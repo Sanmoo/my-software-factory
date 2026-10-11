@@ -19,7 +19,7 @@ import {
   type GitHubRequest,
   type GitHubResponse,
 } from "../tracker/github.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { IssueRef, IssueSnapshot } from "../tracker/port.js";
 
 const REPO = "Sanmoo/my-software-factory";
 const ACCOUNT = "Sanmoo";
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   const token = await boundary.accountToken(ACCOUNT);
   const tracker = new GitHubTracker({ account: ACCOUNT, claimedLabel: CLAIMED_LABEL, boundary });
   const scope = { project: REPO, readyLabel: READY_LABEL };
-  const eligible = (issue: Awaited<ReturnType<GitHubTracker["readIssue"]>>) =>
+  const eligible = (issue: IssueSnapshot) =>
     evaluateEligibility({ project: { enabled: true, readyLabel: READY_LABEL, routing: { kind: "repository" } }, issue, tracked: new Set() }, coreRules);
 
   let subject = 0;
