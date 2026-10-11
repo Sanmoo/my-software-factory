@@ -16,9 +16,10 @@ import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { DoneOutcome, TrackerPort } from "../src/tracker/port.js";
+import { jobBranch } from "../src/core/job.js";
 
-// Job branch of issue 1 (msf/<issue id>) and target branch of the project.
-const HEAD = "msf/1";
+// Job branch of issue 1 (see jobBranch) and target branch of the project.
+const HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 const TARGET = "main";
 const READY = { status: "pr_ready", pr: { repository: "acme/app", number: 9 } };
 const dir = () => mkdtemp(join(tmpdir(), "msf-pr-"));
@@ -154,7 +155,7 @@ test("a ready result that the PR port does not confirm becomes a help request, a
     ["PR closed without merge", prOf({ state: "closed" }), /não está aberto/],
     ["PR already merged", prOf({ state: "merged" }), /não está aberto/],
     ["base is another branch", prOf({ baseBranch: "develop" }), /base develop, esperada main/],
-    ["head is another branch", prOf({ headBranch: "feature/x" }), /head feature\/x, esperado msf\/1/],
+    ["head is another branch", prOf({ headBranch: "feature/x" }), /head feature\/x, esperado msf\/memory\/acme\/app\/1/],
   ];
   for (const [label, pr, reason] of cases) {
     const s = await setup();

@@ -15,7 +15,7 @@ const job = {
   ref: { tracker: "github" as const, project: "acme/app", id: "6" },
   repository: "acme/app",
   targetBranch: "main",
-  branch: "msf/job-github-acme-app-6",
+  branch: "msf/github/acme/app/6",
   baseSha: "1111111111111111111111111111111111111111",
   models,
   review: {

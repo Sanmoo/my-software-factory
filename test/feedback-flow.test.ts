@@ -16,6 +16,8 @@ import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.
 import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { IssueRef } from "../src/tracker/port.js";
+import { jobBranch } from "../src/core/job.js";
+const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 // Feedback reactivates a job through the same effects as a terminal reply (R09, R10, CA11, CA12).
 // The memory tracker, a fake PR port and the local reply path keep every scenario deterministic.
@@ -89,7 +91,7 @@ class FakePrs implements PrPort {
       ref,
       state: "open",
       baseBranch: "main",
-      headBranch: "msf/1",
+      headBranch: JOB_HEAD,
       checks: { known: true, value: "pending" },
       review: { known: true, value: "none" },
     };

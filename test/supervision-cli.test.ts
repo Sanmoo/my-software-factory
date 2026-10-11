@@ -16,6 +16,8 @@ import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
+import { jobBranch } from "../src/core/job.js";
+const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 // The operator's CLI for one instance (R09). The CLI writes commands to the instance's local
 // queue; the instance applies them on its next poll. The memory tracker and the fake runner
@@ -63,7 +65,7 @@ const HELP = { status: "needs_help", question: "Which seam?", context: "slugify"
 const PR_READY = { status: "pr_ready", pr: { repository: "acme/app", number: 7 } };
 
 // The github.com boundary: every PR the runner reports is open, based on the target branch
-// and headed by the job branch (msf/<issue id>), so a ready result is accepted.
+// and headed by the job branch (see jobBranch), so a ready result is accepted.
 const openPrs: PrPort = {
   async readPr(ref) {
     return {
@@ -72,7 +74,7 @@ const openPrs: PrPort = {
         ref,
         state: "open",
         baseBranch: "main",
-        headBranch: "msf/1",
+        headBranch: JOB_HEAD,
         checks: { known: true, value: "pending" },
         review: { known: true, value: "none" },
       },

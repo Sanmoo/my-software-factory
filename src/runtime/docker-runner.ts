@@ -12,10 +12,10 @@ import {
   diffSha256Of,
   fileSha256At,
   headOf,
-  jobBranchName,
   jobLayout,
   type JobLayout,
 } from "./docker-area.js";
+import { jobBranch } from "../core/job.js";
 import { sandcastleRequest, type SandcastleRequest } from "./docker-invocation.js";
 import { interpretOutput } from "./docker-output.js";
 import { continuationPrompt, implementPrompt, type ReviewMaterial } from "./docker-prompt.js";
@@ -172,7 +172,7 @@ class DockerRunner implements Runner {
     project: ProjectConfig,
     layout: JobLayout,
   ): Promise<JobRecord & { targetBranch: string; branch: string; baseSha: string }> {
-    const branch = jobBranchName(context.jobId);
+    const branch = jobBranch(context.ref);
     const baseSha = await createJobRepo({
       source: this.options.repositorySource(project),
       repoDir: layout.repoDir,

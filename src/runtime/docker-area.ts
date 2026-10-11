@@ -28,10 +28,6 @@ export function jobLayout(stateDir: string, key: string): JobLayout {
   };
 }
 
-export function jobBranchName(key: string): string {
-  return `msf/${key.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}`;
-}
-
 export async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await run("git", ["-c", "core.pager=cat", ...args], { cwd, maxBuffer: 64 * 1024 * 1024 });
   return stdout;

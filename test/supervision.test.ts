@@ -15,6 +15,8 @@ import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { IssueRef, TrackerPort } from "../src/tracker/port.js";
+import { jobBranch } from "../src/core/job.js";
+const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 // Operator commands of one instance (R09, R12, P02, P03). Commands go through the local
 // queue and are applied by the instance's poll; the memory tracker and the fake runner
@@ -26,7 +28,7 @@ const WORKSPACE: Workspace = { session: "session-1", area: "area-1" };
 const dir = () => mkdtemp(join(tmpdir(), "msf-supervision-"));
 
 // The github.com boundary: every PR the runner reports is open, based on the target branch
-// and headed by the job branch (msf/<issue id>), so a ready result is accepted.
+// and headed by the job branch (see jobBranch), so a ready result is accepted.
 const openPrs: PrPort = {
   async readPr(ref) {
     return {
@@ -35,7 +37,7 @@ const openPrs: PrPort = {
         ref,
         state: "open",
         baseBranch: "main",
-        headBranch: "msf/1",
+        headBranch: JOB_HEAD,
         checks: { known: true, value: "pending" },
         review: { known: true, value: "none" },
       },
@@ -401,7 +403,7 @@ test("pause does not stop the tracking of a waiting PR: a merge is still confirm
       return {
         status: "found",
         pr: {
-          ref, state, baseBranch: "main", headBranch: "msf/1",
+          ref, state, baseBranch: "main", headBranch: JOB_HEAD,
           checks: { known: true, value: "passing" }, review: { known: true, value: "approved" },
         },
       };

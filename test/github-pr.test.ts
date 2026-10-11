@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createGithubPrPort, type GhCall, type GhResult } from "../src/pr/github.js";
+import { jobBranch } from "../src/core/job.js";
 
 // The process boundary is the only thing replaced: `gh` itself is not run.
 const TOKEN = "gho_test_token_not_real";
@@ -25,7 +26,7 @@ function ghWith(
 const pullRequest = (overrides: Record<string, unknown> = {}, rollup: unknown = { state: "PENDING" }) => ({
   state: "OPEN",
   baseRefName: "main",
-  headRefName: "msf/8",
+  headRefName: jobBranch({ tracker: "github", project: "acme/app", id: "8" }),
   reviewDecision: null,
   commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
   ...overrides,
@@ -43,7 +44,7 @@ test("an open PR is read with the project account's token injected per call, nev
       ref,
       state: "open",
       baseBranch: "main",
-      headBranch: "msf/8",
+      headBranch: jobBranch({ tracker: "github", project: "acme/app", id: "8" }),
       checks: { known: true, value: "pending" },
       review: { known: true, value: "none" },
     },

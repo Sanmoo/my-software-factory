@@ -15,6 +15,8 @@ import type { PrLookup, PrPort } from "../src/pr/port.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { ClaimOutcome, TrackerPort } from "../src/tracker/port.js";
+import { jobBranch } from "../src/core/job.js";
+const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 const NEEDS_HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
 // Session and area reported by the runner; a resume needs them to continue the conversation.
@@ -482,7 +484,7 @@ test("a PR-ready result moves the job to waiting-for-pr with its reference and r
     ? finished({ status: "pr_ready", pr: { repository: "acme/app", number: 9 } })
     : finished(NEEDS_HELP)));
   const prs: PrPort = { readPr: async () => ({ status: "found", pr: {
-    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: "msf/1",
+    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: JOB_HEAD,
     checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
   } }), readFeedback: async () => ({ comments: [], checks: [] }), };
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], prs });

@@ -7,6 +7,7 @@ import type { CredentialRef, InstanceConfig, ProjectConfig } from "../src/config
 import { RunnerConfigError } from "../src/runtime/docker-config.js";
 import { createDockerRunner, type SandboxBoundary, type SandboxOutcome, type SandboxRun } from "../src/runtime/docker-runner.js";
 import { git, headOf, jobLayout } from "../src/runtime/docker-area.js";
+import { jobBranch } from "../src/core/job.js";
 import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
 
@@ -147,6 +148,20 @@ test("a new invocation runs in its own area at base, with the configured limit, 
   assert.match(run.request.prompt, /\/skill:implement/);
   assert.match(run.request.prompt, /Authorized repository: acme\/app\./);
   assert.ok(run.request.prompt.includes(await headOf(layout.repoDir)), "the prompt names the base");
+});
+
+test("the job area is on the canonical job branch that the PR check expects, and the prompt names it", async () => {
+  const f = await fixture();
+  const { boundary, runs } = fakeBoundary(async () => ({
+    sessionId: "session-1", completed: true,
+    events: reply({ status: "needs_help", question: "Which seam?", context: "slugify" }),
+  }));
+  await runnerFor(f, boundary).run(newContext());
+
+  const layout = jobLayout(f.stateDir, key);
+  const branch = jobBranch(ref);
+  assert.equal((await git(layout.repoDir, "branch", "--show-current")).trim(), branch);
+  assert.ok(runs[0]!.request.prompt.includes(branch), "the prompt names the branch");
 });
 
 test("the git area and the Pi session survive the container: a continuation resumes the same session on the same commits", async () => {

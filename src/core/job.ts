@@ -46,9 +46,17 @@ export interface PrStatus {
   review: Known<ReviewState>;
 }
 
-// The branch the implementation of an issue works on and that its PR must have as head.
-// The runner creates it with this name; the PR validation checks it (R08).
-export const jobBranch = (ref: IssueRef): string => `msf/${ref.id}`;
+// Letters, digits, "_", "-" and "/" stand for themselves. Any other UTF-16 unit is written as "%"
+// and four hex digits: "%" is a legal character in a Git ref, so a segment never starts with an
+// illegal character, and the fixed width keeps the encoding injective.
+const encodeRefPart = (text: string): string =>
+  text.replace(/[^A-Za-z0-9_/-]/g, (char) => `%${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
+// The branch the implementation of an issue works on and that its PR must have as head (R08,
+// CA19). It is derived from the job identity (tracker, project, issue id), so the same issue
+// number in two projects gives two branches. The runner creates it; the PR check expects it.
+export const jobBranch = (ref: IssueRef): string =>
+  `msf/${encodeRefPart(ref.tracker)}/${encodeRefPart(ref.project)}/${encodeRefPart(ref.id)}`;
 
 export interface TransitionDetails {
   message: string;
