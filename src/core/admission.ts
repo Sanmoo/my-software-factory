@@ -120,7 +120,7 @@ export class Admission {
   }
 
   // One polling cycle: continuations first (CA07), then waiting PRs (R11), then new work by
-// priority (P05).
+  // priority (P05).
   async poll(): Promise<PollReport> {
     const report: PollReport = { admitted: [], skipped: [], errors: [] };
     const continuations = this.allJobs().filter((job) => job.pending !== undefined);
