@@ -212,6 +212,8 @@ como `runner` são exemplos, não nome de ferramenta obrigatório.
 
 O operador acompanha por tail de logs. Feedback recebido enquanto um agente
 está ativo fica pendente para a próxima invocação; não há steering ao vivo no MVP.
+O log principal mostra a severidade de cada linha e agrupa falhas repetidas; o
+histórico local continua completo.
 
 ### R10 — Feedback Jira, PR e terminal
 

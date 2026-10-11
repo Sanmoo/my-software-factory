@@ -65,6 +65,16 @@ e como. É um pedido de ajuda: o que não for escolhido não é tratado nem perg
 de novo. Checks e conflitos não passam por ela.
 _Avoid_: agente decidindo sozinho quais comentários atender, triagem como aprovação de escopo novo
 
+**Log principal**:
+Fluxo contínuo de uma instância em que o operador acompanha transições de
+trabalhos, falhas e ações humanas necessárias, com comandos que pode copiar.
+_Avoid_: console, log do runtime, histórico local como sinônimo
+
+**Log detalhado**:
+Fluxo de uma única invocação, próximo da experiência interativa do agente:
+mensagens públicas, chamadas de ferramentas e seus resultados.
+_Avoid_: log principal, log do runtime como sinônimo
+
 **Retomada manual**:
 Continuidade de um trabalho solicitada explicitamente pelo operador a partir
 da sessão anterior e da área preservada.
