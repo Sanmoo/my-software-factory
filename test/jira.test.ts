@@ -432,3 +432,75 @@ test("postComment publishes the [msf] marker once and returns the comment id", a
     ["901", "[msf] já marcado", false],
   ]);
 });
+
+const writesOf = (fake: FakeJira) => fake.writes().map((request) => `${request.method} ${request.path}`);
+
+test("claim adds the claimed label, runs the doing transition and confirms it by rereading", async () => {
+  await withTracker([fakeIssue({ key: "VAN-60" })], async (tracker, fake) => {
+    assert.deepEqual(await tracker.claim(ref("VAN-60")), { status: "accepted" });
+    assert.deepEqual(writesOf(fake), [
+      "PUT /rest/api/3/issue/VAN-60",
+      "POST /rest/api/3/issue/VAN-60/transitions",
+    ]);
+    const after = await tracker.readIssue(ref("VAN-60"));
+    assert.deepEqual(after.claimed, { known: true, value: true });
+    assert.deepEqual(after.statusCategory, { known: true, value: "in-progress" });
+  });
+});
+
+test("claim of an issue already claimed is rejected without any write", async () => {
+  await withTracker([fakeIssue({ key: "VAN-61", labels: ["ready-for-agent", "agent-claimed"] })], async (tracker, fake) => {
+    assert.deepEqual(await tracker.claim(ref("VAN-61")), { status: "rejected", reason: "issue já claimed" });
+    assert.deepEqual(writesOf(fake), []);
+  });
+});
+
+test("claim whose claim state cannot be read is rejected, not presumed unclaimed", async () => {
+  await withTracker([fakeIssue({ key: "VAN-62", hideStatus: true })], async (tracker, fake) => {
+    const outcome = await tracker.claim(ref("VAN-62"));
+    assert.equal(outcome.status, "rejected");
+    assert.deepEqual(writesOf(fake), []);
+  });
+});
+
+test("claim without the configured doing transition is rejected before the label is added", async () => {
+  await withTracker([fakeIssue({ key: "VAN-63", transitions: [{ id: "31", name: "Concluído", to: "done" }] })], async (tracker, fake) => {
+    const outcome = await tracker.claim(ref("VAN-63"));
+    assert.equal(outcome.status, "rejected");
+    assert.match(outcome.status === "rejected" ? outcome.reason : "", /Em andamento/);
+    assert.deepEqual(writesOf(fake), []);
+  });
+});
+
+test("releaseClaim removes only the claimed label and never transitions the issue", async () => {
+  const issue = fakeIssue({ key: "VAN-64", labels: ["ready-for-agent", "agent-claimed"], statusName: "Em andamento", category: "indeterminate" });
+  await withTracker([issue], async (tracker, fake) => {
+    await tracker.releaseClaim(ref("VAN-64"));
+    assert.deepEqual(writesOf(fake), ["PUT /rest/api/3/issue/VAN-64"]);
+    const after = await tracker.readIssue(ref("VAN-64"));
+    assert.deepEqual(after.labels, { known: true, value: ["ready-for-agent"] });
+    assert.deepEqual(after.statusCategory, { known: true, value: "in-progress" });
+  });
+});
+
+test("markDone runs the configured done transition and confirms the Done category", async () => {
+  await withTracker([fakeIssue({ key: "VAN-65" })], async (tracker, fake) => {
+    assert.deepEqual(await tracker.markDone(ref("VAN-65")), { status: "done" });
+    assert.deepEqual(writesOf(fake), ["POST /rest/api/3/issue/VAN-65/transitions"]);
+    assert.deepEqual((await tracker.readIssue(ref("VAN-65"))).statusCategory, { known: true, value: "done" });
+  });
+});
+
+test("markDone of an issue already in Done is the expected state and writes nothing", async () => {
+  await withTracker([fakeIssue({ key: "VAN-66", statusName: "Concluído", category: "done" })], async (tracker, fake) => {
+    assert.deepEqual(await tracker.markDone(ref("VAN-66")), { status: "already-done" });
+    assert.deepEqual(writesOf(fake), []);
+  });
+});
+
+test("markDone without the configured done transition is not confirmed", async () => {
+  await withTracker([fakeIssue({ key: "VAN-67", transitions: [] })], async (tracker) => {
+    const outcome = await tracker.markDone(ref("VAN-67"));
+    assert.equal(outcome.status, "not-confirmed");
+  });
+});

@@ -267,12 +267,27 @@ export class JiraTracker implements TrackerPort {
     }
   }
 
-  async claim(_ref: IssueRef): Promise<ClaimOutcome> {
-    throw new Error("não implementado");
+  // Adds the claimed label and runs the doing transition, then rereads: the start counts
+  // only when the tracker confirms both the claim and the In Progress category.
+  async claim(ref: IssueRef): Promise<ClaimOutcome> {
+    const before = await this.readIssue(ref);
+    if (!before.claimed.known) return { status: "rejected", reason: `claim não lido: ${before.claimed.reason}` };
+    if (before.claimed.value) return { status: "rejected", reason: "issue já claimed" };
+    const doing = await this.transitionTo(ref.id, this.settings.doingTransition);
+    if (doing === undefined) {
+      return { status: "rejected", reason: `transição '${this.settings.doingTransition}' indisponível para ${ref.id}` };
+    }
+    await this.updateLabels(ref.id, [{ add: this.settings.claimedLabel }]);
+    await this.runTransition(ref.id, doing);
+    const after = await this.readIssue(ref);
+    const started = after.claimed.known && after.claimed.value
+      && after.statusCategory.known && after.statusCategory.value === "in-progress";
+    return started ? { status: "accepted" } : { status: "rejected", reason: "início não confirmado pelo Jira" };
   }
 
-  async releaseClaim(_ref: IssueRef): Promise<void> {
-    throw new Error("não implementado");
+  // Removes the claimed label only; the status is left as it is.
+  async releaseClaim(ref: IssueRef): Promise<void> {
+    await this.updateLabels(ref.id, [{ remove: this.settings.claimedLabel }]);
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -313,8 +328,39 @@ export class JiraTracker implements TrackerPort {
     return created.id;
   }
 
-  async markDone(_ref: IssueRef): Promise<DoneOutcome> {
-    throw new Error("não implementado");
+  async markDone(ref: IssueRef): Promise<DoneOutcome> {
+    const before = await this.readIssue(ref);
+    if (before.statusCategory.known && before.statusCategory.value === "done") return { status: "already-done" };
+    const done = await this.transitionTo(ref.id, this.settings.doneTransition);
+    if (done === undefined) {
+      return { status: "not-confirmed", reason: `transição '${this.settings.doneTransition}' indisponível para ${ref.id}` };
+    }
+    await this.runTransition(ref.id, done);
+    const after = await this.readIssue(ref);
+    return after.statusCategory.known && after.statusCategory.value === "done"
+      ? { status: "done" }
+      : { status: "not-confirmed", reason: "categoria Done não confirmada pelo Jira" };
+  }
+
+  private async transitionTo(key: string, name: string): Promise<string | undefined> {
+    const page = await jiraRequest<{ transitions: Array<{ id: string; name: string }> }>(
+      this.connection,
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
+    );
+    return page?.transitions.find((transition) => transition.name === name)?.id;
+  }
+
+  private async runTransition(key: string, transitionId: string): Promise<void> {
+    await jiraRequest(this.connection, "POST", `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+      transition: { id: transitionId },
+    });
+  }
+
+  private async updateLabels(key: string, operations: Array<{ add: string } | { remove: string }>): Promise<void> {
+    await jiraRequest(this.connection, "PUT", `/rest/api/3/issue/${encodeURIComponent(key)}`, {
+      update: { labels: operations },
+    });
   }
 
   // Follows nextPageToken until Jira reports the last page.
