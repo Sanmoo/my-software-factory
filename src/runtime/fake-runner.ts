@@ -1,4 +1,4 @@
-import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
+import type { Runner, RunnerContext, RunnerOutput, Workspace } from "./runner.js";
 
 // Deterministic runner for tests and the MVP slice before the Docker runner (#6).
 // The script decides each call's output; an Error means the runner failed.
@@ -18,3 +18,15 @@ export class FakeRunner implements Runner {
 }
 
 export const finished = (...results: unknown[]): RunnerOutput => ({ kind: "finished", results });
+
+// Reports the session and area of an output, as a runner that knows them would. Accepts the
+// pending output of a gate too, so a runner can report its workspace when it finishes.
+export function withWorkspace(output: RunnerOutput, workspace: Workspace): RunnerOutput;
+export function withWorkspace(output: Promise<RunnerOutput>, workspace: Workspace): Promise<RunnerOutput>;
+export function withWorkspace(
+  output: RunnerOutput | Promise<RunnerOutput>,
+  workspace: Workspace,
+): RunnerOutput | Promise<RunnerOutput> {
+  if (output instanceof Promise) return output.then((resolved) => ({ ...resolved, workspace }));
+  return { ...output, workspace };
+}

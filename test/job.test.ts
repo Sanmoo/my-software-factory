@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { newJob, transitionJob, type Job } from "../src/core/job.js";
+import { jobBranch, newJob, recordPrStatus, transitionJob, type Job } from "../src/core/job.js";
 
 const ref = { tracker: "github" as const, project: "acme/app", id: "7" };
 const start = (): Job => newJob({ ref, repository: "acme/app" });
@@ -53,4 +53,23 @@ test("transitions do not mutate the job they start from", () => {
   transitionJob(job, "interrupted", { message: "queda", reason: "x" });
   assert.equal(job.state, "running");
   assert.deepEqual(job.log, []);
+});
+
+test("the job branch is msf/ and the issue id, the head the factory checks a PR against", () => {
+  assert.equal(jobBranch(ref), "msf/7");
+  assert.equal(jobBranch({ tracker: "jira", project: "VAN", id: "VAN-12" }), "msf/VAN-12");
+});
+
+test("recording PR status keeps the state and the PR, and logs only when a message is given", () => {
+  const pr = transitionJob(start(), "waiting-for-pr", { message: "PR validado", pr: { repository: "acme/app", number: 3 } });
+  const status = { checks: { known: true as const, value: "pending" as const }, review: { known: true as const, value: "none" as const } };
+
+  const silent = recordPrStatus(pr, status);
+  assert.equal(silent.state, "waiting-for-pr");
+  assert.deepEqual(silent.prStatus, status);
+  assert.deepEqual(silent.log, ["PR validado"]);
+
+  const logged = recordPrStatus(silent, { ...status, checks: { known: true, value: "passing" } }, "CI: passing");
+  assert.deepEqual(logged.log, ["PR validado", "CI: passing"]);
+  assert.equal(pr.prStatus, undefined, "the job it starts from is not mutated");
 });
