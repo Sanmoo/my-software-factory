@@ -12,6 +12,7 @@
 // printed; the report contains issue numbers, outcomes and REST paths only.
 
 import { coreRules, evaluateEligibility } from "../core/eligibility.js";
+import { postFactoryComment } from "../core/markers.js";
 import {
   createGhCliBoundary,
   GitHubTracker,
@@ -117,7 +118,7 @@ async function main(): Promise<void> {
 
     steps.push({ step: "claim novamente", outcome: JSON.stringify(await tracker.claim(ref(subject))) });
 
-    const commentId = await tracker.postComment(ref(subject), `conformidade t04 ${date}\n\n${MARKER}`);
+    const commentId = await postFactoryComment(tracker, ref(subject), `conformidade t04 ${date}`);
     const comments = await tracker.readComments(ref(subject));
     const posted = comments.find((comment) => comment.id === commentId);
     steps.push({

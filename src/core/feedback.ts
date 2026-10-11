@@ -2,15 +2,13 @@ import { createHash } from "node:crypto";
 import type { Continuation, Job, JobState } from "./job.js";
 import type { PrCheck, PrFeedback } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
+import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
 
 // Feedback that reaches a job (R09, R10, CA11, CA12). Pure judgement: no I/O here. The
 // admission reads the tracker and the PR port, applies these rules, and persists the result.
 // Feedback never widens scope and never decides merge or deploy: it only reactivates the job
 // (as a reply or a correction) and is delivered to the next invocation as text.
 
-// Markers the factory adds to what it publishes (R10). A comment with a marker is never feedback.
-const GITHUB_MARKER = "<!-- msf:agent -->";
-const JIRA_MARKER = "[msf]";
 // The prefix that makes a human issue comment a directed reply to the job (CA11).
 const DIRECTED_PREFIX = "agent:";
 

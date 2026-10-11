@@ -45,6 +45,19 @@ function reviewRules(input: JobPromptInput): string {
   ].join("\n");
 }
 
+// Comments the agent writes carry the factory marker of their tracker (R10): the agent publishes
+// with the operator's credentials, and only marked comments are told apart from human ones.
+function commentRules(ref: IssueRef): string {
+  const issue = ref.tracker === "jira"
+    ? "Every comment you write on the Jira issue must start with [msf]."
+    : "Every comment you write on the GitHub issue must start with <!-- msf:agent -->.";
+  return [
+    `Comments: ${issue}`,
+    "Every comment or review you write on the pull request must start with <!-- msf:agent -->.",
+    "Unmarked comments are read as human feedback.",
+  ].join("\n");
+}
+
 const RESULT_PROTOCOL = [
   "Result protocol: end your final message with exactly one structured result, then the completion signal.",
   "This holds even when you ask a question: a question without the result tag is not delivered and ends nothing.",
@@ -68,6 +81,7 @@ export function implementPrompt(input: JobPromptInput): string {
     "Models:",
     roleLines(input.models),
     reviewRules(input),
+    commentRules(input.ref),
     RESULT_PROTOCOL,
   ].join("\n\n");
 }
@@ -83,6 +97,7 @@ export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "c
     "Models stay the same:",
     roleLines(input.models),
     reviewRules(input),
+    commentRules(input.ref),
     RESULT_PROTOCOL,
   ].join("\n\n");
 }

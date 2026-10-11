@@ -424,7 +424,7 @@ test("readComments returns id, author, bot flag, body text and time across pages
   ]);
 });
 
-test("postComment publishes the [msf] marker once and returns the comment id", async () => {
+test("postComment posts the body as given: the core adds the [msf] marker, the adapter neither adds nor strips it", async () => {
   const issues = [fakeIssue({ key: "VAN-51" })];
   const comments = await withTracker(issues, async (tracker) => {
     const plain = await tracker.postComment(ref("VAN-51"), "resultado parcial");
@@ -432,9 +432,9 @@ test("postComment publishes the [msf] marker once and returns the comment id", a
     assert.deepEqual([plain, marked], ["900", "901"]);
     return tracker.readComments(ref("VAN-51"));
   });
-  assert.deepEqual(comments.map((comment) => [comment.id, comment.body, comment.isBot]), [
-    ["900", "[msf] resultado parcial", false],
-    ["901", "[msf] já marcado", false],
+  assert.deepEqual(comments.map((comment) => [comment.id, comment.body]), [
+    ["900", "resultado parcial"],
+    ["901", "[msf] já marcado"],
   ]);
 });
 

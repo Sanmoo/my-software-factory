@@ -8,6 +8,7 @@ import {
   type JiraTrackerSettings,
 } from "../tracker/jira.js";
 import type { IssueRef, IssueSnapshot } from "../tracker/port.js";
+import { postFactoryComment } from "../core/markers.js";
 
 // Live conformance of the Jira TrackerPort adapter (ticket #5), against the VAN project.
 //
@@ -266,7 +267,7 @@ async function writeChecks(
   check(doneName !== undefined && doneCandidates.includes(doneName), "nome da transição done não confirmado");
   const tracker = new JiraTracker(connection, settingsFor(doingName, doneName ?? "", linkType));
 
-  const commentId = await tracker.postComment(reference(blocker), "teste de conformidade do adapter Jira");
+  const commentId = await postFactoryComment(tracker, reference(blocker), "teste de conformidade do adapter Jira");
   const comments = await tracker.readComments(reference(blocker));
   const posted = comments.find((comment) => comment.id === commentId);
   check(posted !== undefined && posted.body.startsWith("[msf]"), "comentário [msf] não lido de volta");
@@ -281,7 +282,7 @@ async function writeChecks(
 
   check((await tracker.claim(reference(blocked))).status === "accepted", "claim da bloqueada não aceito");
   log("claim bloqueada", "accepted");
-  await tracker.postComment(reference(blocked), "teste de conformidade do adapter Jira");
+  await postFactoryComment(tracker, reference(blocked), "teste de conformidade do adapter Jira");
   log("done bloqueada", await tracker.markDone(reference(blocked)));
   log("done bloqueada (repetido)", await tracker.markDone(reference(blocked)));
 

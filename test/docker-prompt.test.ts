@@ -64,6 +64,16 @@ test("the result protocol asks for one structured result and the completion sign
   assert.ok(prompt.includes('"reviews"'), "review evidence for pr_ready");
 });
 
+test("the agent is told that every tracker or PR comment it writes starts with the marker of its tracker", () => {
+  const prompt = implementPrompt(job);
+  assert.match(prompt, /GitHub issue[^.]*must start with <!-- msf:agent -->/);
+  assert.match(prompt, /pull request[^.]*must start with <!-- msf:agent -->/);
+  const jiraPrompt = implementPrompt({ ...job, ref: { tracker: "jira", project: "VAN", id: "VAN-7" }, branch: "msf/jira/VAN/VAN-7" });
+  assert.match(jiraPrompt, /Jira issue[^.]*must start with \[msf\]/);
+  assert.match(jiraPrompt, /pull request[^.]*must start with <!-- msf:agent -->/);
+  assert.match(continuationPrompt({ ...job, kind: "resume" }), /GitHub issue[^.]*must start with <!-- msf:agent -->/);
+});
+
 test("the agent is told not to merge and not to deploy to production", () => {
   const prompt = implementPrompt(job);
   assert.match(prompt, /Never merge/);

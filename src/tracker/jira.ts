@@ -87,7 +87,6 @@ export function jqlString(value: string): string {
 
 const ISSUE_FIELDS = "summary,status,labels,assignee,priority,issuelinks";
 const PAGE_SIZE = 100;
-const JIRA_MARKER = "[msf]";
 
 // Atlassian Document Format node, as returned for comment bodies.
 interface AdfNode {
@@ -323,14 +322,13 @@ export class JiraTracker implements TrackerPort {
     }));
   }
 
-  // Every comment the factory publishes starts with the [msf] marker, added once.
+  // Posts the body as given: the core adds the [msf] marker (see core/markers.ts).
   async postComment(ref: IssueRef, body: string): Promise<string> {
-    const text = body.startsWith(JIRA_MARKER) ? body : `${JIRA_MARKER} ${body}`;
     const created = await jiraRequest<{ id: string }>(
       this.connection,
       "POST",
       `/rest/api/3/issue/${encodeURIComponent(ref.id)}/comment`,
-      { body: adfFromText(text) },
+      { body: adfFromText(body) },
     );
     if (created === undefined) throw new Error("Jira não devolveu o id do comentário");
     return created.id;
