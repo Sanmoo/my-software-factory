@@ -1,5 +1,5 @@
 import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { CredentialRef, InstanceConfig, ProjectConfig } from "../config/types.js";
 import {
   findProject,
@@ -20,12 +20,21 @@ import { continuationPrompt, implementPrompt } from "./docker-prompt.js";
 import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
 import { messageOf } from "../core/values.js";
+import { noopObserver, type Observer } from "../core/observability.js";
+import type { IssueRef } from "../tracker/port.js";
+import { AgentActivity } from "./agent-activity.js";
+import type { IssueState } from "./agent-issue-writes.js";
 
 // Docker runner (R06, R07, R08, CA08, CA09, CA18). Each job gets its own git area and Pi
 // session on the host; the agent runs only inside the sandbox boundary. Any failure before or
 // during the run is an interruption with its reason. Nothing here runs on the host instead.
 
 // The sandbox boundary: Docker and Sandcastle in production, a fake in tests.
+// The silence the runtime tolerates before it gives up, and how often it warns meanwhile. The
+// Sandcastle boundary applies both; the activity reports them as the effective values.
+export const IDLE_TIMEOUT_SECONDS = 600;
+export const IDLE_WARNING_SECONDS = 60;
+
 export interface SandboxRun {
   image: string;
   cwd: string; // job repository, the bind-mounted work area
@@ -34,6 +43,14 @@ export interface SandboxRun {
   model: string; // implementer model: the main agent of the invocation
   token: string; // GitHub token for the container environment only
   request: SandcastleRequest;
+  // Where the boundary sends what the agent prints, line by line, as it arrives. The runner turns it
+  // into the detailed log and the operational events; the boundary only feeds it and drives its clock.
+  activity: AgentActivity;
+  // Seconds of silence after which the runtime stops the agent.
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  // The runtime's own log (setup, warnings of the dependency); the detailed log is the activity's.
+  runtimeLogPath: string;
 }
 
 export interface SandboxOutcome {
@@ -60,6 +77,13 @@ export interface DockerRunnerOptions {
   // Remote the job area pushes to, when it differs from the checkout it was cloned from.
   remoteUrl?: (project: ProjectConfig) => string | undefined;
   boundary: SandboxBoundary;
+  // Where operational events go. Absent: the run is not observed beyond its own logs.
+  observer?: Observer;
+  // The clock of the activity, injectable so silence can be controlled in tests.
+  now?: () => number;
+  // Rereads the issue of a job in the tracker: the evidence by which a write the agent made on its
+  // own issue can be confirmed. Absent: such writes are reported as not confirmable.
+  issueEvidence?: (ref: IssueRef) => () => Promise<IssueState>;
 }
 
 // Configuration problems are visible when the runner is built, before any job starts.
@@ -99,7 +123,9 @@ class DockerRunner implements Runner {
 
   async run(context: RunnerContext): Promise<RunnerOutput> {
     const layout = jobLayout(this.options.stateDir, context.jobId);
+    const observer = this.options.observer ?? noopObserver;
     let secret: string | undefined;
+    let activity: AgentActivity | undefined;
     try {
       const project = findProject(this.options.instance.projects, context.ref, context.repository);
       const models = requireRunModels(project);
@@ -109,6 +135,7 @@ class DockerRunner implements Runner {
         image: this.options.image, profileDir, account: project.githubAccount,
       });
       secret = preflight.token;
+      observer.registerSecret(preflight.token);
 
       const saved = context.kind === "new" ? undefined : await this.readRecord(layout);
       const repoRef = context.kind === "new"
@@ -123,10 +150,33 @@ class DockerRunner implements Runner {
       });
       await this.audit(layout, `invocação ${context.kind}; limite efetivo=${request.maxIterations}; implementer=${models.implementer}`);
       await mkdir(layout.sessionsDir, { recursive: true });
+
+      // One invocation, one detailed log: the operator follows it with `tail -f` while it runs.
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const logs = join(layout.areaDir, "logs");
+      const detailPath = join(logs, `${stamp}.log`);
+      const runtimeLogPath = join(logs, `${stamp}.runtime.log`);
+      const artifactsDir = join(logs, `${stamp}.artifacts`);
+      const issueEvidence = this.options.issueEvidence?.(context.ref);
+      activity = new AgentActivity({
+        observer, job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
+        detailPath, artifactsDir, ...(this.options.now === undefined ? {} : { now: this.options.now }),
+        idle: { timeoutSeconds: IDLE_TIMEOUT_SECONDS, warnEverySeconds: IDLE_WARNING_SECONDS },
+        issueWrites: { ref: context.ref, repository: project.repository, ...(issueEvidence === undefined ? {} : { evidence: issueEvidence }) },
+      });
+      observer.setDetailLog(context.jobId, detailPath);
+      observer.emit({
+        kind: "logs-da-invocação", text: "logs da invocação", job: context.jobId,
+        ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
+        fields: { detalhado: detailPath, runtime: runtimeLogPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
+      });
       const outcome = await this.options.boundary.run({
         image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir, profileDir,
         model: models.implementer, token: preflight.token, request,
+        activity, idleTimeoutSeconds: IDLE_TIMEOUT_SECONDS, idleWarningSeconds: IDLE_WARNING_SECONDS, runtimeLogPath,
       });
+      await activity.close();
+      this.reportReplyDelivery(observer, context, activity);
 
       const sessionId = outcome.sessionId ?? repoRef.sessionId;
       await this.writeRecord(layout, { ...repoRef, sessionId });
@@ -142,9 +192,33 @@ class DockerRunner implements Runner {
       for (const line of interpretation.audit) await this.audit(layout, line);
       return reportWorkspace(interpretation.output);
     } catch (error) {
-      const reason = redact(messageOf(error), secret);
+      const reason = observer.redact(redact(messageOf(error), secret));
+      // A real timeout is a transition of its own; the warnings before it were only warnings.
+      if (/Agent idle for \d+ seconds/.test(reason)) activity?.timedOut(reason);
+      await activity?.close();
       await this.audit(layout, `interrompido: ${reason}`);
       return interrupted(reason);
+    }
+  }
+
+  // A reply is delivered only when the stream shows it reaching the agent: the user message of the
+  // invocation carries its text. Without that evidence the delivery stays unconfirmed (decision 4).
+  private reportReplyDelivery(observer: Observer, context: RunnerContext, activity: AgentActivity): void {
+    const replies = context.continuation?.replies ?? [];
+    if (replies.length === 0) return;
+    const seen = activity.userMessages();
+    const delivered = replies.filter((reply) => seen.some((message) => message.includes(reply))).length;
+    const base = {
+      job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
+    };
+    const fields = { comando: context.replyCommands?.join(","), respostas: replies.length };
+    if (delivered === replies.length) {
+      observer.emit({ kind: "resposta-entregue", text: "resposta entregue ao agente", ...base, fields: { ...fields, evidência: "mensagem do usuário no stream do runtime" } });
+    } else {
+      observer.emit({
+        kind: "entrega-não-confirmada", text: "entrega da resposta ao agente não confirmada", ...base,
+        fields: { ...fields, confirmadas: delivered, motivo: "sem evidência no stream do runtime; a resposta foi incluída na retomada" },
+      });
     }
   }
 

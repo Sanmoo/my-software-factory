@@ -87,39 +87,46 @@ export function sandcastleBoundary(): SandboxBoundary {
     async run(input) {
       await mkdir(input.sessionsDir, { recursive: true });
       const events: PiEvent[] = [];
-      // The stream log belongs to this job's area, one file per invocation.
-      const logDir = join(dirname(input.cwd), "logs");
-      await mkdir(logDir, { recursive: true });
-      const logPath = join(logDir, `${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
-      const result = await run({
-        agent: agentFor(input.model, input.sessionsDir),
-        sandbox: docker({
-          imageName: input.image,
-          env: { GH_TOKEN: input.token },
-          mounts: await mountsFor(input),
-        }),
-        cwd: input.cwd,
-        branchStrategy: { type: "head" },
-        prompt: input.request.prompt,
-        maxIterations: input.request.maxIterations,
-        resumeSession: input.request.resumeSession,
-        completionSignal: input.request.completionSignal,
-        idleTimeoutSeconds: 600,
-        hooks: {
-          sandbox: {
-            onSandboxReady: [{ command: `sh ${SANDBOX_PROFILE_SCRIPT} ${input.profileDir}` }],
+      // The dependency's own log (setup, its warnings) is one file per invocation; the readable
+      // activity is the runner's detailed log, fed by the raw lines below.
+      await mkdir(dirname(input.runtimeLogPath), { recursive: true });
+      const timer = setInterval(() => input.activity.checkIdle(), Math.min(input.idleWarningSeconds, 5) * 1000);
+      timer.unref();
+      let result;
+      try {
+        result = await run({
+          agent: agentFor(input.model, input.sessionsDir),
+          sandbox: docker({
+            imageName: input.image,
+            env: { GH_TOKEN: input.token },
+            mounts: await mountsFor(input),
+          }),
+          cwd: input.cwd,
+          branchStrategy: { type: "head" },
+          prompt: input.request.prompt,
+          maxIterations: input.request.maxIterations,
+          resumeSession: input.request.resumeSession,
+          completionSignal: input.request.completionSignal,
+          idleTimeoutSeconds: input.idleTimeoutSeconds,
+          hooks: {
+            sandbox: {
+              onSandboxReady: [{ command: `sh ${SANDBOX_PROFILE_SCRIPT} ${input.profileDir}` }],
+            },
           },
-        },
-        logging: {
-          type: "file",
-          path: logPath,
-          onAgentStreamEvent(event: AgentStreamEvent) {
-            if (event.type !== "raw") return;
-            const parsed = parseEvent(event.line);
-            if (parsed) events.push(parsed);
+          logging: {
+            type: "file",
+            path: input.runtimeLogPath,
+            onAgentStreamEvent(event: AgentStreamEvent) {
+              if (event.type !== "raw") return;
+              input.activity.line(event.line);
+              const parsed = parseEvent(event.line);
+              if (parsed) events.push(parsed);
+            },
           },
-        },
-      });
+        });
+      } finally {
+        clearInterval(timer);
+      }
       const sessionId = result.iterations.at(-1)?.sessionId ?? result.iterations[0]?.sessionId;
       return { sessionId, completed: result.completionSignal !== undefined, iterations: result.iterations.length, events };
     },
