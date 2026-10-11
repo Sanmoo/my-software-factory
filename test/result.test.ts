@@ -11,12 +11,14 @@ test("a single needs_help result carries the question and its context", () => {
   );
 });
 
-test("a needs_help result with the experiment shape (no context) is still accepted", () => {
-  const experiment = implementResult([{ type: "message_end", message: { role: "assistant", content: [{
-    type: "text",
-    text: '<smoke-result>{"status":"needs_help","question":"Approve the seam?"}</smoke-result><promise>HELP</promise>',
-  }] } }, { type: "agent_settled", aborted: false } satisfies PiEvent]);
-  assert.deepEqual(parseRunOutput([{ status: "needs_help", question: experiment.status === "needs_help" ? experiment.question : "" }]),
+test("the experiment's needs_help shape is accepted as a help request by this contract too", () => {
+  const text = '<smoke-result>{"status":"needs_help","question":"Approve the seam?"}</smoke-result><promise>HELP</promise>';
+  const experiment = implementResult([
+    { type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } },
+    { type: "agent_settled", aborted: false } satisfies PiEvent,
+  ]);
+  assert.equal(experiment.status, "needs_help");
+  assert.deepEqual(parseRunOutput([{ status: "needs_help", question: "Approve the seam?" }]),
     { ok: true, result: { status: "needs_help", question: "Approve the seam?", context: "" } });
 });
 
