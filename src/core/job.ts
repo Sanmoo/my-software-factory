@@ -32,6 +32,9 @@ export interface Job {
   workspace?: Workspace;
   // Operator replies not yet delivered to an invocation (R09).
   replies?: string[];
+  // Keys of tracker and PR feedback already taken by this job, as `source:id@revision` (R10).
+  // An event is consumed once: its id and revision are recorded so it never repeats.
+  consumed?: string[];
   // Last PR observation by polling (R11). Kept across states; it never changes the state.
   prStatus?: PrStatus;
   pending?: Continuation;
@@ -61,7 +64,8 @@ const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   running: ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required", "done"],
   // A resume that cannot continue the session asks for help again (P03).
   "waiting-for-help": ["running", "waiting-for-help", "interrupted", "intervention-required", "done", "released"],
-  "waiting-for-pr": ["running", "interrupted", "intervention-required", "done", "released"],
+  // Undecidable feedback on the PR is a help request to the human (R10).
+  "waiting-for-pr": ["running", "waiting-for-help", "interrupted", "intervention-required", "done", "released"],
   interrupted: ["running", "waiting-for-help", "released"],
   "intervention-required": ["running", "released"],
   done: [],

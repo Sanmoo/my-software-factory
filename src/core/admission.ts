@@ -1,10 +1,11 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
-import type { PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
+import type { PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
 import type { ContinuationContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
+import { directedReply, judgePrFeedback, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import { projectEligibility, type ProjectEligibility } from "./project-eligibility.js";
 import { normalizePriority } from "./priority.js";
@@ -59,6 +60,10 @@ const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
 
 // Jobs an operator can release: none of them has an invocation running (R09).
 const RELEASABLE: readonly JobState[] = ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required"];
+
+// Jobs whose issue is read for directed replies (CA11). A job that is done, released or needs
+// intervention takes no input from the tracker.
+const TRACKER_FEEDBACK_STATES: readonly JobState[] = ["waiting-for-help", "running", "interrupted", "waiting-for-pr"];
 
 const UNRESOLVED_START = "início não confirmado pelo tracker: claim e doing não estão visíveis";
 
@@ -140,11 +145,13 @@ export class Admission {
     return [...this.runErrors];
   }
 
-  // One polling cycle: operator commands in queue order (R09), then, unless paused, continuations
-  // first (CA07), then waiting PRs (R11), then new work by priority (P05).
+  // One polling cycle: operator commands in queue order (R09), directed replies in the tracker
+  // (R10), then waiting PRs (R11), whose feedback becomes corrections, then, unless paused,
+  // continuations first (CA07) and new work by priority (P05).
   async poll(): Promise<PollReport> {
     const report: PollReport = { admitted: [], skipped: [], errors: [], commands: [], paused: false };
     await this.processCommands(report);
+    await this.collectTrackerFeedback(report);
     try {
       report.paused = await this.deps.control.isPaused();
     } catch (error) {
@@ -153,15 +160,16 @@ export class Admission {
       return report;
     }
     // A pause holds new invocations only: tracking of waiting PRs (R11) keeps observing and
-    // confirming merges, as an active job would.
+    // confirming merges, as an active job would. Feedback found here is admitted by the
+    // continuations below in the same poll, when a slot is free.
+    for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
+      await this.guard(job.key, report, () => this.trackPr(job, report));
+    }
     if (!report.paused) {
       const continuations = this.allJobs().filter((job) => job.pending !== undefined);
       for (const job of continuations) {
         await this.guard(job.key, report, () => this.admitContinuation(job, report));
       }
-    }
-    for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
-      await this.guard(job.key, report, () => this.trackPr(job, report));
     }
     if (report.paused) return report;
     let candidates: NewCandidate[] = [];
@@ -238,27 +246,37 @@ export class Admission {
     }
   }
 
-  // A directed answer (R09). A job waiting for help is reactivated when a slot is free; any
-  // other job that is not running keeps the reply for its next invocation. An active agent
-  // is never interrupted, so its reply also waits for the next invocation.
+  // A terminal reply is directed input with no tracker event behind it (R09). It takes the same
+  // path as an `agent:` comment, so both have the same effect (CA11).
   private async reply(job: Job, message: string): Promise<string | undefined> {
     if (message.trim() === "") return "resposta vazia";
-    const replies = [...(job.replies ?? []), message];
-    switch (job.state) {
-      case "waiting-for-help":
-        await this.persist({
-          ...appendLog(job, `resposta recebida; reativação quando houver vaga: ${message}`),
-          replies,
-          pending: "resume",
+    const outcome = receiveFeedback(job, [{ message }], "resposta recebida");
+    if ("reason" in outcome) return `reply ${outcome.reason}`;
+    await this.persist(outcome.job);
+    return undefined;
+  }
+
+  // Directed replies in the tracker (CA11): a human comment without marker that starts with
+  // `agent:`. Each comment is consumed once, by its id and revision (R10).
+  private async collectTrackerFeedback(report: PollReport): Promise<void> {
+    for (const candidate of this.allJobs().filter((job) => TRACKER_FEEDBACK_STATES.includes(job.state))) {
+      await this.guard(candidate.key, report, async () => {
+        const comments = await this.deps.tracker.readComments(candidate.ref);
+        const current = this.jobs.get(candidate.key);
+        if (!current) return;
+        const consumed = new Set(current.consumed ?? []);
+        const inputs = comments.flatMap((comment) => {
+          const input = directedReply(candidate.ref.tracker, comment);
+          return input !== undefined && !consumed.has(input.key) ? [input] : [];
         });
-        return undefined;
-      case "running":
-      case "interrupted":
-      case "waiting-for-pr":
-        await this.persist({ ...appendLog(job, `resposta pendente para a próxima invocação: ${message}`), replies });
-        return undefined;
-      default:
-        return `reply não se aplica ao estado ${job.state}`;
+        if (inputs.length === 0) return;
+        const outcome = receiveFeedback(current, inputs, "resposta dirigida recebida na issue");
+        if ("reason" in outcome) {
+          report.skipped.push({ key: current.key, reason: `feedback da issue ${outcome.reason}` });
+          return;
+        }
+        await this.persist(outcome.job);
+      });
     }
   }
 
@@ -625,6 +643,7 @@ export class Admission {
     switch (verdict.kind) {
       case "open":
         await this.observe(job.key, verdict.pr);
+        await this.collectPrFeedback(job, pr, report);
         return;
       case "merged":
         await this.complete(job, report, project.targetBranch);
@@ -640,6 +659,41 @@ export class Admission {
         return;
       }
     }
+  }
+
+  // Feedback on an open PR (R10, CA12): human reviews and comments, and failing checks, become
+  // a correction with a slot and priority. A case the factory cannot decide goes to the human,
+  // and its items are consumed so they are not asked again.
+  private async collectPrFeedback(job: Job, pr: PrRef, report: PollReport): Promise<void> {
+    let feedback: PrFeedback;
+    try {
+      feedback = await this.deps.prs.readFeedback(pr);
+    } catch (error) {
+      report.errors.push({ key: job.key, message: `feedback do PR não pôde ser lido: ${messageOf(error)}` });
+      return;
+    }
+    const current = this.jobs.get(job.key);
+    if (!current || current.state !== "waiting-for-pr") return;
+    const judgement = judgePrFeedback(feedback, new Set(current.consumed ?? []));
+    if (judgement.inputs.length === 0) return;
+    const consumed = judgement.inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
+    if (judgement.undecidable === undefined) {
+      const outcome = receiveFeedback(current, judgement.inputs, "feedback do PR recebido");
+      if ("reason" in outcome) {
+        report.skipped.push({ key: job.key, reason: `feedback do PR ${outcome.reason}` });
+        return;
+      }
+      await this.persist(outcome.job);
+      return;
+    }
+    const items = judgement.inputs.map((input) => input.message).join("; ");
+    await this.apply(job.key, "waiting-for-help", {
+      message: `feedback do PR exige decisão humana: ${judgement.undecidable}`,
+      question: `Feedback do PR (${pr.repository}#${pr.number}) não pode ser decidido pela factory: ${judgement.undecidable}. `
+        + `Itens: ${items}. Responda com a orientação ou libere o trabalho.`,
+      context: "",
+      consumed,
+    });
   }
 
   // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
@@ -680,14 +734,19 @@ export class Admission {
     await this.persist(recordPrStatus(current, status, describeStatus(status)));
   }
 
+  // `consumed` records feedback taken by this same transition, so the state and the record
+  // are written together.
   private async apply(
     key: string,
     to: JobState,
-    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"] },
+    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"]; consumed?: string[] },
   ): Promise<Job> {
     const current = this.jobs.get(key);
     if (!current) throw new Error(`trabalho desconhecido: ${key}`);
-    const next = transitionJob(current, to, details);
+    const base: Job = details.consumed
+      ? { ...current, consumed: [...(current.consumed ?? []), ...details.consumed] }
+      : current;
+    const next = transitionJob(base, to, details);
     await this.persist(next);
     return next;
   }

@@ -45,12 +45,24 @@ const isPriority = (value: unknown): value is number | null =>
   value === null || (typeof value === "number" && Number.isFinite(value));
 const isIssueIdentity = (value: unknown): value is { project: string; id: string } =>
   isObject(value) && isString(value.project) && isString(value.id);
+const isComment = (value: unknown): value is Comment =>
+  isObject(value) && isString(value.id) && isString(value.author) && isBoolean(value.isBot)
+  && isString(value.body) && isString(value.createdAt);
 
 function readKnown<T>(raw: Obj, key: string, path: string, check: (value: unknown) => value is T): Known<T> {
   const value = raw[key];
   if (isObject(value) && isString(value.unknown)) return { known: false, reason: value.unknown };
   if (check(value)) return { known: true, value };
   throw new MemoryFixtureError(`fixture inválido em ${path}.${key}`);
+}
+
+// Comments are optional in a fixture: they model what the issue already had before a test starts.
+function parseComments(raw: Obj, path: string): Comment[] {
+  if (raw.comments === undefined) return [];
+  if (!Array.isArray(raw.comments) || !raw.comments.every(isComment)) {
+    throw new MemoryFixtureError(`fixture inválido em ${path}.comments`);
+  }
+  return raw.comments.map((comment) => ({ ...comment }));
 }
 
 function parseIssue(raw: unknown, index: number): StoredIssue {
@@ -71,7 +83,7 @@ function parseIssue(raw: unknown, index: number): StoredIssue {
       : blockers,
     statusCategory: readKnown(raw, "statusCategory", path, isStatus),
     priority: readKnown(raw, "priority", path, isPriority),
-    comments: [],
+    comments: parseComments(raw, path),
   };
   if (raw.openSprint !== undefined) issue.openSprint = readKnown(raw, "openSprint", path, isBoolean);
   if (raw.assignee !== undefined) issue.assignee = readKnown(raw, "assignee", path, isNullableString);

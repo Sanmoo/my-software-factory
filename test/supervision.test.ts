@@ -40,6 +40,7 @@ const openPrs: PrPort = {
       },
     };
   },
+  readFeedback: async () => ({ comments: [], checks: [] }),
 };
 
 const github = (repository: string) => ({
@@ -403,6 +404,7 @@ test("pause does not stop the tracking of a waiting PR: a merge is still confirm
         },
       };
     },
+    readFeedback: async () => ({ comments: [], checks: [] }),
   };
   const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
   const admission = await open({ memory, stateDir, runner, repos: ["acme/app"], prs });
