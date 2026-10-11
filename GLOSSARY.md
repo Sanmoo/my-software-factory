@@ -52,10 +52,18 @@ limite de iterações, sem declarar o trabalho concluído.
 _Avoid_: falha silenciosa, processo indefinidamente esperando uma pessoa
 
 **Feedback acionável**:
-Informação nova dirigida ao trabalho por uma pessoa ou falha de check relevante
-do PR, capaz de motivar resposta ou correção. Na issue, só conta o que a pessoa
-endereça explicitamente ao agente; no PR, todo review humano é dirigido ao trabalho.
-_Avoid_: qualquer comentário da issue como comando, relato do próprio agente como feedback
+Informação nova dirigida ao trabalho por uma pessoa, falha de check relevante
+do PR ou conflito do PR com a branch de destino, capaz de motivar resposta ou
+correção. Na issue, só conta o que a pessoa endereça explicitamente ao agente;
+no PR, todo comentário humano é dirigido ao trabalho.
+_Avoid_: qualquer comentário da issue como comando, relato do próprio agente como feedback,
+conflito como impedimento, conflito desconhecido como ausência de conflito
+
+**Triagem de feedback do PR**:
+Escolha, pelo operador, de quais comentários humanos do PR o trabalho vai tratar
+e como. É um pedido de ajuda: o que não for escolhido não é tratado nem perguntado
+de novo. Checks e conflitos não passam por ela.
+_Avoid_: agente decidindo sozinho quais comentários atender, triagem como aprovação de escopo novo
 
 **Retomada manual**:
 Continuidade de um trabalho solicitada explicitamente pelo operador a partir
