@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { access, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { DIFF_ARGS, sha256 } from "./review-material.js";
 
 const run = promisify(execFile);
 
@@ -70,18 +69,4 @@ export async function createJobRepo(input: {
 
 export async function headOf(repoDir: string): Promise<string> {
   return (await git(repoDir, "rev-parse", "HEAD")).trim();
-}
-
-// The exact diff text reviewers receive (see DIFF_ARGS) and its digest.
-export async function diffTextOf(repoDir: string, base: string, head: string): Promise<string> {
-  return git(repoDir, ...DIFF_ARGS(base, head));
-}
-
-export async function diffSha256Of(repoDir: string, base: string, head: string): Promise<string> {
-  return sha256(await diffTextOf(repoDir, base, head));
-}
-
-// Digest of a file as it is in a given commit, so the spec and standards reviewed are the base's.
-export async function fileSha256At(repoDir: string, rev: string, path: string): Promise<string> {
-  return sha256(await git(repoDir, "show", `${rev}:${path}`));
 }

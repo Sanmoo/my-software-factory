@@ -35,9 +35,7 @@ async function fixture() {
   await git(source, "init", "-q", "-b", "main");
   await git(source, "config", "user.name", "Operator");
   await git(source, "config", "user.email", "operator@invalid");
-  await mkdir(join(source, "docs"), { recursive: true });
-  await writeFile(join(source, "docs", "spec.md"), "Implement slugify.\n");
-  await writeFile(join(source, "CODING_STANDARDS.md"), "Strict TypeScript.\n");
+  await writeFile(join(source, "AGENTS.md"), "Strict TypeScript.\n");
   await git(source, "add", ".");
   await git(source, "commit", "-q", "-m", "fixture");
   const stateDir = await mkdtemp(join(tmpdir(), "msf-state-"));
@@ -286,12 +284,12 @@ test("the effective limit and every use of the default model are written to the 
   assert.ok(!record.includes(TOKEN), "run record holds no secret");
 });
 
-test("a pr_ready result without approved reviews on both axes never reaches the admission as success", async () => {
+test("a pr_ready result reaches the admission as it is: the PR port, not the runner, confirms the PR", async () => {
   const f = await fixture();
   const { boundary } = fakeBoundary(async () => ({
     sessionId: "session-1", completed: true,
-    events: reply({ status: "pr_ready", pr: { repository: "acme/app", number: 7 }, reviews: [] }),
+    events: reply({ status: "pr_ready", pr: { repository: "acme/app", number: 7 } }),
   }));
   const output = await runnerFor(f, boundary).run(newContext());
-  assert.match(interruptedReason(output) ?? "", /sem revisão aprovada/);
+  assert.deepEqual(output.kind === "finished" ? output.results : undefined, [{ status: "pr_ready", pr: { repository: "acme/app", number: 7 } }]);
 });

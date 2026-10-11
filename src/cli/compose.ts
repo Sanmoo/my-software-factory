@@ -92,7 +92,6 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     repositorySource: (project) => local.checkouts[project.repository]!,
     remoteUrl: (project) => `https://github.com/${project.repository}.git`,
     boundary: options.sandbox ?? sandcastleBoundary(),
-    ...(local.reviewInputs ? { reviewInputs: local.reviewInputs } : {}),
   });
 
   const accountOf = new Map(projects.map((project) => [project.repository, project.githubAccount]));

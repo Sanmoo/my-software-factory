@@ -29,6 +29,11 @@ Não colar tokens nem transcrições brutas.
 - Economizadas (o que a factory fez sem mim: claim/doing, clone, implementação, PR, observação de CI/merge, done): …
 - Exigidas (respostas, resume, release, correções, ajustes de config): …
 
+## Review no /implement (CA09)
+
+Pelo log e pela sessão (`runs/*.audit.jsonl`): os dois reviewers rodaram, com quais modelos, receberam base,
+diff exato, issue e padrões, e o veredito de cada um. A factory não verifica isso: é observação do piloto.
+
 ## Falhas e surpresas
 
 …

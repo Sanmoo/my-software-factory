@@ -1,3 +1,6 @@
+> **Erratum (2026-10-11):** a checagem de evidência de review descrita abaixo (digests de base, HEAD,
+> diff, spec e padrões ligados ao `pr_ready`) foi removida; ver P06 na spec. O restante vale.
+
 # Teste 008 — runner Docker: `/implement` real em Sandcastle, com retomada
 
 Data: 2026-10-11. Modelo **github-copilot/gpt-6-luna** para todos os papéis (implementer,

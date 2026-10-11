@@ -337,10 +337,9 @@ write_env PROFILE_PESSOAL "$PROFILE_PESSOAL"
 write_env PROFILE_TRABALHO "$PROFILE_TRABALHO"
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
-stage "Alvos do piloto e insumos de review"
-say "Os reviewers leem a spec e os padrões do repositório NO COMMIT BASE: docs/spec.md e AGENTS.md."
-say "Hoje só my-software-factory tem docs/spec.md; os demais alvos precisam ganhar o arquivo para rodar."
+stage "Alvos do piloto"
 say "Todos os 16 alvos ficam na configuração; só os escolhidos abaixo ficam enabled."
+say "A spec da tarefa é a própria issue; o review é feito pelo /implement dentro da invocação."
 echo
 all_projects | awk -F'|' '{ printf "    %-9s %-18s %s\n", $1, $2, $3 }'
 echo
@@ -361,21 +360,6 @@ write_env PILOT_GH_PROJECT "$PILOT_GH_PROJECT"
 write_env PILOT_JIRA_PROJECT "$PILOT_JIRA_PROJECT"
 write_env PILOT_EXTRA_PROJECTS "$PILOT_EXTRA_PROJECTS"
 ENABLED=",$PILOT_GH_PROJECT,$PILOT_JIRA_PROJECT,$PILOT_EXTRA_PROJECTS,"
-bad=0
-while IFS='|' read -r -u 3 _instance name repo _adapter account _jirakey; do
-  [[ "$ENABLED" == *",$name,"* ]] || continue
-  for file in docs/spec.md AGENTS.md; do
-    if gh_as "$account" api "repos/$repo/contents/$file?ref=main" --silent >/dev/null 2>&1; then say "ok   $name: $file na main"
-    else warn "$name ($repo): falta $file na main"; bad=1; fi
-  done
-done 3< <(all_projects)
-if (( bad )); then
-  warn "Adicione os arquivos que faltam na main (PR normal de vocês): docs/spec.md descreve a tarefa piloto"
-  warn "(o que construir e como validar); AGENTS.md traz os padrões do repositório."
-  warn "Depois de mergear, atualize também a main local do checkout (git pull): é dela que o trabalho clona."
-  pause "Quando estiverem na main, Enter para conferir de novo"
-  exec "$0"
-fi
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Checkouts locais dos alvos habilitados"
@@ -428,7 +412,6 @@ if [[ -f "$CONFIG" ]] && ! confirm "$CONFIG já existe; regenerar? (perde ediç�
   fs.writeFileSync(out, JSON.stringify(cfg, null, 2) + "\n");
   fs.writeFileSync(localOut, JSON.stringify({
     image, profiles: { pessoal, trabalho }, checkouts,
-    reviewInputs: { specPath: "docs/spec.md", standardsPath: "AGENTS.md" },
   }, null, 2) + "\n");
 ' "$TEMPLATE" "$CONFIG" "$LOCAL" "$ENABLED" "$JIRA_OPERATOR_ACCOUNT_ID" "$CON_DONE_TRANSITION" \
   "$PROFILE_PESSOAL" "$PROFILE_TRABALHO" "$CHECKOUT_ROOT" "$IMAGE"
@@ -456,7 +439,7 @@ while IFS='|' read -r -u 3 _instance name repo adapter account _jirakey; do
   ensure_label "$account" "$repo" ready-for-agent 0e8a16 "Pronta para o agente"
   ensure_label "$account" "$repo" agent-claimed fbca04 "Reivindicada pela factory"
 done 3< <(all_projects)
-say "Agora o check: Docker, imagem, perfil, token, tracker (descoberta), operador Jira, checkouts e insumos de review."
+say "Agora o check: Docker, imagem, perfil, token, tracker (descoberta), operador Jira, e checkouts."
 for instance in pessoal trabalho; do
   while true; do
     printf '\n  %s── instância %s ──%s\n' "$BOLD" "$instance" "$RESET"
@@ -470,7 +453,7 @@ pause "Enter para seguir"
 # ── 10 ────────────────────────────────────────────────────────────────────
 stage "Criar as tarefas reais e autorizá-las (você)"
 say "Autorizar = aplicar ready-for-agent. Use tarefas PEQUENAS e seguras; deploy produtivo e merge nunca são da factory."
-say "Escreva em docs/spec.md (já na main) o que a tarefa precisa; a issue aponta para ele."
+say "A descrição da issue é a spec que o agente e os reviewers recebem: escreva o que construir, as restrições e como validar."
 echo
 step "GitHub ($PILOT_GH_PROJECT): crie a issue e aplique a label ready-for-agent."
 gh_repo=$(all_projects | awk -F'|' -v n="$PILOT_GH_PROJECT" '$2==n {print $3}')
@@ -512,7 +495,7 @@ done
 # ── 12 ────────────────────────────────────────────────────────────────────
 stage "Rodada N=2 e fechamento"
 say "N=2 exige duas tarefas em REPOSITÓRIOS diferentes da MESMA instância (um repo só roda uma implementação por vez)."
-say "O segundo projeto precisa de docs/spec.md e AGENTS.md na main (e do checkout local atualizado)."
+say "O segundo projeto precisa do checkout local atualizado."
 ask_or N2_INSTANCIA "Instância usada no N=2 (pessoal|trabalho):" "trabalho"
 ask_or N2_PROJETO "Segundo projeto a habilitar nessa instância (nome da tabela do estágio 6):" ""
 is_project "$N2_PROJETO" || { warn "projeto desconhecido: '$N2_PROJETO'"; exit 1; }

@@ -4,7 +4,7 @@ import { git } from "../runtime/docker-area.js";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
 import { messageOf } from "../core/values.js";
-import { DEFAULT_REVIEW_INPUTS, type SandboxBoundary } from "../runtime/docker-runner.js";
+import type { SandboxBoundary } from "../runtime/docker-runner.js";
 import { resolveModelAuth, resolveRuntimeProfile } from "../runtime/docker-config.js";
 import { jiraConnectionFromEnv, jiraRequest } from "../tracker/jira.js";
 import type { LocalSettings } from "./local-settings.js";
@@ -40,8 +40,7 @@ async function attempt(what: string, run: () => Promise<string>): Promise<CheckL
 async function checkoutLines(project: ProjectConfig, local: LocalSettings): Promise<CheckLine[]> {
   const checkout = local.checkouts[project.repository]!;
   const branch = project.targetBranch;
-  const inputs = local.reviewInputs ?? DEFAULT_REVIEW_INPUTS;
-  const lines = [
+  return [
     await attempt(`${project.name}: checkout ${checkout}`, async () => {
       await git(checkout, "rev-parse", "--verify", `refs/heads/${branch}`);
       const remote = (await git(checkout, "remote", "get-url", "origin")).trim();
@@ -58,13 +57,6 @@ async function checkoutLines(project: ProjectConfig, local: LocalSettings): Prom
         : `branch ${branch} presente`;
     }),
   ];
-  for (const file of [inputs.specPath, inputs.standardsPath]) {
-    lines.push(await attempt(`${project.name}: ${file} em ${branch}`, async () => {
-      await git(checkout, "cat-file", "-e", `refs/heads/${branch}:${file}`);
-      return "presente (insumo de review dos reviewers)";
-    }));
-  }
-  return lines;
 }
 
 export async function checkInstance(options: CheckOptions): Promise<CheckLine[]> {

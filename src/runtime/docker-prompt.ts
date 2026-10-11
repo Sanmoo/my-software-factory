@@ -3,17 +3,14 @@ import { refKey } from "../tracker/port.js";
 import { COMPLETION_SIGNAL } from "./docker-invocation.js";
 import type { RunModels } from "./docker-config.js";
 import type { IssueContext } from "./runner.js";
-import { diffCommandText } from "./review-material.js";
 
 // Prompts for the Pi invocation inside the container (R07). The result protocol is the
 // contract the runner checks in docker-output.ts; keep the two in step.
 
-export interface ReviewMaterial {
-  specPath: string;
-  specSha256: string;
-  standardsPath: string;
-  standardsSha256: string;
-}
+// The exact diff the reviewers get: explicit prefixes and --no-ext-diff keep the output
+// independent of the operator's diff.* configuration.
+const diffCommand = (base: string): string =>
+  `git -c core.pager=cat diff --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --binary ${base} <HEAD sha>`;
 
 export interface JobPromptInput {
   ref: IssueRef;
@@ -22,7 +19,6 @@ export interface JobPromptInput {
   branch: string;
   baseSha: string;
   models: RunModels;
-  review: ReviewMaterial;
   // Present for the implementation invocation only.
   issue?: IssueContext;
 }
@@ -49,14 +45,17 @@ function roleLines(models: RunModels): string {
   ].join("\n");
 }
 
+// The review belongs to /implement and runs inside the same invocation. The factory does not
+// verify it: it hands the agent the material and the rule for what a ready PR means.
 function reviewRules(input: JobPromptInput): string {
-  const { review, baseSha } = input;
   return [
     "Review: after the implementation is committed, review it on two axes, standards and spec.",
-    `Give each reviewer: the review base ${baseSha}, the full text of this exact diff`,
-    `(\`${diffCommandText(baseSha, "<HEAD sha>")}\`), the spec ${review.specPath} (sha256 ${review.specSha256})`,
-    `and the standards ${review.standardsPath} (sha256 ${review.standardsSha256}).`,
-    "A review without that material is not an approval.",
+    `Give each reviewer: the review base ${input.baseSha}, the full text of this exact diff`,
+    `(\`${diffCommand(input.baseSha)}\`), the issue text above as the spec`,
+    "and the repository standards (AGENTS.md or the equivalent documents of the repository, if any).",
+    "A review that did not receive that material is not an approval.",
+    "Report a PR as ready only when both reviews approved. If a review is rejected or inconclusive and you",
+    "cannot resolve it, ask for help.",
   ].join("\n");
 }
 
@@ -64,7 +63,7 @@ function reviewRules(input: JobPromptInput): string {
 // with the operator's credentials, and only marked comments are told apart from human ones.
 function commentRules(ref: IssueRef): string {
   const issue = ref.tracker === "jira"
-    ? "Every comment you write on the Jira issue must start with [msf]."
+    ? "You have no access to Jira: do not comment on the Jira issue. Report through the structured result below; the factory writes to the tracker."
     : "Every comment you write on the GitHub issue must start with <!-- msf:agent -->.";
   return [
     `Comments: ${issue}`,
@@ -77,11 +76,8 @@ const RESULT_PROTOCOL = [
   "Result protocol: end your final message with exactly one structured result, then the completion signal.",
   "This holds even when you ask a question: a question without the result tag is not delivered and ends nothing.",
   `- Needs a human decision: <msf-result>{"status":"needs_help","question":"...","context":"..."}</msf-result>`,
-  `- PR ready: <msf-result>{"status":"pr_ready","pr":{"repository":"owner/repo","number":N},"reviews":[...]}</msf-result>`,
-  "  only when the pull request exists and both reviews are approved. Each review entry is",
-  '  {"axis":"standards"|"spec","model":"<reviewer model>","verdict":"approved"|"rejected"|"inconclusive",',
-  '   "base":"<base sha>","head":"<HEAD sha>","diffSha256":"<sha256 of the exact diff>",',
-  '   "specSha256":"...","standardsSha256":"..."}.',
+  `- PR ready: <msf-result>{"status":"pr_ready","pr":{"repository":"owner/repo","number":N}}</msf-result>`,
+  "  only when the pull request exists and both reviews are approved.",
   `- Any other stop: <msf-result>{"status":"interrupted","reason":"..."}</msf-result>`,
   `Then print ${COMPLETION_SIGNAL}.`,
   "Never merge a pull request. Never deploy to production.",
@@ -93,7 +89,7 @@ export function implementPrompt(input: JobPromptInput): string {
     `Work item: ${refKey(input.ref)}. Authorized repository: ${input.repository}.`,
     ...(input.issue ? [issueLines(input.issue)] : []),
     `Work only in /home/agent/workspace, on branch ${input.branch}, created from ${input.targetBranch} at base ${input.baseSha}.`,
-    `Read the spec ${input.review.specPath} and the standards ${input.review.standardsPath} in the workspace before implementing.`,
+    "Read the repository standards in the workspace (AGENTS.md or equivalent documents, if any) before implementing.",
     "Models:",
     roleLines(input.models),
     reviewRules(input),

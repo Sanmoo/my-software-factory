@@ -168,7 +168,8 @@ Não acionar produção por uma ação própria só por ela estar embutida num s
 Usar TDD nas seams previamente acordadas e review em Standards e Spec conforme
 as skills. Se uma aprovação/informação exigida estiver ausente, pedir ajuda,
 sem inventar resposta humana. Reviewers recebem base, diff exato, spec e padrões;
-resultado sem acesso ao material necessário não é review aprovado.
+resultado sem acesso ao material necessário não é review aprovado. O review ocorre dentro da
+invocação do `/implement` e a factory não o verifica (ver P06).
 
 ### R08 — Resultado e limite de iterações
 
@@ -281,6 +282,12 @@ exigências de uma plataforma durável:
 - **P05:** normalizar prioridades por configuração; sem prioridade explícita,
   usar nível padrão e desempate por identidade estável. Nenhuma política de
   deadline, preempção ou fairness sofisticada é exigida.
+
+- **P06:** o review dos dois eixos é parte do `/implement`, na mesma invocação: não é estado da
+  factory nem evidência exigida no resultado. O prompt entrega base, diff exato, issue como spec e
+  padrões do repositório e diz que "PR pronto" exige os dois reviews aprovados. A factory confirma
+  o PR (R08), o modelo explícito por subagente e a reconciliação dos filhos; a CA09 é demonstrada
+  por log e sessão no piloto, não por bloqueio. Substitui a checagem de digests do ticket #6.
 
 Esquema de dados e detalhes de API dos adapters (além das representações de R02)
 devem ser especificados nos tickets a partir das capacidades observadas dos projetos

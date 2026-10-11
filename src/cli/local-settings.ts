@@ -12,8 +12,6 @@ export interface LocalSettings {
   profiles: Record<string, string>;
   // Local checkout each job area is cloned from, by repository (owner/repo).
   checkouts: Record<string, string>;
-  // Files the reviewers read in the repository at the base commit.
-  reviewInputs?: { specPath: string; standardsPath: string };
 }
 
 export const DEFAULT_IMAGE = "msf-docker-runner:local";
@@ -37,15 +35,7 @@ export function parseLocalSettings(raw: unknown): LocalSettings | string {
   if (raw.image !== undefined && (typeof raw.image !== "string" || raw.image.trim() === "")) {
     return "image deve ser texto não vazio";
   }
-  const settings: LocalSettings = { image: (raw.image as string | undefined) ?? DEFAULT_IMAGE, profiles, checkouts };
-  if (raw.reviewInputs !== undefined) {
-    const inputs = raw.reviewInputs;
-    if (!isObject(inputs) || typeof inputs.specPath !== "string" || typeof inputs.standardsPath !== "string") {
-      return "reviewInputs deve ter specPath e standardsPath";
-    }
-    settings.reviewInputs = { specPath: inputs.specPath, standardsPath: inputs.standardsPath };
-  }
-  return settings;
+  return { image: (raw.image as string | undefined) ?? DEFAULT_IMAGE, profiles, checkouts };
 }
 
 export async function loadLocalSettings(path: string): Promise<LocalSettings | string> {

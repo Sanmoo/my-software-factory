@@ -18,12 +18,6 @@ const job = {
   branch: "msf/github/acme/app/6",
   baseSha: "1111111111111111111111111111111111111111",
   models,
-  review: {
-    specPath: "docs/spec.md",
-    specSha256: "a".repeat(64),
-    standardsPath: "CODING_STANDARDS.md",
-    standardsSha256: "b".repeat(64),
-  },
 };
 
 test("the first invocation runs the installed /implement skill on the work item, base and branch", () => {
@@ -59,12 +53,15 @@ test("every agent role is named with its explicit model, and the default role is
   assert.match(prompt, /no other model/);
 });
 
-test("reviewers get the base, the exact diff command, the spec and the standards, with their digests", () => {
+test("reviewers get the base, the exact diff command, the issue as the spec and the repository standards", () => {
   const prompt = implementPrompt(job);
   assert.ok(prompt.includes("git -c core.pager=cat diff --no-color --no-ext-diff --no-textconv"), "exact diff command");
-  assert.ok(prompt.includes(`docs/spec.md (sha256 ${"a".repeat(64)})`), "spec with digest");
-  assert.ok(prompt.includes(`CODING_STANDARDS.md (sha256 ${"b".repeat(64)})`), "standards with digest");
-  assert.match(prompt, /A review without that material is not an approval/);
+  assert.ok(prompt.includes(job.baseSha), "review base");
+  assert.match(prompt, /issue text above as the spec/);
+  assert.match(prompt, /AGENTS\.md/);
+  assert.match(prompt, /not an approval/);
+  assert.match(prompt, /only when both reviews approved/);
+  assert.doesNotMatch(prompt, /sha256/, "the factory no longer asks for review digests");
 });
 
 test("the result protocol asks for one structured result and the completion signal", () => {
@@ -75,15 +72,15 @@ test("the result protocol asks for one structured result and the completion sign
   assert.ok(prompt.includes("<msf-result>"), "result tag");
   assert.ok(prompt.includes(COMPLETION_SIGNAL), "completion signal");
   assert.match(prompt, /even when you ask a question/, "a question still needs the tag");
-  assert.ok(prompt.includes('"reviews"'), "review evidence for pr_ready");
+  assert.ok(!prompt.includes('"reviews"'), "no review evidence in the result");
 });
 
-test("the agent is told that every tracker or PR comment it writes starts with the marker of its tracker", () => {
+test("the agent marks its GitHub and PR comments, and is told it has no Jira access", () => {
   const prompt = implementPrompt(job);
   assert.match(prompt, /GitHub issue[^.]*must start with <!-- msf:agent -->/);
   assert.match(prompt, /pull request[^.]*must start with <!-- msf:agent -->/);
   const jiraPrompt = implementPrompt({ ...job, ref: { tracker: "jira", project: "VAN", id: "VAN-7" }, branch: "msf/jira/VAN/VAN-7" });
-  assert.match(jiraPrompt, /Jira issue[^.]*must start with \[msf\]/);
+  assert.match(jiraPrompt, /no access to Jira: do not comment on the Jira issue/);
   assert.match(jiraPrompt, /pull request[^.]*must start with <!-- msf:agent -->/);
   assert.match(continuationPrompt({ ...job, kind: "resume" }), /GitHub issue[^.]*must start with <!-- msf:agent -->/);
 });

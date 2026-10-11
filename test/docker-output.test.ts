@@ -5,21 +5,11 @@ import { interpretOutput, type InterpretInput } from "../src/runtime/docker-outp
 
 const GPT = "github-copilot/gpt-6-luna";
 const HAIKU = "github-copilot/claude-haiku-5.5";
-const BASE = "1".repeat(40);
-const HEAD = "2".repeat(40);
-const DIFF = "d".repeat(64);
-const SPEC = "a".repeat(64);
-const STANDARDS = "b".repeat(64);
 
 const input = (events: PiEvent[], overrides: Partial<InterpretInput> = {}): InterpretInput => ({
   events,
   completed: true,
   models: { implementer: GPT, "reviewer-standards": GPT, "reviewer-spec": GPT, default: HAIKU },
-  baseSha: BASE,
-  headSha: HEAD,
-  diffSha256: DIFF,
-  specSha256: SPEC,
-  standardsSha256: STANDARDS,
   ...overrides,
 });
 
@@ -30,11 +20,7 @@ const finalText = (text: string): PiEvent => ({
 });
 const result = (json: unknown): string => `<msf-result>${JSON.stringify(json)}</msf-result>\n<promise>MSF-RESULT</promise>`;
 
-const review = (axis: "standards" | "spec", overrides: Record<string, unknown> = {}) => ({
-  axis, model: GPT, verdict: "approved", base: BASE, head: HEAD,
-  diffSha256: DIFF, specSha256: SPEC, standardsSha256: STANDARDS, ...overrides,
-});
-const prReady = (reviews: unknown[]) => ({ status: "pr_ready", pr: { repository: "acme/app", number: 7 }, reviews });
+const prReady = { status: "pr_ready", pr: { repository: "acme/app", number: 7 } };
 
 const launch = (toolCallId: string, args: Record<string, unknown>): PiEvent => ({
   type: "tool_execution_start", toolName: "subagent", toolCallId, args,
@@ -158,37 +144,11 @@ test("a run that ended without the completion signal has no valid result, and th
   assert.ok(out.audit.some((line) => /sem sinal de conclusão/.test(line)));
 });
 
-test("pr_ready with approved reviews bound to the final base, head and digests is passed on", () => {
-  const out = interpretOutput(input([
-    finalText(result(prReady([review("standards"), review("spec")]))), settled,
-  ]));
-  assert.deepEqual(out.output, { kind: "finished", results: [prReady([review("standards"), review("spec")])] });
-});
-
-test("pr_ready without an approved review on one axis is an interruption, not a success", () => {
-  const out = interpretOutput(input([
-    finalText(result(prReady([review("standards")]))), settled,
-  ]));
-  assert.match(reasonOf(out.output) ?? "", /sem revisão aprovada.*spec/);
-});
-
-test("a review of an older diff does not approve the final diff", () => {
-  const stale = [review("standards"), review("spec", { diffSha256: "e".repeat(64) })];
-  const out = interpretOutput(input([finalText(result(prReady(stale))), settled]));
-  assert.match(reasonOf(out.output) ?? "", /sem revisão aprovada.*spec/);
-});
-
-test("a review without the spec and standards digests did not receive that material and does not count", () => {
-  const withoutMaterial = [review("standards", { specSha256: undefined, standardsSha256: undefined }), review("spec")];
-  const out = interpretOutput(input([finalText(result(prReady(withoutMaterial))), settled]));
-  assert.match(reasonOf(out.output) ?? "", /sem revisão aprovada.*standards/);
-});
-
-test("a review by a model that is not the configured reviewer does not count, and neither does an inconclusive one", () => {
-  const wrongModel = [review("standards", { model: HAIKU }), review("spec")];
-  assert.match(reasonOf(interpretOutput(input([finalText(result(prReady(wrongModel))), settled])).output) ?? "", /standards/);
-  const inconclusive = [review("standards"), review("spec", { verdict: "inconclusive" })];
-  assert.match(reasonOf(interpretOutput(input([finalText(result(prReady(inconclusive))), settled])).output) ?? "", /spec/);
+// The review belongs to /implement inside the same invocation: the runner does not gate on it.
+// The PR itself is confirmed later by the admission, on the PR port (R08, CA19).
+test("a pr_ready result is passed on as it is; the review is the agent's, the PR is confirmed by the admission", () => {
+  const out = interpretOutput(input([finalText(result(prReady)), settled]));
+  assert.deepEqual(out.output, { kind: "finished", results: [prReady] });
 });
 
 function reasonOf(output: { kind: "finished"; results: unknown[] } | { kind: "continue" }): string | undefined {

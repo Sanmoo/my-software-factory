@@ -53,7 +53,7 @@ async function profile(): Promise<string> {
 }
 
 test("a profile without the implement skill fails the check", async () => {
-  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const dir = await checkout([]);
   const empty = await mkdtemp(join(tmpdir(), "msf-profile-"));
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
@@ -63,7 +63,7 @@ test("a profile without the implement skill fails the check", async () => {
 });
 
 test("a ready instance passes every line, read-only", async () => {
-  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const dir = await checkout([]);
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
     local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
@@ -72,19 +72,8 @@ test("a ready instance passes every line, read-only", async () => {
   assert.ok(lines.some((l) => /2 issue\(s\)/.test(l.detail)));
 });
 
-test("a repository without the review inputs fails the check and says which file", async () => {
-  const dir = await checkout(["docs/spec.md"]);
-  const lines = await checkInstance({
-    config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
-  });
-  const failed = lines.filter((l) => !l.ok);
-  assert.equal(failed.length, 1);
-  assert.match(failed[0]!.what, /CODING_STANDARDS\.md/);
-});
-
 test("a failing Docker preflight and a wrong origin are reported, not thrown", async () => {
-  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const dir = await checkout([]);
   await git(dir, "remote", "set-url", "origin", "https://github.com/acme/other.git");
   const lines = await checkInstance({
     config: config.config, instance, deps,
@@ -97,7 +86,7 @@ test("a failing Docker preflight and a wrong origin are reported, not thrown", a
 });
 
 test("a checkout whose target branch is ahead of origin fails: those commits would ride in the PR", async () => {
-  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const dir = await checkout([]);
   await writeFile(join(dir, "local.txt"), "x\n");
   await git(dir, "add", ".");
   await git(dir, "commit", "-q", "-m", "unpushed");
@@ -109,7 +98,7 @@ test("a checkout whose target branch is ahead of origin fails: those commits wou
 });
 
 test("a checkout that never fetched origin/main fails instead of skipping the unpushed-commit check", async () => {
-  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const dir = await checkout([]);
   await git(dir, "update-ref", "-d", "refs/remotes/origin/main");
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,

@@ -9,8 +9,6 @@ import {
 } from "./docker-config.js";
 import {
   createJobRepo,
-  diffSha256Of,
-  fileSha256At,
   headOf,
   jobLayout,
   type JobLayout,
@@ -18,7 +16,7 @@ import {
 import { jobBranch } from "../core/job.js";
 import { sandcastleRequest, type SandcastleRequest } from "./docker-invocation.js";
 import { interpretOutput } from "./docker-output.js";
-import { continuationPrompt, implementPrompt, type ReviewMaterial } from "./docker-prompt.js";
+import { continuationPrompt, implementPrompt } from "./docker-prompt.js";
 import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
 import { messageOf } from "../core/values.js";
@@ -51,13 +49,6 @@ export interface SandboxBoundary {
   run(input: SandboxRun): Promise<SandboxOutcome>;
 }
 
-export interface ReviewInputs {
-  specPath: string;
-  standardsPath: string;
-}
-
-export const DEFAULT_REVIEW_INPUTS: ReviewInputs = { specPath: "docs/spec.md", standardsPath: "CODING_STANDARDS.md" };
-
 export interface DockerRunnerOptions {
   instance: InstanceConfig;
   credentials: Readonly<Record<string, CredentialRef>>;
@@ -69,7 +60,6 @@ export interface DockerRunnerOptions {
   // Remote the job area pushes to, when it differs from the checkout it was cloned from.
   remoteUrl?: (project: ProjectConfig) => string | undefined;
   boundary: SandboxBoundary;
-  reviewInputs?: ReviewInputs;
 }
 
 // Configuration problems are visible when the runner is built, before any job starts.
@@ -105,11 +95,7 @@ const interrupted = (reason: string): RunnerOutput => ({
 const exists = (path: string) => access(path).then(() => true, () => false);
 
 class DockerRunner implements Runner {
-  private readonly reviewInputs: ReviewInputs;
-
-  constructor(private readonly options: DockerRunnerOptions) {
-    this.reviewInputs = options.reviewInputs ?? DEFAULT_REVIEW_INPUTS;
-  }
+  constructor(private readonly options: DockerRunnerOptions) {}
 
   async run(context: RunnerContext): Promise<RunnerOutput> {
     const layout = jobLayout(this.options.stateDir, context.jobId);
@@ -128,10 +114,9 @@ class DockerRunner implements Runner {
       const repoRef = context.kind === "new"
         ? await this.startJob(context, project, layout)
         : await this.resumeJob(context, saved, layout);
-      const review = await this.reviewMaterial(layout.repoDir, repoRef.baseSha);
       const prompt = context.kind === "new"
-        ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review, ...(context.issue ? { issue: context.issue } : {}) })
-        : continuationPrompt({ kind: context.kind, note: operatorInput(context), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review });
+        ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, ...(context.issue ? { issue: context.issue } : {}) })
+        : continuationPrompt({ kind: context.kind, note: operatorInput(context), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,
@@ -149,16 +134,10 @@ class DockerRunner implements Runner {
       // The session and area of this invocation are reported so the admission can resume them (P03).
       const reportWorkspace = (output: RunnerOutput): RunnerOutput =>
         sessionId === undefined ? output : { ...output, workspace: { session: sessionId, area: layout.repoDir } };
-      const headSha = await headOf(layout.repoDir);
       const interpretation = interpretOutput({
         events: outcome.events,
         completed: outcome.completed,
         models,
-        baseSha: repoRef.baseSha,
-        headSha,
-        diffSha256: await diffSha256Of(layout.repoDir, repoRef.baseSha, headSha),
-        specSha256: review.specSha256,
-        standardsSha256: review.standardsSha256,
       });
       for (const line of interpretation.audit) await this.audit(layout, line);
       return reportWorkspace(interpretation.output);
@@ -210,16 +189,6 @@ class DockerRunner implements Runner {
       throw new Error("sessão registrada no trabalho difere da sessão do runner; não retomar");
     }
     return { ...saved, jobId: context.jobId, sessionId: workspace.session };
-  }
-
-  private async reviewMaterial(repoDir: string, baseSha: string): Promise<ReviewMaterial> {
-    const { specPath, standardsPath } = this.reviewInputs;
-    return {
-      specPath,
-      specSha256: await fileSha256At(repoDir, baseSha, specPath),
-      standardsPath,
-      standardsSha256: await fileSha256At(repoDir, baseSha, standardsPath),
-    };
   }
 
   private async readRecord(layout: JobLayout): Promise<JobRecord | undefined> {

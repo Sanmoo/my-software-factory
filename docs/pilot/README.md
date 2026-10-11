@@ -36,22 +36,26 @@ Supervisão enquanto roda: `npm run logs`, `reply`, `resume`, `release`, `pause`
   A área agora empurra para `https://github.com/<repo>.git` com o `GH_TOKEN` do container
   (credential helper que lê a variável; o token nunca é gravado) e a imagem instala o `gh`.
 
+## Review dentro do /implement
+
+O review dos dois eixos roda dentro da invocação do `/implement`; a factory não o verifica e não há
+estado nem evidência de review no resultado. O prompt entrega ao agente a base, o comando do diff
+exato, a issue como spec e o `AGENTS.md` como padrões, e manda reportar `pr_ready` só com os dois
+reviews aprovados. A factory confirma o PR no adapter (R08) e continua exigindo modelo explícito por
+subagente e filhos reconciliados. O piloto demonstra a CA09 pelo log e pela sessão.
+
 ## Pendências que dependem do operador
 
-1. **Insumos de review.** O runner exige, no commit base, a spec e os padrões em arquivos
-   (`reviewInputs`). Nenhum dos repositórios do §7 tem `docs/spec.md`; todos (exceto
-   `revolving-credit-playbooks`) têm `AGENTS.md`. O piloto usa `docs/spec.md` + `AGENTS.md` e
-   exige que o repositório alvo ganhe o `docs/spec.md` da tarefa. A alternativa de usar o corpo
-   da issue como spec muda a evidência de review (digest da spec): é decisão de desenho, não feita aqui.
-2. **Jira não chega ao container.** O agente escreve comentários no Jira só se tiver credencial
-   no container; hoje ele recebe só o `GH_TOKEN`. A factory (host) continua comentando e fazendo
-   transições. Decidir se o container precisa de acesso ao Jira.
-3. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o
+1. **Jira fora do container (decidido).** O container só recebe o `GH_TOKEN`; o agente não escreve
+   no Jira e reporta pelo resultado estruturado. Hoje a factory não posta a pergunta no card nem o
+   bloqueia: a ajuda aparece em `status`/`logs` e se responde por `reply` ou comentário `agent:`.
+   Modo unattended (comentar e bloquear o card) seria um ticket à parte.
+2. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o
    wizard pergunta e o piloto valida.
-4. **Credencial Jira por nome.** O adapter lê `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` do
+3. **Credencial Jira por nome.** O adapter lê `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` do
    ambiente; o nome em `credentials.JIRA_TRABALHO.ref` é validado mas não escolhe a variável (R01
    pede referência). Suficiente para uma conta Jira; decidir se vale generalizar.
-5. **Modelo e perfil do trabalho.** O piloto usa `github-copilot/gpt-6-luna` nos dois perfis
+4. **Modelo e perfil do trabalho.** O piloto usa `github-copilot/gpt-6-luna` nos dois perfis
    (envelope barato da spec §6). O perfil de trabalho precisa dele autenticado.
 
 ## Critérios da #10 e como são cobertos

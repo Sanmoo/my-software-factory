@@ -16,11 +16,6 @@ export interface InterpretInput {
   // True when Sandcastle matched the completion signal; otherwise the iterations ran out.
   completed: boolean;
   models: RunModels;
-  baseSha: string;
-  headSha: string;
-  diffSha256: string;
-  specSha256: string;
-  standardsSha256: string;
 }
 
 export interface Interpretation {
@@ -74,11 +69,6 @@ export function interpretOutput(input: InterpretInput): Interpretation {
 
   const bodies = [...lastAssistantText(events).matchAll(RESULT_PATTERN)].map((match) => match[1] ?? "");
   const results = bodies.map(parseBody);
-  const [only] = results;
-  if (results.length === 1 && isObject(only) && only.status === "pr_ready") {
-    const gap = reviewGap(only, input);
-    if (gap !== undefined) return interrupted(gap, audit);
-  }
   return { output: { kind: "finished", results }, audit };
 }
 
@@ -142,26 +132,4 @@ function parseBody(body: string): ResultBody {
   } catch {
     return body;
   }
-}
-
-// A PR is ready only with an approved review on each axis, bound to the final base, head and
-// digests, by the configured reviewer model. A review without the material does not count.
-function reviewGap(result: Record<string, unknown>, input: InterpretInput): string | undefined {
-  const reviews: unknown[] = Array.isArray(result.reviews) ? result.reviews : [];
-  const missing: string[] = [];
-  for (const axis of ["standards", "spec"] as const) {
-    const approved = reviews.some((review) => isObject(review)
-      && review.axis === axis
-      && review.model === input.models[`reviewer-${axis}`]
-      && review.verdict === "approved"
-      && review.base === input.baseSha
-      && review.head === input.headSha
-      && review.diffSha256 === input.diffSha256
-      && review.specSha256 === input.specSha256
-      && review.standardsSha256 === input.standardsSha256);
-    if (!approved) missing.push(axis);
-  }
-  return missing.length === 0
-    ? undefined
-    : `pr_ready sem revisão aprovada nos eixos ${missing.join(", ")} com o material final`;
 }
