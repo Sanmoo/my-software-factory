@@ -1,0 +1,109 @@
+{
+  "credentials": {
+    "copilot-trabalho": { "kind": "pi-auth", "ref": "copilot-trabalho" },
+    "copilot-pessoal": { "kind": "pi-auth", "ref": "copilot-pessoal" },
+    "jira-van": { "kind": "env", "ref": "JIRA_VAN_TOKEN" }
+  },
+  "instances": [
+    {
+      "name": "trabalho",
+      "maxConcurrent": 1,
+      "pollIntervalSeconds": 300,
+      "maxIterations": 5,
+      "modelAuth": "copilot-trabalho",
+      "projects": [
+        {
+          "name": "dora-metrics",
+          "enabled": true,
+          "adapter": "github",
+          "repository": "samuel-santos_bjd/dora-metrics",
+          "targetBranch": "main",
+          "prIntegration": "github.com",
+          "runtimeProfile": "docker-default",
+          "githubAccount": "samuel-santos_bjd",
+          "models": {
+            "implementer": "github-copilot/gpt-6-luna",
+            "reviewer-standards": "github-copilot/claude-haiku-5.5",
+            "reviewer-spec": "github-copilot/claude-haiku-5.5",
+            "default": "github-copilot/claude-haiku-5.5"
+          }
+        },
+        {
+          "name": "revolving-monolith-backend",
+          "enabled": true,
+          "adapter": "jira",
+          "repository": "bancojohndeere/revolving-credit-monolith-backend",
+          "targetBranch": "develop",
+          "prIntegration": "github.com",
+          "runtimeProfile": "docker-default",
+          "githubAccount": "samuel-santos_bjd",
+          "jira": {
+            "projectKey": "VAN",
+            "routingLabel": "monolith",
+            "doingTransition": "Em andamento",
+            "doneTransition": "Concluído",
+            "blockingLinkTypes": ["Blocks"],
+            "credential": "jira-van",
+            "operator": "samuel.santos"
+          },
+          "models": {
+            "implementer": "github-copilot/gpt-6-luna",
+            "reviewer-standards": "github-copilot/claude-haiku-5.5",
+            "reviewer-spec": "github-copilot/claude-haiku-5.5",
+            "default": "github-copilot/claude-haiku-5.5"
+          }
+        },
+        {
+          "name": "revolving-dealer-services",
+          "enabled": true,
+          "adapter": "jira",
+          "repository": "bancojohndeere/revolving-credit-dealer-services",
+          "targetBranch": "develop",
+          "prIntegration": "github.com",
+          "runtimeProfile": "docker-default",
+          "githubAccount": "samuel-santos_bjd",
+          "jira": {
+            "projectKey": "VAN",
+            "routingLabel": "dealer-services",
+            "doingTransition": "Em andamento",
+            "doneTransition": "Concluído",
+            "blockingLinkTypes": ["Blocks"],
+            "credential": "jira-van",
+            "operator": "samuel.santos"
+          },
+          "models": {
+            "implementer": "github-copilot/gpt-6-luna",
+            "reviewer-standards": "github-copilot/claude-haiku-5.5",
+            "reviewer-spec": "github-copilot/claude-haiku-5.5",
+            "default": "github-copilot/claude-haiku-5.5"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pessoal",
+      "maxConcurrent": 2,
+      "pollIntervalSeconds": 600,
+      "maxIterations": 5,
+      "modelAuth": "copilot-pessoal",
+      "projects": [
+        {
+          "name": "my-tasks",
+          "enabled": true,
+          "adapter": "github",
+          "repository": "Sanmoo/my-tasks",
+          "targetBranch": "main",
+          "prIntegration": "github.com",
+          "runtimeProfile": "docker-default",
+          "githubAccount": "Sanmoo",
+          "models": {
+            "implementer": "github-copilot/gpt-6-luna",
+            "reviewer-standards": "github-copilot/claude-haiku-5.5",
+            "reviewer-spec": "github-copilot/claude-haiku-5.5",
+            "default": "github-copilot/claude-haiku-5.5"
+          }
+        }
+      ]
+    }
+  ]
+}

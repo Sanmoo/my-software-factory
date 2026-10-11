@@ -1,0 +1,60 @@
+{
+  "credentials": {
+    "EXAMPLE_MODEL_AUTH": { "kind": "pi-auth", "ref": "EXAMPLE_PI_AUTH_PROFILE" },
+    "EXAMPLE_JIRA_AUTH": { "kind": "env", "ref": "EXAMPLE_JIRA_TOKEN_VARIABLE" }
+  },
+  "instances": [
+    {
+      "name": "EXAMPLE_INSTANCE",
+      "maxConcurrent": 1,
+      "pollIntervalSeconds": 300,
+      "maxIterations": 5,
+      "modelAuth": "EXAMPLE_MODEL_AUTH",
+      "projects": [
+        {
+          "name": "EXAMPLE_GITHUB_PROJECT",
+          "enabled": true,
+          "adapter": "github",
+          "repository": "EXAMPLE_OWNER/EXAMPLE_REPO",
+          "targetBranch": "EXAMPLE_BRANCH",
+          "prIntegration": "github.com",
+          "runtimeProfile": "EXAMPLE_DOCKER_PROFILE",
+          "githubAccount": "EXAMPLE_GITHUB_ACCOUNT",
+          "labels": { "ready": "ready-for-agent", "claimed": "agent-claimed" },
+          "models": {
+            "implementer": "EXAMPLE_PROVIDER/EXAMPLE_IMPLEMENTER_MODEL",
+            "reviewer-standards": "EXAMPLE_PROVIDER/EXAMPLE_STANDARDS_MODEL",
+            "reviewer-spec": "EXAMPLE_PROVIDER/EXAMPLE_SPEC_MODEL",
+            "default": "EXAMPLE_PROVIDER/EXAMPLE_DEFAULT_MODEL"
+          }
+        },
+        {
+          "name": "EXAMPLE_JIRA_PROJECT",
+          "enabled": true,
+          "adapter": "jira",
+          "repository": "EXAMPLE_OWNER/EXAMPLE_JIRA_REPO",
+          "targetBranch": "EXAMPLE_BRANCH",
+          "prIntegration": "github.com",
+          "runtimeProfile": "EXAMPLE_DOCKER_PROFILE",
+          "githubAccount": "EXAMPLE_GITHUB_ACCOUNT",
+          "labels": { "ready": "ready-for-agent", "claimed": "agent-claimed" },
+          "jira": {
+            "projectKey": "EXAMPLE",
+            "routingLabel": "EXAMPLE_ROUTING_LABEL",
+            "doingTransition": "EXAMPLE_DOING_TRANSITION",
+            "doneTransition": "EXAMPLE_DONE_TRANSITION",
+            "blockingLinkTypes": ["EXAMPLE_BLOCKING_LINK_TYPE"],
+            "credential": "EXAMPLE_JIRA_AUTH",
+            "operator": "EXAMPLE_OPERATOR"
+          },
+          "models": {
+            "implementer": "EXAMPLE_PROVIDER/EXAMPLE_IMPLEMENTER_MODEL",
+            "reviewer-standards": "EXAMPLE_PROVIDER/EXAMPLE_STANDARDS_MODEL",
+            "reviewer-spec": "EXAMPLE_PROVIDER/EXAMPLE_SPEC_MODEL",
+            "default": "EXAMPLE_PROVIDER/EXAMPLE_DEFAULT_MODEL"
+          }
+        }
+      ]
+    }
+  ]
+}
