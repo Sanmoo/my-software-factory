@@ -1,26 +1,27 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { loadConfigFile } from "../config/load.js";
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
-import { coreRules, evaluateEligibility, type EligibilityRule, type Routing } from "../core/eligibility.js";
-import { jiraEligibilityRules } from "../tracker/jira-rules.js";
+import { evaluateEligibility } from "../core/eligibility.js";
+import type { Job } from "../core/job.js";
+import { projectEligibility } from "../core/project-eligibility.js";
+import { createFileJobStore } from "../state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../tracker/memory.js";
 import type { IssueRef } from "../tracker/port.js";
+import { loadInstance, type CliRun } from "./instance.js";
+import { stateLabel, summaryOf } from "./jobs-view.js";
 
 // `status` for one instance: lists the eligible issues and every rejection with its
 // reasons. Only the memory adapter exists until the GitHub and Jira adapters land,
-// so the tracker data comes from a fixture file.
+// so the tracker data comes from a fixture file. With --state-dir it also lists the
+// jobs of the instance and treats their issues as already tracked.
 
-export interface StatusRun {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+export type StatusRun = CliRun;
 
 interface Options {
   configPath: string;
   instanceName: string;
   fixturePath: string;
+  stateDir?: string;
 }
 
 interface Row {
@@ -36,8 +37,13 @@ interface ProjectReport {
   rejected: Row[];
 }
 
-const USAGE = "uso: npm run status -- --config FILE --instance NAME --fixture FILE";
-const FLAGS = ["--config", "--instance", "--fixture"];
+interface JobsReport {
+  jobs: Job[];
+  unreadable: string[];
+}
+
+const USAGE = "uso: npm run status -- --config FILE --instance NAME --fixture FILE [--state-dir DIR]";
+const FLAGS = ["--config", "--instance", "--fixture", "--state-dir"];
 
 function parseArgs(argv: readonly string[]): Options | string {
   const values = new Map<string, string>();
@@ -55,38 +61,22 @@ function parseArgs(argv: readonly string[]): Options | string {
   if (fixturePath === undefined) {
     return `--fixture é obrigatório: sem adapter real de tracker, o status lê um fixture em memória\n${USAGE}`;
   }
-  return { configPath, instanceName, fixturePath };
-}
-
-// Routing labels are the ones configured for the same Jira project key in this instance.
-function routingFor(instance: InstanceConfig, project: ProjectConfig): Routing {
-  if (project.adapter === "github") return { kind: "repository" };
-  const knownLabels = instance.projects.flatMap((other) =>
-    other.adapter === "jira" && other.jira.projectKey === project.jira.projectKey ? [other.jira.routingLabel] : []);
-  return { kind: "label", routingLabel: project.jira.routingLabel, knownLabels };
-}
-
-function rulesFor(project: ProjectConfig): readonly EligibilityRule[] {
-  return project.adapter === "jira" ? [...coreRules, ...jiraEligibilityRules(project.jira.operator)] : coreRules;
+  return { configPath, instanceName, fixturePath, stateDir: values.get("--state-dir") };
 }
 
 async function reportProject(
   tracker: MemoryTracker,
   instance: InstanceConfig,
   project: ProjectConfig,
+  tracked: ReadonlySet<string>,
 ): Promise<ProjectReport> {
-  const scope = project.adapter === "github" ? project.repository : project.jira.projectKey;
-  const report: ProjectReport = { project, scope, candidates: [], rejected: [] };
+  const setup = projectEligibility(instance, project);
+  const report: ProjectReport = { project, scope: setup.scope.project, candidates: [], rejected: [] };
   if (!project.enabled) return report;
-  const refs = await tracker.discoverCandidates({ project: scope, readyLabel: project.labels.ready });
+  const refs = await tracker.discoverCandidates(setup.scope);
   for (const ref of refs) {
     const issue = await tracker.readIssue(ref);
-    const verdict = evaluateEligibility({
-      project: { enabled: project.enabled, readyLabel: project.labels.ready, routing: routingFor(instance, project) },
-      issue,
-      // Nothing is tracked yet: no admission exists in this slice.
-      tracked: new Set<string>(),
-    }, rulesFor(project));
+    const verdict = evaluateEligibility({ project: setup.project, issue, tracked }, setup.rules);
     if (verdict.eligible) {
       report.candidates.push({ ref, title: issue.title, reasons: [] });
     } else {
@@ -101,7 +91,17 @@ function displayRef(ref: IssueRef, project: ProjectConfig): string {
   return project.adapter === "github" ? `${ref.project}#${ref.id}` : ref.id;
 }
 
-function render(instance: InstanceConfig, fixturePath: string, reports: ProjectReport[]): string {
+function renderJobs(jobs: JobsReport): string[] {
+  const lines = ["", `Trabalhos (${jobs.jobs.length}):`];
+  for (const job of jobs.jobs) {
+    const summary = summaryOf(job);
+    lines.push(`  ${job.key} ${stateLabel(job.state)}${summary ? ` — ${summary}` : ""}`);
+  }
+  if (jobs.unreadable.length > 0) lines.push(`Arquivos ilegíveis (${jobs.unreadable.length}): ${jobs.unreadable.join(", ")}`);
+  return lines;
+}
+
+function render(instance: InstanceConfig, fixturePath: string, reports: ProjectReport[], jobs?: JobsReport): string {
   const lines = [
     `Instância ${instance.name} (N=${instance.maxConcurrent}, polling ${instance.pollIntervalSeconds}s, máx. iterações ${instance.maxIterations})`,
     `Tracker: memória (fixture ${fixturePath})`,
@@ -120,6 +120,7 @@ function render(instance: InstanceConfig, fixturePath: string, reports: ProjectR
       lines.push(`    ${displayRef(row.ref, project)} ${row.title} — ${row.reasons.join("; ")}`);
     }
   }
+  if (jobs) lines.push(...renderJobs(jobs));
   return lines.join("\n") + "\n";
 }
 
@@ -127,21 +128,9 @@ export async function runStatus(argv: readonly string[]): Promise<StatusRun> {
   const options = parseArgs(argv);
   if (typeof options === "string") return { exitCode: 2, stdout: "", stderr: `${options}\n` };
 
-  const loaded = await loadConfigFile(options.configPath);
-  if (!loaded.ok) {
-    const details = loaded.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
-    return { exitCode: 1, stdout: "", stderr: `configuração inválida:\n${details}\n` };
-  }
-
-  const instance = loaded.config.instances.find((candidate) => candidate.name === options.instanceName);
-  if (!instance) {
-    const available = loaded.config.instances.map((candidate) => candidate.name).join(", ");
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `instância '${options.instanceName}' não encontrada; disponíveis: ${available}\n`,
-    };
-  }
+  const loaded = await loadInstance(options.configPath, options.instanceName);
+  if (!loaded.ok) return loaded.run;
+  const { instance } = loaded;
 
   let tracker: MemoryTracker;
   try {
@@ -151,9 +140,16 @@ export async function runStatus(argv: readonly string[]): Promise<StatusRun> {
     return { exitCode: 1, stdout: "", stderr: `${reason}\n` };
   }
 
+  let jobs: JobsReport | undefined;
+  if (options.stateDir !== undefined) {
+    const loadedJobs = await createFileJobStore(options.stateDir).load();
+    jobs = { jobs: loadedJobs.jobs, unreadable: loadedJobs.unreadable };
+  }
+  const tracked = new Set((jobs?.jobs ?? []).map((job) => job.key));
+
   const reports: ProjectReport[] = [];
-  for (const project of instance.projects) reports.push(await reportProject(tracker, instance, project));
-  return { exitCode: 0, stdout: render(instance, options.fixturePath, reports), stderr: "" };
+  for (const project of instance.projects) reports.push(await reportProject(tracker, instance, project, tracked));
+  return { exitCode: 0, stdout: render(instance, options.fixturePath, reports, jobs), stderr: "" };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -162,3 +158,4 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   process.stderr.write(run.stderr);
   process.exitCode = run.exitCode;
 }
+
