@@ -84,6 +84,12 @@ function fakeIssue(overrides: Partial<FakeIssue> & { key: string }): FakeIssue {
   };
 }
 
+// Undefined leaves the priority field out of the response; null is "no priority".
+function priorityJson(priority: string | null | undefined): { name: string } | null | undefined {
+  if (priority === undefined || priority === null) return priority;
+  return { name: priority };
+}
+
 const projectOf = (key: string) => key.slice(0, key.lastIndexOf("-"));
 
 class FakeJira {
@@ -135,7 +141,7 @@ class FakeJira {
     if (discovery) {
       matches = [...this.issues.values()]
         .filter((issue) => projectOf(issue.key) === discovery[1] && issue.labels.includes(discovery[2]))
-        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+        .sort((a, b) => a.key.localeCompare(b.key));
     } else if (sprint) {
       // Models a project without a board, where openSprints() is rejected by Jira.
       if (this.issues.get(sprint[1])?.summary === "NO_BOARD") return { status: 400 };
@@ -161,7 +167,7 @@ class FakeJira {
       summary: issue.summary,
       labels: issue.labels,
       assignee: issue.assignee === null ? null : { accountId: issue.assignee, displayName: "Operator" },
-      priority: issue.priority === undefined ? undefined : issue.priority === null ? null : { name: issue.priority },
+      priority: priorityJson(issue.priority),
       issuelinks: issue.links.map((link) => {
         const other = link.inwardIssue ?? link.outwardIssue ?? "";
         const target = this.issues.get(other);
@@ -169,14 +175,16 @@ class FakeJira {
           key: other,
           fields: {
             summary: target?.summary ?? other,
-            status: { name: target?.statusName ?? "?", statusCategory: { key: target ? target.category : "undefined" } },
+            ...(target && !target.hideStatus
+              ? { status: { name: target.statusName, statusCategory: { key: target.category } } }
+              : {}),
           },
         };
         return {
           id: `${issue.key}-${other}`,
           type: link.type,
-          ...(link.inwardIssue !== undefined ? { inwardIssue: linked.key ? linked : undefined } : {}),
-          ...(link.outwardIssue !== undefined ? { outwardIssue: linked } : {}),
+          ...(link.inwardIssue === undefined ? {} : { inwardIssue: linked }),
+          ...(link.outwardIssue === undefined ? {} : { outwardIssue: linked }),
         };
       }),
     };
@@ -339,4 +347,41 @@ test("an unreadable status makes claim and category unknown, never false", async
 test("an unreadable sprint state is reported as unknown, not as outside the sprint", async () => {
   const snapshot = await withTracker([fakeIssue({ key: "VAN-16", summary: "NO_BOARD" })], (tracker) => tracker.readIssue(ref("VAN-16")));
   assert.equal(snapshot.openSprint?.known, false);
+});
+
+const RELATES = { name: "Relates", inward: "relates to", outward: "relates to" };
+
+test("an open 'is blocked by' link is a non-terminal blocker; a done blocker is terminal", async () => {
+  const issues = [
+    fakeIssue({ key: "VAN-20", links: [{ type: BLOCKS, inwardIssue: "VAN-21" }, { type: BLOCKS, inwardIssue: "VAN-22" }] }),
+    fakeIssue({ key: "VAN-21", category: "indeterminate", statusName: "Em andamento" }),
+    fakeIssue({ key: "VAN-22", category: "done", statusName: "Concluído" }),
+  ];
+  const snapshot = await withTracker(issues, (tracker) => tracker.readIssue(ref("VAN-20")));
+  assert.deepEqual(snapshot.blockers, {
+    known: true,
+    value: [
+      { ref: { tracker: "jira", project: "VAN", id: "VAN-21" }, terminal: { known: true, value: false } },
+      { ref: { tracker: "jira", project: "VAN", id: "VAN-22" }, terminal: { known: true, value: true } },
+    ],
+  });
+});
+
+test("an issue that blocks another, or a link of another type, is not blocked", async () => {
+  const issues = [
+    fakeIssue({ key: "VAN-30", links: [{ type: BLOCKS, outwardIssue: "VAN-31" }, { type: RELATES, inwardIssue: "VAN-32" }] }),
+    fakeIssue({ key: "VAN-31" }),
+    fakeIssue({ key: "VAN-32" }),
+  ];
+  const snapshot = await withTracker(issues, (tracker) => tracker.readIssue(ref("VAN-30")));
+  assert.deepEqual(snapshot.blockers, { known: true, value: [] });
+});
+
+test("a blocker whose status cannot be read has unknown terminal state", async () => {
+  const issues = [
+    fakeIssue({ key: "VAN-40", links: [{ type: BLOCKS, inwardIssue: "VAN-41" }] }),
+    fakeIssue({ key: "VAN-41", hideStatus: true }),
+  ];
+  const snapshot = await withTracker(issues, (tracker) => tracker.readIssue(ref("VAN-40")));
+  assert.equal(snapshot.blockers.known && snapshot.blockers.value[0].terminal.known, false);
 });
