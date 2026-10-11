@@ -154,11 +154,12 @@ function parseJira(raw: unknown, path: string, credentials: Record<string, Crede
     issues.add(join(path, "blockingLinkTypes"), "lista de tipos de link de bloqueio obrigatória");
   }
   requireCredential(credential, "env", join(path, "credential"), credentials, issues);
-  if ([projectKey, routingLabel, doingTransition, doneTransition, credential, operator, blockingLinkTypes].some((v) => v === undefined)) {
+  if (projectKey === undefined || routingLabel === undefined || doingTransition === undefined
+    || doneTransition === undefined || blockingLinkTypes === undefined || credential === undefined
+    || operator === undefined) {
     return undefined;
   }
-  return { projectKey: projectKey!, routingLabel: routingLabel!, doingTransition: doingTransition!,
-    doneTransition: doneTransition!, blockingLinkTypes: blockingLinkTypes!, credential: credential!, operator: operator! };
+  return { projectKey, routingLabel, doingTransition, doneTransition, blockingLinkTypes, credential, operator };
 }
 
 function parseLabels(raw: unknown, path: string, issues: Issues): { ready: string; claimed: string } | undefined {
@@ -203,15 +204,17 @@ function parseProject(raw: unknown, path: string, credentials: Record<string, Cr
     issues.add(join(path, "jira"), "bloco jira só é válido com adapter jira");
   }
 
-  const common = [name, enabled, repository, targetBranch, runtimeProfile, githubAccount, labels, models];
-  if (common.some((v) => v === undefined) || (adapter !== "github" && adapter !== "jira")) return undefined;
-  if (adapter === "jira" && jira === undefined) return undefined;
+  if (name === undefined || enabled === undefined || repository === undefined || targetBranch === undefined
+    || runtimeProfile === undefined || githubAccount === undefined || labels === undefined || models === undefined) {
+    return undefined;
+  }
   const base = {
-    name: name!, enabled: enabled!, repository: repository!, targetBranch: targetBranch!,
-    prIntegration: "github.com" as const, runtimeProfile: runtimeProfile!, githubAccount: githubAccount!,
-    labels: labels!, models: models!,
+    name, enabled, repository, targetBranch, prIntegration: "github.com" as const, runtimeProfile,
+    githubAccount, labels, models,
   };
-  return adapter === "jira" ? { ...base, adapter, jira: jira! } : { ...base, adapter };
+  if (adapter === "github") return { ...base, adapter };
+  if (adapter === "jira" && jira !== undefined) return { ...base, adapter, jira };
+  return undefined;
 }
 
 function parseInstance(raw: unknown, path: string, credentials: Record<string, CredentialRef>, issues: Issues): InstanceConfig | undefined {
@@ -235,10 +238,12 @@ function parseInstance(raw: unknown, path: string, credentials: Record<string, C
     const label = isObject(project) && typeof project.name === "string" ? project.name : String(index);
     return parseProject(project, `${join(path, "projects")}.${label}`, credentials, issues);
   });
-  if ([name, maxConcurrent, pollIntervalSeconds, maxIterations, modelAuth].some((v) => v === undefined)
-    || projects.some((p) => p === undefined)) return undefined;
-  return { name: name!, maxConcurrent: maxConcurrent!, pollIntervalSeconds: pollIntervalSeconds!,
-    maxIterations: maxIterations!, modelAuth: modelAuth!, projects: projects as ProjectConfig[] };
+  const validProjects = projects.filter((p): p is ProjectConfig => p !== undefined);
+  if (name === undefined || maxConcurrent === undefined || pollIntervalSeconds === undefined
+    || maxIterations === undefined || modelAuth === undefined || validProjects.length !== projects.length) {
+    return undefined;
+  }
+  return { name, maxConcurrent, pollIntervalSeconds, maxIterations, modelAuth, projects: validProjects };
 }
 
 // Cross-instance rules: an instance name is unique, a project name is unique,

@@ -1,4 +1,5 @@
 import type {
+  BlockerRef,
   ClaimOutcome,
   Comment,
   DoneOutcome,
@@ -65,9 +66,9 @@ function parseIssue(raw: unknown, index: number): StoredIssue {
     labels: readKnown(raw, "labels", path, isStringArray),
     assignees: readKnown(raw, "assignees", path, isStringArray),
     claimed: readKnown(raw, "claimed", path, isBoolean),
-    blockers: { known: blockers.known, ...(blockers.known
-      ? { value: blockers.value.map((b) => ({ tracker: "memory" as const, project: b.project, id: b.id })) }
-      : { reason: blockers.reason }) } as Known<IssueRef[]>,
+    blockers: blockers.known
+      ? { known: true, value: blockers.value.map((b) => ({ tracker: "memory", project: b.project, id: b.id })) }
+      : blockers,
     statusCategory: readKnown(raw, "statusCategory", path, isStatus),
     priority: readKnown(raw, "priority", path, isPriority),
     comments: [],
@@ -99,13 +100,10 @@ export class MemoryTracker implements TrackerPort {
 
   async readIssue(ref: IssueRef): Promise<IssueSnapshot> {
     const issue = this.require(ref);
-    const blockers = issue.blockers.known
-      ? { known: true as const, value: issue.blockers.value.map((blocker) => ({
-          ref: blocker,
-          terminal: this.terminalOf(blocker),
-        })) }
+    const blockers: Known<BlockerRef[]> = issue.blockers.known
+      ? { known: true, value: issue.blockers.value.map((blocker) => ({ ref: blocker, terminal: this.terminalOf(blocker) })) }
       : issue.blockers;
-    return {
+    const snapshot: IssueSnapshot = {
       ref: issue.ref,
       title: issue.title,
       labels: issue.labels,
@@ -114,9 +112,10 @@ export class MemoryTracker implements TrackerPort {
       blockers,
       statusCategory: issue.statusCategory,
       priority: issue.priority,
-      ...(issue.openSprint ? { openSprint: issue.openSprint } : {}),
-      ...(issue.assignee ? { assignee: issue.assignee } : {}),
     };
+    if (issue.openSprint) snapshot.openSprint = issue.openSprint;
+    if (issue.assignee) snapshot.assignee = issue.assignee;
+    return snapshot;
   }
 
   async claim(ref: IssueRef): Promise<ClaimOutcome> {
