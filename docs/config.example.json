@@ -45,7 +45,7 @@
             "doneTransition": "EXAMPLE_DONE_TRANSITION",
             "blockingLinkTypes": ["EXAMPLE_BLOCKING_LINK_TYPE"],
             "credential": "EXAMPLE_JIRA_AUTH",
-            "operator": "EXAMPLE_OPERATOR"
+            "operator": "EXAMPLE_JIRA_ACCOUNT_ID"
           },
           "models": {
             "implementer": "EXAMPLE_PROVIDER/EXAMPLE_IMPLEMENTER_MODEL",

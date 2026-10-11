@@ -14,12 +14,51 @@ test("loads two instances (work and personal) with their projects", async () => 
   const names = result.config.instances.map((instance) => instance.name);
   assert.deepEqual(names, ["trabalho", "pessoal"]);
   const [work, personal] = result.config.instances;
-  assert.deepEqual(work.projects.map((project) => project.name),
-    ["dora-metrics", "revolving-monolith-backend", "revolving-dealer-services"]);
-  assert.deepEqual(personal.projects.map((project) => project.name), ["my-tasks"]);
+  assert.deepEqual(work.projects.map((project) => project.name), [
+    "dora-metrics", "revolving-monolith-backend", "revolving-dealer-services", "revolving-mfe",
+    "revolving-fdm", "revolving-common-infra", "revolving-lambda-auth", "revolving-playbooks",
+    "consorcio-monolith-backend", "consorcio-mfe", "consorcio-playbooks",
+  ]);
+  assert.deepEqual(personal.projects.map((project) => project.name),
+    ["my-tasks", "my-software-factory", "my-finances", "lorebase-frontend", "lorebase-backend"]);
   assert.equal(work.maxConcurrent, 1);
   assert.equal(personal.maxConcurrent, 2);
   assert.equal(personal.pollIntervalSeconds, 600);
+});
+
+// The configured targets of spec section 7, written out from the spec (not derived from the fixture).
+const SECTION_7: Array<[string, string, string]> = [
+  ["pessoal", "github", "Sanmoo/my-tasks"],
+  ["pessoal", "github", "Sanmoo/my-software-factory"],
+  ["pessoal", "github", "Sanmoo/my-finances"],
+  ["pessoal", "github", "Sanmoo/lorebase-frontend"],
+  ["pessoal", "github", "Sanmoo/lorebase-backend"],
+  ["trabalho", "github", "samuel-santos_bjd/dora-metrics"],
+  ["trabalho", "VAN/monolith", "bancojohndeere/revolving-credit-monolith-backend"],
+  ["trabalho", "VAN/dealer-services", "bancojohndeere/revolving-credit-dealer-services"],
+  ["trabalho", "VAN/mfe", "bancojohndeere/revolving-credit-mfe"],
+  ["trabalho", "VAN/fdm", "bancojohndeere/revolving-credit-fiscal-document-management"],
+  ["trabalho", "VAN/common-infra", "bancojohndeere/revolving-credit-products-common-infra"],
+  ["trabalho", "VAN/lambda-auth", "bancojohndeere/revolving-credit-multi-issuer-lambda-authorizer"],
+  ["trabalho", "VAN/playbooks", "bancojohndeere/revolving-credit-playbooks"],
+  ["trabalho", "CON/monolith", "bancojohndeere/consorcio-monolith-backend"],
+  ["trabalho", "CON/mfe", "bancojohndeere/consorcio-mfe"],
+  ["trabalho", "CON/playbooks", "bancojohndeere/consorcio-playbooks"],
+];
+
+test("the fixture carries all 16 targets of spec section 7: 5 personal and 11 work, Jira and GitHub", async () => {
+  const result = await loadConfigFile(fixture("instances.json"));
+  assert.equal(result.ok, true, JSON.stringify(result.ok ? [] : result.issues));
+  if (!result.ok) return;
+  const targets = result.config.instances.flatMap((instance) => instance.projects.map((project) => {
+    if (project.adapter === "github") return [instance.name, "github", project.repository];
+    return [instance.name, `${project.jira.projectKey}/${project.jira.routingLabel}`, project.repository];
+  }));
+  assert.equal(targets.length, 16);
+  assert.deepEqual(targets.filter(([instance]) => instance === "pessoal").length, 5);
+  assert.deepEqual(targets.filter(([instance]) => instance === "trabalho").length, 11);
+  const sorted = (rows: string[][]) => rows.map((row) => row.join(" ")).sort();
+  assert.deepEqual(sorted(targets), sorted(SECTION_7));
 });
 
 type Raw = Record<string, any>; // mutable JSON fixture copy for error-case tests
@@ -163,4 +202,28 @@ test("a GitHub project cannot carry a priority rank map", async () => {
   });
   assert.equal(result.ok, false);
   assert.match(messages(result).join("\n"), /priorityRanks.*campo desconhecido/);
+});
+
+test("the documented example names the Jira operator as an accountId placeholder, not an e-mail", async () => {
+  const path = fileURLToPath(new URL("../docs/config.example.json", import.meta.url));
+  const raw = JSON.parse(await readFile(path, "utf8"));
+  const operators = raw.instances.flatMap((instance: { projects: Array<{ jira?: { operator: string } }> }) =>
+    instance.projects.flatMap((project) => (project.jira ? [project.jira.operator] : [])));
+  assert.ok(operators.length > 0, "the example has a Jira project");
+  for (const operator of operators) {
+    assert.match(operator, /ACCOUNT_ID/, "placeholder names the Jira accountId");
+    assert.doesNotMatch(operator, /@/, "not an e-mail");
+  }
+});
+
+test("the Jira project of the fixture uses the done transition confirmed by the conformance report (007)", async () => {
+  const result = await loadConfigFile(fixture("instances.json"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const van = result.config.instances.flatMap((instance) => instance.projects)
+    .filter((project) => project.adapter === "jira" && project.jira.projectKey === "VAN");
+  assert.ok(van.length > 0);
+  for (const project of van) {
+    assert.ok(project.adapter === "jira" && project.jira.doneTransition === "Itens concluídos");
+  }
 });

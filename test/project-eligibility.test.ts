@@ -47,6 +47,6 @@ test("a Jira project routes by the labels of its project key in the instance; a 
   assert.deepEqual(jira.project.routing, {
     kind: "label",
     routingLabel: "monolith",
-    knownLabels: ["monolith", "dealer-services"],
+    knownLabels: ["monolith", "dealer-services", "mfe", "fdm", "common-infra", "lambda-auth", "playbooks"],
   });
 });

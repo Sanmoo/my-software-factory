@@ -60,6 +60,22 @@ Ele habilita skills e ferramentas da fixture, mantendo MCP desativado. Não roda
 em projeto real nem usa tracker/PR/deploy. Consulte as ressalvas de TDD e dos
 reviewers no [relatório](docs/results/004-implement-help.md).
 
+## Configuração
+
+[`docs/config.example.json`](docs/config.example.json) traz apenas placeholders
+`EXAMPLE_*`: nenhum token, conta ou valor real. Campos principais:
+
+- `credentials`: referências nomeadas (`pi-auth` ou variável de ambiente); a
+  configuração nunca carrega o valor do segredo.
+- `jira.operator`: o **accountId** Jira do operador (obtido em
+  `GET /rest/api/3/myself`), não um e-mail. O adapter compara esse valor com o
+  assignee da issue.
+- `jira.doneTransition` e `jira.doingTransition`: nomes exatos das transições do
+  projeto; para VAN, o done confirmado é `Itens concluídos`
+  ([conformidade Jira](docs/results/007-jira-conformance.md)).
+- `jira.priorityRanks` (opcional): nome de prioridade para inteiro positivo, menor
+  = mais urgente. Sem o campo, vale a tabela padrão (Highest 1 … Lowest 5).
+
 Detalhes: [spec](docs/spec.md), [design e evidências](docs/design.md),
 [resultado inicial](docs/results/003-copilot-luna.md)
 e [próximos passos](docs/backlog.md). Não versionar transcrições brutas,

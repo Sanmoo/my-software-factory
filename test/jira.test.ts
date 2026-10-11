@@ -84,7 +84,7 @@ function fakeIssue(overrides: Partial<FakeIssue> & { key: string }): FakeIssue {
     links: [],
     transitions: [
       { id: "11", name: "Em andamento", to: "indeterminate" },
-      { id: "31", name: "Concluído", to: "done" },
+      { id: "31", name: "Itens concluídos", to: "done" },
     ],
     comments: [],
     ...overrides,
@@ -259,7 +259,7 @@ async function startFake(fake: FakeJira): Promise<{ server: Server; connection: 
 const SETTINGS: JiraTrackerSettings = {
   claimedLabel: "agent-claimed",
   doingTransition: "Em andamento",
-  doneTransition: "Concluído",
+  doneTransition: "Itens concluídos",
   blockingLinkTypes: ["Blocks"],
 };
 
@@ -355,7 +355,7 @@ test("a To Do issue without the claimed label is not claimed; the label or a non
   );
   assert.deepEqual(labelled.claimed, { known: true, value: true });
   const done = await withTracker(
-    [fakeIssue({ key: "VAN-14", statusName: "Concluído", category: "done" })],
+    [fakeIssue({ key: "VAN-14", statusName: "Itens concluídos", category: "done" })],
     (tracker) => tracker.readIssue(ref("VAN-14")),
   );
   assert.deepEqual(done.claimed, { known: true, value: true });
@@ -378,7 +378,7 @@ test("an open 'is blocked by' link is a non-terminal blocker; a done blocker is 
   const issues = [
     fakeIssue({ key: "VAN-20", links: [{ type: BLOCKS, inwardIssue: "VAN-21" }, { type: BLOCKS, inwardIssue: "VAN-22" }] }),
     fakeIssue({ key: "VAN-21", category: "indeterminate", statusName: "Em andamento" }),
-    fakeIssue({ key: "VAN-22", category: "done", statusName: "Concluído" }),
+    fakeIssue({ key: "VAN-22", category: "done", statusName: "Itens concluídos" }),
   ];
   const snapshot = await withTracker(issues, (tracker) => tracker.readIssue(ref("VAN-20")));
   assert.deepEqual(snapshot.blockers, {
@@ -501,7 +501,7 @@ test("claim whose claim state cannot be read is rejected, not presumed unclaimed
 });
 
 test("claim without the configured doing transition is rejected before the label is added", async () => {
-  await withTracker([fakeIssue({ key: "VAN-63", transitions: [{ id: "31", name: "Concluído", to: "done" }] })], async (tracker, fake) => {
+  await withTracker([fakeIssue({ key: "VAN-63", transitions: [{ id: "31", name: "Itens concluídos", to: "done" }] })], async (tracker, fake) => {
     const outcome = await tracker.claim(ref("VAN-63"));
     assert.equal(outcome.status, "rejected");
     assert.match(outcome.status === "rejected" ? outcome.reason : "", /Em andamento/);
@@ -529,7 +529,7 @@ test("markDone runs the configured done transition and confirms the Done categor
 });
 
 test("markDone of an issue already in Done is the expected state and writes nothing", async () => {
-  await withTracker([fakeIssue({ key: "VAN-66", statusName: "Concluído", category: "done" })], async (tracker, fake) => {
+  await withTracker([fakeIssue({ key: "VAN-66", statusName: "Itens concluídos", category: "done" })], async (tracker, fake) => {
     assert.deepEqual(await tracker.markDone(ref("VAN-66")), { status: "already-done" });
     assert.deepEqual(writesOf(fake), []);
   });
@@ -569,7 +569,7 @@ test("each negative filter rejects the issue with its rule", async () => {
     { name: "unassigned", issue: fakeIssue({ key: "VAN-74", assignee: null }), rule: "assignee-operador" },
     { name: "already claimed by label", issue: fakeIssue({ key: "VAN-75", labels: ["ready-for-agent", "playbooks", "agent-claimed"] }), rule: "not-claimed" },
     { name: "not ready for agent", issue: fakeIssue({ key: "VAN-76", labels: ["playbooks"] }), rule: "ready" },
-    { name: "terminal", issue: fakeIssue({ key: "VAN-77", statusName: "Concluído", category: "done" }), rule: "not-terminal" },
+    { name: "terminal", issue: fakeIssue({ key: "VAN-77", statusName: "Itens concluídos", category: "done" }), rule: "not-terminal" },
     { name: "two routing labels", issue: fakeIssue({ key: "VAN-78", labels: ["ready-for-agent", "playbooks", "monolith"] }), rule: "routing" },
     {
       name: "blocked by an open issue",
@@ -593,7 +593,7 @@ test("each negative filter rejects the issue with its rule", async () => {
 test("a link to a blocker that is already Done does not block", async () => {
   const issues = [
     fakeIssue({ key: "VAN-83", links: [{ type: BLOCKS, inwardIssue: "VAN-84" }] }),
-    fakeIssue({ key: "VAN-84", category: "done", statusName: "Concluído" }),
+    fakeIssue({ key: "VAN-84", category: "done", statusName: "Itens concluídos" }),
   ];
   assert.deepEqual(await eligibilityOf(issues, "VAN-83"), []);
 });
