@@ -2,6 +2,8 @@ import { pathToFileURL } from "node:url";
 import type { CommandBody } from "../core/commands.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileJobStore } from "../state/file-job-store.js";
+import { createFileHistory } from "../state/history.js";
+import { messageOf } from "../core/values.js";
 import { loadInstance, type CliRun } from "./instance.js";
 
 // Operator commands of one instance (R09): reply, resume, release, pause and unpause. The
@@ -102,13 +104,25 @@ export async function runSupervision(argv: readonly string[]): Promise<CliRun> {
     body = { type: options.command as "pause" | "unpause" };
   }
 
-  await createFileCommandQueue(options.stateDir).enqueue(body);
+  const id = await createFileCommandQueue(options.stateDir).enqueue(body);
   const target = options.job !== undefined ? ` (${options.job})` : "";
-  return {
-    exitCode: 0,
-    stdout: `${CONFIRMATION[options.command]}${target} na fila da instância ${options.instanceName}; será aplicada no próximo ciclo\n`,
-    stderr: "",
-  };
+  // Queued is not applied and not delivered: the instance applies the queue on its next poll and
+  // the runner only later shows whether the agent received it (issue #15, decision 4).
+  const lines = [
+    `${CONFIRMATION[options.command]}${target} na fila da instância ${options.instanceName}; comando=${id}; `
+      + "enfileirado, ainda não aplicado nem entregue ao agente; será aplicado no próximo ciclo",
+  ];
+  try {
+    await createFileHistory(options.stateDir).append({
+      at: new Date().toISOString(), instance: options.instanceName, kind: "comando-enfileirado",
+      text: `${options.command} enfileirado`, ...(options.job === undefined ? {} : { job: options.job }),
+      fields: { comando: id }, lines: [],
+    });
+  } catch (error) {
+    // The command is queued whatever happens to the history: the loss is said, not hidden.
+    lines.push(`aviso: o histórico local não pôde ser gravado (${messageOf(error)}); o comando continua na fila`);
+  }
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -7,6 +7,7 @@ import type { Job } from "../core/job.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
 import { createFileJobStore } from "../state/file-job-store.js";
+import { readFailures, type RecordedFailure } from "../state/history.js";
 import { loadMemoryTracker, type MemoryTracker } from "../tracker/memory.js";
 import type { IssueRef } from "../tracker/port.js";
 import { loadInstance, type CliRun } from "./instance.js";
@@ -46,6 +47,9 @@ interface JobsReport {
   paused: boolean;
   pausePending: boolean;
   pendingCommands: number;
+  // Observability that is failing right now: the operator lost some visibility, not the agent.
+  observability: RecordedFailure[];
+  observabilityUnreadable?: string;
 }
 
 const USAGE = "uso: npm run status -- --config FILE --instance NAME --fixture FILE [--state-dir DIR]";
@@ -108,6 +112,10 @@ function renderJobs(jobs: JobsReport): string[] {
     const summary = summaryOf(job);
     lines.push(`  ${job.key} ${stateLabel(job.state)}${summary ? ` — ${summary}` : ""}`);
   }
+  for (const failure of jobs.observability) {
+    lines.push(`Observabilidade: falha em ${failure.sink} desde ${failure.at}: ${failure.message} (a execução dos trabalhos não depende disso)`);
+  }
+  if (jobs.observabilityUnreadable !== undefined) lines.push(`Observabilidade: estado das falhas ilegível (${jobs.observabilityUnreadable})`);
   if (jobs.unreadable.length > 0) lines.push(`Arquivos ilegíveis (${jobs.unreadable.length}): ${jobs.unreadable.join(", ")}`);
   return lines;
 }
@@ -165,7 +173,13 @@ export async function runStatus(argv: readonly string[]): Promise<StatusRun> {
       paused: last ? last.type === "pause" : applied,
       pausePending: last !== undefined && (last.type === "pause") !== applied,
       pendingCommands: queued.commands.length + queued.unreadable.length,
+      observability: [],
     };
+    try {
+      jobs.observability = await readFailures(options.stateDir);
+    } catch (error) {
+      jobs.observabilityUnreadable = (error as Error).message;
+    }
   }
   const tracked = new Set((jobs?.jobs ?? []).map((job) => job.key));
 

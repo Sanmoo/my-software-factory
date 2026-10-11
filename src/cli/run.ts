@@ -1,8 +1,12 @@
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfigFile } from "../config/load.js";
 import { Admission, type PollReport } from "../core/admission.js";
+import { createObserver } from "../core/observability.js";
+import { createRedactor } from "../core/redaction.js";
 import { messageOf } from "../core/values.js";
+import { createFileFailureStore, createFileHistory } from "../state/history.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import { checkInstance } from "./check.js";
 import { composeInstance } from "./compose.js";
@@ -56,8 +60,8 @@ const log = (line: string): void => { process.stdout.write(`${stamp()} ${line}\n
 
 function describe(report: PollReport): string[] {
   return [
-    ...report.admitted.map((key) => `admitido ${key}`),
-    ...report.commands.map((c) => `comando ${c.type}${c.job ? ` ${c.job}` : ""}: ${c.status}${c.reason ? ` (${c.reason})` : ""}`),
+    // Admissions are announced by the observer with their reason; the report does not repeat them.
+    ...report.commands.map((c) => `comando ${c.type}${c.job ? ` ${c.job}` : ""} comando=${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ""}`),
     ...report.skipped.map((s) => `adiado ${s.key}: ${s.reason}`),
     ...report.errors.map((e) => `ERRO ${e.key}: ${e.message}`),
     ...(report.paused ? ["instância pausada: nada novo é admitido"] : []),
@@ -82,9 +86,19 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (typeof local === "string") { process.stderr.write(`${local}\n`); return 1; }
 
   const sandbox = sandcastleBoundary();
+  // Events reach the main log as they happen, also from invocations running in the background, and
+  // the local history that `logs` reads. The commands it prints are the ones this process runs with.
+  const observer = createObserver({
+    instance: instance.name,
+    console: (line) => { process.stdout.write(`${line}\n`); },
+    history: createFileHistory(options.stateDir),
+    failures: createFileFailureStore(options.stateDir),
+    redactor: createRedactor(),
+    cli: { config: resolve(options.configPath), instance: instance.name, stateDir: resolve(options.stateDir) },
+  });
   let deps;
   try {
-    deps = composeInstance({ config: loaded.config, instance, local, stateDir: options.stateDir, sandbox });
+    deps = composeInstance({ config: loaded.config, instance, local, stateDir: options.stateDir, sandbox, observer });
   } catch (error) {
     process.stderr.write(`composição falhou: ${messageOf(error)}\n`);
     return 1;
@@ -118,6 +132,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const errors = await admission.settle();
   for (const error of errors) log(`ERRO de persistência: ${messageOf(error)}`);
+  await observer.flush();
   return errors.length === 0 ? 0 : 1;
 }
 

@@ -1,6 +1,7 @@
 # Plano aprovado — observabilidade do runner e do agente
 
-Status: entendimento confirmado pelo operador em 2026-10-11; implementação pendente.
+Status: entendimento confirmado pelo operador em 2026-10-11; implementado na branch
+`msf/obs15-agent-observability` (ver "Como ficou implementado" no fim).
 Spec de implementação: [issue #15](https://github.com/Sanmoo/my-software-factory/issues/15),
 label `ready-for-agent`; a issue é a referência canônica para execução.
 Origem: [piloto #10](https://github.com/Sanmoo/my-software-factory/issues/10).
@@ -139,3 +140,36 @@ Correção/retry de retomada, auto-restart por idle, steering ao vivo, merge do
 PR #14, deploy, serviço remoto de notificações, dashboard, observabilidade
 centralizada e armazenamento durável/event sourcing. Não elevar `verbose:true`
 a solução final sem atender legibilidade, sigilo e falhas.
+
+## Como ficou implementado
+
+- **Principal e histórico** — `src/core/observability.ts` (`Observer`): cada evento sai na hora
+  no log principal do `run` e é anexado ao histórico local `<state-dir>/history/<trabalho>.jsonl`
+  (`src/state/history.ts`), com instância, trabalho, invocação, motivo e id do comando.
+  `npm run logs` lê a linha do tempo desse histórico; perguntas, contexto e respostas ficam nele.
+  Falhas de gravação aparecem no principal (uma vez por destino) e em `npm run status`
+  (`<state-dir>/observability/failures.json`); a execução continua e nada é repetido.
+- **Motivos, espera, merge e escritas na issue** — `src/core/admission.ts` + `src/core/ops-events.ts`.
+  Os gatilhos ficam no job (`Job.triggers`) até a invocação iniciar; `trabalho admitido` é só a
+  admissão inicial. O merge externo é detectado uma vez (`Job.mergeDetected`). Os adapters de
+  tracker devolvem as alterações concretas (`IssueChange`, com `confirmed`/`attempted`/`unchanged`
+  e `PartialWriteError` para sucesso parcial); o orquestrador anuncia tentativa antes e resultado depois.
+- **Atividade do agente** — `src/runtime/agent-activity.ts`: log detalhado legível, em tempo real,
+  por invocação (`<área>/logs/<ts>.log`), com todas as ferramentas (sem lista de nomes), resultados e
+  erros; saídas longas vão inteiras para `<ts>.artifacts/`; credenciais conhecidas são ocultadas
+  antes de qualquer gravação (`src/core/redaction.ts`). Avisos de `idle` são técnicos (duração,
+  última atividade, timeout efetivo), a volta da saída é registrada e o timeout real é outra transição.
+- **Escritas diretas do agente** — `src/runtime/agent-issue-writes.ts` reconhece `gh issue
+  edit/close/reopen/comment` nas chamadas `bash` e só confirma com releitura do tracker; o resto
+  (`gh api`, `curl`) é anunciado como limitação de observação.
+
+### Limitações declaradas (decisões 14 e 25)
+
+- O stream Pi não expõe a atividade interna dos filhos: o principal mostra lançamento, atualizações
+  recebidas e desfecho (ou "sem desfecho observado") e referencia um log do filho montado a partir
+  do que o parent viu. Isso é dito no log (`limitação do runtime`), nunca convertido em progresso.
+- A entrega da resposta ao agente só é confirmada quando o stream mostra a mensagem do usuário com o
+  texto; caso contrário fica `não confirmada` (ainda assim a resposta foi incluída na retomada).
+- A leitura "antes" de uma escrita do agente é feita no início da chamada, sem sincronização com o
+  processo: é melhor esforço.
+- O log de setup do Sandcastle continua em `<ts>.runtime.log`; o log legível é o `<ts>.log`.

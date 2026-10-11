@@ -2,6 +2,7 @@ import { projectEligibility } from "../config/project-eligibility.js";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
 import { createGithubPrPort } from "../pr/github.js";
+import { noopObserver, type Observer } from "../core/observability.js";
 import { createDockerRunner, type SandboxBoundary } from "../runtime/docker-runner.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
@@ -25,6 +26,8 @@ export interface ComposeOptions {
   // Boundaries are injectable for tests; the defaults are the real ones.
   github?: GitHubBoundary;
   sandbox?: SandboxBoundary;
+  // Where operational events go: the main log and the local history (issue #15).
+  observer?: Observer;
 }
 
 const enabled = (instance: InstanceConfig): ProjectConfig[] => instance.projects.filter((project) => project.enabled);
@@ -65,6 +68,9 @@ function jiraRoutes(projects: ProjectConfig[], env: NodeJS.ProcessEnv): TrackerR
 
 export function composeInstance(options: ComposeOptions): AdmissionDeps {
   const { config, instance, local } = options;
+  const observer = options.observer ?? noopObserver;
+  // Credentials the process holds are hidden from every log and history before they are written.
+  for (const name of ["JIRA_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) observer.registerSecret((options.env ?? process.env)[name]);
   const projects = enabled(instance);
   const github = options.github ?? createGhCliBoundary();
 
@@ -92,6 +98,16 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     repositorySource: (project) => local.checkouts[project.repository]!,
     remoteUrl: (project) => `https://github.com/${project.repository}.git`,
     boundary: options.sandbox ?? sandcastleBoundary(),
+    observer,
+    // What the tracker shows about an issue, to confirm (or not) the writes the agent makes itself.
+    issueEvidence: (ref) => async () => {
+      const [snapshot, comments] = await Promise.all([tracker.readIssue(ref), tracker.readComments(ref)]);
+      return {
+        ...(snapshot.labels.known ? { labels: snapshot.labels.value } : {}),
+        ...(snapshot.statusCategory.known ? { done: snapshot.statusCategory.value === "done" } : {}),
+        commentIds: comments.map((comment) => comment.id),
+      };
+    },
   });
 
   const accountOf = new Map(projects.map((project) => [project.repository, project.githubAccount]));
@@ -110,5 +126,6 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
       },
     }),
     eligibility: (project) => projectEligibility(instance, project),
+    observer,
   };
 }

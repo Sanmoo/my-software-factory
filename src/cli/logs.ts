@@ -1,5 +1,8 @@
 import { pathToFileURL } from "node:url";
+import { renderFields } from "../core/observability.js";
+import { messageOf } from "../core/values.js";
 import { createFileJobStore } from "../state/file-job-store.js";
+import { createFileHistory } from "../state/history.js";
 import { loadInstance, type CliRun } from "./instance.js";
 import { stateLabel, summaryOf } from "./jobs-view.js";
 
@@ -40,6 +43,26 @@ function parseArgs(argv: readonly string[]): Options | string {
   return { configPath, instanceName, stateDir, job: positional[0] };
 }
 
+// The timestamped history of the job: help, replies, waits, resumes and outcomes, with the whole
+// question and context kept as they were asked (issue #15). It does not depend on the snapshot.
+async function timeline(stateDir: string, job: string): Promise<string[]> {
+  let history;
+  try {
+    history = await createFileHistory(stateDir).read(job);
+  } catch (error) {
+    return ["linha do tempo: indisponível", `  o histórico local não pôde ser lido: ${messageOf(error)}`];
+  }
+  if (history.records.length === 0 && history.unreadable === 0) return ["linha do tempo: (nenhum evento registrado)"];
+  const lines = ["linha do tempo:"];
+  for (const record of history.records) {
+    const head = [record.at, record.text, renderFields({ ...(record.invocation === undefined ? {} : { invocação: record.invocation }), ...record.fields })]
+      .filter((part) => part !== "").join(" ");
+    lines.push(`  ${head}`, ...record.lines.map((line) => `      ${line}`));
+  }
+  if (history.unreadable > 0) lines.push(`  (${history.unreadable} linha(s) ilegível(is) no histórico)`);
+  return lines;
+}
+
 export async function runLogs(argv: readonly string[]): Promise<CliRun> {
   const options = parseArgs(argv);
   if (typeof options === "string") return { exitCode: 2, stdout: "", stderr: `${options}\n` };
@@ -61,6 +84,7 @@ export async function runLogs(argv: readonly string[]): Promise<CliRun> {
     lines.push(`motivo: ${summaryOf(job)}`);
   }
   lines.push("log:", ...job.log.map((entry) => `  ${entry}`));
+  lines.push(...(await timeline(options.stateDir, job.key)));
   return { exitCode: 0, stdout: lines.join("\n") + "\n", stderr: "" };
 }
 

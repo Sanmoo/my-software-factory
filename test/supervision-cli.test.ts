@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,6 +17,8 @@ import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import { jobBranch } from "../src/core/job.js";
+import { createObserver, type Observer } from "../src/core/observability.js";
+import { createFileFailureStore, createFileHistory } from "../src/state/history.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 // The operator's CLI for one instance (R09). The CLI writes commands to the instance's local
@@ -114,7 +116,7 @@ async function prepare(): Promise<Fixtures> {
 }
 
 // The instance itself: the same admission the operator's commands are applied to.
-async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (context: RunnerContext) => Promise<RunnerOutput> }) {
+async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (context: RunnerContext) => Promise<RunnerOutput> }, observer?: Observer) {
   const loaded = await loadConfigFile(fixtures.configPath);
   if (!loaded.ok) throw new Error(JSON.stringify(loaded.issues));
   return Admission.open({
@@ -126,6 +128,7 @@ async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (co
     commands: createFileCommandQueue(fixtures.stateDir),
     control: createFileInstanceControl(fixtures.stateDir),
     prs: openPrs,
+    ...(observer ? { observer } : {}),
   });
 }
 
@@ -138,6 +141,8 @@ test("reply records a directed answer without changing the job until the instanc
   const run = await runSupervision(["reply", ...common(f), "--message", "Use the v2 seam", JOB]);
   assert.equal(run.exitCode, 0, run.stderr);
   assert.match(run.stdout, /resposta registrada \(memory:acme\/app#1\) na fila da instância trabalho/);
+  // Queued is not applied and not delivered, and the command has an id to follow it by.
+  assert.match(run.stdout, /comando=\S+; enfileirado, ainda não aplicado nem entregue ao agente/);
 
   const before = await runLogs(logsArgs(f));
   assert.match(before.stdout, /estado: aguardando ajuda/);
@@ -270,4 +275,47 @@ test("a command file written by an operator cannot hide the status of the other 
   const status = await runStatus(statusArgs(f));
   assert.equal(status.exitCode, 0, status.stderr);
   assert.match(status.stdout, /memory:acme\/app#1 aguardando ajuda/);
+});
+
+test("logs shows the timeline of a reply from the queue to the outcome, with ids and without promising delivery", async () => {
+  const f = await prepare();
+  const lines: string[] = [];
+  const observer = createObserver({ instance: "trabalho", console: (line) => lines.push(line), history: createFileHistory(f.stateDir) });
+  // The first help request happened before this process: its history comes from the same files.
+  const run = await runSupervision(["reply", ...common(f), "--message", "Use the v2 seam", JOB]);
+  const id = /comando=(\S+);/.exec(run.stdout)![1]!;
+
+  const runner = new FakeRunner((context) => (context.kind === "resume" ? finished(PR_READY) : finished(HELP)));
+  const admission = await openAdmission(f, runner, observer);
+  await admission.poll();
+  await admission.settle();
+  await observer.flush();
+
+  const logs = (await runLogs(logsArgs(f))).stdout;
+  const timeline = logs.slice(logs.indexOf("linha do tempo:"));
+  const order = ["reply enfileirado", "reply aplicado", "invocação retomada", "resposta incluída na retomada", "PR aceito para acompanhamento"]
+    .map((text) => timeline.indexOf(text));
+  assert.ok(order.every((index) => index >= 0), `every step is on the timeline: ${order.join(",")}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "in order");
+  assert.equal(timeline.split(`comando=${id}`).length - 1, 4, "the command id correlates enqueue, application, resume and inclusion");
+  assert.doesNotMatch(timeline, /entregue/, "no delivery is promised without runtime evidence");
+  assert.match(timeline, /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z/, "timestamped");
+});
+
+test("status shows a failing observability, and a history that cannot be written does not lose the queued command", async () => {
+  const f = await prepare();
+  await createFileFailureStore(f.stateDir).record({ at: "2026-10-11T12:00:00.000Z", sink: "log detalhado", message: "EACCES" });
+  const status = await runStatus(statusArgs(f));
+  assert.match(status.stdout, /Observabilidade: falha em log detalhado desde 2026-10-11T12:00:00.000Z: EACCES/);
+
+  const blocked = await fixturesIn(await mkdtemp(join(tmpdir(), "msf-supervision-cli-")));
+  await mkdir(blocked.stateDir, { recursive: true });
+  await writeFile(join(blocked.stateDir, "history"), "blocks the directory");
+  await writeFile(join(blocked.stateDir, "memory%3Aacme%2Fapp%231.json"), JSON.stringify({
+    key: JOB, ref: { tracker: "memory", project: "acme/app", id: "1" }, repository: "acme/app", state: "waiting-for-help", log: [],
+  }));
+  const run = await runSupervision(["resume", ...common(blocked), JOB]);
+  assert.equal(run.exitCode, 0);
+  assert.match(run.stdout, /aviso: o histórico local não pôde ser gravado/);
+  assert.equal((await createFileCommandQueue(blocked.stateDir).pending()).commands.length, 1, "the command is still queued");
 });
