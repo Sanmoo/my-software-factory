@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Job } from "./job.js";
+import type { Continuation, Job, JobState } from "./job.js";
 import type { PrCheck, PrFeedback } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 
@@ -9,10 +9,10 @@ import type { Comment, TrackerKind } from "../tracker/port.js";
 // (as a reply or a correction) and is delivered to the next invocation as text.
 
 // Markers the factory adds to what it publishes (R10). A comment with a marker is never feedback.
-export const GITHUB_MARKER = "<!-- msf:agent -->";
-export const JIRA_MARKER = "[msf]";
+const GITHUB_MARKER = "<!-- msf:agent -->";
+const JIRA_MARKER = "[msf]";
 // The prefix that makes a human issue comment a directed reply to the job (CA11).
-export const DIRECTED_PREFIX = "agent:";
+const DIRECTED_PREFIX = "agent:";
 
 // One piece of directed input. `key` identifies the tracker or PR event it came from, so the
 // job can record that it was consumed; terminal replies have no event and no key.
@@ -39,7 +39,7 @@ export function isFactoryComment(tracker: TrackerKind, body: string): boolean {
 
 // A human issue comment without marker that starts with `agent:` is a directed reply (CA11).
 // Anything else is conversation between people and is not feedback.
-export function directedReply(tracker: TrackerKind, comment: Comment): FeedbackInput | undefined {
+export function directedReply(tracker: TrackerKind, comment: Comment): { key: string; message: string } | undefined {
   if (comment.isBot || isFactoryComment(tracker, comment.body)) return undefined;
   const text = comment.body.trim();
   if (!text.startsWith(DIRECTED_PREFIX)) return undefined;
@@ -90,42 +90,35 @@ export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<stri
   };
 }
 
-// Result of giving directed input to a job. `not-applicable` is the reason a state cannot take
-// input; the caller decides how to report it.
+// What directed input does in each state: the continuation it requests (if any) and the log wording.
+const EFFECT_OF_STATE: Partial<Record<JobState, { pending?: Continuation; log: string }>> = {
+  "waiting-for-help": { pending: "resume", log: "reativação quando houver vaga" },
+  "waiting-for-pr": { pending: "correction", log: "correção solicitada; aguarda vaga" },
+  running: { log: "pendente para a próxima invocação" },
+  interrupted: { log: "pendente para a próxima invocação" },
+};
+
+// Result of giving directed input to a job. `reason` says why the state cannot take input; the
+// caller decides how to report it.
 export type ReceiveOutcome = { job: Job } | { reason: string };
 
 // Directed input has one effect whatever its source (CA11): the terminal reply and a tracker
 // `agent:` comment both come through here. A job waiting for help is reactivated as a reply when a
 // slot is free; a job waiting for PR becomes a correction; an active or interrupted job keeps the
 // input for its next invocation (R09). Consumed keys are recorded so the same event never repeats.
-export function receiveFeedback(job: Job, inputs: FeedbackInput[], label: string): ReceiveOutcome {
+export function receiveFeedback(job: Job, inputs: FeedbackInput[], origin: string): ReceiveOutcome {
   if (inputs.length === 0) return { job };
-  let pending = job.pending;
-  let suffix: string;
-  switch (job.state) {
-    case "waiting-for-help":
-      pending = "resume";
-      suffix = "reativação quando houver vaga";
-      break;
-    case "waiting-for-pr":
-      pending = "correction";
-      suffix = "correção solicitada; aguarda vaga";
-      break;
-    case "running":
-    case "interrupted":
-      suffix = "pendente para a próxima invocação";
-      break;
-    default:
-      return { reason: `${label} não se aplica ao estado ${job.state}` };
-  }
-  const log = inputs.map((input) => `${label} recebido; ${suffix}: ${input.message}`);
+  const effect = EFFECT_OF_STATE[job.state];
+  if (effect === undefined) return { reason: `não se aplica ao estado ${job.state}` };
+  const log = inputs.map((input) => `${origin}; ${effect.log}: ${input.message}`);
   const consumed = inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
-  const next: Job = {
-    ...job,
-    replies: [...(job.replies ?? []), ...inputs.map((input) => input.message)],
-    consumed: [...(job.consumed ?? []), ...consumed],
-    log: [...job.log, ...log],
+  return {
+    job: {
+      ...job,
+      ...(effect.pending === undefined ? {} : { pending: effect.pending }),
+      replies: [...(job.replies ?? []), ...inputs.map((input) => input.message)],
+      consumed: [...(job.consumed ?? []), ...consumed],
+      log: [...job.log, ...log],
+    },
   };
-  if (pending !== undefined) next.pending = pending;
-  return { job: next };
 }
