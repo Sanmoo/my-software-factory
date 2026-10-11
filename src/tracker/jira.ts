@@ -1,12 +1,15 @@
 import {
+  PartialWriteError,
   refKey,
   type BlockerRef,
   type ClaimOutcome,
   type Comment,
   type DoneOutcome,
+  type IssueChange,
   type IssueRef,
   type IssueSnapshot,
   type Known,
+  type ReleaseOutcome,
   type StatusCategory,
   type TrackerPort,
   type TrackerScope,
@@ -298,17 +301,37 @@ export class JiraTracker implements TrackerPort {
     if (doing === undefined) {
       return { status: "rejected", reason: `transição '${this.settings.doingTransition}' indisponível para ${ref.id}` };
     }
-    await this.updateLabels(ref.id, [{ add: this.settings.claimedLabel }]);
-    await this.runTransition(ref.id, doing);
+    const made: IssueChange[] = [];
+    const categoryBefore = before.statusCategory.known ? before.statusCategory.value : undefined;
+    try {
+      await this.updateLabels(ref.id, [{ add: this.settings.claimedLabel }]);
+      made.push({ operation: "adicionar-label", target: this.settings.claimedLabel, before: "ausente", after: "presente", result: "attempted" });
+      await this.runTransition(ref.id, doing);
+      made.push({ operation: "transição", target: this.settings.doingTransition, ...(categoryBefore ? { before: categoryBefore } : {}), result: "attempted" });
+    } catch (error) {
+      if (made.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, made);
+    }
     const after = await this.readIssue(ref);
-    const started = after.claimed.known && after.claimed.value
-      && after.statusCategory.known && after.statusCategory.value === "in-progress";
-    return started ? { status: "accepted" } : { status: "rejected", reason: "início não confirmado pelo Jira" };
+    const labelled = after.claimed.known && after.claimed.value;
+    const inProgress = after.statusCategory.known && after.statusCategory.value === "in-progress";
+    const changes: IssueChange[] = [
+      { ...made[0]!, result: labelled ? "confirmed" : "attempted" },
+      {
+        ...made[1]!,
+        ...(after.statusCategory.known ? { after: after.statusCategory.value } : {}),
+        result: inProgress ? "confirmed" : "attempted",
+      },
+    ];
+    return labelled && inProgress
+      ? { status: "accepted", changes }
+      : { status: "rejected", reason: "início não confirmado pelo Jira", changes };
   }
 
   // Removes the claimed label only; the status is left as it is.
-  async releaseClaim(ref: IssueRef): Promise<void> {
+  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
     await this.updateLabels(ref.id, [{ remove: this.settings.claimedLabel }]);
+    return { changes: [{ operation: "remover-label", target: this.settings.claimedLabel, after: "ausente", result: "attempted" }] };
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -350,16 +373,26 @@ export class JiraTracker implements TrackerPort {
 
   async markDone(ref: IssueRef): Promise<DoneOutcome> {
     const before = await this.readIssue(ref);
-    if (before.statusCategory.known && before.statusCategory.value === "done") return { status: "already-done" };
+    if (before.statusCategory.known && before.statusCategory.value === "done") {
+      return { status: "already-done", changes: [{ operation: "transição", target: this.settings.doneTransition, before: "done", after: "done", result: "unchanged" }] };
+    }
+    const categoryBefore = before.statusCategory.known ? before.statusCategory.value : undefined;
     const done = await this.transitionTo(ref.id, this.settings.doneTransition);
     if (done === undefined) {
       return { status: "not-confirmed", reason: `transição '${this.settings.doneTransition}' indisponível para ${ref.id}` };
     }
     await this.runTransition(ref.id, done);
     const after = await this.readIssue(ref);
-    return after.statusCategory.known && after.statusCategory.value === "done"
-      ? { status: "done" }
-      : { status: "not-confirmed", reason: "categoria Done não confirmada pelo Jira" };
+    const confirmed = after.statusCategory.known && after.statusCategory.value === "done";
+    const changes: IssueChange[] = [{
+      operation: "transição", target: this.settings.doneTransition,
+      ...(categoryBefore ? { before: categoryBefore } : {}),
+      ...(after.statusCategory.known ? { after: after.statusCategory.value } : {}),
+      result: confirmed ? "confirmed" : "attempted",
+    }];
+    return confirmed
+      ? { status: "done", changes }
+      : { status: "not-confirmed", reason: "categoria Done não confirmada pelo Jira", changes };
   }
 
   private async transitionTo(key: string, name: string): Promise<string | undefined> {

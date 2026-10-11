@@ -33,11 +33,15 @@ test("readIssue reports a blocker terminal flag only when the blocker can be rea
 test("claim, release and done are observable through readIssue", async () => {
   const tracker = await load();
   const ref = { tracker: "memory" as const, project: github.project, id: "1" };
-  assert.deepEqual(await tracker.claim(ref), { status: "accepted" });
+  const accepted = await tracker.claim(ref);
+  assert.equal(accepted.status, "accepted");
+  assert.equal(accepted.changes?.[0]?.operation, "adicionar-label");
   const claimed = await tracker.readIssue(ref);
   assert.deepEqual(claimed.claimed, { known: true, value: true });
-  await tracker.releaseClaim(ref);
+  assert.equal((await tracker.releaseClaim(ref))?.changes[0]?.result, "confirmed");
   assert.deepEqual((await tracker.readIssue(ref)).claimed, { known: true, value: false });
-  assert.deepEqual(await tracker.markDone(ref), { status: "done" });
-  assert.deepEqual(await tracker.markDone(ref), { status: "already-done" });
+  assert.equal((await tracker.markDone(ref)).status, "done");
+  const again = await tracker.markDone(ref);
+  assert.equal(again.status, "already-done");
+  assert.equal(again.changes?.[0]?.result, "unchanged");
 });

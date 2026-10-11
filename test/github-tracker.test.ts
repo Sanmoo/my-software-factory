@@ -7,7 +7,7 @@ import {
   type GitHubRequest,
   type GitHubResponse,
 } from "../src/tracker/github.js";
-import type { BlockerRef, IssueRef, TrackerScope } from "../src/tracker/port.js";
+import { PartialWriteError, type BlockerRef, type IssueRef, type TrackerScope } from "../src/tracker/port.js";
 
 const REPO = "Sanmoo/my-software-factory";
 const ACCOUNT = "Sanmoo";
@@ -50,6 +50,7 @@ class FakeGitHub implements GitHubBoundary {
   readonly calls: Call[] = [];
   readonly tokenRequests: string[] = [];
   failDependencies = false;
+  failAssigneeWrites = false;
   ignoreAssigneeWrites = false;
   private nextDbId = 5000;
   private nextCommentId = 9000;
@@ -127,6 +128,7 @@ class FakeGitHub implements GitHubBoundary {
       return { status: 200, body: issue.labels.map((n) => ({ name: n })) };
     }
     if (sub === "/assignees") {
+      if (this.failAssigneeWrites) return { status: 500, body: { message: "boom" } };
       const names = body.assignees as string[];
       if (request.method === "POST" && !this.ignoreAssigneeWrites) {
         for (const name of names) if (!issue.assignees.includes(name)) issue.assignees.push(name);
@@ -319,7 +321,14 @@ test("claim adds the claimed label and assigns the project account, confirmed by
   gh.add({ number: 1, labels: ["ready-for-agent"] });
   const adapter = tracker(gh);
 
-  assert.deepEqual(await adapter.claim(ref(1)), { status: "accepted" });
+  // The adapter reports the concrete writes it made, confirmed by the reread (observability).
+  assert.deepEqual(await adapter.claim(ref(1)), {
+    status: "accepted",
+    changes: [
+      { operation: "adicionar-label", target: "agent-claimed", before: "ausente", after: "presente", result: "confirmed" },
+      { operation: "atribuir", target: ACCOUNT, before: "sem a conta", after: "atribuída", result: "confirmed" },
+    ],
+  });
 
   const snapshot = await adapter.readIssue(ref(1));
   assert.deepEqual(snapshot.claimed, { known: true, value: true });
@@ -348,6 +357,21 @@ test("claim is rejected when the reread does not confirm the project assignment"
   const outcome = await tracker(gh).claim(ref(1));
 
   assert.equal(outcome.status, "rejected");
+});
+
+test("a claim that fails after the label write reports the label as a partial success", async () => {
+  const gh = new FakeGitHub();
+  gh.add({ number: 1, labels: ["ready-for-agent"] });
+  gh.failAssigneeWrites = true;
+
+  await assert.rejects(tracker(gh).claim(ref(1)), (error: unknown) => {
+    assert.ok(error instanceof PartialWriteError);
+    // The label stays on the issue: the failure of the assignment must not hide that write.
+    assert.deepEqual(error.changes, [
+      { operation: "adicionar-label", target: "agent-claimed", before: "ausente", after: "presente", result: "attempted" },
+    ]);
+    return true;
+  });
 });
 
 test("a failed token read is not cached: the next call asks the boundary again", async () => {
@@ -444,7 +468,10 @@ test("markDone closes the issue as completed and confirms it by reread", async (
   gh.add({ number: 1, labels: ["ready-for-agent"] });
   const adapter = tracker(gh);
 
-  assert.deepEqual(await adapter.markDone(ref(1)), { status: "done" });
+  assert.deepEqual(await adapter.markDone(ref(1)), {
+    status: "done",
+    changes: [{ operation: "fechar", before: "open", after: "closed (completed)", result: "confirmed" }],
+  });
   assert.equal(gh.issues.get(1)?.state, "closed");
   assert.equal(gh.issues.get(1)?.stateReason, "completed");
   assert.deepEqual((await adapter.readIssue(ref(1))).statusCategory, { known: true, value: "done" });
@@ -503,7 +530,10 @@ test("markDone on an issue already closed as completed is expected and writes no
   gh.add({ number: 1, state: "closed", stateReason: "completed" });
   const adapter = tracker(gh);
 
-  assert.deepEqual(await adapter.markDone(ref(1)), { status: "already-done" });
+  assert.deepEqual(await adapter.markDone(ref(1)), {
+    status: "already-done",
+    changes: [{ operation: "fechar", before: "closed", after: "closed", result: "unchanged" }],
+  });
   assert.deepEqual(gh.writes(), []);
 });
 

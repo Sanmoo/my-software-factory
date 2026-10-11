@@ -53,13 +53,50 @@ export interface Comment {
   createdAt: string;
 }
 
+// One concrete write an adapter made (or found unnecessary) on an issue (observability,
+// decisions 23 and 24). The adapter says what it did, never what it wished: `confirmed` only
+// when it reread the tracker and saw the change; `attempted` when the call was accepted but not
+// confirmed; `unchanged` when the tracker already had the expected state (nothing was written).
+export type ChangeOperation =
+  | "adicionar-label"
+  | "remover-label"
+  | "atribuir"
+  | "remover-atribuição"
+  | "transição"
+  | "fechar"
+  | "comentar";
+export type ChangeResult = "confirmed" | "attempted" | "unchanged" | "failed";
+
+export interface IssueChange {
+  operation: ChangeOperation;
+  // The label, account or transition concerned.
+  target?: string;
+  // Known values only: an unknown before or after is left out, never invented.
+  before?: string;
+  after?: string;
+  result: ChangeResult;
+  detail?: string;
+}
+
+// A composite write that failed midway: the writes already made are reported with the error, so
+// a partial success is never hidden behind the failure of the next step.
+export class PartialWriteError extends Error {
+  constructor(message: string, readonly changes: IssueChange[]) {
+    super(message);
+  }
+}
+
 export type ClaimOutcome =
-  | { status: "accepted" }
-  | { status: "rejected"; reason: string };
+  | { status: "accepted"; changes?: IssueChange[] }
+  | { status: "rejected"; reason: string; changes?: IssueChange[] };
 
 export type DoneOutcome =
-  | { status: "done" | "already-done" }
-  | { status: "not-confirmed"; reason: string };
+  | { status: "done" | "already-done"; changes?: IssueChange[] }
+  | { status: "not-confirmed"; reason: string; changes?: IssueChange[] };
+
+export interface ReleaseOutcome {
+  changes: IssueChange[];
+}
 
 export interface TrackerPort {
   // Ready-for-agent issues in scope, paginated by the adapter.
@@ -67,8 +104,8 @@ export interface TrackerPort {
   readIssue(ref: IssueRef): Promise<IssueSnapshot>;
   // Registers claim + start; the caller must confirm via readIssue before running any agent.
   claim(ref: IssueRef): Promise<ClaimOutcome>;
-  // Removes the claim only; never marks done.
-  releaseClaim(ref: IssueRef): Promise<void>;
+  // Removes the claim only; never marks done. May report the concrete changes it made.
+  releaseClaim(ref: IssueRef): Promise<void | ReleaseOutcome>;
   readComments(ref: IssueRef): Promise<Comment[]>;
   // The core prefixes the marker; adapters never strip it. Returns the comment id.
   postComment(ref: IssueRef, body: string): Promise<string>;

@@ -474,7 +474,13 @@ const writesOf = (fake: FakeJira) => fake.writes().map((request) => `${request.m
 
 test("claim adds the claimed label, runs the doing transition and confirms it by rereading", async () => {
   await withTracker([fakeIssue({ key: "VAN-60" })], async (tracker, fake) => {
-    assert.deepEqual(await tracker.claim(ref("VAN-60")), { status: "accepted" });
+    const outcome = await tracker.claim(ref("VAN-60"));
+    assert.equal(outcome.status, "accepted");
+    // The adapter names the concrete writes it made: the label and the doing transition, both reread.
+    assert.deepEqual(outcome.changes?.map(({ operation, result, before, after }) => ({ operation, result, before, after })), [
+      { operation: "adicionar-label", result: "confirmed", before: "ausente", after: "presente" },
+      { operation: "transição", result: "confirmed", before: "to-do", after: "in-progress" },
+    ]);
     assert.deepEqual(writesOf(fake), [
       "PUT /rest/api/3/issue/VAN-60",
       "POST /rest/api/3/issue/VAN-60/transitions",
@@ -522,7 +528,11 @@ test("releaseClaim removes only the claimed label and never transitions the issu
 
 test("markDone runs the configured done transition and confirms the Done category", async () => {
   await withTracker([fakeIssue({ key: "VAN-65" })], async (tracker, fake) => {
-    assert.deepEqual(await tracker.markDone(ref("VAN-65")), { status: "done" });
+    const outcome = await tracker.markDone(ref("VAN-65"));
+    assert.equal(outcome.status, "done");
+    assert.deepEqual(outcome.changes?.map(({ operation, result, after }) => ({ operation, result, after })), [
+      { operation: "transição", result: "confirmed", after: "done" },
+    ]);
     assert.deepEqual(writesOf(fake), ["POST /rest/api/3/issue/VAN-65/transitions"]);
     assert.deepEqual((await tracker.readIssue(ref("VAN-65"))).statusCategory, { known: true, value: "done" });
   });
@@ -530,7 +540,9 @@ test("markDone runs the configured done transition and confirms the Done categor
 
 test("markDone of an issue already in Done is the expected state and writes nothing", async () => {
   await withTracker([fakeIssue({ key: "VAN-66", statusName: "Itens concluídos", category: "done" })], async (tracker, fake) => {
-    assert.deepEqual(await tracker.markDone(ref("VAN-66")), { status: "already-done" });
+    const outcome = await tracker.markDone(ref("VAN-66"));
+    assert.equal(outcome.status, "already-done");
+    assert.equal(outcome.changes?.[0]?.result, "unchanged");
     assert.deepEqual(writesOf(fake), []);
   });
 });

@@ -4,13 +4,16 @@ import type {
   ClaimOutcome,
   Comment,
   DoneOutcome,
+  IssueChange,
   IssueRef,
   IssueSnapshot,
   Known,
   StatusCategory,
+  ReleaseOutcome,
   TrackerPort,
   TrackerScope,
 } from "./port.js";
+import { PartialWriteError } from "./port.js";
 import { isObject, type Obj } from "../core/values.js";
 
 // GitHub Issues adapter (R02, R03, R10). The adapter talks to the REST API through a
@@ -160,34 +163,61 @@ export class GitHubTracker implements TrackerPort {
     if (this.isClaimed(before)) return { status: "rejected", reason: "issue já claimed" };
 
     const path = this.issuePath(ref);
-    expectStatus(
-      await this.call({ method: "POST", path: `${path}/labels`, body: { labels: [this.options.claimedLabel] } }),
-      [200],
-      "adicionar label de claim",
-    );
-    expectStatus(
-      await this.call({ method: "POST", path: `${path}/assignees`, body: { assignees: [this.options.account] } }),
-      [201],
-      "atribuir conta do projeto",
-    );
+    const { claimedLabel, account } = this.options;
+    const label: IssueChange = { operation: "adicionar-label", target: claimedLabel, before: "ausente", result: "failed" };
+    const assignee: IssueChange = { operation: "atribuir", target: account, before: "sem a conta", result: "failed" };
+    const made: IssueChange[] = [];
+    try {
+      expectStatus(
+        await this.call({ method: "POST", path: `${path}/labels`, body: { labels: [claimedLabel] } }),
+        [200],
+        "adicionar label de claim",
+      );
+      made.push({ ...label, after: "presente", result: "attempted" });
+      expectStatus(
+        await this.call({ method: "POST", path: `${path}/assignees`, body: { assignees: [account] } }),
+        [201],
+        "atribuir conta do projeto",
+      );
+      made.push({ ...assignee, after: "atribuída", result: "attempted" });
+    } catch (error) {
+      if (made.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, made);
+    }
 
     const after = await this.fetchIssue(ref);
-    const confirmed = after.labels.includes(this.options.claimedLabel)
-      && after.assignees.includes(this.options.account);
-    return confirmed
-      ? { status: "accepted" }
-      : { status: "rejected", reason: "claim não confirmado na releitura" };
+    const labelled = after.labels.includes(claimedLabel);
+    const assigned = after.assignees.includes(account);
+    const changes: IssueChange[] = [
+      { ...made[0]!, result: labelled ? "confirmed" : "attempted" },
+      { ...made[1]!, result: assigned ? "confirmed" : "attempted" },
+    ];
+    return labelled && assigned
+      ? { status: "accepted", changes }
+      : { status: "rejected", reason: "claim não confirmado na releitura", changes };
   }
 
-  async releaseClaim(ref: IssueRef): Promise<void> {
+  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
     const path = this.issuePath(ref);
-    const label = await this.call({ method: "DELETE", path: `${path}/labels/${encodeURIComponent(this.options.claimedLabel)}` });
-    if (label.status !== 404) expectStatus(label, [200], "remover label de claim");
-    expectStatus(
-      await this.call({ method: "DELETE", path: `${path}/assignees`, body: { assignees: [this.options.account] } }),
-      [200],
-      "remover atribuição da conta do projeto",
-    );
+    const { claimedLabel, account } = this.options;
+    const changes: IssueChange[] = [];
+    try {
+      const label = await this.call({ method: "DELETE", path: `${path}/labels/${encodeURIComponent(claimedLabel)}` });
+      if (label.status !== 404) expectStatus(label, [200], "remover label de claim");
+      changes.push(label.status === 404
+        ? { operation: "remover-label", target: claimedLabel, before: "ausente", after: "ausente", result: "unchanged" }
+        : { operation: "remover-label", target: claimedLabel, before: "presente", after: "ausente", result: "attempted" });
+      expectStatus(
+        await this.call({ method: "DELETE", path: `${path}/assignees`, body: { assignees: [account] } }),
+        [200],
+        "remover atribuição da conta do projeto",
+      );
+      changes.push({ operation: "remover-atribuição", target: account, result: "attempted" });
+    } catch (error) {
+      if (changes.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, changes);
+    }
+    return { changes };
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -208,9 +238,10 @@ export class GitHubTracker implements TrackerPort {
   async markDone(ref: IssueRef): Promise<DoneOutcome> {
     const before = await this.fetchIssue(ref);
     if (before.state === "closed") {
+      const changes: IssueChange[] = [{ operation: "fechar", before: "closed", after: "closed", result: "unchanged" }];
       return before.stateReason === "completed"
-        ? { status: "already-done" }
-        : { status: "not-confirmed", reason: `fechada como ${before.stateReason ?? "sem motivo"}, não como completed` };
+        ? { status: "already-done", changes }
+        : { status: "not-confirmed", reason: `fechada como ${before.stateReason ?? "sem motivo"}, não como completed`, changes };
     }
     expectStatus(
       await this.call({
@@ -222,9 +253,14 @@ export class GitHubTracker implements TrackerPort {
       "fechar issue",
     );
     const after = await this.fetchIssue(ref);
-    return after.state === "closed" && after.stateReason === "completed"
-      ? { status: "done" }
-      : { status: "not-confirmed", reason: "fechamento não confirmado na releitura" };
+    const confirmed = after.state === "closed" && after.stateReason === "completed";
+    const changes: IssueChange[] = [{
+      operation: "fechar", before: "open", after: after.state === "closed" ? `closed (${after.stateReason ?? "sem motivo"})` : "open",
+      result: confirmed ? "confirmed" : "attempted",
+    }];
+    return confirmed
+      ? { status: "done", changes }
+      : { status: "not-confirmed", reason: "fechamento não confirmado na releitura", changes };
   }
 
   // Native dependency edges. Not part of TrackerPort: used by the conformance check to

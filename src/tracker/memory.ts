@@ -3,9 +3,11 @@ import type {
   ClaimOutcome,
   Comment,
   DoneOutcome,
+  IssueChange,
   IssueRef,
   IssueSnapshot,
   Known,
+  ReleaseOutcome,
   StatusCategory,
   TrackerPort,
   TrackerScope,
@@ -138,14 +140,25 @@ export class MemoryTracker implements TrackerPort {
       return { status: "rejected", reason: "issue já claimed" };
     }
     issue.claimed = { known: true, value: true };
+    const changes: IssueChange[] = [
+      { operation: "adicionar-label", target: "claim", before: "ausente", after: "presente", result: "confirmed" },
+    ];
     if (issue.statusCategory.known && issue.statusCategory.value === "to-do") {
       issue.statusCategory = { known: true, value: "in-progress" };
+      changes.push({ operation: "transição", target: "doing", before: "to-do", after: "in-progress", result: "confirmed" });
     }
-    return { status: "accepted" };
+    return { status: "accepted", changes };
   }
 
-  async releaseClaim(ref: IssueRef): Promise<void> {
-    this.require(ref).claimed = { known: true, value: false };
+  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
+    const issue = this.require(ref);
+    const had = issue.claimed.known && issue.claimed.value;
+    issue.claimed = { known: true, value: false };
+    return {
+      changes: [had
+        ? { operation: "remover-label", target: "claim", before: "presente", after: "ausente", result: "confirmed" }
+        : { operation: "remover-label", target: "claim", before: "ausente", after: "ausente", result: "unchanged" }],
+    };
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -168,10 +181,14 @@ export class MemoryTracker implements TrackerPort {
   async markDone(ref: IssueRef): Promise<DoneOutcome> {
     const issue = this.require(ref);
     if (issue.statusCategory.known && issue.statusCategory.value === "done") {
-      return { status: "already-done" };
+      return { status: "already-done", changes: [{ operation: "fechar", before: "done", after: "done", result: "unchanged" }] };
     }
+    const before = issue.statusCategory.known ? issue.statusCategory.value : undefined;
     issue.statusCategory = { known: true, value: "done" };
-    return { status: "done" };
+    return {
+      status: "done",
+      changes: [{ operation: "fechar", ...(before ? { before } : {}), after: "done", result: "confirmed" }],
+    };
   }
 
   private require(ref: IssueRef): StoredIssue {
