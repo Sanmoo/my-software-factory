@@ -438,6 +438,54 @@ test("markDone closes the issue as completed and confirms it by reread", async (
   assert.deepEqual((await adapter.readIssue(ref(1))).statusCategory, { known: true, value: "done" });
 });
 
+const PROJECT = { enabled: true, readyLabel: "ready-for-agent", routing: { kind: "repository" as const } };
+
+test("terminal means closed as completed: a completed issue is done", async () => {
+  const gh = new FakeGitHub();
+  gh.add({ number: 1, state: "closed", stateReason: "completed" });
+
+  assert.deepEqual((await tracker(gh).readIssue(ref(1))).statusCategory, { known: true, value: "done" });
+});
+
+test("an issue closed for another reason is not done and its category is not guessed", async () => {
+  const gh = new FakeGitHub();
+  gh.add({ number: 1, state: "closed", stateReason: "not_planned" });
+  gh.add({ number: 2, state: "closed", stateReason: "duplicate" });
+  gh.add({ number: 3, state: "closed", stateReason: null });
+  const adapter = tracker(gh);
+
+  for (const n of [1, 2, 3]) {
+    const category = (await adapter.readIssue(ref(n))).statusCategory;
+    assert.equal(category.known, false, `#${n} must not read as a known category`);
+    assert.notDeepEqual(category, { known: true, value: "done" }, `#${n} is not done`);
+  }
+});
+
+test("an issue closed for another reason is not eligible: its status is unknown, so eligibility rejects it", async () => {
+  const gh = new FakeGitHub();
+  gh.add({ number: 1, labels: ["ready-for-agent"], state: "closed", stateReason: "not_planned" });
+  const snapshot = await tracker(gh).readIssue(ref(1));
+
+  const verdict = evaluateEligibility({ project: PROJECT, issue: snapshot, tracked: new Set() }, coreRules);
+
+  assert.equal(verdict.eligible, false);
+});
+
+test("only open blocked_by dependencies block: a blocker closed for another reason does not block", async () => {
+  const gh = new FakeGitHub();
+  const notPlanned = gh.add({ number: 3, state: "closed", stateReason: "not_planned" });
+  gh.add({ number: 1, labels: ["ready-for-agent"], blockedBy: [notPlanned.dbId] });
+
+  const snapshot = await tracker(gh).readIssue(ref(1));
+
+  assert.deepEqual(snapshot.blockers, {
+    known: true,
+    value: [{ ref: ref(3), terminal: { known: true, value: true } }],
+  });
+  const verdict = evaluateEligibility({ project: PROJECT, issue: snapshot, tracked: new Set() }, coreRules);
+  assert.equal(verdict.eligible, true);
+});
+
 test("markDone on an issue already closed as completed is expected and writes nothing", async () => {
   const gh = new FakeGitHub();
   gh.add({ number: 1, state: "closed", stateReason: "completed" });

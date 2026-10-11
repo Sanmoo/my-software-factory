@@ -146,7 +146,7 @@ export class GitHubTracker implements TrackerPort {
       assignees: { known: true, value: issue.assignees },
       claimed: { known: true, value: claimed },
       blockers: await this.readBlockers(ref),
-      statusCategory: { known: true, value: this.statusOf(issue, claimed) },
+      statusCategory: this.statusOf(issue, claimed),
       // GitHub Issues has no priority field: null is the honest answer, not unknown.
       priority: { known: true, value: null },
     };
@@ -264,10 +264,16 @@ export class GitHubTracker implements TrackerPort {
     return issue.assignees.length > 0 || issue.labels.includes(this.options.claimedLabel);
   }
 
-  private statusOf(issue: RestIssue, claimed: boolean): StatusCategory {
-    // Closed means terminal regardless of reason; open and claimed means started.
-    if (issue.state === "closed") return "done";
-    return claimed ? "in-progress" : "to-do";
+  // R02: done is an issue closed as completed. Closed for another reason is not done, and GitHub
+  // has no category for it, so its status stays unknown and eligibility rejects it. Open and
+  // claimed means started.
+  private statusOf(issue: RestIssue, claimed: boolean): Known<StatusCategory> {
+    if (issue.state === "closed") {
+      return issue.stateReason === "completed"
+        ? { known: true, value: "done" }
+        : { known: false, reason: `fechada como ${issue.stateReason ?? "sem motivo"}, não como completed` };
+    }
+    return { known: true, value: claimed ? "in-progress" : "to-do" };
   }
 
   private async fetchIssue(ref: IssueRef): Promise<RestIssue> {
