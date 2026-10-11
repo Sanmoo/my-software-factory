@@ -1,0 +1,402 @@
+import type { InstanceConfig, ProjectConfig } from "../config/types.js";
+import type { Runner, RunKind, RunnerOutput } from "../runtime/runner.js";
+import { evaluateEligibility, type Verdict } from "./eligibility.js";
+import { appendLog, holdsSlot, newJob, transitionJob, type Continuation, type Job, type JobState } from "./job.js";
+import type { JobStore } from "./job-store.js";
+import { projectEligibility, type ProjectEligibility } from "./project-eligibility.js";
+import { normalizePriority } from "./priority.js";
+import { parseRunOutput } from "./result.js";
+import { refKey, type IssueRef, type IssueSnapshot, type TrackerPort } from "../tracker/port.js";
+
+// The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
+// and concurrency limits (R05), runs the runner and records its result (R08, R09), and
+// persists every change (P01). Runners run in the background; `poll` returns once the
+// admissions decided in that poll are dispatched.
+
+export interface AdmissionDeps {
+  instance: InstanceConfig;
+  tracker: TrackerPort;
+  runner: Runner;
+  store: JobStore;
+}
+
+export interface PollReport {
+  admitted: string[];
+  skipped: Array<{ key: string; reason: string }>;
+  errors: Array<{ key: string; message: string }>;
+}
+
+export type ContinuationOutcome = { status: "queued" } | { status: "rejected"; reason: string };
+
+// Continuations allowed from each state: a resume answers a help request or continues an
+// interrupted job; a correction answers feedback on an open PR (R09, R10).
+const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
+  resume: ["waiting-for-help", "interrupted"],
+  correction: ["waiting-for-pr"],
+};
+
+const UNRESOLVED_START = "início não confirmado pelo tracker: claim e doing não estão visíveis";
+
+interface NewCandidate {
+  ref: IssueRef;
+  key: string;
+  project: ProjectConfig;
+  eligibility: ProjectEligibility;
+  priority: number;
+}
+
+const byKey = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+const byPriorityThenIdentity = (a: NewCandidate, b: NewCandidate) =>
+  a.priority - b.priority || byKey(a.key, b.key);
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// Job files are named after their key (see file-job-store), so an unreadable file still
+// tells which issue it belongs to.
+function keyFromFileName(name: string): string[] {
+  try {
+    return [decodeURIComponent(name.replace(/\.json$/, ""))];
+  } catch {
+    return [];
+  }
+}
+
+export class Admission {
+  readonly unreadable: readonly string[];
+  private readonly jobs = new Map<string, Job>();
+  // Keys of job files that could not be read: their issues stay tracked, never re-admitted.
+  private readonly unreadableKeys: ReadonlySet<string>;
+  private readonly runs = new Set<Promise<void>>();
+  private readonly runErrors: unknown[] = [];
+
+  private constructor(private readonly deps: AdmissionDeps, loaded: Job[], unreadable: string[]) {
+    for (const job of loaded) this.jobs.set(job.key, job);
+    this.unreadable = unreadable;
+    this.unreadableKeys = new Set(unreadable.flatMap(keyFromFileName));
+  }
+
+  // Opening recovers from a crash: any job that held a slot is interrupted and is not
+  // executed again automatically (R12).
+  static async open(deps: AdmissionDeps): Promise<Admission> {
+    const { jobs, unreadable } = await deps.store.load();
+    const admission = new Admission(deps, jobs, unreadable);
+    for (const job of jobs) {
+      if (holdsSlot(job.state)) {
+        await admission.apply(job.key, "interrupted", {
+          message: "orquestrador caiu com trabalho ativo; não reexecutado automaticamente",
+          reason: "orquestrador caiu com trabalho ativo; não reexecutado automaticamente",
+        });
+      }
+    }
+    return admission;
+  }
+
+  job(key: string): Job | undefined {
+    return this.jobs.get(key);
+  }
+
+  allJobs(): Job[] {
+    return [...this.jobs.values()].sort((a, b) => byKey(a.key, b.key));
+  }
+
+  // Waits for every dispatched runner to finish; returns the errors of runs that failed
+  // at the persistence level (runner failures are job results, not errors).
+  async settle(): Promise<unknown[]> {
+    while (this.runs.size > 0) await Promise.all([...this.runs]);
+    return [...this.runErrors];
+  }
+
+  // One polling cycle: continuations first (CA07), then new work by priority (P05).
+  async poll(): Promise<PollReport> {
+    const report: PollReport = { admitted: [], skipped: [], errors: [] };
+    const continuations = this.allJobs().filter((job) => job.pending !== undefined);
+    for (const job of continuations) {
+      await this.guard(job.key, report, () => this.admitContinuation(job, report));
+    }
+    let candidates: NewCandidate[] = [];
+    try {
+      candidates = await this.discover(report);
+    } catch (error) {
+      report.errors.push({ key: "discovery", message: messageOf(error) });
+    }
+    for (const candidate of candidates) {
+      await this.guard(candidate.key, report, () => this.admitNew(candidate, report));
+    }
+    return report;
+  }
+
+  async requestContinuation(key: string, kind: Continuation): Promise<ContinuationOutcome> {
+    const job = this.jobs.get(key);
+    if (!job) return { status: "rejected", reason: "trabalho desconhecido" };
+    if (job.pending !== undefined) return { status: "queued" };
+    if (!CONTINUATIONS[kind].includes(job.state)) {
+      return { status: "rejected", reason: `${kind} não se aplica ao estado ${job.state}` };
+    }
+    await this.persist({ ...appendLog(job, `${kind} solicitado; aguarda vaga`), pending: kind });
+    return { status: "queued" };
+  }
+
+  private async guard(key: string, report: PollReport, action: () => Promise<void>): Promise<void> {
+    try {
+      await action();
+    } catch (error) {
+      report.errors.push({ key, message: messageOf(error) });
+    }
+  }
+
+  private async discover(report: PollReport): Promise<NewCandidate[]> {
+    const candidates: NewCandidate[] = [];
+    for (const project of this.deps.instance.projects) {
+      if (!project.enabled) continue;
+      const eligibility = projectEligibility(this.deps.instance, project);
+      const refs = await this.deps.tracker.discoverCandidates(eligibility.scope);
+      for (const ref of refs) {
+        const key = refKey(ref);
+        if (this.jobs.has(key)) continue;
+        if (this.unreadableKeys.has(key)) {
+          report.skipped.push({ key, reason: "arquivo do trabalho ilegível; não readmitido" });
+          continue;
+        }
+        const snapshot = await this.deps.tracker.readIssue(ref);
+        const verdict = this.verdictFor(eligibility, snapshot, this.trackedKeys());
+        if (!verdict.eligible) {
+          report.skipped.push({ key, reason: this.describe(verdict) });
+          continue;
+        }
+        candidates.push({ ref, key, project, eligibility, priority: normalizePriority(snapshot.priority) });
+      }
+    }
+    return candidates.sort(byPriorityThenIdentity);
+  }
+
+  private isTracked(key: string): boolean {
+    return this.jobs.has(key) || this.unreadableKeys.has(key);
+  }
+
+  private trackedKeys(): ReadonlySet<string> {
+    return new Set([...this.jobs.keys(), ...this.unreadableKeys]);
+  }
+
+  private verdictFor(eligibility: ProjectEligibility, snapshot: IssueSnapshot, tracked: ReadonlySet<string>): Verdict {
+    return evaluateEligibility({ project: eligibility.project, issue: snapshot, tracked }, eligibility.rules);
+  }
+
+  private describe(verdict: Verdict): string {
+    return verdict.eligible ? "" : verdict.rejections.map((rejection) => rejection.reason).join("; ");
+  }
+
+  // Sequence of R04: reread eligibility, reserve the slot, persist the job, claim,
+  // confirm claim and doing state, and only then dispatch the runner.
+  private async admitNew(candidate: NewCandidate, report: PollReport): Promise<void> {
+    const { ref, key } = candidate;
+    if (this.isTracked(key)) {
+      report.skipped.push({ key, reason: "já acompanhada pelo script" });
+      return;
+    }
+    const snapshot = await this.deps.tracker.readIssue(ref);
+    const verdict = this.verdictFor(candidate.eligibility, snapshot, this.trackedKeys());
+    if (!verdict.eligible) {
+      report.skipped.push({ key, reason: this.describe(verdict) });
+      return;
+    }
+    const job = newJob({ ref, repository: candidate.project.repository });
+    const blocked = this.reserve(job);
+    if (blocked) {
+      report.skipped.push({ key, reason: blocked });
+      return;
+    }
+    await this.persist(job);
+    await this.note(key, "vaga reservada; claim solicitado");
+
+    let claimed;
+    try {
+      claimed = await this.deps.tracker.claim(ref);
+    } catch {
+      await this.afterClaimWriteError(key, ref, report);
+      return;
+    }
+    if (claimed.status === "rejected") {
+      await this.forget(key);
+      report.skipped.push({ key, reason: `claim recusado pelo tracker: ${claimed.reason}` });
+      return;
+    }
+    if (!(await this.startConfirmed(ref))) {
+      await this.apply(key, "intervention-required", { message: UNRESOLVED_START, reason: UNRESOLVED_START });
+      report.errors.push({ key, message: UNRESOLVED_START });
+      return;
+    }
+    await this.note(key, `início confirmado; runner disparado (${this.deps.instance.maxIterations} iterações)`);
+    report.admitted.push(key);
+    this.dispatch(key, ref, "new", this.deps.instance.maxIterations);
+  }
+
+  private async admitContinuation(job: Job, report: PollReport): Promise<void> {
+    const kind = job.pending!;
+    const project = this.deps.instance.projects.find((candidate) => candidate.repository === job.repository && candidate.enabled);
+    if (!project) {
+      report.skipped.push({ key: job.key, reason: "projeto do trabalho não está habilitado na instância" });
+      return;
+    }
+    const snapshot = await this.deps.tracker.readIssue(job.ref);
+    if (!snapshot.claimed.known || !snapshot.statusCategory.known) {
+      report.skipped.push({ key: job.key, reason: "estado externo ilegível; nova leitura no próximo polling" });
+      return;
+    }
+    if (!snapshot.claimed.value) {
+      await this.apply(job.key, "intervention-required", {
+        message: "claim não está mais registrado no tracker; não reclamado automaticamente",
+        reason: "claim não está mais registrado no tracker; não reclamado automaticamente",
+      });
+      return;
+    }
+    if (snapshot.statusCategory.value === "done") {
+      await this.apply(job.key, "intervention-required", {
+        message: "issue terminal no tracker", reason: "issue terminal no tracker",
+      });
+      return;
+    }
+    const blocked = this.reserve(job);
+    if (blocked) {
+      report.skipped.push({ key: job.key, reason: blocked });
+      return;
+    }
+    const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração` });
+    report.admitted.push(job.key);
+    this.dispatch(running.key, running.ref, kind, 1);
+  }
+
+  // Capacity and repository check. Synchronous with the reservation it guards, so
+  // parallel polls cannot exceed N or start two implementations in one repository.
+  private reserve(job: Job): string | undefined {
+    const active = [...this.jobs.values()].filter((other) => holdsSlot(other.state));
+    if (active.length >= this.deps.instance.maxConcurrent) return "sem vaga livre";
+    if (active.some((other) => other.repository === job.repository)) {
+      return `repositório ${job.repository} já tem implementação ativa`;
+    }
+    this.jobs.set(job.key, job);
+    return undefined;
+  }
+
+  private async startConfirmed(ref: IssueRef): Promise<boolean> {
+    try {
+      const snapshot = await this.deps.tracker.readIssue(ref);
+      return snapshot.claimed.known && snapshot.claimed.value
+        && snapshot.statusCategory.known && snapshot.statusCategory.value === "in-progress";
+    } catch {
+      return false;
+    }
+  }
+
+  // After a write error the external state is reread before anything else (P02).
+  private async afterClaimWriteError(key: string, ref: IssueRef, report: PollReport): Promise<void> {
+    let snapshot;
+    try {
+      snapshot = await this.deps.tracker.readIssue(ref);
+    } catch {
+      await this.apply(key, "intervention-required", {
+        message: "erro de escrita no claim e estado externo ilegível",
+        reason: "erro de escrita no claim e estado externo ilegível",
+      });
+      return;
+    }
+    if (snapshot.claimed.known && snapshot.claimed.value) {
+      const reason = "erro de escrita no claim; tracker mostra claim com origem não comprovada: não iniciar";
+      await this.apply(key, "intervention-required", { message: reason, reason });
+      return;
+    }
+    if (snapshot.claimed.known) {
+      await this.forget(key);
+      report.errors.push({ key, message: "erro de escrita no claim; nada registrado no tracker, nova tentativa no próximo polling" });
+      return;
+    }
+    const reason = "erro de escrita no claim e estado externo desconhecido";
+    await this.apply(key, "intervention-required", { message: reason, reason });
+  }
+
+  private dispatch(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): void {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations).catch((error: unknown) => {
+      this.runErrors.push(error);
+    });
+    this.runs.add(run);
+    void run.then(() => this.runs.delete(run));
+  }
+
+  // Up to maxIterations invocations of the runner. A final output that is absent,
+  // ambiguous or invalid is never success and stops the job at once.
+  private async execute(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): Promise<void> {
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      let output: RunnerOutput;
+      try {
+        output = await this.deps.runner.run({ jobId: key, ref, kind, iteration, maxIterations });
+      } catch {
+        await this.apply(key, "intervention-required", {
+          message: "runner falhou sem resultado estruturado",
+          reason: "runner falhou sem resultado estruturado",
+        });
+        return;
+      }
+      if (output.kind === "continue") {
+        if (iteration < maxIterations) {
+          await this.note(key, `iteração ${iteration}/${maxIterations} (${kind}) sem resultado final; nova iteração`);
+        }
+        continue;
+      }
+      const parsed = parseRunOutput(output.results);
+      if (!parsed.ok) {
+        const reason = `resultado inválido: ${parsed.reason}`;
+        await this.apply(key, "intervention-required", { message: reason, reason });
+        return;
+      }
+      const result = parsed.result;
+      switch (result.status) {
+        case "needs_help":
+          await this.apply(key, "waiting-for-help", {
+            message: `pedido de ajuda: ${result.question}`,
+            question: result.question,
+            context: result.context,
+          });
+          return;
+        case "pr_ready":
+          await this.apply(key, "waiting-for-pr", {
+            message: `PR pronto: ${result.pr.repository}#${result.pr.number}`,
+            pr: result.pr,
+          });
+          return;
+        case "interrupted":
+          await this.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason });
+          return;
+      }
+    }
+    const reason = `limite de iterações (${maxIterations}) atingido sem resultado válido`;
+    await this.apply(key, "intervention-required", { message: reason, reason });
+  }
+
+  private async apply(
+    key: string,
+    to: JobState,
+    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"] },
+  ): Promise<Job> {
+    const current = this.jobs.get(key);
+    if (!current) throw new Error(`trabalho desconhecido: ${key}`);
+    const next = transitionJob(current, to, details);
+    await this.persist(next);
+    return next;
+  }
+
+  private async note(key: string, message: string): Promise<void> {
+    const current = this.jobs.get(key);
+    if (!current) throw new Error(`trabalho desconhecido: ${key}`);
+    await this.persist(appendLog(current, message));
+  }
+
+  private async persist(job: Job): Promise<void> {
+    this.jobs.set(job.key, job);
+    await this.deps.store.save(job);
+  }
+
+  private async forget(key: string): Promise<void> {
+    this.jobs.delete(key);
+    await this.deps.store.remove(key);
+  }
+}
