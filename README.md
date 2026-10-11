@@ -37,8 +37,9 @@ npm run verify
 `verify` executa `typecheck`, `lint` e `test`, nessa ordem, parando no primeiro erro.
 Oxlint analisa `.ts` em `src/` e `test/`, sem formatação ou análise de tipos; portanto,
 não detecta de forma geral promessas não tratadas, condições dependentes de tipos,
-propagação de `any` ou todo erro engolido. `no-empty` cobre apenas blocos catch vazios
-sem comentário. Supressões justificadas exigem diretiva pontual, regra e motivo:
+propagação de `any` ou todo erro engolido. `no-empty` reporta blocos vazios, exceto
+os comentados; por isso, não garante tratamento adequado de todo catch. Supressões
+justificadas exigem diretiva pontual, regra e motivo:
 
 ```ts
 // oxlint-disable-next-line typescript/no-explicit-any -- entrada legada validada externamente

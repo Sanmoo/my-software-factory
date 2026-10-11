@@ -7,6 +7,7 @@ import { jiraEligibilityRules } from "../src/tracker/jira-rules.js";
 import {
   JiraTracker,
   jiraConnectionFromEnv,
+  jiraRequest,
   type JiraConnection,
   type JiraTrackerSettings,
 } from "../src/tracker/jira.js";
@@ -274,6 +275,13 @@ async function withTracker<T>(issues: FakeIssue[], run: (tracker: JiraTracker, f
 }
 
 const ref = (id: string): IssueRef => ({ tracker: "jira", project: projectOf(id), id });
+
+test("GET requests reject a body just as fetch does, rather than silently dropping it", async () => {
+  await assert.rejects(
+    jiraRequest({ baseUrl: "https://example.atlassian.net", username: USERNAME, apiToken: TOKEN }, "GET", "/issue", { query: "value" }),
+    { name: "TypeError", message: "Request with GET/HEAD method cannot have body." },
+  );
+});
 
 test("connection is read from the JIRA_* environment variables; missing ones are named without values", () => {
   assert.deepEqual(
