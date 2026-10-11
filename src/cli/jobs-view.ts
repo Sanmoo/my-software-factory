@@ -8,6 +8,7 @@ const LABELS: Record<JobState, string> = {
   interrupted: "interrompido",
   "intervention-required": "intervenção necessária",
   done: "concluído",
+  released: "liberado (sem acompanhamento)",
 };
 
 export const stateLabel = (state: JobState): string => LABELS[state];
@@ -22,6 +23,7 @@ export function summaryOf(job: Job): string {
       return job.pr ? `${job.pr.repository}#${job.pr.number}` : "";
     case "interrupted":
     case "intervention-required":
+    case "released":
       return job.reason ?? "";
     default:
       return "";

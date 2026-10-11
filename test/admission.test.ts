@@ -6,13 +6,18 @@ import test from "node:test";
 import { Admission } from "../src/core/admission.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
-import { FakeRunner, finished } from "../src/runtime/fake-runner.js";
-import type { Runner, RunnerOutput } from "../src/runtime/runner.js";
+import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
+import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
+import { createFileCommandQueue } from "../src/state/command-queue.js";
+import { createFileInstanceControl } from "../src/state/instance-control.js";
+import type { PrLookup, PrPort } from "../src/pr/port.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { ClaimOutcome, TrackerPort } from "../src/tracker/port.js";
 
 const NEEDS_HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
+// Session and area reported by the runner; a resume needs them to continue the conversation.
+const WORKSPACE: Workspace = { session: "session-1", area: "area-1" };
 const dir = () => mkdtemp(join(tmpdir(), "msf-admission-"));
 
 const github = (repository: string) => ({
@@ -94,13 +99,20 @@ interface OpenOptions {
   maxConcurrent?: number;
   maxIterations?: number;
   tracker?: (base: MemoryTracker) => TrackerPort;
+  prs?: PrPort;
 }
+
+// Without PR state of its own a test sees no PR: a ready result is then refused.
+const NO_PRS: PrPort = { readPr: async (): Promise<PrLookup> => ({ status: "not-found" }) };
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
   tracker: options.tracker ? options.tracker(options.memory) : options.memory,
   runner: options.runner,
   store: createFileJobStore(options.stateDir),
+  commands: createFileCommandQueue(options.stateDir),
+  control: createFileInstanceControl(options.stateDir),
+  prs: options.prs ?? NO_PRS,
 });
 
 function gate() {
@@ -323,7 +335,7 @@ test("a requested resume runs before new work, even when the new work has higher
     { repo: "acme/b", id: "2", priority: 1, claimed: true },
   ]);
   const resumed = gate();
-  const runner = new FakeRunner((context) => (context.kind === "resume" ? resumed.promise : finished(NEEDS_HELP)));
+  const runner = new FakeRunner((context) => (context.kind === "resume" ? resumed.promise : withWorkspace(finished(NEEDS_HELP), WORKSPACE)));
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/a", "acme/b"] });
 
   await admission.poll();
@@ -347,7 +359,7 @@ test("a resume waits for the slot held by another active job", async () => {
   const first = gate();
   const second = gate();
   const runner = new FakeRunner((context) => {
-    if (context.kind === "new") return context.ref.id === "1" ? first.promise : second.promise;
+    if (context.kind === "new") return withWorkspace(context.ref.id === "1" ? first.promise : second.promise, WORKSPACE);
     return finished(NEEDS_HELP);
   });
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/a", "acme/b"] });
@@ -373,7 +385,7 @@ test("a resume waits while another active implementation runs in the same reposi
   const first = gate();
   const second = gate();
   const runner = new FakeRunner((context) => {
-    if (context.kind === "new") return context.ref.id === "1" ? first.promise : second.promise;
+    if (context.kind === "new") return withWorkspace(context.ref.id === "1" ? first.promise : second.promise, WORKSPACE);
     return finished(NEEDS_HELP);
   });
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], maxConcurrent: 2 });
@@ -467,7 +479,11 @@ test("a PR-ready result moves the job to waiting-for-pr with its reference and r
   const runner = new FakeRunner((context) => (context.ref.id === "1"
     ? finished({ status: "pr_ready", pr: { repository: "acme/app", number: 9 } })
     : finished(NEEDS_HELP)));
-  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  const prs: PrPort = { readPr: async () => ({ status: "found", pr: {
+    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: "msf/1",
+    checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
+  } }) };
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], prs });
 
   await admission.poll();
   await admission.settle();

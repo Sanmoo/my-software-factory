@@ -87,6 +87,9 @@ interface JobRecord {
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+// Operator replies delivered with a continuation (R09); the admission hands them over in `continuation`.
+const operatorInput = (context: RunnerContext): string => (context.continuation?.replies ?? []).join("\n");
+
 const redact = (text: string, secret: string | undefined): string =>
   secret ? text.split(secret).join("[redacted]") : text;
 
@@ -124,7 +127,7 @@ class DockerRunner implements Runner {
       const review = await this.reviewMaterial(layout.repoDir, repoRef.baseSha);
       const prompt = context.kind === "new"
         ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review })
-        : continuationPrompt({ kind: context.kind, note: context.note, ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review });
+        : continuationPrompt({ kind: context.kind, note: operatorInput(context), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,
@@ -138,6 +141,9 @@ class DockerRunner implements Runner {
 
       const sessionId = outcome.sessionId ?? repoRef.sessionId;
       await this.writeRecord(layout, { ...repoRef, sessionId });
+      // The session and area of this invocation are reported so the admission can resume them (P03).
+      const reportWorkspace = (output: RunnerOutput): RunnerOutput =>
+        sessionId === undefined ? output : { ...output, workspace: { session: sessionId, area: layout.repoDir } };
       const headSha = await headOf(layout.repoDir);
       const interpretation = interpretOutput({
         events: outcome.events,
@@ -150,7 +156,7 @@ class DockerRunner implements Runner {
         standardsSha256: review.standardsSha256,
       });
       for (const line of interpretation.audit) await this.audit(layout, line);
-      return interpretation.output;
+      return reportWorkspace(interpretation.output);
     } catch (error) {
       const reason = redact(messageOf(error), secret);
       await this.audit(layout, `interrompido: ${reason}`);
@@ -187,7 +193,16 @@ class DockerRunner implements Runner {
     if (!(await exists(layout.repoDir))) {
       throw new Error(`área do trabalho ausente: ${layout.repoDir}; retomada não reconstrói o trabalho`);
     }
-    return { ...saved, jobId: context.jobId };
+    // The admission's record of the job is the authority for what to continue; it must agree with the runner's.
+    const workspace = context.continuation?.workspace;
+    if (workspace === undefined) return { ...saved, jobId: context.jobId };
+    if (workspace.area !== layout.repoDir) {
+      throw new Error(`área registrada no trabalho (${workspace.area}) difere da área do runner; não retomar`);
+    }
+    if (saved.sessionId !== undefined && saved.sessionId !== workspace.session) {
+      throw new Error("sessão registrada no trabalho difere da sessão do runner; não retomar");
+    }
+    return { ...saved, jobId: context.jobId, sessionId: workspace.session };
   }
 
   private async reviewMaterial(repoDir: string, baseSha: string): Promise<ReviewMaterial> {

@@ -129,7 +129,12 @@ assert.ok(recordAfterFirst.sessionId, "Pi session recorded outside the container
 // 3. Continuation: same session, one iteration, same area; the operator approves the seam.
 const note = "Approved seam: export function slugify(text: string): string in src/slugify.ts. "
   + "Proceed with TDD through the export (red then green), run npm test, make one local commit.";
-const second: RunnerOutput = await runnerFor().run(context({ kind: "resume", note }));
+const firstSession = recordAfterFirst.sessionId;
+assert.ok(firstSession, "continuation needs the session recorded by the first invocation");
+const second: RunnerOutput = await runnerFor().run(context({
+  kind: "resume",
+  continuation: { workspace: { session: firstSession, area: layout.repoDir }, replies: [note] },
+}));
 process.stdout.write(`Continuation output: ${JSON.stringify(second)}\n`);
 assert.equal(second.kind, "finished");
 

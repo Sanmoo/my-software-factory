@@ -131,13 +131,14 @@ test("a new invocation runs in its own area at base, with the configured limit, 
   }));
   const output = await runnerFor(f, boundary).run(newContext());
 
+  const layout = jobLayout(f.stateDir, key);
   assert.deepEqual(output, {
     kind: "finished",
     results: [{ status: "needs_help", question: "Which seam?", context: "slugify" }],
+    workspace: { session: "session-1", area: layout.repoDir },
   });
   const [run] = runs;
   assert.ok(run, "the agent ran once");
-  const layout = jobLayout(f.stateDir, key);
   assert.equal(run.cwd, layout.repoDir);
   assert.equal(run.request.maxIterations, 5);
   assert.equal(run.request.resumeSession, undefined);
@@ -165,15 +166,41 @@ test("the git area and the Pi session survive the container: a continuation resu
   await runner.run(newContext());
   const partial = await headOf(layout.repoDir);
 
-  const output = await runner.run(newContext({ kind: "resume", maxIterations: 5, note: "Approved." }));
+  const output = await runner.run(newContext({
+    kind: "resume", maxIterations: 5,
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["Approved."] },
+  }));
 
-  assert.deepEqual(output, { kind: "finished", results: [{ status: "interrupted", reason: "done locally" }] });
+  assert.deepEqual(output, {
+    kind: "finished",
+    results: [{ status: "interrupted", reason: "done locally" }],
+    workspace: { session: "session-1", area: layout.repoDir },
+  });
   const second = runs[1]!;
   assert.equal(second.request.resumeSession, "session-1", "same Pi session");
   assert.equal(second.request.maxIterations, 1, "continuations are one iteration");
   assert.equal(second.cwd, layout.repoDir, "same area");
   assert.match(second.request.prompt, /Operator input: Approved\./);
   assert.equal(await git(layout.repoDir, "rev-parse", "HEAD").then((s) => s.trim()), partial, "partial commit kept");
+});
+
+test("a continuation naming another session or area than the runner's record is refused", async () => {
+  const f = await fixture();
+  const { boundary, runs } = fakeBoundary(async () => ({
+    sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }),
+  }));
+  const runner = runnerFor(f, boundary);
+  await runner.run(newContext());
+  const layout = jobLayout(f.stateDir, key);
+  const otherSession = await runner.run(newContext({
+    kind: "resume", continuation: { workspace: { session: "session-9", area: layout.repoDir }, replies: [] },
+  }));
+  assert.match(interruptedReason(otherSession) ?? "", /sessão registrada no trabalho difere/);
+  const otherArea = await runner.run(newContext({
+    kind: "resume", continuation: { workspace: { session: "session-1", area: "/elsewhere" }, replies: [] },
+  }));
+  assert.match(interruptedReason(otherArea) ?? "", /área registrada no trabalho/);
+  assert.equal(runs.length, 1, "neither mismatch reached the agent");
 });
 
 test("a continuation without a recorded session is an interruption, never a new conversation", async () => {
