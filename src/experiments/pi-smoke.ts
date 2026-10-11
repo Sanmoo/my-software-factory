@@ -7,7 +7,9 @@ import { pi, run, type AgentStreamEvent } from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { parseEvent, verifyPhase, type PiEvent } from "./pi-evidence.js";
 
-const model = process.env.SMOKE_MODEL ?? "openai-codex/gpt-6.1-sol";
+const model = process.env.SMOKE_MODEL;
+assert.ok(model && model.includes("/"),
+  "Set SMOKE_MODEL explicitly to provider/model; the probe never selects a fallback provider.");
 const maxIterations = Number(process.env.SMOKE_MAX_ITERATIONS ?? 5);
 assert.ok(Number.isSafeInteger(maxIterations) && maxIterations > 0);
 const root = resolve(".smoke", randomUUID());

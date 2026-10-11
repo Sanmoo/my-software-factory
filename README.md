@@ -6,7 +6,8 @@ engenharia supervisionado. Repositório privado; em fase de teste de compatibili
 ## Estado atual
 
 - Bootstrap TypeScript e teste reproduzível de Pi headless/subagentes/retomada.
-- **Teste real bloqueado por `fetch failed` no provider**, antes da delegação.
+- **Teste real bloqueado por TLS no endpoint Codex**: certificado Fortinet
+  não validado pelo Node, antes da delegação. [Diagnóstico](docs/results/002-tls-diagnosis.md).
 - Ainda não há polling, concorrência, CLI operacional nem adapters de tracker.
 - Issue tracker será acessado por porta e adapters: Jira no trabalho e GitHub
   Issues nos projetos pessoais. Campos Jira não pertencem ao contrato central.
@@ -24,8 +25,12 @@ npm run typecheck
 O teste real faz chamadas ao modelo já autenticado e não roda em `npm test`:
 
 ```sh
-SMOKE_MODEL=openai-codex/gpt-6.1-sol npm run smoke:pi
+SMOKE_MODEL=provider/model npm run smoke:pi
 ```
+
+`SMOKE_MODEL` é obrigatório e inclui provider: o teste não escolhe nem troca
+provider automaticamente. A execução inicial usou openai-codex/gpt-6.1-sol;
+esta escolha não foi uma comprovação de equivalência ao perfil interativo.
 
 `SMOKE_MAX_ITERATIONS` altera o máximo (padrão 5). A retomada usa uma iteração,
 como requerido por Sandcastle. `noSandbox()` roda no host, não isola processos.
