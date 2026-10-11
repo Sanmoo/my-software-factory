@@ -1,10 +1,13 @@
 # My Software Factory
 
 Mini orquestrador local em TypeScript, com Sandcastle e Pi, para trabalho de
-engenharia supervisionado. Repositório privado; em fase de teste de compatibilidade.
+engenharia supervisionado. Repositório privado; spec de MVP consolidada para revisão.
 
 ## Estado atual
 
+- [Spec do MVP](docs/spec.md): **Docker, Jira e GitHub Issues desde o início**;
+  requisitos confirmados, propostas técnicas e critérios de aceite separados.
+  Tickets ainda não criados. [Glossário](GLOSSARY.md).
 - Bootstrap TypeScript e teste reproduzível de Pi headless/subagentes/retomada.
 - **Teste real passou com Pi + github-copilot/gpt-6-luna**: filho async, resultado
   incorporado e retomada da mesma sessão, com uma iteração em cada fase.
@@ -57,6 +60,7 @@ Ele habilita skills e ferramentas da fixture, mantendo MCP desativado. Não roda
 em projeto real nem usa tracker/PR/deploy. Consulte as ressalvas de TDD e dos
 reviewers no [relatório](docs/results/004-implement-help.md).
 
-Detalhes: [design](docs/design.md), [resultado atual](docs/results/003-copilot-luna.md)
+Detalhes: [spec](docs/spec.md), [design e evidências](docs/design.md),
+[resultado inicial](docs/results/003-copilot-luna.md)
 e [próximos passos](docs/backlog.md). Não versionar transcrições brutas,
 credenciais ou configuração corporativa.
