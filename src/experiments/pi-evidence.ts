@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 export interface PiEvent {
   type: string;
   toolName?: string;
-  args?: { agent?: string; async?: boolean; action?: string };
+  args?: { agent?: string; async?: boolean; action?: string; model?: string };
   isError?: boolean;
   aborted?: boolean;
   message?: {
@@ -11,6 +11,14 @@ export interface PiEvent {
     stopReason?: string;
     errorMessage?: string;
     content?: Array<{ type?: string; text?: string }>;
+    usage?: {
+      input?: number;
+      output?: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+      totalTokens?: number;
+      cost?: { total?: number };
+    };
   };
 }
 
