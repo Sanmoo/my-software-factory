@@ -13,7 +13,6 @@ import {
   assertNoSecret,
   CHILD_AGENT,
   resolveSpikeModel,
-  SANDBOX_SESSIONS_DIR,
   spikeMounts,
   summarizeUsage,
   verifyDelegation,
@@ -30,7 +29,6 @@ const image = process.env.SPIKE_IMAGE ?? "msf-docker-spike:local";
 const account = "Sanmoo";
 const home = homedir();
 const repoRoot = process.cwd();
-const spikeDir = join(repoRoot, "src", "experiments", "docker-spike");
 const profileDir = join(home, ".pi", "agent");
 const previousRun = process.env.SMOKE_RUN;
 const resuming = Boolean(previousRun);
@@ -286,9 +284,14 @@ if (!resuming) {
   process.stdout.write(`Help request recorded. Question: ${output.question}\n` +
     `Reply with: SMOKE_MODEL=${model} SMOKE_RUN=${area} SMOKE_REPLY='...' npm run smoke:docker\n`);
 } else {
-  const state = JSON.parse(await readFile(statePath, "utf8")) as {
+  let state: {
     model: string; base: string; sessionId: string; childMarker: string; question: string; checkpoint: string;
   };
+  try {
+    state = JSON.parse(await readFile(statePath, "utf8"));
+  } catch (error) {
+    throw new Error(`could not read the help-phase state at ${statePath}`, { cause: error });
+  }
   assert.equal(state.model, model, "do not change models during the experiment");
   const reply = process.env.SMOKE_REPLY?.trim();
   assert.ok(reply, "SMOKE_REPLY must contain the human answer");
