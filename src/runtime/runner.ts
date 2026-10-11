@@ -31,11 +31,16 @@ export interface RunnerContext {
   // The configured repository of the job's project. A Jira key can serve several projects, so
   // the ref alone does not say which repository the job belongs to.
   repository: string;
+  // Identifies this invocation in events and logs (issue #15).
+  invocation?: string;
   kind: RunKind;
   iteration: number;
   maxIterations: number;
   // Present only for resume and correction invocations.
   continuation?: ContinuationContext;
+  // Ids of the operator commands whose replies this invocation carries, so the runner can report
+  // their delivery by id (issue #15). Replies from the tracker have no command id and are not listed.
+  replyCommands?: string[];
   // Present only for the implementation (new) invocation.
   issue?: IssueContext;
 }

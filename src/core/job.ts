@@ -19,6 +19,25 @@ export type JobState = (typeof JOB_STATES)[number];
 // Requests that re-admit a job whose claim the factory already holds (P02).
 export type Continuation = "resume" | "correction";
 
+// Why a continuation of a job was asked for (issue #15, decisions 19-21): the operational reason,
+// not the technical kind of the invocation. A trigger is kept from the moment its feedback is
+// taken until the invocation it motivates starts, so a wait for a slot never hides it.
+export type TriggerReason = "resposta-humana" | "feedback-pr" | "check-falhou" | "retomada-manual";
+
+export interface Trigger {
+  reason: TriggerReason;
+  // Where it came from: terminal, issue, pr, operador.
+  origin: string;
+  // Short reference to the event: a comment, a review, a check id, a command id.
+  ref?: string;
+  author?: string;
+  // The pull request, as "#14", when the feedback concerns one.
+  pr?: string;
+  check?: string;
+  // Id of the operator command (reply, resume) that caused it.
+  command?: string;
+}
+
 export interface Job {
   key: string; // identity: tracker + project + issue id (see refKey)
   ref: IssueRef;
@@ -38,6 +57,10 @@ export interface Job {
   // Last PR observation by polling (R11). Kept across states; it never changes the state.
   prStatus?: PrStatus;
   pending?: Continuation;
+  // The causes of the pending continuation, in the order they were taken (issue #15).
+  triggers?: Trigger[];
+  // When the external merge of the linked PR was first detected; it is announced only once.
+  mergeDetected?: string;
   log: string[];
 }
 
@@ -103,6 +126,7 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
   delete next.context;
   delete next.pending;
   if (to === "running") {
+    delete next.triggers;
     // Resuming keeps the PR reference: the PR stays the one tracked by this job.
     // Replies are delivered by the invocation that starts now (R09).
     delete next.replies;

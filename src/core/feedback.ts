@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Continuation, Job, JobState } from "./job.js";
+import type { Continuation, Job, JobState, Trigger } from "./job.js";
 import type { PrCheck, PrFeedback } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
@@ -17,6 +17,8 @@ const DIRECTED_PREFIX = "agent:";
 export interface FeedbackInput {
   key?: string;
   message: string;
+  // Why this input reactivates the job, for the observability of the continuation.
+  trigger?: Trigger;
 }
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -37,13 +39,17 @@ export function isFactoryComment(tracker: TrackerKind, body: string): boolean {
 
 // A human issue comment without marker that starts with `agent:` is a directed reply (CA11).
 // Anything else is conversation between people and is not feedback.
-export function directedReply(tracker: TrackerKind, comment: Comment): { key: string; message: string } | undefined {
+export function directedReply(tracker: TrackerKind, comment: Comment): { key: string; message: string; trigger: Trigger } | undefined {
   if (comment.isBot || isFactoryComment(tracker, comment.body)) return undefined;
   const text = comment.body.trim();
   if (!text.startsWith(DIRECTED_PREFIX)) return undefined;
   const message = text.slice(DIRECTED_PREFIX.length).trim();
   if (message === "") return undefined;
-  return { key: commentKey("issue", comment.id, comment.body), message };
+  return {
+    key: commentKey("issue", comment.id, comment.body),
+    message,
+    trigger: { reason: "resposta-humana", origin: "issue", ref: `comentário ${comment.id}`, author: comment.author },
+  };
 }
 
 export interface PrJudgement {
@@ -65,7 +71,11 @@ export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<stri
     if (consumed.has(key)) continue;
     const label = comment.kind === "review" ? "revisão" : "comentário";
     const text = comment.body.trim() === "" ? "(sem texto)" : comment.body.trim();
-    inputs.push({ key, message: `${label} de ${comment.author}: ${text}` });
+    inputs.push({
+      key,
+      message: `${label} de ${comment.author}: ${text}`,
+      trigger: { reason: "feedback-pr", origin: "pr", ref: `${label} ${comment.id}`, author: comment.author },
+    });
   }
 
   const suspects = feedback.checks
@@ -78,7 +88,11 @@ export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<stri
     : suspects.filter((check) => !requiredExist || (check.required.known && check.required.value));
   for (const check of triggering) {
     const text = check.state.known ? `check com falha: ${check.name}` : `check de estado desconhecido: ${check.name}`;
-    inputs.push({ key: checkKey(check), message: text });
+    inputs.push({
+      key: checkKey(check),
+      message: text,
+      trigger: { reason: "check-falhou", origin: "pr", check: check.name, ref: check.id },
+    });
   }
 
   if (!blind) return { inputs };
@@ -110,10 +124,12 @@ export function receiveFeedback(job: Job, inputs: FeedbackInput[], origin: strin
   if (effect === undefined) return { reason: `não se aplica ao estado ${job.state}` };
   const log = inputs.map((input) => `${origin}; ${effect.log}: ${input.message}`);
   const consumed = inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
+  const triggers = inputs.flatMap((input) => (input.trigger === undefined ? [] : [input.trigger]));
   return {
     job: {
       ...job,
       ...(effect.pending === undefined ? {} : { pending: effect.pending }),
+      ...(triggers.length === 0 ? {} : { triggers: [...(job.triggers ?? []), ...triggers] }),
       replies: [...(job.replies ?? []), ...inputs.map((input) => input.message)],
       consumed: [...(job.consumed ?? []), ...consumed],
       log: [...job.log, ...log],

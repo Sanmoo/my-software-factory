@@ -4,7 +4,7 @@ import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind,
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
-import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
+import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
 import { directedReply, judgePrFeedback, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
@@ -12,7 +12,9 @@ import { issueContextOf } from "./issue-context.js";
 import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
-import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
+import { noopObserver, type FieldValue, type Observer } from "./observability.js";
+import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, triggerSummary, type IssueWriteContext } from "./ops-events.js";
+import { PartialWriteError, refKey, type IssueChange, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
 // The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
@@ -31,6 +33,9 @@ export interface AdmissionDeps {
   prs: PrPort;
   // The eligibility setup of each configured project, built by the configuration layer.
   eligibility: (project: ProjectConfig) => ProjectEligibility;
+  // Where the operational events go (main log and local history). Absent: nothing is observed.
+  // Observing never changes what the admission does (issue #15).
+  observer?: Observer;
 }
 
 export interface CommandOutcome {
@@ -109,8 +114,13 @@ export class Admission {
   private readonly unreadableKeys: ReadonlySet<string>;
   private readonly runs = new Set<Promise<void>>();
   private readonly runErrors: unknown[] = [];
+  private readonly obs: Observer;
+  private invocationSeq = 0;
+  // Waits already announced, so a poll that finds the same wait again does not repeat the event.
+  private readonly announcedWaits = new Set<string>();
 
   private constructor(private readonly deps: AdmissionDeps, loaded: Job[], unreadable: string[]) {
+    this.obs = deps.observer ?? noopObserver;
     for (const job of loaded) this.jobs.set(job.key, job);
     this.unreadable = unreadable;
     this.unreadableKeys = new Set(unreadable.flatMap(keyFromFileName));
@@ -186,15 +196,60 @@ export class Admission {
     return report;
   }
 
-  async requestContinuation(key: string, kind: Continuation): Promise<ContinuationOutcome> {
+  // A manual resume (or a correction asked by hand) is a trigger of its own: it is kept with
+  // the others until the invocation starts (issue #15).
+  async requestContinuation(key: string, kind: Continuation, command?: string): Promise<ContinuationOutcome> {
     const job = this.jobs.get(key);
     if (!job) return { status: "rejected", reason: "trabalho desconhecido" };
-    if (job.pending !== undefined) return { status: "queued" };
+    const trigger: Trigger = {
+      reason: "retomada-manual", origin: command === undefined ? "operador" : "terminal",
+      ...(command === undefined ? {} : { command, ref: `comando ${command}` }),
+    };
+    if (job.pending !== undefined) {
+      if (command !== undefined) await this.persist({ ...job, triggers: [...(job.triggers ?? []), trigger] });
+      return { status: "queued" };
+    }
     if (!CONTINUATIONS[kind].includes(job.state)) {
       return { status: "rejected", reason: `${kind} não se aplica ao estado ${job.state}` };
     }
-    await this.persist({ ...appendLog(job, `${kind} solicitado; aguarda vaga`), pending: kind });
+    await this.persist({ ...appendLog(job, `${kind} solicitado; aguarda vaga`), pending: kind, triggers: [...(job.triggers ?? []), trigger] });
+    this.emitFor(key, "feedback-recebido", "retomada solicitada", triggerSummary([trigger]).fields);
     return { status: "queued" };
+  }
+
+  // One operational event of a job. Never throws: the observer reports its own failures.
+  private emitFor(key: string, kind: string, text: string, fields: Record<string, FieldValue> = {}, lines?: string[], invocation?: string): void {
+    this.obs.emit({ kind, text, job: key, ...(invocation === undefined ? {} : { invocation }), fields, ...(lines === undefined ? {} : { lines }) });
+  }
+
+  // A tracker write made by the orchestrator: the attempt is announced before, the concrete
+  // changes the adapter reports after, and a failure keeps whatever was written before it.
+  // The write itself is never repeated because of what is observed.
+  private async writeIssue<T extends { changes?: IssueChange[] } | void>(
+    context: IssueWriteContext,
+    write: () => Promise<T>,
+  ): Promise<T> {
+    this.obs.emit(issueWriteAttempt(context));
+    try {
+      return await write();
+    } catch (error) {
+      if (error instanceof PartialWriteError) this.reportChanges(context, error.changes);
+      this.obs.emit(issueWriteFailure(context, messageOf(error), true));
+      throw error;
+    }
+  }
+
+  private reportChanges(context: IssueWriteContext, changes: readonly IssueChange[] | undefined): void {
+    for (const change of changes ?? []) this.obs.emit(issueChangeEvent(context, change));
+  }
+
+  private writeContext(job: { key: string; ref: IssueRef }, operation: string, reason: string, invocation?: string, refs?: Record<string, FieldValue>): IssueWriteContext {
+    return { ref: job.ref, job: job.key, origin: "orquestrador", operation, reason, ...(invocation === undefined ? {} : { invocation }), ...(refs === undefined ? {} : { refs }) };
+  }
+
+  private newInvocation(): string {
+    this.invocationSeq += 1;
+    return `inv-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${this.invocationSeq}`;
   }
 
   // Applies the queued commands in order and removes each one once it has been applied.
@@ -224,13 +279,19 @@ export class Admission {
     const base = { id: command.id, type: command.type };
     if (command.type === "pause" || command.type === "unpause") {
       await this.deps.control.setPaused(command.type === "pause");
+      this.obs.emit({ kind: "comando-aplicado", text: command.type === "pause" ? "instância pausada" : "instância despausada", fields: { comando: command.id } });
       return { ...base, status: "applied" };
     }
     const job = this.jobs.get(command.job);
     if (!job) return { ...base, job: command.job, status: "rejected", reason: "trabalho desconhecido" };
     const reason = await this.operate(job, command);
-    if (reason === undefined) return { ...base, job: job.key, status: "applied" };
+    if (reason === undefined) {
+      // `reply aplicado` is the orchestrator taking the reply: neither delivery nor start of a run.
+      this.emitFor(job.key, "comando-aplicado", `${command.type} aplicado`, { comando: command.id });
+      return { ...base, job: job.key, status: "applied" };
+    }
     await this.note(job.key, `${command.type} rejeitado: ${reason}`);
+    this.emitFor(job.key, "comando-rejeitado", `${command.type} rejeitado`, { comando: command.id, motivo: reason });
     return { ...base, job: job.key, status: "rejected", reason };
   }
 
@@ -238,21 +299,22 @@ export class Admission {
   private async operate(job: Job, command: JobCommand): Promise<string | undefined> {
     switch (command.type) {
       case "reply":
-        return this.reply(job, command.message);
+        return this.reply(job, command.message, command.id);
       case "resume": {
-        const outcome = await this.requestContinuation(job.key, "resume");
+        const outcome = await this.requestContinuation(job.key, "resume", command.id);
         return outcome.status === "rejected" ? outcome.reason : undefined;
       }
       case "release":
-        return this.release(job);
+        return this.release(job, command.id);
     }
   }
 
   // A terminal reply is directed input with no tracker event behind it (R09). It takes the same
   // path as an `agent:` comment, so both have the same effect (CA11).
-  private async reply(job: Job, message: string): Promise<string | undefined> {
+  private async reply(job: Job, message: string, command: string): Promise<string | undefined> {
     if (message.trim() === "") return "resposta vazia";
-    const outcome = receiveFeedback(job, [{ message }], "resposta recebida");
+    const trigger: Trigger = { reason: "resposta-humana", origin: "terminal", command, ref: `comando ${command}` };
+    const outcome = receiveFeedback(job, [{ message, trigger }], "resposta recebida");
     if ("reason" in outcome) return `reply ${outcome.reason}`;
     await this.persist(outcome.job);
     return undefined;
@@ -278,19 +340,38 @@ export class Admission {
           return;
         }
         await this.persist(outcome.job);
+        this.announceFeedback(current.key, inputs);
       });
+    }
+  }
+
+  // Feedback taken by the job: each input is announced once, when it is consumed, with its reason
+  // and a short reference. The invocation it motivates is announced when it starts.
+  private announceFeedback(key: string, inputs: readonly { trigger?: Trigger }[]): void {
+    for (const input of inputs) {
+      if (input.trigger === undefined) continue;
+      this.emitFor(key, "feedback-recebido", "feedback recebido", triggerSummary([input.trigger]).fields);
     }
   }
 
   // Removes the claim and ends tracking; area, session and PR stay on the job. Never moves
   // the issue to done and never touches the PR (R09, CA19). A write whose answer was lost is
   // confirmed by rereading the tracker (P02).
-  private async release(job: Job): Promise<string | undefined> {
+  private async release(job: Job, command?: string): Promise<string | undefined> {
     if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
+    const context = this.writeContext(job, "release", "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
+    let changes: IssueChange[] | undefined;
     try {
-      await this.deps.tracker.releaseClaim(job.ref);
+      const outcome = await this.writeIssue(context, async () => this.deps.tracker.releaseClaim(job.ref));
+      changes = outcome?.changes;
     } catch (error) {
       if (!(await this.claimRemoved(job.ref))) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+    }
+    // The reread decides what the label change was: an accepted call alone is only an attempt.
+    if (changes !== undefined) {
+      const removed = await this.claimRemoved(job.ref);
+      this.reportChanges(context, changes.map((change) =>
+        change.operation === "remover-label" && change.result === "attempted" && removed ? { ...change, result: "confirmed" as const } : change));
     }
     await this.apply(job.key, "released", {
       message: "claim removido pelo operador; acompanhamento encerrado; área, sessão e PR preservados",
@@ -374,19 +455,22 @@ export class Admission {
     const job = newJob({ ref, repository: candidate.project.repository });
     const blocked = this.reserve(job);
     if (blocked) {
+      this.announceWait(key, "issue-elegível", blocked, []);
       report.skipped.push({ key, reason: blocked });
       return;
     }
     await this.persist(job);
     await this.note(key, "vaga reservada; claim solicitado");
 
+    const context = this.writeContext(job, "claim", "admissão");
     let claimed;
     try {
-      claimed = await this.deps.tracker.claim(ref);
+      claimed = await this.writeIssue(context, () => this.deps.tracker.claim(ref));
     } catch {
       await this.afterClaimWriteError(key, ref, report);
       return;
     }
+    this.reportChanges(context, claimed.changes);
     if (claimed.status === "rejected") {
       await this.forget(key);
       report.skipped.push({ key, reason: `claim recusado pelo tracker: ${claimed.reason}` });
@@ -399,7 +483,11 @@ export class Admission {
     }
     await this.note(key, `início confirmado; runner disparado (${this.deps.instance.maxIterations} iterações)`);
     report.admitted.push(key);
-    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref), undefined, issueContextOf(snapshot));
+    // `trabalho admitido` is only for this first admission; later starts say why they continue.
+    this.emitFor(key, "trabalho-admitido", "trabalho admitido", { motivo: "issue-elegível" });
+    this.clearWaits(key);
+    const invocation = this.startInvocation(key, "new", [], {});
+    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref), invocation, undefined, issueContextOf(snapshot));
   }
 
   private async admitContinuation(job: Job, report: PollReport): Promise<void> {
@@ -440,8 +528,14 @@ export class Admission {
       });
       return;
     }
+    // A job whose continuation was asked before triggers existed (an older state file) still says
+    // why, by the kind it was asked as, instead of inventing a cause.
+    const triggers: Trigger[] = job.triggers !== undefined && job.triggers.length > 0
+      ? job.triggers
+      : [{ reason: kind === "correction" ? "feedback-pr" : "retomada-manual", origin: "desconhecida" }];
     const blocked = this.reserve(job);
     if (blocked) {
+      this.announceWait(job.key, kind, blocked, triggers);
       report.skipped.push({ key: job.key, reason: blocked });
       return;
     }
@@ -449,7 +543,48 @@ export class Admission {
     const delivered = replies.length > 0 ? `; ${replies.length} resposta(s) entregue(s)` : "";
     const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração${delivered}` });
     report.admitted.push(job.key);
-    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), { workspace, replies });
+    this.clearWaits(job.key);
+    const commands = triggers.flatMap((trigger) => (trigger.reason === "resposta-humana" && trigger.command !== undefined ? [trigger.command] : []));
+    const invocation = this.startInvocation(job.key, kind, triggers, { sessão: workspace.session, área: workspace.area });
+    for (const command of commands) {
+      this.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, undefined, invocation);
+    }
+    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, replies }, undefined, commands);
+  }
+
+  // The invocation that is about to run, announced with its operational reason (issue #15).
+  private startInvocation(key: string, kind: RunKind, triggers: readonly Trigger[], extra: Record<string, FieldValue>): string {
+    const invocation = this.newInvocation();
+    const reasons = kind === "new"
+      ? { fields: { motivo: "issue-elegível" } as Record<string, FieldValue>, lines: [] as string[] }
+      : triggerSummary(triggers);
+    this.emitFor(
+      key,
+      kind === "new" ? "invocação-iniciada" : "invocação-retomada",
+      kind === "new" ? "invocação iniciada" : "invocação retomada",
+      { tipo: kind === "new" ? "nova" : kind === "resume" ? "retomada" : "correção", ...reasons.fields, ...extra },
+      reasons.lines.length > 1 ? reasons.lines : undefined,
+      invocation,
+    );
+    return invocation;
+  }
+
+  private clearWaits(key: string): void {
+    for (const entry of [...this.announcedWaits]) if (entry.startsWith(`${key}|`)) this.announcedWaits.delete(entry);
+  }
+
+  // A job that waits for a slot or another impediment keeps its original reason (decision 21).
+  // Each distinct wait is announced once, not on every poll.
+  private announceWait(key: string, kind: Continuation | RunKind | "issue-elegível", impediment: string, triggers: readonly Trigger[]): void {
+    const signature = `${kind}|${impediment}|${JSON.stringify(triggers)}`;
+    if (this.announcedWaits.has(`${key}|${signature}`)) return;
+    this.announcedWaits.add(`${key}|${signature}`);
+    const reasons = triggers.length === 0 ? { fields: { motivo: "issue-elegível" } as Record<string, FieldValue>, lines: [] as string[] } : triggerSummary(triggers);
+    this.emitFor(
+      key, "invocação-aguardando", triggers.length === 0 ? "issue elegível aguardando vaga" : "invocação aguardando vaga",
+      { ...reasons.fields, impedimento: impediment },
+      reasons.lines.length > 1 ? reasons.lines : undefined,
+    );
   }
 
   // Capacity and repository check. Synchronous with the reservation it guards, so
@@ -506,10 +641,12 @@ export class Admission {
     kind: RunKind,
     maxIterations: number,
     delivery: Delivery,
+    invocation: string,
     continuation?: ContinuationContext,
     issue?: IssueContext,
+    replyCommands?: string[],
   ): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, continuation, issue).catch((error: unknown) => {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue, replyCommands).catch((error: unknown) => {
       this.runErrors.push(error);
     });
     this.runs.add(run);
@@ -524,8 +661,10 @@ export class Admission {
     kind: RunKind,
     maxIterations: number,
     delivery: Delivery,
+    invocation: string,
     continuation?: ContinuationContext,
     issue?: IssueContext,
+    replyCommands?: string[],
   ): Promise<void> {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
@@ -536,20 +675,25 @@ export class Admission {
         kind,
         iteration,
         maxIterations,
+        invocation,
         ...(continuation ? { continuation } : {}),
         ...(issue ? { issue } : {}),
+        ...(replyCommands !== undefined && replyCommands.length > 0 ? { replyCommands } : {}),
       };
       try {
         output = await this.deps.runner.run(context);
       } catch {
+        this.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "falha-do-runner" }, undefined, invocation);
         await this.apply(key, "intervention-required", {
           message: "runner falhou sem resultado estruturado",
           reason: "runner falhou sem resultado estruturado",
+          invocation,
         });
         return;
       }
       if (output.workspace) await this.update(key, { workspace: output.workspace });
       if (output.kind === "continue") {
+        this.emitFor(key, "invocação-encerrada", "iteração encerrada sem resultado final", { iteração: `${iteration}/${maxIterations}`, resultado: "sem-resultado" }, undefined, invocation);
         if (iteration < maxIterations) {
           await this.note(key, `iteração ${iteration}/${maxIterations} (${kind}) sem resultado final; nova iteração`);
         }
@@ -558,28 +702,31 @@ export class Admission {
       const parsed = parseRunOutput(output.results);
       if (!parsed.ok) {
         const reason = `resultado inválido: ${parsed.reason}`;
-        await this.apply(key, "intervention-required", { message: reason, reason });
+        this.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "inválido" }, undefined, invocation);
+        await this.apply(key, "intervention-required", { message: reason, reason, invocation });
         return;
       }
       const result = parsed.result;
+      this.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: result.status }, undefined, invocation);
       switch (result.status) {
         case "needs_help":
           await this.apply(key, "waiting-for-help", {
             message: `pedido de ajuda: ${result.question}`,
             question: result.question,
             context: result.context,
+            invocation,
           });
           return;
         case "pr_ready":
-          await this.acceptPr(key, result.pr, delivery);
+          await this.acceptPr(key, result.pr, delivery, invocation);
           return;
         case "interrupted":
-          await this.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason });
+          await this.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason, invocation });
           return;
       }
     }
     const reason = `limite de iterações (${maxIterations}) atingido sem resultado válido`;
-    await this.apply(key, "intervention-required", { message: reason, reason });
+    await this.apply(key, "intervention-required", { message: reason, reason, invocation });
   }
 
   private enabledProjectOf(job: Job): ProjectConfig | undefined {
@@ -589,10 +736,10 @@ export class Admission {
   // A "PR pronto" result is accepted only after the PR port confirms it (R08, CA19). An
   // invalid PR is a help request. A PR that cannot be read is neither success nor help: the
   // operator decides (P02), so the job needs intervention.
-  private async acceptPr(key: string, pr: PrRef, delivery: Delivery): Promise<void> {
+  private async acceptPr(key: string, pr: PrRef, delivery: Delivery, invocation?: string): Promise<void> {
     const misplaced = misplacedRepository(pr, delivery);
     if (misplaced !== undefined) {
-      await this.refusePr(key, pr, misplaced);
+      await this.refusePr(key, pr, misplaced, invocation);
       return;
     }
     let lookup: PrLookup;
@@ -602,23 +749,25 @@ export class Admission {
       await this.apply(key, "intervention-required", {
         message: `PR não pôde ser confirmado: ${messageOf(error)}`,
         reason: `PR não pôde ser confirmado no github.com: ${messageOf(error)}`,
+        invocation,
       });
       return;
     }
     const verdict = judgeReadyPr(lookup, delivery);
     if (!verdict.valid) {
-      await this.refusePr(key, pr, verdict.reason);
+      await this.refusePr(key, pr, verdict.reason, invocation);
       return;
     }
-    await this.apply(key, "waiting-for-pr", { message: `PR validado: ${pr.repository}#${pr.number}`, pr });
+    await this.apply(key, "waiting-for-pr", { message: `PR validado: ${pr.repository}#${pr.number}`, pr, invocation });
     if (lookup.status === "found") await this.observe(key, lookup.pr);
   }
 
-  private async refusePr(key: string, pr: PrRef, reason: string): Promise<void> {
+  private async refusePr(key: string, pr: PrRef, reason: string, invocation?: string): Promise<void> {
     await this.apply(key, "waiting-for-help", {
       message: `PR pronto recusado: ${reason}`,
       question: `PR pronto não confirmado (${pr.repository}#${pr.number}): ${reason}. Corrija o PR ou informe o próximo passo.`,
       context: "",
+      invocation,
     });
   }
 
@@ -652,6 +801,7 @@ export class Admission {
         await this.collectPrFeedback(job, pr, report);
         return;
       case "merged":
+        await this.announceMerge(job, pr, project.targetBranch);
         await this.complete(job, report, project.targetBranch);
         return;
       case "closed": {
@@ -684,12 +834,16 @@ export class Admission {
     if (judgement.inputs.length === 0) return;
     const consumed = judgement.inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
     if (judgement.undecidable === undefined) {
-      const outcome = receiveFeedback(current, judgement.inputs, "feedback do PR recebido");
+      const prRef = `#${pr.number}`;
+      const inputs = judgement.inputs.map((input) =>
+        input.trigger === undefined ? input : { ...input, trigger: { ...input.trigger, pr: prRef } });
+      const outcome = receiveFeedback(current, inputs, "feedback do PR recebido");
       if ("reason" in outcome) {
         report.skipped.push({ key: job.key, reason: `feedback do PR ${outcome.reason}` });
         return;
       }
       await this.persist(outcome.job);
+      this.announceFeedback(job.key, inputs);
       return;
     }
     const items = judgement.inputs.map((input) => input.message).join("; ");
@@ -702,24 +856,43 @@ export class Admission {
     });
   }
 
+  // The external merge of the linked PR, seen once: recorded on the job before it is announced,
+  // so the next polls (while `done` is still pending) do not repeat it. The factory never merges.
+  private async announceMerge(job: Job, pr: PrRef, targetBranch: string): Promise<void> {
+    const current = this.jobs.get(job.key) ?? job;
+    if (current.mergeDetected !== undefined) return;
+    await this.persist({ ...current, mergeDetected: new Date().toISOString() });
+    this.emitFor(job.key, "merge-detectado", "merge detectado", {
+      pr: `${pr.repository}#${pr.number}`, destino: targetBranch, origem: "externa",
+    });
+  }
+
   // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
   // reread (R11). Until then the job keeps waiting and the next poll tries again.
   private async complete(job: Job, report: PollReport, targetBranch: string): Promise<void> {
     let confirmed = false;
     let why = "";
+    const context = this.writeContext(job, "done", "conclusão-após-merge");
     try {
-      const outcome = await this.deps.tracker.markDone(job.ref);
+      const outcome = await this.writeIssue(context, () => this.deps.tracker.markDone(job.ref));
       if (outcome.status === "not-confirmed") {
         why = outcome.reason;
+        this.reportChanges(context, outcome.changes);
       } else {
         const snapshot = await this.deps.tracker.readIssue(job.ref);
         confirmed = snapshot.statusCategory.known && snapshot.statusCategory.value === "done";
         if (!confirmed) why = "releitura não mostra done";
+        // The reread is the evidence: an adapter that only attempted the write is confirmed by it.
+        this.reportChanges(context, outcome.changes?.map((change) =>
+          confirmed && change.result === "attempted" ? { ...change, result: "confirmed" as const } : change));
       }
     } catch (error) {
       why = messageOf(error);
     }
     if (!confirmed) {
+      this.emitFor(job.key, "conclusão-pendente", "merge confirmado; done ainda não confirmado", {
+        motivo: why, próximo: "nova tentativa no próximo polling",
+      });
       report.errors.push({
         key: job.key,
         message: `PR mesclado; done ainda não confirmado pelo tracker (${why}): nova tentativa no próximo polling`,
@@ -738,6 +911,11 @@ export class Admission {
     const status: PrStatus = { checks: pr.checks, review: pr.review };
     if (current.prStatus && statusKey(current.prStatus) === statusKey(status)) return;
     await this.persist(recordPrStatus(current, status, describeStatus(status)));
+    this.emitFor(key, "acompanhamento-pr", "acompanhamento do PR alterado", {
+      pr: `${pr.ref.repository}#${pr.ref.number}`,
+      ci: status.checks.known ? status.checks.value : `desconhecido (${status.checks.reason})`,
+      review: status.review.known ? status.review.value : `desconhecido (${status.review.reason})`,
+    });
   }
 
   // `consumed` records feedback taken by this same transition, so the state and the record
@@ -745,7 +923,7 @@ export class Admission {
   private async apply(
     key: string,
     to: JobState,
-    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"]; consumed?: string[] },
+    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"]; consumed?: string[]; invocation?: string },
   ): Promise<Job> {
     const current = this.jobs.get(key);
     if (!current) throw new Error(`trabalho desconhecido: ${key}`);
@@ -754,7 +932,46 @@ export class Admission {
       : current;
     const next = transitionJob(base, to, details);
     await this.persist(next);
+    this.announceState(next, details);
     return next;
+  }
+
+  // The operational event of a state the job has just entered. Waiting for help keeps the whole
+  // question and context in the history and says how to answer (issue #15, decisions 3, 5, 6).
+  private announceState(job: Job, details: { reason?: string; question?: string; context?: string; invocation?: string }): void {
+    const { key } = job;
+    const { invocation } = details;
+    switch (job.state) {
+      case "waiting-for-help": {
+        const commands = this.obs.commands(key);
+        const lines = [
+          `pergunta: ${details.question ?? ""}`,
+          ...(details.context ? [`contexto: ${details.context}`] : []),
+          ...(commands ? [`responder: ${commands.reply}`, `histórico: ${commands.logs}`, ...(commands.detail ? [`log detalhado: ${commands.detail}`] : [])] : []),
+        ];
+        this.emitFor(key, "ajuda-solicitada", "ajuda solicitada", {}, lines, invocation);
+        return;
+      }
+      case "waiting-for-pr":
+        this.emitFor(key, "pr-aceito", "PR aceito para acompanhamento; o trabalho não está concluído", {
+          pr: job.pr === undefined ? undefined : `${job.pr.repository}#${job.pr.number}`,
+        }, undefined, invocation);
+        return;
+      case "interrupted":
+        this.emitFor(key, "trabalho-interrompido", "trabalho interrompido", { motivo: details.reason }, undefined, invocation);
+        return;
+      case "intervention-required":
+        this.emitFor(key, "intervenção-necessária", "intervenção necessária", { motivo: details.reason }, undefined, invocation);
+        return;
+      case "done":
+        this.emitFor(key, "trabalho-concluído", "trabalho concluído", { done: "confirmado" });
+        return;
+      case "released":
+        this.emitFor(key, "trabalho-liberado", "trabalho liberado", { motivo: details.reason });
+        return;
+      case "running":
+        return;
+    }
   }
 
   private async note(key: string, message: string): Promise<void> {
