@@ -142,9 +142,13 @@ assert.equal(second.kind, "finished");
 const recordAfterSecond = JSON.parse(await readFile(layout.recordPath, "utf8")) as { sessionId?: string };
 const sameSession = recordAfterSecond.sessionId === recordAfterFirst.sessionId;
 assert.ok(sameSession, "the continuation must use the same Pi session");
+// Each Sandcastle iteration of the new invocation is a fresh Pi session file; the continuation
+// must append to the one the runner recorded (the last iteration of the new invocation).
 const sessionFiles = (await execFileAsync("find", [layout.sessionsDir, "-name", "*.jsonl"])).stdout
-  .split("\n").filter(Boolean).length;
-assert.equal(sessionFiles, 1, "one Pi session file for the whole job");
+  .split("\n").filter(Boolean);
+const continuationFile = sessionFiles.find((path) => path.endsWith(`_${firstSession}.jsonl`));
+assert.ok(continuationFile, "the recorded session file exists");
+assert.match(await readFile(continuationFile, "utf8"), /Continue the resume of work item/, "continuation appended to the recorded session");
 const commits = Number((await git(layout.repoDir, "rev-list", "--count", `${recordAfterFirst.baseSha}..HEAD`)).trim());
 const status = (await git(layout.repoDir, "status", "--porcelain")).trim();
 const { stdout: hostTest } = await execFileAsync("node", ["--test", "test/slugify.test.ts"], { cwd: layout.repoDir }).catch(
@@ -158,7 +162,7 @@ const report = {
   first,
   second,
   sameSession,
-  sessionFiles,
+  sessionFiles: sessionFiles.length,
   fixtureCommitsSinceBase: commits,
   areaClean: status === "",
   hostTestOutput: hostTest.split("\n").filter((line) => /^# (pass|fail)/.test(line)),
