@@ -47,6 +47,7 @@ function reviewRules(input: JobPromptInput): string {
 
 const RESULT_PROTOCOL = [
   "Result protocol: end your final message with exactly one structured result, then the completion signal.",
+  "This holds even when you ask a question: a question without the result tag is not delivered and ends nothing.",
   `- Needs a human decision: <msf-result>{"status":"needs_help","question":"...","context":"..."}</msf-result>`,
   `- PR ready: <msf-result>{"status":"pr_ready","pr":{"repository":"owner/repo","number":N},"reviews":[...]}</msf-result>`,
   "  only when the pull request exists and both reviews are approved. Each review entry is",

@@ -60,6 +60,7 @@ test("the result protocol asks for one structured result and the completion sign
   }
   assert.ok(prompt.includes("<msf-result>"), "result tag");
   assert.ok(prompt.includes(COMPLETION_SIGNAL), "completion signal");
+  assert.match(prompt, /even when you ask a question/, "a question still needs the tag");
   assert.ok(prompt.includes('"reviews"'), "review evidence for pr_ready");
 });
 
