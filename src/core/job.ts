@@ -1,6 +1,6 @@
 import { refKey, type IssueRef, type Known } from "../tracker/port.js";
 import type { Workspace } from "../runtime/runner.js";
-import type { CheckState, ReviewState } from "../pr/port.js";
+import type { CheckState, Mergeability, ReviewState } from "../pr/port.js";
 import type { PrRef } from "./result.js";
 
 // Job states (R04, R05, R08, R09, R12). `running` is the only state that holds a slot:
@@ -22,7 +22,7 @@ export type Continuation = "resume" | "correction";
 // Why a continuation of a job was asked for (issue #15, decisions 19-21): the operational reason,
 // not the technical kind of the invocation. A trigger is kept from the moment its feedback is
 // taken until the invocation it motivates starts, so a wait for a slot never hides it.
-export type TriggerReason = "resposta-humana" | "feedback-pr" | "check-falhou" | "retomada-manual";
+export type TriggerReason = "resposta-humana" | "feedback-pr" | "check-falhou" | "conflito-pr" | "retomada-manual";
 
 export interface Trigger {
   reason: TriggerReason;
@@ -67,6 +67,7 @@ export interface Job {
 export interface PrStatus {
   checks: Known<CheckState>;
   review: Known<ReviewState>;
+  mergeable: Known<Mergeability>;
 }
 
 // Letters, digits, "_", "-" and "/" stand for themselves. Any other UTF-16 unit is written as "%"

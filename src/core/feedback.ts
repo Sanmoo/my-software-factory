@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Continuation, Job, JobState, Trigger } from "./job.js";
-import type { PrCheck, PrFeedback } from "../pr/port.js";
+import type { PrCheck, PrFeedback, PrSnapshot } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
 
@@ -51,6 +51,25 @@ export function directedReply(tracker: TrackerKind, comment: Comment): { key: st
     trigger: { reason: "resposta-humana", origin: "issue", ref: `comentário ${comment.id}`, author: comment.author },
   };
 }
+
+// A conflict of the PR with its target branch calls for a correction (R10, CA12). It is judged on the
+// pair of head and base commits the PR is read at: that pair is taken once, so a correction that did
+// not move the head does not repeat, while a new conflicting pair calls for it again. Unknown
+// mergeability is no verdict: it is neither a conflict nor its absence, and the next poll reads it again.
+export function judgeConflict(pr: PrSnapshot, consumed: ReadonlySet<string>): FeedbackInput | undefined {
+  if (!pr.mergeable.known || pr.mergeable.value !== "conflicting") return undefined;
+  const key = `pr:conflict:${pr.headSha}@${pr.baseSha}`;
+  if (consumed.has(key)) return undefined;
+  const head = shortSha(pr.headSha);
+  const base = shortSha(pr.baseSha);
+  return {
+    key,
+    message: `PR em conflito com ${pr.baseBranch} (head ${head}, base ${base})`,
+    trigger: { reason: "conflito-pr", origin: "pr", ref: `conflito ${head}..${base}`, pr: `#${pr.ref.number}` },
+  };
+}
+
+const shortSha = (sha: string): string => sha.slice(0, 7);
 
 export interface PrJudgement {
   // New feedback that calls for a response or a correction (or, when undecidable, is for the human).

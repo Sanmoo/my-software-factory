@@ -86,7 +86,7 @@ test("a job branch is a valid git ref name for any repository name, even one sta
 
 test("recording PR status keeps the state and the PR, and logs only when a message is given", () => {
   const pr = transitionJob(start(), "waiting-for-pr", { message: "PR validado", pr: { repository: "acme/app", number: 3 } });
-  const status = { checks: { known: true as const, value: "pending" as const }, review: { known: true as const, value: "none" as const } };
+  const status = { checks: { known: true as const, value: "pending" as const }, review: { known: true as const, value: "none" as const }, mergeable: { known: true as const, value: "mergeable" as const } };
 
   const silent = recordPrStatus(pr, status);
   assert.equal(silent.state, "waiting-for-pr");

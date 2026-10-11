@@ -23,10 +23,16 @@ function ghWith(
   return { run, calls };
 }
 
+const HEAD_SHA = "1111111111111111111111111111111111111111";
+const BASE_SHA = "2222222222222222222222222222222222222222";
+
 const pullRequest = (overrides: Record<string, unknown> = {}, rollup: unknown = { state: "PENDING" }) => ({
   state: "OPEN",
   baseRefName: "main",
   headRefName: jobBranch({ tracker: "github", project: "acme/app", id: "8" }),
+  headRefOid: HEAD_SHA,
+  baseRefOid: BASE_SHA,
+  mergeable: "MERGEABLE",
   reviewDecision: null,
   commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
   ...overrides,
@@ -45,6 +51,9 @@ test("an open PR is read with the project account's token injected per call, nev
       state: "open",
       baseBranch: "main",
       headBranch: jobBranch({ tracker: "github", project: "acme/app", id: "8" }),
+      headSha: HEAD_SHA,
+      baseSha: BASE_SHA,
+      mergeable: { known: true, value: "mergeable" },
       checks: { known: true, value: "pending" },
       review: { known: true, value: "none" },
     },
@@ -57,6 +66,33 @@ test("an open PR is read with the project account's token injected per call, nev
   for (const call of calls) {
     assert.ok(!call.args.some((arg) => arg.includes(TOKEN)), "the token never appears in argv");
   }
+});
+
+// ---- R10 / issue #19: mergeability of the PR, read from github.com ----------------------------
+
+const mergeableOf = async (mergeable: unknown) => {
+  const { run } = ghWith(pullRequest({ mergeable }));
+  const lookup = await createGithubPrPort({ accountOf: () => "acme-bot", run }).readPr(ref);
+  assert.equal(lookup.status, "found");
+  return lookup.status === "found" ? lookup.pr.mergeable : undefined;
+};
+
+test("a PR that conflicts with its base is conflicting; one that is only behind or clean is mergeable", async () => {
+  assert.deepEqual(await mergeableOf("CONFLICTING"), { known: true, value: "conflicting" });
+  assert.deepEqual(await mergeableOf("MERGEABLE"), { known: true, value: "mergeable" });
+});
+
+test("mergeability GitHub has not computed yet is unknown, never read as the absence of a conflict", async () => {
+  const unknown = await mergeableOf("UNKNOWN");
+  assert.equal(unknown?.known, false);
+  assert.match(unknown?.known === false ? unknown.reason : "", /mergeabilidade/);
+  const unrecognized = await mergeableOf("A_NOVA_MERGEABILIDADE");
+  assert.equal(unrecognized?.known, false, "an unrecognized value is unknown too");
+});
+
+test("a PR without the commits it was read at is an unexpected answer, not a PR to judge", async () => {
+  const { run } = ghWith(pullRequest({ headRefOid: undefined }));
+  await assert.rejects(createGithubPrPort({ accountOf: () => "acme-bot", run }).readPr(ref), /consulta de PR/);
 });
 
 test("merged and closed PRs keep their state and the base and head branches", async () => {
@@ -108,7 +144,8 @@ test("the PR port exposes reads only: there is no merge operation to call", asyn
 
   assert.deepEqual(Object.keys(port), ["readPr", "readFeedback"]);
   await port.readPr(ref);
-  assert.ok(calls.every((call) => !call.args.some((arg) => /merge/i.test(arg))), "no gh call built by the adapter merges");
+  // Reading mergeability is allowed; any merge mutation or `pr merge` command is not.
+  assert.ok(calls.every((call) => !call.args.some((arg) => /mergePullRequest|enablePullRequestAutoMerge|pr merge/i.test(arg))), "no gh call built by the adapter merges");
 });
 
 // ---- CA12: feedback read from the PR (reviews, conversation comments, checks) ---------------

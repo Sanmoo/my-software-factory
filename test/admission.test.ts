@@ -525,7 +525,7 @@ test("a PR-ready result moves the job to waiting-for-pr with its reference and r
     ? finished({ status: "pr_ready", pr: { repository: "acme/app", number: 9 } })
     : finished(NEEDS_HELP)));
   const prs: PrPort = { readPr: async () => ({ status: "found", pr: {
-    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: JOB_HEAD,
+    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: JOB_HEAD, headSha: "h1", baseSha: "b1", mergeable: { known: true, value: "mergeable" },
     checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
   } }), readFeedback: async () => ({ comments: [], checks: [] }), };
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], prs });

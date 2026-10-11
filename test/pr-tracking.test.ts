@@ -93,6 +93,9 @@ const prOf = (overrides: Partial<PrSnapshot> = {}): PrSnapshot => ({
   state: "open",
   baseBranch: TARGET,
   headBranch: HEAD,
+  headSha: "h1",
+  baseSha: "b1",
+  mergeable: { known: true, value: "mergeable" },
   checks: { known: true, value: "pending" },
   review: { known: true, value: "none" },
   ...overrides,
@@ -145,7 +148,7 @@ test("a ready PR that is open, based on the target branch and headed by the job 
   const job = admission.job(keyOf);
   assert.equal(job?.state, "waiting-for-pr");
   assert.deepEqual(job?.pr, { repository: "acme/app", number: 9 }, "the link is the one the factory recorded");
-  assert.deepEqual(job?.prStatus, { checks: { known: true, value: "pending" }, review: { known: true, value: "none" } });
+  assert.deepEqual(job?.prStatus, { checks: { known: true, value: "pending" }, review: { known: true, value: "none" }, mergeable: { known: true, value: "mergeable" } });
   assert.deepEqual(s.prs.reads, [{ repository: "acme/app", number: 9 }]);
 });
 
@@ -330,7 +333,7 @@ test("the full lifecycle through the github.com adapter builds no merge call", a
     argvs.push([...args]);
     if (args[0] === "auth") return { exitCode: 0, stdout: "gho_test_not_real\n", stderr: "" };
     const pullRequest = {
-      state: pr.state, baseRefName: pr.base, headRefName: pr.head, reviewDecision: null,
+      state: pr.state, baseRefName: pr.base, headRefName: pr.head, headRefOid: "h1", baseRefOid: "b1", mergeable: "MERGEABLE", reviewDecision: null,
       commits: { nodes: [{ commit: { statusCheckRollup: { state: pr.rollup } } }] },
     };
     return { exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest } } }), stderr: "" };
@@ -349,5 +352,5 @@ test("the full lifecycle through the github.com adapter builds no merge call", a
   assert.equal(admission.job(keyOf)?.state, "done");
   assert.ok(argvs.length > 0);
   assert.ok(argvs.every((argv) => !argv.includes("merge")), "no gh call merges a PR");
-  assert.ok(argvs.every((argv) => !argv.some((arg) => /merge/i.test(arg))));
+  assert.ok(argvs.every((argv) => !argv.some((arg) => /mergePullRequest|enablePullRequestAutoMerge|pr merge/i.test(arg))), "reading mergeability is not a merge");
 });

@@ -1,11 +1,11 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
-import type { PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
+import type { Mergeability, PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
 import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
-import { directedReply, judgePrFeedback, receiveFeedback } from "./feedback.js";
+import { directedReply, judgeConflict, judgePrFeedback, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
@@ -89,13 +89,17 @@ const byKey = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byPriorityThenIdentity = (a: NewCandidate, b: NewCandidate) =>
   a.priority - b.priority || byKey(a.key, b.key);
 
-const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, status.review]);
+const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, status.review, status.mergeable]);
 
 const describeKnown = <T extends string>(label: string, known: Known<T>): string =>
   known.known ? `${label}: ${known.value}` : `${label}: desconhecido (${known.reason})`;
 
+// Unknown mergeability is said as unknown: it is neither a conflict nor the absence of one (R10).
+const describeMergeable = (mergeable: Known<Mergeability>): string =>
+  mergeable.known ? (mergeable.value === "conflicting" ? "PR em conflito" : "sem conflito") : `mergeabilidade desconhecida (${mergeable.reason})`;
+
 const describeStatus = (status: PrStatus): string =>
-  `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}`;
+  `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}; ${describeMergeable(status.mergeable)}`;
 
 // Job files are named after their key (see file-job-store), so an unreadable file still
 // tells which issue it belongs to.
@@ -566,7 +570,9 @@ export class Admission {
     for (const command of commands) {
       this.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, { invocation });
     }
-    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, replies }, undefined, commands);
+    const conflict = triggers.some((trigger) => trigger.reason === "conflito-pr");
+    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation,
+      { workspace, replies, ...(conflict ? { conflict: true } : {}) }, undefined, commands);
   }
 
   // The causes of the pending continuation of a job. One asked before triggers existed (an older state
@@ -822,6 +828,7 @@ export class Admission {
     switch (verdict.kind) {
       case "open":
         await this.observe(job.key, verdict.pr);
+        await this.collectConflict(job, verdict.pr, report);
         await this.collectPrFeedback(job, pr, report);
         return;
       case "merged":
@@ -839,6 +846,22 @@ export class Admission {
         return;
       }
     }
+  }
+
+  // A conflict of the open PR with its target branch (R10, CA12) becomes a correction with a slot and
+  // a reason of its own. It is judged on the commits read now, so a failing feedback read never hides it.
+  private async collectConflict(job: Job, snapshot: PrSnapshot, report: PollReport): Promise<void> {
+    const current = this.jobs.get(job.key);
+    if (!current || current.state !== "waiting-for-pr") return;
+    const input = judgeConflict(snapshot, new Set(current.consumed ?? []));
+    if (input === undefined) return;
+    const outcome = receiveFeedback(current, [input], "conflito do PR recebido");
+    if ("reason" in outcome) {
+      report.skipped.push({ key: current.key, reason: `conflito do PR ${outcome.reason}` });
+      return;
+    }
+    await this.persist(outcome.job);
+    this.announceFeedback(current.key, [input]);
   }
 
   // Feedback on an open PR (R10, CA12): human reviews and comments, and failing checks, become
@@ -932,13 +955,14 @@ export class Admission {
   private async observe(key: string, pr: PrSnapshot): Promise<void> {
     const current = this.jobs.get(key);
     if (!current) throw new Error(`trabalho desconhecido: ${key}`);
-    const status: PrStatus = { checks: pr.checks, review: pr.review };
+    const status: PrStatus = { checks: pr.checks, review: pr.review, mergeable: pr.mergeable };
     if (current.prStatus && statusKey(current.prStatus) === statusKey(status)) return;
     await this.persist(recordPrStatus(current, status, describeStatus(status)));
     this.emitFor(key, "acompanhamento-pr", "acompanhamento do PR alterado", {
       pr: `${pr.ref.repository}#${pr.ref.number}`,
       ci: status.checks.known ? status.checks.value : `desconhecido (${status.checks.reason})`,
       review: status.review.known ? status.review.value : `desconhecido (${status.review.reason})`,
+      mergeabilidade: describeMergeable(status.mergeable),
     });
   }
 

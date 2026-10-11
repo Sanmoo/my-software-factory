@@ -61,13 +61,14 @@ const memoryOf = (ids: string[]) => loadMemoryTracker({
 class FakePrs implements PrPort {
   feedback: PrFeedback = { comments: [], checks: [] };
   state: PrSnapshot["state"] = "open";
+  mergeable: PrSnapshot["mergeable"] = { known: true, value: "mergeable" };
 
   async readPr(ref: PrRef): Promise<PrLookup> {
     return {
       status: "found",
       pr: {
-        ref, state: this.state, baseBranch: "main", headBranch: HEAD("1"),
-        checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
+        ref, state: this.state, baseBranch: "main", headBranch: HEAD("1"), headSha: "h1", baseSha: "b1",
+        mergeable: this.mergeable, checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
       },
     };
   }
@@ -416,3 +417,38 @@ test("a release whose write errored but whose reread shows the claim gone is con
   assert.match(matching(s.lines, /resultado da alteração incerto/)[0]!, /erro="resposta perdida"/);
   assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /confirmada por releitura após erro de escrita/);
 });
+
+test("a PR conflict is announced on the main line and in the history with its reason, and the correction names it", async () => {
+  const s = await setup({ runner: new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE)) });
+  await s.admission.poll();
+  await s.admission.settle();
+
+  s.prs.mergeable = { known: true, value: "conflicting" };
+  assert.deepEqual((await s.admission.poll()).admitted, [KEY("1")]);
+  await s.admission.settle();
+  await s.observer.flush();
+
+  const received = matching(s.lines, /feedback recebido/)[0]!;
+  assert.match(received, /motivo=conflito-pr origem=pr/);
+  const resumed = matching(s.lines, /invocação retomada/)[0]!;
+  assert.match(resumed, /motivo=conflito-pr/);
+  assert.match(s.admission.job(KEY("1"))?.log.join("\n") ?? "", /PR em conflito/, "the job log says the PR conflicts");
+  const { records } = await createFileHistory(s.stateDir).read(KEY("1"));
+  const record = records.find((entry) => entry.kind === "invocação-retomada")!;
+  assert.equal(record.fields.motivo, "conflito-pr", "the history keeps the reason");
+});
+
+test("unknown mergeability is not announced as a conflict on the main line", async () => {
+  const s = await setup({ runner: new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE)) });
+  await s.admission.poll();
+  await s.admission.settle();
+
+  s.prs.mergeable = { known: false, reason: "mergeabilidade ainda não calculada pelo github.com" };
+  await s.admission.poll();
+  await s.observer.flush();
+
+  assert.deepEqual(matching(s.lines, /motivo=conflito-pr|PR em conflito|feedback recebido/), [], "no conflict is announced");
+  assert.equal(matching(s.lines, /mergeabilidade="mergeabilidade desconhecida/).length, 1, "the unknown is said as unknown");
+  assert.match(s.admission.job(KEY("1"))?.log.join("\n") ?? "", /mergeabilidade desconhecida/);
+});
+

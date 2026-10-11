@@ -8,12 +8,18 @@ import type { Comment, Known } from "../tracker/port.js";
 export type PrState = "open" | "closed" | "merged";
 export type CheckState = "pending" | "passing" | "failing" | "none";
 export type ReviewState = "none" | "pending" | "approved" | "changes-requested";
+// Whether the PR conflicts with its base branch (R10). Unknown while GitHub has not computed it.
+export type Mergeability = "mergeable" | "conflicting";
 
 export interface PrSnapshot {
   ref: PrRef;
   state: PrState;
   baseBranch: string;
   headBranch: string;
+  // The commits the PR was read at. A conflict is identified by this pair (R10).
+  headSha: string;
+  baseSha: string;
+  mergeable: Known<Mergeability>;
   checks: Known<CheckState>;
   review: Known<ReviewState>;
 }

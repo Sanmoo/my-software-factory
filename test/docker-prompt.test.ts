@@ -100,3 +100,37 @@ test("a continuation carries the operator's input when there is one, and says so
   assert.ok(withoutNote.includes("<msf-result>"), "same result protocol");
   assert.ok(withoutNote.includes(job.baseSha));
 });
+
+// ---- issue #19: a correction for a conflict with the target branch -------------------------
+
+test("a conflict correction rebases the job branch onto the remote target and force-pushes only that branch", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", conflict: true });
+  assert.match(prompt, /conflicts with main on github\.com/);
+  assert.ok(prompt.includes("git fetch origin main"), "fetch the remote target");
+  assert.ok(prompt.includes("git rebase origin/main"), "rebase onto the remote target");
+  assert.ok(prompt.includes(`git push --force-with-lease origin ${job.branch}`), "force-with-lease, on the job branch only");
+  assert.match(prompt, /Never merge main into the branch/, "no merge of the target into the branch");
+  assert.match(prompt, /Never merge the pull request/, "no merge of the PR");
+});
+
+test("a conflict correction asks for help when it cannot decide how to resolve a conflict", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", conflict: true });
+  assert.match(prompt, /cannot decide how to resolve a conflict, ask for help with needs_help/);
+});
+
+test("a conflict correction reviews against the target it was rebased onto, not the old base", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", conflict: true });
+  assert.match(prompt, /review base is the commit origin\/main points to after the rebase, not the base above/);
+});
+
+test("a correction for any other feedback does not carry the conflict rules", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction" });
+  assert.doesNotMatch(prompt, /force-with-lease/);
+  assert.doesNotMatch(prompt, /rebase/);
+});
+
+test("a conflict correction still carries the operator's input, when there is one", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", conflict: true, note: "prefira a versão nova" });
+  assert.match(prompt, /Operator input: prefira a versão nova/);
+  assert.match(prompt, /force-with-lease/);
+});

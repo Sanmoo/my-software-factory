@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import type { PrRef } from "../core/result.js";
 import type { Known } from "../tracker/port.js";
-import type { CheckState, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, ReviewState } from "./port.js";
+import type { CheckState, Mergeability, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, ReviewState } from "./port.js";
 import { isObject, type Obj } from "../core/values.js";
 
 // github.com adapter for the PR port, through the `gh` CLI (R01, R11). Each call gets the
@@ -27,7 +27,7 @@ export interface GithubPrOptions {
 // Read-only: the queries are the pull request lookup and its feedback. No merge operation exists here.
 const PULL_REQUEST_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { "
-  + "pullRequest(number: $number) { state baseRefName headRefName reviewDecision "
+  + "pullRequest(number: $number) { state baseRefName headRefName headRefOid baseRefOid mergeable reviewDecision "
   + "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } }";
 
 // Feedback of the PR (R10): conversation comments, reviews (the last 100 of each) and the checks of the
@@ -154,12 +154,22 @@ function parseFeedback(body: unknown): PrFeedback {
   return { comments: [...comments, ...reviews], checks: contexts.map(checkOf) };
 }
 
+// UNKNOWN is GitHub still computing the answer: it is not a verdict either way (R10).
+function mergeabilityOf(value: unknown): Known<Mergeability> {
+  if (value === "MERGEABLE") return { known: true, value: "mergeable" };
+  if (value === "CONFLICTING") return { known: true, value: "conflicting" };
+  return value === "UNKNOWN"
+    ? { known: false, reason: "mergeabilidade ainda não calculada pelo github.com" }
+    : { known: false, reason: `mergeabilidade desconhecida: ${String(value)}` };
+}
+
 function parseSnapshot(ref: PrRef, body: unknown): PrSnapshot {
   const repository = isObject(body) && isObject(body.data) ? body.data.repository : undefined;
   const pullRequest = isObject(repository) ? repository.pullRequest : undefined;
   if (!isObject(pullRequest)) throw new Error("consulta de PR: resposta inesperada do github.com");
   const state = typeof pullRequest.state === "string" ? STATES[pullRequest.state] : undefined;
-  if (state === undefined || typeof pullRequest.baseRefName !== "string" || typeof pullRequest.headRefName !== "string") {
+  if (state === undefined || typeof pullRequest.baseRefName !== "string" || typeof pullRequest.headRefName !== "string"
+    || typeof pullRequest.headRefOid !== "string" || typeof pullRequest.baseRefOid !== "string") {
     throw new Error("consulta de PR: resposta inesperada do github.com");
   }
   return {
@@ -167,6 +177,9 @@ function parseSnapshot(ref: PrRef, body: unknown): PrSnapshot {
     state,
     baseBranch: pullRequest.baseRefName,
     headBranch: pullRequest.headRefName,
+    headSha: pullRequest.headRefOid,
+    baseSha: pullRequest.baseRefOid,
+    mergeable: mergeabilityOf(pullRequest.mergeable),
     checks: knownFrom(CHECKS, rollupStateOf(pullRequest), "estado de checks"),
     review: knownFrom(REVIEWS, pullRequest.reviewDecision, "decisão de review"),
   };

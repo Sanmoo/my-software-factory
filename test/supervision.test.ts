@@ -37,7 +37,7 @@ const openPrs: PrPort = {
         ref,
         state: "open",
         baseBranch: "main",
-        headBranch: JOB_HEAD,
+        headBranch: JOB_HEAD, headSha: "h1", baseSha: "b1", mergeable: { known: true, value: "mergeable" },
         checks: { known: true, value: "pending" },
         review: { known: true, value: "none" },
       },
@@ -403,7 +403,7 @@ test("pause does not stop the tracking of a waiting PR: a merge is still confirm
       return {
         status: "found",
         pr: {
-          ref, state, baseBranch: "main", headBranch: JOB_HEAD,
+          ref, state, baseBranch: "main", headBranch: JOB_HEAD, headSha: "h1", baseSha: "b1", mergeable: { known: true, value: "mergeable" },
           checks: { known: true, value: "passing" }, review: { known: true, value: "approved" },
         },
       };

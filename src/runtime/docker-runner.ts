@@ -145,7 +145,7 @@ class DockerRunner implements Runner {
         : await this.resumeJob(context, saved, layout);
       const prompt = context.kind === "new"
         ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, ...(context.issue ? { issue: context.issue } : {}) })
-        : continuationPrompt({ kind: context.kind, note: operatorInput(context), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
+        : continuationPrompt({ kind: context.kind, note: operatorInput(context), conflict: context.continuation?.conflict === true, ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,

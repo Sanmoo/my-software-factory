@@ -76,7 +76,7 @@ const openPrs: PrPort = {
         ref,
         state: "open",
         baseBranch: "main",
-        headBranch: JOB_HEAD,
+        headBranch: JOB_HEAD, headSha: "h1", baseSha: "b1", mergeable: { known: true, value: "mergeable" },
         checks: { known: true, value: "pending" },
         review: { known: true, value: "none" },
       },

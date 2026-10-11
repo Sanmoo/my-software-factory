@@ -10,13 +10,14 @@ import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
-import type { PrLookup, PrPort, PrFeedback, PrSnapshot } from "../src/pr/port.js";
+import type { Mergeability, PrLookup, PrPort, PrFeedback, PrSnapshot } from "../src/pr/port.js";
 import type { PrRef } from "../src/core/result.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
 import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import type { IssueRef } from "../src/tracker/port.js";
+import type { IssueRef, Known } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
+import { summaryOf } from "../src/cli/jobs-view.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 // Feedback reactivates a job through the same effects as a terminal reply (R09, R10, CA11, CA12).
@@ -85,6 +86,10 @@ const memoryOf = (ids: string[], comments: Record<string, unknown[]> = {}) => lo
 class FakePrs implements PrPort {
   feedback: PrFeedback = { comments: [], checks: [] };
   unreadableFeedback = false;
+  // The PR as GitHub answers now: the commits it is read at and whether it conflicts with its base.
+  headSha = "h1";
+  baseSha = "b1";
+  mergeable: Known<Mergeability> = { known: true, value: "mergeable" };
 
   async readPr(ref: PrRef): Promise<PrLookup> {
     const pr: PrSnapshot = {
@@ -92,6 +97,9 @@ class FakePrs implements PrPort {
       state: "open",
       baseBranch: "main",
       headBranch: JOB_HEAD,
+      headSha: this.headSha,
+      baseSha: this.baseSha,
+      mergeable: this.mergeable,
       checks: { known: true, value: "pending" },
       review: { known: true, value: "none" },
     };
@@ -373,4 +381,97 @@ test("a PR feedback read that fails is reported and the job keeps waiting for th
   const report = await admission.poll();
   assert.deepEqual(report.errors.map((error) => error.key), [KEY("1")]);
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+});
+
+// ---- issue #19: a conflict of the PR with its target branch is a correction -------------
+
+const CONFLICTING: Known<Mergeability> = { known: true, value: "conflicting" };
+const UNKNOWN: Known<Mergeability> = { known: false, reason: "mergeabilidade ainda não calculada pelo github.com" };
+
+test("a PR that conflicts with its target branch calls for a correction, and the correction carries the conflict", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.mergeable = CONFLICTING;
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the correction is admitted in the same poll");
+  await admission.settle();
+
+  assert.equal(runner.calls[1]?.kind, "correction");
+  assert.equal(runner.calls[1]?.continuation?.conflict, true, "the agent is told the PR conflicts");
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+});
+
+test("a conflict is judged on the pair of head and base: the same pair is not offered again, and status says PR em conflito", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.mergeable = CONFLICTING;
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+
+  // The correction did not move the head: the same pair still conflicts.
+  assert.deepEqual((await admission.poll()).admitted, [], "the same pair does not call for a correction again");
+  await admission.settle();
+  assert.equal(runner.calls.length, 2);
+  assert.equal(summaryOf(admission.job(KEY("1"))!), "acme/app#9 — PR em conflito", "the operator sees the conflict in status");
+});
+
+test("a new pair that conflicts calls for a correction again", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.mergeable = CONFLICTING;
+  await admission.poll();
+  await admission.settle();
+
+  // The target branch moved on: the base commit is new, so the pair is new.
+  prs.baseSha = "b2";
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a new conflicting pair is a new correction");
+  await admission.settle();
+  assert.equal(runner.calls.length, 3);
+});
+
+test("unknown mergeability calls for nothing, is not read as no conflict, and is read again on the next poll", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.mergeable = UNKNOWN;
+  assert.deepEqual((await admission.poll()).admitted, [], "GitHub has not decided: nothing is triggered");
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+  assert.equal(admission.job(KEY("1"))?.pending, undefined);
+  assert.doesNotMatch(summaryOf(admission.job(KEY("1"))!), /PR em conflito/, "unknown is not shown as a conflict");
+
+  prs.mergeable = CONFLICTING;
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the next poll reads the answer and calls for the correction");
+  await admission.settle();
+});
+
+test("a PR that is only behind its target branch, without conflict, calls for nothing", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.baseSha = "b2"; // the target moved on; no conflict
+  assert.deepEqual((await admission.poll()).admitted, []);
+  assert.equal(runner.calls.length, 1);
+  assert.equal(summaryOf(admission.job(KEY("1"))!), "acme/app#9");
 });
