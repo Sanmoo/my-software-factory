@@ -14,7 +14,7 @@ import type {
   TrackerScope,
 } from "./port.js";
 import { PartialWriteError } from "./port.js";
-import { isObject, type Obj } from "../core/values.js";
+import { isObject } from "../core/values.js";
 
 // GitHub Issues adapter (R02, R03, R10). The adapter talks to the REST API through a
 // small injected boundary: it asks for the project account's token and then performs
@@ -435,6 +435,9 @@ function runCommand(
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.on("error", reject);
     child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") reject(error);
+    });
     child.stdin.end(options.input ?? "");
   });
 }

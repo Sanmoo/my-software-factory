@@ -74,11 +74,11 @@ export async function jiraRequest<T = unknown>(
 ): Promise<T | undefined> {
   const credentials = Buffer.from(`${connection.username}:${connection.apiToken}`).toString("base64");
   const headers: Record<string, string> = { accept: "application/json", authorization: `Basic ${credentials}` };
-  if (body !== undefined) headers["content-type"] = "application/json";
+  if (body !== undefined && method !== "GET") headers["content-type"] = "application/json";
   const response = await fetch(`${connection.baseUrl.replace(/\/+$/, "")}${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(method === "GET" || body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) throw new JiraRequestError(response.status, method, path.split("?")[0]);
   // Some successful writes (204, or 201 for issueLink) answer without a body.

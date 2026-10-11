@@ -163,7 +163,7 @@ export class Admission {
   // Waits for every dispatched runner to finish; returns the errors of runs that failed
   // at the persistence level (runner failures are job results, not errors).
   async settle(): Promise<unknown[]> {
-    while (this.runs.size > 0) await Promise.all([...this.runs]);
+    while (this.runs.size > 0) await Promise.all(this.runs);
     return [...this.runErrors];
   }
 
