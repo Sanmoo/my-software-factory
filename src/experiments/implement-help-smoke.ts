@@ -95,6 +95,9 @@ Use only fixture-local Git commits. Checkpoint before review is allowed so
 code-review's HEAD diff is non-empty. Review base: ${baseHead}.
 Spec source: docs/spec.md; standards: CODING_STANDARDS.md;
 tracker: docs/agents/issue-tracker.md. Child reviewers read-only, no nested delegation.
+Give reviewers the exact committed diff and source paths in their handoff.
+For the named parallel workflow, each args.tasks item accepts only agent/task;
+set the shared model on the top-level call, not inside those tasks items.
 `;
 const prompt = resuming
   ? `Human response to your prior question: ${process.env.SMOKE_REPLY}\n${protocol}`
@@ -132,7 +135,11 @@ try {
       model, base: baseHead, sessionId, question: output.question,
     }, null, 2));
   } else {
-    git("status", "--porcelain"); // Retain the full fixture and events for independent checks.
+    assert.equal(git("status", "--porcelain").trim(), "", "completed fixture must be clean");
+    assert.ok(Number(git("rev-list", "--count", `${baseHead}..HEAD`).trim()) > 0,
+      "completed fixture must contain a work commit");
+    execFileSync("npm", ["test"], { cwd: fixture, stdio: "inherit" });
+    execFileSync("npm", ["run", "typecheck"], { cwd: fixture, stdio: "inherit" });
   }
   const report = { phase, model, output, sameSession: resuming,
     iterations: result.iterations.length, sessionId };
