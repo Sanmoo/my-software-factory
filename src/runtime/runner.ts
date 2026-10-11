@@ -1,4 +1,4 @@
-import type { IssueRef } from "../tracker/port.js";
+import type { IssueRef, Known } from "../tracker/port.js";
 
 // Runner port (R07, R08). The admission hands the runner a pointer to the job and the
 // effective iteration limit; the runner returns what its iteration produced.
@@ -18,6 +18,13 @@ export interface ContinuationContext {
   replies: string[];
 }
 
+// What an implementation invocation knows about its issue: the title and body as the tracker
+// gave them, bounded in size (see core/issue-context.ts). The body is unknown when it was not read.
+export interface IssueContext {
+  title: string;
+  body: Known<string>;
+}
+
 export interface RunnerContext {
   jobId: string;
   ref: IssueRef;
@@ -26,6 +33,8 @@ export interface RunnerContext {
   maxIterations: number;
   // Present only for resume and correction invocations.
   continuation?: ContinuationContext;
+  // Present only for the implementation (new) invocation.
+  issue?: IssueContext;
 }
 
 // `finished` carries the structured results found in the final output of an iteration

@@ -26,6 +26,7 @@ interface FakeIssue {
   number: number;
   dbId: number;
   title: string;
+  body?: string | null;
   state: "open" | "closed";
   stateReason: string | null;
   labels: string[];
@@ -178,6 +179,7 @@ class FakeGitHub implements GitHubBoundary {
       id: issue.dbId,
       number: issue.number,
       title: issue.title,
+      body: issue.body ?? null,
       state: issue.state,
       state_reason: issue.stateReason,
       labels: issue.labels.map((name) => ({ name })),
@@ -222,6 +224,16 @@ test("discovery uses the configured ready label name", async () => {
   const found = await tracker(gh).discoverCandidates({ project: REPO, readyLabel: "pronta-para-agente" });
 
   assert.deepEqual(found, [ref(1)]);
+});
+
+test("readIssue reads the body of the issue; an empty GitHub body is empty text, not an unknown one", async () => {
+  const gh = new FakeGitHub();
+  gh.add({ number: 1, body: "Implementar slugify.\n\nVer docs/spec.md" });
+  gh.add({ number: 2 });
+  const adapter = tracker(gh);
+
+  assert.deepEqual((await adapter.readIssue(ref(1))).body, { known: true, value: "Implementar slugify.\n\nVer docs/spec.md" });
+  assert.deepEqual((await adapter.readIssue(ref(2))).body, { known: true, value: "" });
 });
 
 test("claimed is true for any assignee or for the claimed label, and false otherwise", async () => {

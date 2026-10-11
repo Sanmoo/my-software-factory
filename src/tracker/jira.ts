@@ -85,7 +85,7 @@ export function jqlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-const ISSUE_FIELDS = "summary,status,labels,assignee,priority,issuelinks";
+const ISSUE_FIELDS = "summary,status,labels,assignee,priority,issuelinks,description";
 const PAGE_SIZE = 100;
 
 // Atlassian Document Format node, as returned for comment bodies.
@@ -140,6 +140,7 @@ interface JiraIssue {
   key: string;
   fields?: {
     summary?: string;
+    description?: AdfNode | string | null;
     status?: JiraStatus;
     labels?: string[];
     assignee?: { accountId: string } | null;
@@ -194,6 +195,13 @@ function priorityOf(priority: { name?: string } | null | undefined): Known<numbe
   return rank === undefined ? { known: false, reason: `prioridade sem mapeamento: ${priority.name}` } : { known: true, value: rank };
 }
 
+// The description as plain text; an absent field is unknown, a null one is an empty body.
+function bodyOf(description: AdfNode | string | null | undefined): Known<string> {
+  if (description === undefined) return { known: false, reason: "descrição não lida" };
+  if (description === null) return { known: true, value: "" };
+  return { known: true, value: typeof description === "string" ? description : adfText(description) };
+}
+
 // Issue keys are PROJECTKEY-NUMBER; the project is everything before the last hyphen.
 function projectOfKey(key: string): string {
   return key.slice(0, key.lastIndexOf("-"));
@@ -229,6 +237,7 @@ export class JiraTracker implements TrackerPort {
     return {
       ref,
       title: fields.summary ?? "",
+      body: bodyOf(fields.description),
       labels,
       assignees: assigneesOf(assignee),
       claimed,

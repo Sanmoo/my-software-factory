@@ -58,6 +58,7 @@ interface RestIssue {
   id: number;
   number: number;
   title: string;
+  body: string;
   state: "open" | "closed";
   stateReason: string | null;
   labels: string[];
@@ -81,6 +82,8 @@ function parseIssue(raw: unknown): RestIssue {
     id: raw.id,
     number: raw.number,
     title: typeof raw.title === "string" ? raw.title : "",
+    // GitHub answers null for an empty body: that is empty text, not an unread one.
+    body: typeof raw.body === "string" ? raw.body : "",
     state: raw.state === "closed" ? "closed" : "open",
     stateReason: typeof raw.state_reason === "string" ? raw.state_reason : null,
     labels,
@@ -147,6 +150,7 @@ export class GitHubTracker implements TrackerPort {
       claimed: { known: true, value: claimed },
       blockers: await this.readBlockers(ref),
       statusCategory: this.statusOf(issue, claimed),
+      body: { known: true, value: issue.body },
       // GitHub Issues has no priority field: null is the honest answer, not unknown.
       priority: { known: true, value: null },
     };

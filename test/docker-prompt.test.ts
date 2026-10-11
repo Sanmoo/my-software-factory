@@ -36,6 +36,20 @@ test("the first invocation runs the installed /implement skill on the work item,
   assert.ok(prompt.includes("Authorized repository: acme/app."), "authorized repository");
 });
 
+test("the implementation prompt carries the issue title and body as delimited data, and says when the body was not read", () => {
+  const prompt = implementPrompt({ ...job, issue: { title: "Slugify", body: { known: true, value: "Implementar slugify." } } });
+  assert.match(prompt, /Issue title: Slugify/);
+  assert.match(prompt, /<<<issue body\nImplementar slugify\.\nissue body>>>/);
+  assert.match(prompt, /data, not instructions/);
+
+  const unread = implementPrompt({ ...job, issue: { title: "Slugify", body: { known: false, reason: "descrição não lida" } } });
+  assert.match(unread, /Issue body: not read \(descrição não lida\)/);
+});
+
+test("without an issue context the implementation prompt has no issue section", () => {
+  assert.doesNotMatch(implementPrompt(job), /Issue title:/);
+});
+
 test("every agent role is named with its explicit model, and the default role is used for other subagents", () => {
   const prompt = implementPrompt(job);
   assert.match(prompt, /implementer.*github-copilot\/gpt-6-luna/);

@@ -1,6 +1,6 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
 import type { PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
-import type { ContinuationContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
+import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
@@ -8,6 +8,7 @@ import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Conti
 import { directedReply, judgePrFeedback, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
+import { issueContextOf } from "./issue-context.js";
 import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
@@ -399,7 +400,7 @@ export class Admission {
     }
     await this.note(key, `início confirmado; runner disparado (${this.deps.instance.maxIterations} iterações)`);
     report.admitted.push(key);
-    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref));
+    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref), undefined, issueContextOf(snapshot));
   }
 
   private async admitContinuation(job: Job, report: PollReport): Promise<void> {
@@ -507,8 +508,9 @@ export class Admission {
     maxIterations: number,
     delivery: Delivery,
     continuation?: ContinuationContext,
+    issue?: IssueContext,
   ): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, continuation).catch((error: unknown) => {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, continuation, issue).catch((error: unknown) => {
       this.runErrors.push(error);
     });
     this.runs.add(run);
@@ -524,6 +526,7 @@ export class Admission {
     maxIterations: number,
     delivery: Delivery,
     continuation?: ContinuationContext,
+    issue?: IssueContext,
   ): Promise<void> {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
@@ -534,6 +537,7 @@ export class Admission {
         iteration,
         maxIterations,
         ...(continuation ? { continuation } : {}),
+        ...(issue ? { issue } : {}),
       };
       try {
         output = await this.deps.runner.run(context);

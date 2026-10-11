@@ -45,6 +45,8 @@ interface FakeComment {
 interface FakeIssue {
   key: string;
   summary: string;
+  // Plain text of the description; null is an issue without description.
+  description?: string | null;
   labels: string[];
   statusName: string;
   category: Category;
@@ -72,6 +74,7 @@ const BLOCKS = { name: "Blocks", inward: "is blocked by", outward: "blocks" };
 function fakeIssue(overrides: Partial<FakeIssue> & { key: string }): FakeIssue {
   return {
     summary: `${overrides.key} summary`,
+    description: null,
     labels: ["ready-for-agent", "playbooks"],
     statusName: "A Fazer",
     category: "new",
@@ -169,6 +172,7 @@ class FakeJira {
   private issueJson(issue: FakeIssue): unknown {
     const fields: Record<string, unknown> = {
       summary: issue.summary,
+      description: issue.description === undefined || issue.description === null ? issue.description : adf(...issue.description.split("\n").map((line) => [line])),
       labels: issue.labels,
       assignee: issue.assignee === null ? null : { accountId: issue.assignee, displayName: "Operator" },
       priority: priorityJson(issue.priority),
@@ -320,7 +324,16 @@ test("readIssue maps labels, assignee, status category, priority and the open sp
     priority: { known: true, value: 2 },
     openSprint: { known: true, value: true },
     assignee: { known: true, value: OPERATOR_ACCOUNT },
+    body: { known: true, value: "" },
   });
+});
+
+test("readIssue reads the description as the issue body, plain text with one line per paragraph", async () => {
+  const snapshot = await withTracker(
+    [fakeIssue({ key: "VAN-12", description: "Implementar slugify.\nVer docs/spec.md" })],
+    (tracker) => tracker.readIssue(ref("VAN-12")),
+  );
+  assert.deepEqual(snapshot.body, { known: true, value: "Implementar slugify.\nVer docs/spec.md" });
 });
 
 test("an issue outside the open sprint, or unassigned, reads as such", async () => {

@@ -37,6 +37,9 @@ export interface IssueSnapshot {
   blockers: Known<BlockerRef[]>;
   statusCategory: Known<StatusCategory>;
   priority: Known<number | null>;
+  // The issue body (description). Optional so that adapters that do not read it say nothing;
+  // an absent body is unknown, never empty.
+  body?: Known<string>;
   // Jira-only metadata, populated only by the Jira adapter.
   openSprint?: Known<boolean>;
   assignee?: Known<string | null>;

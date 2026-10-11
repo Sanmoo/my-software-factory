@@ -25,6 +25,7 @@ interface StoredIssue {
   blockers: Known<IssueRef[]>;
   statusCategory: Known<StatusCategory>;
   priority: Known<number | null>;
+  body?: Known<string>;
   openSprint?: Known<boolean>;
   assignee?: Known<string | null>;
   comments: Comment[];
@@ -85,6 +86,8 @@ function parseIssue(raw: unknown, index: number): StoredIssue {
     priority: readKnown(raw, "priority", path, isPriority),
     comments: parseComments(raw, path),
   };
+  // The body is optional in a fixture; without one the body is not read.
+  if (raw.body !== undefined) issue.body = readKnown(raw, "body", path, isString);
   if (raw.openSprint !== undefined) issue.openSprint = readKnown(raw, "openSprint", path, isBoolean);
   if (raw.assignee !== undefined) issue.assignee = readKnown(raw, "assignee", path, isNullableString);
   return issue;
@@ -125,6 +128,7 @@ export class MemoryTracker implements TrackerPort {
       statusCategory: issue.statusCategory,
       priority: issue.priority,
     };
+    if (issue.body) snapshot.body = issue.body;
     if (issue.openSprint) snapshot.openSprint = issue.openSprint;
     if (issue.assignee) snapshot.assignee = issue.assignee;
     return snapshot;

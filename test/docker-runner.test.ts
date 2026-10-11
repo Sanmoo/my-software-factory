@@ -150,6 +150,20 @@ test("a new invocation runs in its own area at base, with the configured limit, 
   assert.ok(run.request.prompt.includes(await headOf(layout.repoDir)), "the prompt names the base");
 });
 
+test("the implementation prompt the sandbox receives carries the issue title and body", async () => {
+  const f = await fixture();
+  const { boundary, runs } = fakeBoundary(async () => ({
+    sessionId: "session-1", completed: true,
+    events: reply({ status: "needs_help", question: "Which seam?", context: "slugify" }),
+  }));
+  await runnerFor(f, boundary).run(newContext({
+    issue: { title: "Slugify", body: { known: true, value: "Implementar slugify.\nVer docs/spec.md" } },
+  }));
+
+  assert.match(runs[0]!.request.prompt, /Issue title: Slugify/);
+  assert.ok(runs[0]!.request.prompt.includes("Implementar slugify.\nVer docs/spec.md"), "the body reaches the agent");
+});
+
 test("the job area is on the canonical job branch that the PR check expects, and the prompt names it", async () => {
   const f = await fixture();
   const { boundary, runs } = fakeBoundary(async () => ({

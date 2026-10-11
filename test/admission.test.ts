@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
+import { ISSUE_BODY_LIMIT } from "../src/core/issue-context.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
@@ -61,12 +62,14 @@ interface IssueSpec {
   id: string;
   priority?: unknown;
   claimed?: boolean;
+  body?: string;
 }
 
-const issue = ({ repo, id, priority = null, claimed = false }: IssueSpec) => ({
+const issue = ({ repo, id, priority = null, claimed = false, body }: IssueSpec) => ({
   project: repo,
   id,
   title: `Issue ${id}`,
+  ...(body === undefined ? {} : { body }),
   labels: ["ready-for-agent"],
   assignees: [],
   claimed,
@@ -150,6 +153,35 @@ test("an eligible issue is claimed and confirmed before the runner starts, then 
   assert.equal(job?.question, "Which seam?");
   assert.equal(job?.context, "slugify");
   assert.deepEqual(runKinds(runner), ["1:new:1/5"]);
+});
+
+test("the implementation invocation carries the issue title and body as context, not only ids", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1", body: "Implementar slugify.\nVer docs/spec.md" }]);
+  const runner = new FakeRunner(async () => finished(NEEDS_HELP));
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+
+  await admission.poll();
+  await admission.settle();
+
+  assert.deepEqual(runner.calls[0]?.issue, {
+    title: "Issue 1",
+    body: { known: true, value: "Implementar slugify.\nVer docs/spec.md" },
+  });
+});
+
+test("a long issue body reaches the runner bounded, with its truncation marker", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1", body: "b".repeat(ISSUE_BODY_LIMIT + 1000) }]);
+  const runner = new FakeRunner(async () => finished(NEEDS_HELP));
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+
+  await admission.poll();
+  await admission.settle();
+
+  const body = runner.calls[0]?.issue?.body;
+  assert.equal(body?.known, true);
+  if (body?.known !== true) return;
+  assert.ok(body.value.length < ISSUE_BODY_LIMIT + 200, "bounded size");
+  assert.match(body.value, /truncado: 1000 caracteres omitidos/);
 });
 
 test("the runner does not start when the tracker does not confirm the claim and doing state", async () => {
