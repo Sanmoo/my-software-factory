@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
 import { runLogs } from "../src/cli/logs.js";
@@ -116,6 +117,7 @@ async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (co
   if (!loaded.ok) throw new Error(JSON.stringify(loaded.issues));
   return Admission.open({
     instance: loaded.config.instances[0]!,
+  eligibility: (project) => projectEligibility(loaded.config.instances[0]!, project),
     tracker: fixtures.tracker,
     runner,
     store: createFileJobStore(fixtures.stateDir),

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission, type PollReport } from "../src/core/admission.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
@@ -126,6 +127,7 @@ interface OpenOptions {
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
+  eligibility: (project) => projectEligibility(instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }), project),
   tracker: options.tracker ? options.tracker(options.memory) : options.memory,
   runner: options.runner,
   store: createFileJobStore(options.stateDir),

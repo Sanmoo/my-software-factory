@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import type { PrRef } from "../src/core/result.js";
 import { parseConfig } from "../src/config/validate.js";
@@ -106,6 +107,7 @@ interface Setup {
 function admissionOver(setup: Setup, tracker: TrackerPort = setup.memory, prs: PrPort = setup.prs) {
   return Admission.open({
     instance: instance(),
+  eligibility: (project) => projectEligibility(instance(), project),
     tracker,
     runner: setup.runner,
     store: createFileJobStore(setup.stateDir),

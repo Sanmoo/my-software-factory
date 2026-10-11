@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { projectEligibility } from "../config/project-eligibility.js";
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
 import { evaluateEligibility } from "../core/eligibility.js";
 import type { Job } from "../core/job.js";
-import { projectEligibility } from "../core/project-eligibility.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
 import { createFileJobStore } from "../state/file-job-store.js";

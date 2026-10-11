@@ -7,7 +7,7 @@ import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
 import { directedReply, judgePrFeedback, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
-import { projectEligibility, type ProjectEligibility } from "./project-eligibility.js";
+import type { ProjectEligibility } from "./project-eligibility.js";
 import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
@@ -27,6 +27,8 @@ export interface AdmissionDeps {
   control: InstanceControl;
   // Reads pull requests on github.com. It has no merge operation: the factory never merges (R11).
   prs: PrPort;
+  // The eligibility setup of each configured project, built by the configuration layer.
+  eligibility: (project: ProjectConfig) => ProjectEligibility;
 }
 
 export interface CommandOutcome {
@@ -318,7 +320,7 @@ export class Admission {
     const candidates: NewCandidate[] = [];
     for (const project of this.deps.instance.projects) {
       if (!project.enabled) continue;
-      const eligibility = projectEligibility(this.deps.instance, project);
+      const eligibility = this.deps.eligibility(project);
       const refs = await this.deps.tracker.discoverCandidates(eligibility.scope);
       for (const ref of refs) {
         const key = refKey(ref);

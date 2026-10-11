@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
@@ -111,6 +112,7 @@ interface OpenOptions {
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instance(options.maxConcurrent),
+  eligibility: (project) => projectEligibility(instance(options.maxConcurrent), project),
   tracker: options.memory,
   runner: options.runner,
   store: createFileJobStore(options.stateDir),

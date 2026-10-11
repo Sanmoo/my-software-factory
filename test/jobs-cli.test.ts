@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
 import { FakeRunner, finished } from "../src/runtime/fake-runner.js";
@@ -90,6 +91,7 @@ async function prepare(extraJobFile?: { name: string; content: string }): Promis
   const tracker = loadMemoryTracker(TRACKER);
   const admission = await Admission.open({
     instance: loaded.config.instances[0]!,
+  eligibility: (project) => projectEligibility(loaded.config.instances[0]!, project),
     tracker,
     runner: new FakeRunner(script),
     store: createFileJobStore(stateDir),
