@@ -31,3 +31,7 @@ RUN npm install --global --no-fund --no-audit "@earendil-works/pi-coding-agent@$
 ENV HOME=/home/agent
 USER ${AGENT_UID}:${AGENT_GID}
 WORKDIR /home/agent
+
+# Sandcastle starts sandboxes with docker exec; the container must stay alive
+# (same ENTRYPOINT as Sandcastle's own Pi template).
+ENTRYPOINT ["sleep", "infinity"]
