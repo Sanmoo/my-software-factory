@@ -18,6 +18,8 @@ engenharia supervisionado. Repositório privado; spec de MVP consolidada para re
 - Codex continua com bloqueio TLS independente, documentado no
   [diagnóstico](docs/results/002-tls-diagnosis.md); não é requisito deste piloto.
 - Piloto da issue #10: wizard, config dos 16 alvos e `npm run run` em [docs/pilot](docs/pilot/README.md).
+- Observabilidade: [diagnóstico da atividade ausente nos logs](docs/results/010-agent-observability.md)
+  e [plano aprovado, implementação pendente](docs/plans/agent-observability.md).
 - Issue tracker será acessado por porta e adapters: Jira no trabalho e GitHub
   Issues nos projetos pessoais. Campos Jira não pertencem ao contrato central.
 

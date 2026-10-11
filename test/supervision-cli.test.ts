@@ -155,6 +155,11 @@ test("the instance applies a queued reply: the job resumes its session with the 
   assert.deepEqual(report.commands.map((outcome) => outcome.status), ["applied"]);
   await admission.settle();
   assert.deepEqual(runner.calls[0]?.continuation, { workspace: WORKSPACE, replies: ["Use the v2 seam"] });
+  assert.equal(runner.calls[0]?.kind, "resume");
+  assert.equal(runner.calls.length, 1, "one reply starts one continuation");
+  await admission.poll();
+  await admission.settle();
+  assert.equal(runner.calls.length, 1, "consumed reply is not dispatched again");
 
   const logs = await runLogs(logsArgs(f));
   assert.match(logs.stdout, /estado: aguardando PR/);

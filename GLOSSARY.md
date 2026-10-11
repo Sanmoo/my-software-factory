@@ -25,6 +25,11 @@ Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento,
 intervenções humanas e acompanhamento do PR até seu desfecho.
 _Avoid_: ticket como execução, invocação do agente como trabalho inteiro
 
+**Invocação**:
+Uma execução do agente principal para desenvolver ou dar continuidade a um trabalho.
+Seu encerramento não implica a conclusão do trabalho.
+_Avoid_: turn como invocação, invocação encerrada como trabalho concluído
+
 **Claim**:
 Indicação de que uma issue está reservada para atendimento por alguém ou algum trabalho.
 Não se confunde com atribuição a uma pessoa nem com capacidade de execução.
