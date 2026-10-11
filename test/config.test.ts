@@ -136,3 +136,31 @@ test("projects without label overrides use the default ready and claimed labels"
     assert.deepEqual(project.labels, { ready: "ready-for-agent", claimed: "agent-claimed" });
   }
 });
+
+test("a Jira project may carry a priority rank map: names are non-empty and ranks positive integers", async () => {
+  const valid = await parse((raw) => {
+    raw.instances[0].projects[1].jira.priorityRanks = { Blocker: 1, Highest: 2 };
+  });
+  assert.equal(valid.ok, true, messages(valid).join("\n"));
+  if (valid.ok) {
+    const jira = valid.config.instances[0]!.projects[1]!;
+    assert.ok(jira.adapter === "jira" && jira.jira.priorityRanks?.Blocker === 1);
+  }
+
+  const invalid = await parse((raw) => {
+    raw.instances[0].projects[1].jira.priorityRanks = { Blocker: 0, Highest: 1.5, "": 2 };
+  });
+  assert.equal(invalid.ok, false);
+  const text = messages(invalid).join("\n");
+  assert.match(text, /priorityRanks\.Blocker.*inteiro positivo/);
+  assert.match(text, /priorityRanks\.Highest.*inteiro positivo/);
+  assert.match(text, /priorityRanks.*nome de prioridade vazio/);
+});
+
+test("a GitHub project cannot carry a priority rank map", async () => {
+  const result = await parse((raw) => {
+    raw.instances[0].projects[0].priorityRanks = { Blocker: 1 };
+  });
+  assert.equal(result.ok, false);
+  assert.match(messages(result).join("\n"), /priorityRanks.*campo desconhecido/);
+});

@@ -15,7 +15,7 @@ type Obj = Record<string, unknown>;
 const PROJECT_KEYS = ["name", "enabled", "adapter", "repository", "targetBranch", "prIntegration",
   "runtimeProfile", "githubAccount", "labels", "models", "jira"];
 const JIRA_KEYS = ["projectKey", "routingLabel", "doingTransition", "doneTransition",
-  "blockingLinkTypes", "credential", "operator"];
+  "blockingLinkTypes", "credential", "operator", "priorityRanks"];
 const INSTANCE_KEYS = ["name", "maxConcurrent", "pollIntervalSeconds", "maxIterations", "modelAuth", "projects"];
 const CREDENTIAL_KEYS = ["kind", "ref"];
 const CREDENTIAL_KINDS = ["env", "pi-auth"];
@@ -134,6 +134,29 @@ function parseModels(raw: unknown, path: string, issues: Issues): Record<ModelRo
   return complete ? models : undefined;
 }
 
+// Optional priority ranks: each Jira priority name maps to a positive integer (lower = more urgent).
+function parsePriorityRanks(raw: unknown, path: string, issues: Issues): Record<string, number> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isObject(raw)) {
+    issues.add(path, "priorityRanks deve ser objeto de nome de prioridade para inteiro positivo");
+    return undefined;
+  }
+  const ranks: Record<string, number> = {};
+  let valid = true;
+  for (const [name, rank] of Object.entries(raw)) {
+    if (name.trim() === "") {
+      issues.add(path, "nome de prioridade vazio");
+      valid = false;
+    } else if (typeof rank !== "number" || !Number.isSafeInteger(rank) || rank <= 0) {
+      issues.add(join(path, name), "deve ser inteiro positivo");
+      valid = false;
+    } else {
+      ranks[name] = rank;
+    }
+  }
+  return valid ? ranks : undefined;
+}
+
 function parseJira(raw: unknown, path: string, credentials: Record<string, CredentialRef>, issues: Issues): JiraSettings | undefined {
   if (!isObject(raw)) {
     issues.add(path, "jira deve ser objeto");
@@ -154,12 +177,16 @@ function parseJira(raw: unknown, path: string, credentials: Record<string, Crede
     issues.add(join(path, "blockingLinkTypes"), "lista de tipos de link de bloqueio obrigatória");
   }
   requireCredential(credential, "env", join(path, "credential"), credentials, issues);
+  const priorityRanks = parsePriorityRanks(raw.priorityRanks, join(path, "priorityRanks"), issues);
   if (projectKey === undefined || routingLabel === undefined || doingTransition === undefined
     || doneTransition === undefined || blockingLinkTypes === undefined || credential === undefined
-    || operator === undefined) {
+    || operator === undefined || (raw.priorityRanks !== undefined && priorityRanks === undefined)) {
     return undefined;
   }
-  return { projectKey, routingLabel, doingTransition, doneTransition, blockingLinkTypes, credential, operator };
+  return {
+    projectKey, routingLabel, doingTransition, doneTransition, blockingLinkTypes, credential, operator,
+    ...(priorityRanks === undefined ? {} : { priorityRanks }),
+  };
 }
 
 function parseLabels(raw: unknown, path: string, issues: Issues): { ready: string; claimed: string } | undefined {

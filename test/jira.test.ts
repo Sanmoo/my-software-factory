@@ -418,6 +418,25 @@ const adf = (...paragraphs: string[][]) => ({
   })),
 });
 
+test("a configured priority map replaces the default ranking; a name it does not list is unknown, not the default", async () => {
+  const fake = new FakeJira([
+    fakeIssue({ key: "VAN-30", priority: "Blocker" }),
+    fakeIssue({ key: "VAN-31", priority: "Highest" }),
+    fakeIssue({ key: "VAN-32", priority: "Medium" }),
+  ]);
+  const { server, connection } = await startFake(fake);
+  try {
+    const tracker = new JiraTracker(connection, { ...SETTINGS, priorityRanks: { Blocker: 1, Highest: 2, Medium: 3 } });
+    const ranks = await Promise.all(["VAN-30", "VAN-31", "VAN-32"].map(async (key) => (await tracker.readIssue(ref(key))).priority));
+    assert.deepEqual(ranks, [{ known: true, value: 1 }, { known: true, value: 2 }, { known: true, value: 3 }]);
+    const unlisted = new JiraTracker(connection, { ...SETTINGS, priorityRanks: { Blocker: 1 } });
+    const medium = await unlisted.readIssue(ref("VAN-32"));
+    assert.equal(medium.priority.known, false, "Medium is not listed in this map");
+  } finally {
+    server.close();
+  }
+});
+
 test("readComments returns id, author, bot flag, body text and time across pages", async () => {
   const issues = [
     fakeIssue({

@@ -19,6 +19,9 @@ export interface JiraSettings {
   blockingLinkTypes: string[];
   credential: string;
   operator: string;
+  // Optional ranking of the Jira priority names of this project: lower number = more urgent (P05).
+  // Absent, the adapter's default table applies.
+  priorityRanks?: Record<string, number>;
 }
 
 export interface ProjectLabels {

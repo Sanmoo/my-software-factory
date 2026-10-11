@@ -31,6 +31,9 @@ export interface JiraTrackerSettings {
   doneTransition: string;
   // Link type names whose "is blocked by" direction blocks the issue.
   blockingLinkTypes: readonly string[];
+  // Rank of each priority name (P05, lower = more urgent). Absent, DEFAULT_JIRA_PRIORITY_RANKS applies;
+  // a name the map does not list is unknown.
+  priorityRanks?: Readonly<Record<string, number>>;
 }
 
 export const JIRA_ENV_VARS = ["JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN"] as const;
@@ -186,12 +189,14 @@ function assigneesOf(assignee: Known<string | null>): Known<string[]> {
 }
 
 // Jira default priority names, most urgent first (P05: lower number = more urgent).
-const PRIORITY_RANK: Record<string, number> = { Highest: 1, High: 2, Medium: 3, Low: 4, Lowest: 5 };
+export const DEFAULT_JIRA_PRIORITY_RANKS: Readonly<Record<string, number>> = {
+  Highest: 1, High: 2, Medium: 3, Low: 4, Lowest: 5,
+};
 
-function priorityOf(priority: { name?: string } | null | undefined): Known<number | null> {
+function priorityOf(priority: { name?: string } | null | undefined, ranks: Readonly<Record<string, number>>): Known<number | null> {
   if (priority === undefined) return { known: false, reason: "prioridade não lida" };
   if (priority === null) return { known: true, value: null };
-  const rank = PRIORITY_RANK[priority.name ?? ""];
+  const rank = Object.hasOwn(ranks, priority.name ?? "") ? ranks[priority.name ?? ""] : undefined;
   return rank === undefined ? { known: false, reason: `prioridade sem mapeamento: ${priority.name}` } : { known: true, value: rank };
 }
 
@@ -243,7 +248,7 @@ export class JiraTracker implements TrackerPort {
       claimed,
       blockers: this.blockersOf(fields.issuelinks),
       statusCategory: category,
-      priority: priorityOf(fields.priority),
+      priority: priorityOf(fields.priority, this.settings.priorityRanks ?? DEFAULT_JIRA_PRIORITY_RANKS),
       openSprint: await this.openSprint(ref.id),
       assignee,
     };
