@@ -28,6 +28,9 @@ export interface IssueContext {
 export interface RunnerContext {
   jobId: string;
   ref: IssueRef;
+  // The configured repository of the job's project. A Jira key can serve several projects, so
+  // the ref alone does not say which repository the job belongs to.
+  repository: string;
   kind: RunKind;
   iteration: number;
   maxIterations: number;

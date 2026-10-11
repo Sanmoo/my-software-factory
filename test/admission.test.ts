@@ -155,6 +155,15 @@ test("an eligible issue is claimed and confirmed before the runner starts, then 
   assert.deepEqual(runKinds(runner), ["1:new:1/5"]);
 });
 
+test("every invocation names the repository of the job, so the runner never guesses it from the ref", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(async () => finished(NEEDS_HELP));
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  await admission.poll();
+  await admission.settle();
+  assert.deepEqual(runner.calls.map((call) => call.repository), ["acme/app"]);
+});
+
 test("the implementation invocation carries the issue title and body as context, not only ids", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1", body: "Implementar slugify.\nVer docs/spec.md" }]);
   const runner = new FakeRunner(async () => finished(NEEDS_HELP));

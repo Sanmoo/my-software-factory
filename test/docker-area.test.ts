@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   createJobRepo,
   diffSha256Of,
@@ -97,4 +99,33 @@ test("the area is created on the canonical job branch of the job identity", asyn
   await createJobRepo({ source, repoDir, targetBranch: "main", branch: jobBranch(ref) });
   assert.equal((await git(repoDir, "branch", "--show-current")).trim(), "msf/github/acme/app/6");
   assert.equal(await headOf(repoDir), base);
+});
+
+// Runs `git credential fill` in the area, the way git asks for the credentials of a push.
+async function credentialFor(repoDir: string, token: string): Promise<string> {
+  const child = promisify(execFile)("git", ["credential", "fill"], {
+    cwd: repoDir,
+    env: { ...process.env, GH_TOKEN: token, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  child.child.stdin?.end("protocol=https\nhost=github.com\n\n");
+  return (await child).stdout;
+}
+
+test("with a remote URL the area pushes to github.com with the GH_TOKEN of the container, never a stored secret", async () => {
+  const { source } = await sourceRepo();
+  const repoDir = join(await mkdtemp(join(tmpdir(), "msf-area-")), "repo");
+  await createJobRepo({
+    source, repoDir, targetBranch: "main", branch: "msf/github/acme/app/1",
+    remoteUrl: "https://github.com/acme/app.git",
+  });
+  assert.equal((await git(repoDir, "remote", "get-url", "origin")).trim(), "https://github.com/acme/app.git");
+  assert.match(await credentialFor(repoDir, "tok-123"), /password=tok-123/);
+  assert.doesNotMatch(await git(repoDir, "config", "--local", "--list"), /tok-123/);
+});
+
+test("without a remote URL the origin stays the source checkout", async () => {
+  const { source } = await sourceRepo();
+  const repoDir = join(await mkdtemp(join(tmpdir(), "msf-area-")), "repo");
+  await createJobRepo({ source, repoDir, targetBranch: "main", branch: "msf/github/acme/app/1" });
+  assert.equal((await git(repoDir, "remote", "get-url", "origin")).trim(), source);
 });

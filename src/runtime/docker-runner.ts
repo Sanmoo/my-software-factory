@@ -64,6 +64,8 @@ export interface DockerRunnerOptions {
   image: string;
   // Local clone each project's job area is cloned from (the operator's checkout).
   repositorySource: (project: ProjectConfig) => string;
+  // Remote the job area pushes to, when it differs from the checkout it was cloned from.
+  remoteUrl?: (project: ProjectConfig) => string | undefined;
   boundary: SandboxBoundary;
   reviewInputs?: ReviewInputs;
 }
@@ -111,7 +113,7 @@ class DockerRunner implements Runner {
     const layout = jobLayout(this.options.stateDir, context.jobId);
     let secret: string | undefined;
     try {
-      const project = findProject(this.options.instance.projects, context.ref);
+      const project = findProject(this.options.instance.projects, context.ref, context.repository);
       const models = requireRunModels(project);
       const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
       const profileDir = resolveRuntimeProfile(project, this.options.profiles, auth.agentDir);
@@ -172,8 +174,10 @@ class DockerRunner implements Runner {
     layout: JobLayout,
   ): Promise<JobRecord & { targetBranch: string; branch: string; baseSha: string }> {
     const branch = jobBranch(context.ref);
+    const remoteUrl = this.options.remoteUrl?.(project);
     const baseSha = await createJobRepo({
       source: this.options.repositorySource(project),
+      ...(remoteUrl === undefined ? {} : { remoteUrl }),
       repoDir: layout.repoDir,
       targetBranch: project.targetBranch,
       branch,

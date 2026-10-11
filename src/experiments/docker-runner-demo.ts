@@ -85,7 +85,7 @@ function runnerFor(boundary = sandcastleBoundary(), image = IMAGE) {
 }
 
 const context = (over: Partial<RunnerContext>): RunnerContext =>
-  ({ jobId: key, ref, kind: "new", iteration: 1, maxIterations: instance.maxIterations, ...over });
+  ({ jobId: key, ref, repository: project.repository, kind: "new", iteration: 1, maxIterations: instance.maxIterations, ...over });
 
 async function sandcastleContainers(): Promise<string[]> {
   const { stdout } = await execFileAsync("docker", ["ps", "-a", "--filter", "name=^sandcastle-", "--format", "{{.Names}}"]);

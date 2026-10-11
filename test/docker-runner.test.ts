@@ -69,7 +69,7 @@ function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<Omit<Sa
 }
 
 const newContext = (over: Partial<RunnerContext> = {}): RunnerContext =>
-  ({ jobId: key, ref, kind: "new", iteration: 1, maxIterations: 5, ...over });
+  ({ jobId: key, ref, repository: "acme/app", kind: "new", iteration: 1, maxIterations: 5, ...over });
 
 function runnerFor(f: { source: string; stateDir: string; agentDir: string }, boundary: SandboxBoundary, projects?: ProjectConfig[]) {
   return createDockerRunner({

@@ -532,6 +532,7 @@ export class Admission {
       const context: RunnerContext = {
         jobId: key,
         ref,
+        repository: delivery.repository,
         kind,
         iteration,
         maxIterations,

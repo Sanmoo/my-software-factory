@@ -112,3 +112,11 @@ test("a ref resolves to exactly one configured project: repository for GitHub, p
   assert.equal(findProject(projects, { tracker: "jira", project: "CON", id: "9" }).name, "jira-mfe");
   assert.throws(() => findProject(projects, { tracker: "github", project: "acme/other", id: "1" }), /não configurado/);
 });
+
+test("the repository of the job picks the project when several Jira projects share a key", () => {
+  const projects = [jira("VAN", "monolith"), jira("VAN", "mfe")];
+  const ref = { tracker: "jira" as const, project: "VAN", id: "9" };
+  assert.equal(findProject(projects, ref, "acme/mfe").name, "jira-mfe");
+  assert.throws(() => findProject(projects, ref, "acme/unknown"), /não configurado/);
+  assert.throws(() => findProject(projects, { ...ref, project: "CON" }, "acme/mfe"), /não configurado/);
+});

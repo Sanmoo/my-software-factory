@@ -64,10 +64,12 @@ export function resolveRuntimeProfile(
 }
 
 // Routing by tracker scope: a GitHub ref names the repository, a Jira ref names the project key.
-// A Jira key shared by several projects is ambiguous without a label, so it is refused.
-export function findProject(projects: readonly ProjectConfig[], ref: IssueRef): ProjectConfig {
+// A Jira key shared by several projects is ambiguous without the repository of the job, so it is
+// refused when the repository is not given.
+export function findProject(projects: readonly ProjectConfig[], ref: IssueRef, repository?: string): ProjectConfig {
   const matches = projects.filter((project) => {
     if (!project.enabled) return false;
+    if (repository !== undefined && project.repository !== repository) return false;
     if (ref.tracker === "github") return project.adapter === "github" && project.repository === ref.project;
     return ref.tracker === "jira" && project.adapter === "jira" && project.jira.projectKey === ref.project;
   });
