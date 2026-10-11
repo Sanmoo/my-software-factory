@@ -120,6 +120,7 @@ interface OpenOptions {
   maxConcurrent?: number;
   maxIterations?: number;
   tracker?: (base: MemoryTracker) => TrackerPort;
+  prs?: PrPort;
 }
 
 const open = (options: OpenOptions) => Admission.open({
@@ -129,7 +130,7 @@ const open = (options: OpenOptions) => Admission.open({
   store: createFileJobStore(options.stateDir),
   commands: createFileCommandQueue(options.stateDir),
   control: createFileInstanceControl(options.stateDir),
-  prs: openPrs,
+  prs: options.prs ?? openPrs,
 });
 
 // The operator side: the same queue the CLI writes to.
@@ -384,6 +385,37 @@ test("an unreadable command file is reported and does not hide the other command
   const report: PollReport = await admission.poll();
   assert.equal(report.paused, true);
   assert.match(report.errors.map((error) => error.message).join("\n"), /broken\.json/);
+});
+
+test("pause does not stop the tracking of a waiting PR: a merge is still confirmed as done", async () => {
+  const stateDir = await dir();
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  // The PR is open when the runner reports it, and merged by the time the pause is polled.
+  let merged = false;
+  const prs: PrPort = {
+    async readPr(ref) {
+      const state = merged ? "merged" : "open";
+      return {
+        status: "found",
+        pr: {
+          ref, state, baseBranch: "main", headBranch: "msf/1",
+          checks: { known: true, value: "passing" }, review: { known: true, value: "approved" },
+        },
+      };
+    },
+  };
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await open({ memory, stateDir, runner, repos: ["acme/app"], prs });
+  await admission.poll();
+  await admission.settle();
+  assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "waiting-for-pr");
+
+  await operator(stateDir).enqueue({ type: "pause" });
+  merged = true;
+  const report = await admission.poll();
+  assert.equal(report.paused, true);
+  assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "done");
+  assert.deepEqual((await memory.readIssue(refOf("acme/app", "1"))).statusCategory, { known: true, value: "done" });
 });
 
 // ---- R09 / R12 / CA19: release ----------------------------------------------------------------

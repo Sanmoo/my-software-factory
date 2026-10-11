@@ -152,14 +152,18 @@ export class Admission {
       report.errors.push({ key: "control", message: messageOf(error) });
       return report;
     }
-    if (report.paused) return report;
-    const continuations = this.allJobs().filter((job) => job.pending !== undefined);
-    for (const job of continuations) {
-      await this.guard(job.key, report, () => this.admitContinuation(job, report));
+    // A pause holds new invocations only: tracking of waiting PRs (R11) keeps observing and
+    // confirming merges, as an active job would.
+    if (!report.paused) {
+      const continuations = this.allJobs().filter((job) => job.pending !== undefined);
+      for (const job of continuations) {
+        await this.guard(job.key, report, () => this.admitContinuation(job, report));
+      }
     }
     for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
       await this.guard(job.key, report, () => this.trackPr(job, report));
     }
+    if (report.paused) return report;
     let candidates: NewCandidate[] = [];
     try {
       candidates = await this.discover(report);
