@@ -77,6 +77,7 @@ const openPrs: PrPort = {
       },
     };
   },
+  readFeedback: async () => ({ comments: [], checks: [] }),
 };
 
 interface Fixtures {

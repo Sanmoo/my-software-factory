@@ -103,7 +103,7 @@ interface OpenOptions {
 }
 
 // Without PR state of its own a test sees no PR: a ready result is then refused.
-const NO_PRS: PrPort = { readPr: async (): Promise<PrLookup> => ({ status: "not-found" }) };
+const NO_PRS: PrPort = { readPr: async (): Promise<PrLookup> => ({ status: "not-found" }), readFeedback: async () => ({ comments: [], checks: [] }), };
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
@@ -482,7 +482,7 @@ test("a PR-ready result moves the job to waiting-for-pr with its reference and r
   const prs: PrPort = { readPr: async () => ({ status: "found", pr: {
     ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: "msf/1",
     checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
-  } }) };
+  } }), readFeedback: async () => ({ comments: [], checks: [] }), };
   const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], prs });
 
   await admission.poll();

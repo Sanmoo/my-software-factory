@@ -95,7 +95,7 @@ async function prepare(extraJobFile?: { name: string; content: string }): Promis
     store: createFileJobStore(stateDir),
     commands: createFileCommandQueue(stateDir),
     control: createFileInstanceControl(stateDir),
-    prs: { readPr: async () => ({ status: "not-found" }) },
+    prs: { readPr: async () => ({ status: "not-found" }), readFeedback: async () => ({ comments: [], checks: [] }), },
   });
   await admission.poll();
   assert.deepEqual(await admission.settle(), []);

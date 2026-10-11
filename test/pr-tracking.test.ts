@@ -8,7 +8,7 @@ import type { PrRef } from "../src/core/result.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
 import { createGithubPrPort, type GhCall } from "../src/pr/github.js";
-import type { PrLookup, PrPort, PrSnapshot } from "../src/pr/port.js";
+import type { PrFeedback, PrLookup, PrPort, PrSnapshot } from "../src/pr/port.js";
 import { FakeRunner, finished } from "../src/runtime/fake-runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
@@ -78,6 +78,11 @@ class FakePrs implements PrPort {
     if (this.unreadable) throw new Error("github.com indisponível");
     const pr = this.prs.get(`${ref.repository}#${ref.number}`);
     return pr ? { status: "found", pr } : { status: "not-found" };
+  }
+
+  // No human feedback and no checks unless a test says otherwise.
+  async readFeedback(): Promise<PrFeedback> {
+    return { comments: [], checks: [] };
   }
 }
 
