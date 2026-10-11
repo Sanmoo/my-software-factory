@@ -285,3 +285,58 @@ test("discovery returns every ready-for-agent issue of the project across pages,
     { tracker: "jira", project: "VAN", id: "VAN-5" },
   ]);
 });
+
+test("readIssue maps labels, assignee, status category, priority and the open sprint", async () => {
+  const snapshot = await withTracker(
+    [fakeIssue({ key: "VAN-10", summary: "Playbook item", statusName: "Em andamento", category: "indeterminate", priority: "High" })],
+    (tracker) => tracker.readIssue(ref("VAN-10")),
+  );
+  assert.deepEqual(snapshot, {
+    ref: { tracker: "jira", project: "VAN", id: "VAN-10" },
+    title: "Playbook item",
+    labels: { known: true, value: ["ready-for-agent", "playbooks"] },
+    assignees: { known: true, value: [OPERATOR_ACCOUNT] },
+    claimed: { known: true, value: true },
+    blockers: { known: true, value: [] },
+    statusCategory: { known: true, value: "in-progress" },
+    priority: { known: true, value: 2 },
+    openSprint: { known: true, value: true },
+    assignee: { known: true, value: OPERATOR_ACCOUNT },
+  });
+});
+
+test("an issue outside the open sprint, or unassigned, reads as such", async () => {
+  const snapshot = await withTracker(
+    [fakeIssue({ key: "VAN-11", openSprint: false, assignee: null, priority: null })],
+    (tracker) => tracker.readIssue(ref("VAN-11")),
+  );
+  assert.deepEqual(snapshot.openSprint, { known: true, value: false });
+  assert.deepEqual(snapshot.assignee, { known: true, value: null });
+  assert.deepEqual(snapshot.priority, { known: true, value: null });
+});
+
+test("a To Do issue without the claimed label is not claimed; the label or a non To Do status claims it", async () => {
+  const todo = await withTracker([fakeIssue({ key: "VAN-12" })], (tracker) => tracker.readIssue(ref("VAN-12")));
+  assert.deepEqual(todo.claimed, { known: true, value: false });
+  const labelled = await withTracker(
+    [fakeIssue({ key: "VAN-13", labels: ["ready-for-agent", "agent-claimed"] })],
+    (tracker) => tracker.readIssue(ref("VAN-13")),
+  );
+  assert.deepEqual(labelled.claimed, { known: true, value: true });
+  const done = await withTracker(
+    [fakeIssue({ key: "VAN-14", statusName: "Concluído", category: "done" })],
+    (tracker) => tracker.readIssue(ref("VAN-14")),
+  );
+  assert.deepEqual(done.claimed, { known: true, value: true });
+});
+
+test("an unreadable status makes claim and category unknown, never false", async () => {
+  const snapshot = await withTracker([fakeIssue({ key: "VAN-15", hideStatus: true })], (tracker) => tracker.readIssue(ref("VAN-15")));
+  assert.equal(snapshot.statusCategory.known, false);
+  assert.equal(snapshot.claimed.known, false);
+});
+
+test("an unreadable sprint state is reported as unknown, not as outside the sprint", async () => {
+  const snapshot = await withTracker([fakeIssue({ key: "VAN-16", summary: "NO_BOARD" })], (tracker) => tracker.readIssue(ref("VAN-16")));
+  assert.equal(snapshot.openSprint?.known, false);
+});
