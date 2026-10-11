@@ -10,6 +10,8 @@ export interface RunnerContext {
   kind: RunKind;
   iteration: number;
   maxIterations: number;
+  // Operator text for a resume or correction (a reply or feedback). Optional and additive.
+  note?: string;
 }
 
 // `finished` carries the structured results found in the final output of an iteration
