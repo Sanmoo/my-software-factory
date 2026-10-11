@@ -38,7 +38,7 @@ const FEEDBACK_QUERY =
   + "reviews(last: 100) { nodes { id author { __typename login } body state submittedAt } } "
   + "commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename "
   + "... on CheckRun { id name status conclusion isRequired(pullRequestNumber: $number) } "
-  + "... on StatusContext { id context state isRequired(pullRequestNumber: $number) } } } } } } } } } } }";
+  + "... on StatusContext { id context state isRequired(pullRequestNumber: $number) } } } } } } } } } }";
 
 const runGh: GhCall = (args, env) => new Promise((resolve, reject) => {
   execFile("gh", [...args], { env: { ...process.env, ...env }, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {

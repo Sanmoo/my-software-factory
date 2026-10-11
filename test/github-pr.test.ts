@@ -201,3 +201,12 @@ test("a failed or unexpected feedback read is an error, never an empty feedback"
   const malformed = ghWith({ comments: null });
   await assert.rejects(createGithubPrPort({ accountOf: () => "acme-bot", run: malformed.run }).readFeedback(ref), /feedback do PR/);
 });
+
+test("the feedback query sent to gh is well formed: every selection set opens and closes", async () => {
+  const { run, calls } = ghWith(pullRequestFeedback({ contexts: [] }));
+  await createGithubPrPort({ accountOf: () => "acme-bot", run }).readFeedback(ref);
+
+  const query = calls.flatMap((call) => call.args).find((arg) => arg.startsWith("query="));
+  assert.ok(query, "the adapter sends a GraphQL query");
+  assert.equal([...query].filter((char) => char === "{").length, [...query].filter((char) => char === "}").length);
+});
