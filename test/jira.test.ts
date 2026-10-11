@@ -65,6 +65,8 @@ interface Recorded {
 
 const PAGE_SIZE = 2;
 
+// Jira issue linking model: an issue carrying inwardIssue for a Blocks link is blocked by
+// that issue (GET /rest/api/3/issue of THING-1 lists inwardIssue FEAT-1 as "is blocked by").
 const BLOCKS = { name: "Blocks", inward: "is blocked by", outward: "blocks" };
 
 function fakeIssue(overrides: Partial<FakeIssue> & { key: string }): FakeIssue {
@@ -211,7 +213,8 @@ class FakeJira {
     if (!target) return { status: 400 };
     issue.category = target.to;
     issue.statusName = target.name;
-    return { status: 204 };
+    // Jira answers some successful writes with 201 and no body (as issueLink does).
+    return { status: 201 };
   }
 
   private comments(issue: FakeIssue, url: URL): { status: number; json?: unknown } {

@@ -16,7 +16,8 @@ import type { IssueRef, IssueSnapshot } from "../tracker/port.js";
 //                                        outside any sprint (the only writes allowed)
 //
 // Optional: --done NAME (done transition, otherwise the single done transition found),
-// --doing NAME (default "Em andamento"), --link-type NAME (default "Blocks").
+// --doing NAME (default "Em andamento"), --link-type NAME (default "Blocks"),
+// --test-issues BLOCKED:BLOCKER (reuse two existing [msf-test] issues instead of creating them).
 // Credentials come only from JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN and are never printed.
 
 const PROJECT = "VAN";
@@ -199,28 +200,49 @@ async function createTestIssue(connection: JiraConnection, operator: string, typ
   return key;
 }
 
-async function writeChecks(connection: JiraConnection, linkType: string, doingName: string, doneOption: string | undefined): Promise<void> {
+async function writeChecks(
+  connection: JiraConnection,
+  linkType: string,
+  doingName: string,
+  doneOption: string | undefined,
+  existing: { blocked: string; blocker: string } | undefined,
+): Promise<void> {
   const operator = await operatorAccount(connection);
-  const type = await issueTypeId(connection);
-  log("tipo de issue", type.name);
-  const settings0 = settingsFor(doingName, doneOption ?? "", linkType);
-  const probe = new JiraTracker(connection, settings0);
+  const probe = new JiraTracker(connection, settingsFor(doingName, doneOption ?? "", linkType));
 
-  const blocked = await createTestIssue(connection, operator, type.id, "bloqueada");
-  const blocker = await createTestIssue(connection, operator, type.id, "bloqueadora");
-  log("criadas", { blocked, blocker });
+  let blocked: string;
+  let blocker: string;
+  if (existing) {
+    ({ blocked, blocker } = existing);
+    log("reutilizadas", { blocked, blocker });
+  } else {
+    const type = await issueTypeId(connection);
+    log("tipo de issue", type.name);
+    blocked = await createTestIssue(connection, operator, type.id, "bloqueada");
+    blocker = await createTestIssue(connection, operator, type.id, "bloqueadora");
+    log("criadas", { blocked, blocker });
+  }
+  // Only [msf-test] issues outside any sprint are written to; the guard allows nothing else.
   for (const key of [blocked, blocker]) {
     const snapshot = await probe.readIssue(reference(key));
     check(snapshot.title.startsWith(TEST_PREFIX), `${key} não é issue de teste`);
     check(snapshot.openSprint?.known === true && snapshot.openSprint.value === false, `${key} não está fora de sprint`);
+    createdKeys.add(key);
   }
   log("fora de sprint", "ambas as issues de teste lidas com openSprint = false");
 
-  await jiraRequest(connection, "POST", "/rest/api/3/issueLink", {
-    type: { name: linkType },
-    inwardIssue: { key: blocked },
-    outwardIssue: { key: blocker },
-  });
+  const linked = await probe.readIssue(reference(blocked));
+  if (!(linked.blockers.known && linked.blockers.value.some((b) => b.ref.id === blocker))) {
+    // Payload: inwardIssue is the blocker (origin of "blocks"), outwardIssue the blocked issue.
+    await jiraRequest(connection, "POST", "/rest/api/3/issueLink", {
+      type: { name: linkType },
+      inwardIssue: { key: blocker },
+      outwardIssue: { key: blocked },
+    });
+    log("link", "criado com inwardIssue = bloqueadora, outwardIssue = bloqueada");
+  } else {
+    log("link", "já existente na direção bloqueada/bloqueadora");
+  }
   const afterLink = await probe.readIssue(reference(blocked));
   check(afterLink.blockers.known && afterLink.blockers.value.some((b) => b.ref.id === blocker), "bloqueio não lido na issue bloqueada");
   const reverse = await probe.readIssue(reference(blocker));
@@ -275,7 +297,9 @@ async function main(): Promise<void> {
   const doing = option("--doing") ?? "Em andamento";
   log("modo", WRITE_MODE ? "write" : "read");
   if (WRITE_MODE) {
-    await writeChecks(connection, linkType, doing, option("--done"));
+    const pair = option("--test-issues")?.split(":");
+    const existing = pair?.length === 2 ? { blocked: pair[0], blocker: pair[1] } : undefined;
+    await writeChecks(connection, linkType, doing, option("--done"), existing);
   } else {
     await readOnly(connection, settingsFor(doing, option("--done") ?? "", linkType));
     log("escritas realizadas", writes.length);

@@ -75,8 +75,9 @@ export async function jiraRequest<T = unknown>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) throw new JiraRequestError(response.status, method, path.split("?")[0]);
-  if (response.status === 204) return undefined;
-  return (await response.json()) as T;
+  // Some successful writes (204, or 201 for issueLink) answer without a body.
+  const text = await response.text();
+  return text === "" ? undefined : (JSON.parse(text) as T);
 }
 
 // JQL string literal: double quotes, with backslashes and quotes escaped.
