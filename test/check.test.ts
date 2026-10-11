@@ -7,6 +7,7 @@ import { checkInstance } from "../src/cli/check.js";
 import type { AdmissionDeps } from "../src/core/admission.js";
 import { git } from "../src/runtime/docker-area.js";
 import { parseConfig } from "../src/config/validate.js";
+import type { ProjectConfig } from "../src/config/types.js";
 import { projectEligibility } from "../src/config/project-eligibility.js";
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 
@@ -41,13 +42,30 @@ async function checkout(files: string[]): Promise<string> {
 }
 
 const sandbox: SandboxBoundary = { preflight: async () => ({ token: "t" }), run: async () => { throw new Error("unused"); } };
-const deps = { tracker: { discoverCandidates: async () => [{}, {}] }, eligibility: (p) => projectEligibility(instance, p) } as unknown as AdmissionDeps;
+const deps = { tracker: { discoverCandidates: async () => [{}, {}] }, eligibility: (p: ProjectConfig) => projectEligibility(instance, p) } as unknown as AdmissionDeps;
+
+async function profile(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "msf-profile-"));
+  await mkdir(join(dir, "skills", "implement"), { recursive: true });
+  await writeFile(join(dir, "skills", "implement", "SKILL.md"), "x\n");
+  return dir;
+}
+
+test("a profile without the implement skill fails the check", async () => {
+  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  const empty = await mkdtemp(join(tmpdir(), "msf-profile-"));
+  const lines = await checkInstance({
+    config: config.config, instance, deps, sandbox,
+    local: { image: "img", profiles: { personal: empty }, checkouts: { "acme/app": dir } },
+  });
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /não teria \/implement/);
+});
 
 test("a ready instance passes every line, read-only", async () => {
   const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: "/p" }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
   });
   assert.deepEqual(lines.filter((l) => !l.ok), []);
   assert.ok(lines.some((l) => /2 issue\(s\)/.test(l.detail)));
@@ -57,7 +75,7 @@ test("a repository without the review inputs fails the check and says which file
   const dir = await checkout(["docs/spec.md"]);
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: "/p" }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
   });
   const failed = lines.filter((l) => !l.ok);
   assert.equal(failed.length, 1);
@@ -70,9 +88,22 @@ test("a failing Docker preflight and a wrong origin are reported, not thrown", a
   const lines = await checkInstance({
     config: config.config, instance, deps,
     sandbox: { ...sandbox, preflight: async () => { throw new Error("Docker is unavailable"); } },
-    local: { image: "img", profiles: { personal: "/p" }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
   });
   const failed = lines.filter((l) => !l.ok).map((l) => l.detail).join("\n");
   assert.match(failed, /Docker is unavailable/);
   assert.match(failed, /origin .* não aponta para acme\/app/);
+});
+
+test("a checkout whose target branch is ahead of origin fails: those commits would ride in the PR", async () => {
+  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  await git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
+  await writeFile(join(dir, "local.txt"), "x\n");
+  await git(dir, "add", ".");
+  await git(dir, "commit", "-q", "-m", "unpushed");
+  const lines = await checkInstance({
+    config: config.config, instance, deps, sandbox,
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+  });
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /1 commit\(s\) que não estão em origin\/main/);
 });

@@ -1,3 +1,5 @@
+import { access } from "node:fs/promises";
+import { join } from "node:path";
 import { git } from "../runtime/docker-area.js";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
@@ -45,6 +47,9 @@ async function checkoutLines(project: ProjectConfig, local: LocalSettings): Prom
       await git(checkout, "rev-parse", "--verify", `refs/heads/${branch}`);
       const remote = (await git(checkout, "remote", "get-url", "origin")).trim();
       if (!remote.includes(project.repository)) throw new Error(`origin (${remote}) não aponta para ${project.repository}`);
+      // Commits not on origin would ride along in the job's PR: the area is cloned from this branch.
+      const ahead = await git(checkout, "rev-list", "--count", `origin/${branch}..${branch}`).catch(() => "0");
+      if (Number(ahead) > 0) throw new Error(`${branch} local tem ${ahead.trim()} commit(s) que não estão em origin/${branch}; eles iriam no PR do trabalho`);
       const behind = await git(checkout, "rev-list", "--count", `${branch}..origin/${branch}`).catch(() => "0");
       return Number(behind) > 0
         ? `ATENÇÃO: ${branch} local está ${behind.trim()} commit(s) atrás de origin/${branch}; atualize antes do piloto`
@@ -70,6 +75,13 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
     const auth = resolveModelAuth(instance, config.credentials, local.profiles);
     for (const project of projects) resolveRuntimeProfile(project, local.profiles, auth.agentDir);
     return auth.agentDir;
+  }));
+  lines.push(await attempt("perfil Pi tem a skill implement", async () => {
+    const dir = resolveModelAuth(instance, config.credentials, local.profiles).agentDir;
+    await access(join(dir, "skills", "implement", "SKILL.md")).catch(() => {
+      throw new Error(`${join(dir, "skills", "implement", "SKILL.md")} não existe; o container não teria /implement`);
+    });
+    return "skills/implement/SKILL.md";
   }));
 
   if (jiraProjects.length > 0) {
