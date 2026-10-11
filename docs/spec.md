@@ -221,31 +221,20 @@ Tudo o que a factory/agente publica leva um marcador invisível (GitHub:
 
 Nas issues (Jira e GitHub), só comentário humano sem marcador iniciado por
 `agent:` é resposta dirigida ao trabalho; os demais são conversa entre pessoas.
-No PR, a unidade de feedback é o **comentário**: comentário de conversa, comentário
-inline de thread de review e corpo não vazio de review. Cada comentário novo sem
-marcador e de autor que não seja bot é feedback humano, inclusive em thread já
-resolvido; o marcador é verificado em cada comentário. Review de corpo vazio só
-agrupa comentários inline e não é feedback por si. Checks *required* da proteção
-da branch de destino com falha (ou, sem required, quaisquer checks com falha) e
-conflito do PR com a branch de destino podem disparar correção. Mergeabilidade
-desconhecida não é ausência de conflito nem dispara correção: é relida no próximo
-polling. PR apenas atrasado em relação ao destino, sem conflito, não dispara nada.
-Comentários humanos passam pela triagem de feedback do PR antes de qualquer
-correção; checks e conflitos não (P07).
+No PR, qualquer review/comentário novo sem marcador e de autor que não seja bot
+é feedback humano, e checks *required* da proteção da branch de destino com
+falha (ou, sem required, quaisquer checks com falha) podem disparar correção.
 A resposta local via terminal produz o mesmo efeito de uma resposta dirigida,
 sem depender de comentário externo para destravar a tarefa.
 
 Registrar identidade/revisão do feedback consumido para não repetir eventos nem
 reagir aos relatos do próprio agente. Não transformar comentários em permissão
 para novo escopo, merge ou deploy produtivo. Consumir feedback não é declarar
-que foi resolvido: resolver um thread é ato do agente depois de entregar a
-mudança (P07). Quando não se puder decidir a ação, procurar o humano.
-Um conflito é identificado pelo par head/base do PR: o mesmo par ainda
-conflitante depois de uma correção não dispara de novo e fica visível no status.
+que foi resolvido. Quando não se puder decidir a ação, procurar o humano.
 
 ### R11 — PR e conclusão
 
-Depois de publicar PR, acompanhar CI, review, conflito com o destino e merge pela integração do
+Depois de publicar PR, acompanhar CI, review e merge pela integração do
 repositório configurado, sem manter Pi continuamente vivo para esperar. Novas
 correções reativam o mesmo trabalho com vaga quando disponível.
 
@@ -300,26 +289,6 @@ exigências de uma plataforma durável:
   o PR (R08), o modelo explícito por subagente e a reconciliação dos filhos; a CA09 é demonstrada
   por log e sessão no piloto, não por bloqueio. Substitui a checagem de digests do ticket #6.
 
-- **P07:** o feedback do PR tem tratamentos distintos por tipo (R10).
-  - **Triagem de feedback do PR.** Comentário humano novo, mesmo um só, abre uma correção que
-    invoca `/skill:gh-address-comments`: o agente numera threads e comentários com resumo e
-    proposta de tratamento, sem alterar código, e termina em pedido de ajuda. O operador responde
-    pelos canais de ajuda (`reply` ou `agent:` na issue), não pelo PR. A retomada aplica só o
-    escolhido; item não citado fica consumido, sem ação nem resposta, e o thread aberto; uma
-    instrução como "2: responda que X" gera resposta sem resolver o thread.
-  - **Checks e conflitos** vão direto à correção, sem triagem. Se chegarem junto com comentário
-    humano, esperam a triagem e tudo é feito numa única invocação depois da resposta.
-  - **Conflito** se resolve por rebase da branch do trabalho sobre o destino e
-    `git push --force-with-lease` só nessa branch, e só quando o GitHub reporta conflito.
-    Conflito semântico que o agente não consegue decidir vira pedido de ajuda.
-  - **Resolve.** O agente responde com marcador e marca como resolvido o thread para o qual
-    entregou mudança já enviada, citando o SHA e uma descrição curta (o SHA pode ficar órfão
-    num rebase posterior). Thread recusado ou com pergunta fica aberto. A factory não resolve threads.
-  - A skill vem do perfil do operador, linkada por ele em `~/.pi/agent/skills` (não como efeito do
-    setup, R06); a imagem instala `python3`, que o script da skill exige, e o check de prontidão
-    verifica a skill no perfil. O prompt da correção complementa a skill com marcador, resposta,
-    resolve, push e review dos dois eixos.
-
 Esquema de dados e detalhes de API dos adapters (além das representações de R02)
 devem ser especificados nos tickets a partir das capacidades observadas dos projetos
 configurados, sem remover requisito nem assumir ausência de um campo não lido.
@@ -349,8 +318,6 @@ Os tickets são publicados nas GitHub Issues de `Sanmoo/my-software-factory`
 | CA17 | Issue Jira `ready-for-agent` sem label de roteamento ou com duas aparece no status e não é admitida; com uma, vai ao repositório mapeado. | R01, R03 |
 | CA18 | Cada papel agêntico usa o provider/model e a auth da sua instância; `default` aparece no log; papel sem configuração ou auth ausente é erro visível, sem fallback; conta ativa do `gh` não muda. | R01, R06 |
 | CA19 | Resultado "PR pronto" com PR inexistente, fechado ou com base/head divergentes é inválido; `release` remove o claim sem done. | R08, R09 |
-| CA20 | Comentário inline humano no PR é feedback; a resposta do próprio agente (comentário com marcador numa review de corpo vazio) não; conflito com o destino dispara correção por rebase; mergeabilidade desconhecida ou PR só atrasado não; o mesmo par head/base conflitante não se repete e aparece no status. | R10, R11, P07 |
-| CA21 | Comentário humano no PR gera triagem numerada como pedido de ajuda, sem mudança de código; a retomada aplica só o escolhido; thread com mudança enviada fica resolvido, recusado ou não escolhido fica aberto; checks e conflitos sem comentário humano não passam pela triagem. | R10, P07 |
 
 Os exemplos concretos e seams de teste devem acompanhar os tickets, sobretudo
 para que /implement não precise buscar aprovação rotineira que já possa constar
