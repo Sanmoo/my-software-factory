@@ -1,6 +1,8 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
-import type { Runner, RunKind, RunnerOutput } from "../runtime/runner.js";
+import type { ContinuationContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
+import type { CommandQueue, OperatorCommand } from "./commands.js";
+import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, transitionJob, type Continuation, type Job, type JobState } from "./job.js";
 import type { JobStore } from "./job-store.js";
 import { projectEligibility, type ProjectEligibility } from "./project-eligibility.js";
@@ -18,12 +20,25 @@ export interface AdmissionDeps {
   tracker: TrackerPort;
   runner: Runner;
   store: JobStore;
+  commands: CommandQueue;
+  control: InstanceControl;
+}
+
+export interface CommandOutcome {
+  id: string;
+  type: OperatorCommand["type"];
+  job?: string;
+  status: "applied" | "rejected";
+  reason?: string;
 }
 
 export interface PollReport {
   admitted: string[];
   skipped: Array<{ key: string; reason: string }>;
   errors: Array<{ key: string; message: string }>;
+  commands: CommandOutcome[];
+  // Whether the instance was paused when the poll ran (R09). A paused poll admits nothing.
+  paused: boolean;
 }
 
 export type ContinuationOutcome = { status: "queued" } | { status: "rejected"; reason: string };
@@ -34,6 +49,9 @@ const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
   resume: ["waiting-for-help", "interrupted"],
   correction: ["waiting-for-pr"],
 };
+
+// Jobs an operator can release: none of them has an invocation running (R09).
+const RELEASABLE: readonly JobState[] = ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required"];
 
 const UNRESOLVED_START = "início não confirmado pelo tracker: claim e doing não estão visíveis";
 
@@ -107,9 +125,19 @@ export class Admission {
     return [...this.runErrors];
   }
 
-  // One polling cycle: continuations first (CA07), then new work by priority (P05).
+  // One polling cycle: operator commands in queue order (R09), then, unless paused, continuations
+  // first (CA07) and new work by priority (P05).
   async poll(): Promise<PollReport> {
-    const report: PollReport = { admitted: [], skipped: [], errors: [] };
+    const report: PollReport = { admitted: [], skipped: [], errors: [], commands: [], paused: false };
+    await this.processCommands(report);
+    try {
+      report.paused = await this.deps.control.isPaused();
+    } catch (error) {
+      // An unknown pause state admits nothing: unknown is not the same as not paused.
+      report.errors.push({ key: "control", message: messageOf(error) });
+      return report;
+    }
+    if (report.paused) return report;
     const continuations = this.allJobs().filter((job) => job.pending !== undefined);
     for (const job of continuations) {
       await this.guard(job.key, report, () => this.admitContinuation(job, report));
@@ -135,6 +163,109 @@ export class Admission {
     }
     await this.persist({ ...appendLog(job, `${kind} solicitado; aguarda vaga`), pending: kind });
     return { status: "queued" };
+  }
+
+  // Applies the queued commands in order and removes each one once it has been applied.
+  // A command whose application fails stays queued and is retried on the next poll.
+  private async processCommands(report: PollReport): Promise<void> {
+    let queued;
+    try {
+      queued = await this.deps.commands.pending();
+    } catch (error) {
+      report.errors.push({ key: "commands", message: messageOf(error) });
+      return;
+    }
+    for (const name of queued.unreadable) {
+      report.errors.push({ key: "commands", message: `comando ilegível: ${name}` });
+    }
+    for (const command of queued.commands) {
+      try {
+        report.commands.push(await this.handleCommand(command));
+        await this.deps.commands.done(command.id);
+      } catch (error) {
+        report.errors.push({ key: command.id, message: messageOf(error) });
+      }
+    }
+  }
+
+  private async handleCommand(command: OperatorCommand): Promise<CommandOutcome> {
+    const base = { id: command.id, type: command.type };
+    if (command.type === "pause" || command.type === "unpause") {
+      await this.deps.control.setPaused(command.type === "pause");
+      return { ...base, status: "applied" };
+    }
+    const job = this.jobs.get(command.job);
+    if (!job) return { ...base, job: command.job, status: "rejected", reason: "trabalho desconhecido" };
+    const reason = await this.operate(job, command);
+    if (reason === undefined) return { ...base, job: job.key, status: "applied" };
+    await this.note(job.key, `${command.type} rejeitado: ${reason}`);
+    return { ...base, job: job.key, status: "rejected", reason };
+  }
+
+  // Returns the reason a command was refused, or undefined when it was applied.
+  private async operate(job: Job, command: OperatorCommand): Promise<string | undefined> {
+    switch (command.type) {
+      case "reply":
+        return this.reply(job, command.message);
+      case "resume": {
+        const outcome = await this.requestContinuation(job.key, "resume");
+        return outcome.status === "rejected" ? outcome.reason : undefined;
+      }
+      case "release":
+        return this.release(job);
+      default:
+        return "comando sem trabalho";
+    }
+  }
+
+  // A directed answer (R09). A job waiting for help is reactivated when a slot is free; any
+  // other job that is not running keeps the reply for its next invocation. An active agent
+  // is never interrupted, so its reply also waits for the next invocation.
+  private async reply(job: Job, message: string): Promise<string | undefined> {
+    if (message.trim() === "") return "resposta vazia";
+    const replies = [...(job.replies ?? []), message];
+    switch (job.state) {
+      case "waiting-for-help":
+        await this.persist({
+          ...appendLog(job, `resposta recebida; reativação quando houver vaga: ${message}`),
+          replies,
+          pending: "resume",
+        });
+        return undefined;
+      case "running":
+      case "interrupted":
+      case "waiting-for-pr":
+        await this.persist({ ...appendLog(job, `resposta pendente para a próxima invocação: ${message}`), replies });
+        return undefined;
+      default:
+        return `reply não se aplica ao estado ${job.state}`;
+    }
+  }
+
+  // Removes the claim and ends tracking; area, session and PR stay on the job. Never moves
+  // the issue to done and never touches the PR (R09, CA19). A write whose answer was lost is
+  // confirmed by rereading the tracker (P02).
+  private async release(job: Job): Promise<string | undefined> {
+    if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
+    try {
+      await this.deps.tracker.releaseClaim(job.ref);
+    } catch (error) {
+      if (!(await this.claimRemoved(job.ref))) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+    }
+    await this.apply(job.key, "released", {
+      message: "claim removido pelo operador; acompanhamento encerrado; área, sessão e PR preservados",
+      reason: "liberado pelo operador",
+    });
+    return undefined;
+  }
+
+  private async claimRemoved(ref: IssueRef): Promise<boolean> {
+    try {
+      const snapshot = await this.deps.tracker.readIssue(ref);
+      return snapshot.claimed.known && !snapshot.claimed.value;
+    } catch {
+      return false;
+    }
   }
 
   private async guard(key: string, report: PollReport, action: () => Promise<void>): Promise<void> {
@@ -256,14 +387,29 @@ export class Admission {
       });
       return;
     }
+    const workspace = job.workspace;
+    const missing = [workspace === undefined ? "sessão e área" : undefined, project.runtimeProfile.trim() === "" ? "perfil" : undefined]
+      .filter((item): item is string => item !== undefined)
+      .join(" e ");
+    if (missing !== "" || workspace === undefined) {
+      // No conversation is started silently: the operator decides what happens next (P03).
+      await this.apply(job.key, "waiting-for-help", {
+        message: `${kind} sem ${missing}: pedido de ajuda; nenhuma conversa nova foi iniciada`,
+        question: `${kind} solicitado, mas falta ${missing} para continuar a sessão anterior: responda com a orientação ou libere o trabalho`,
+        context: "nenhuma conversa nova foi iniciada",
+      });
+      return;
+    }
     const blocked = this.reserve(job);
     if (blocked) {
       report.skipped.push({ key: job.key, reason: blocked });
       return;
     }
-    const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração` });
+    const replies = job.replies ?? [];
+    const delivered = replies.length > 0 ? `; ${replies.length} resposta(s) entregue(s)` : "";
+    const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração${delivered}` });
     report.admitted.push(job.key);
-    this.dispatch(running.key, running.ref, kind, 1);
+    this.dispatch(running.key, running.ref, kind, 1, { workspace, replies });
   }
 
   // Capacity and repository check. Synchronous with the reservation it guards, so
@@ -314,8 +460,8 @@ export class Admission {
     await this.apply(key, "intervention-required", { message: reason, reason });
   }
 
-  private dispatch(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations).catch((error: unknown) => {
+  private dispatch(key: string, ref: IssueRef, kind: RunKind, maxIterations: number, continuation?: ContinuationContext): void {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, continuation).catch((error: unknown) => {
       this.runErrors.push(error);
     });
     this.runs.add(run);
@@ -324,11 +470,25 @@ export class Admission {
 
   // Up to maxIterations invocations of the runner. A final output that is absent,
   // ambiguous or invalid is never success and stops the job at once.
-  private async execute(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): Promise<void> {
+  private async execute(
+    key: string,
+    ref: IssueRef,
+    kind: RunKind,
+    maxIterations: number,
+    continuation?: ContinuationContext,
+  ): Promise<void> {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
+      const context: RunnerContext = {
+        jobId: key,
+        ref,
+        kind,
+        iteration,
+        maxIterations,
+        ...(continuation ? { continuation } : {}),
+      };
       try {
-        output = await this.deps.runner.run({ jobId: key, ref, kind, iteration, maxIterations });
+        output = await this.deps.runner.run(context);
       } catch {
         await this.apply(key, "intervention-required", {
           message: "runner falhou sem resultado estruturado",
@@ -336,6 +496,7 @@ export class Admission {
         });
         return;
       }
+      if (output.workspace) await this.update(key, { workspace: output.workspace });
       if (output.kind === "continue") {
         if (iteration < maxIterations) {
           await this.note(key, `iteração ${iteration}/${maxIterations} (${kind}) sem resultado final; nova iteração`);
@@ -388,6 +549,12 @@ export class Admission {
     const current = this.jobs.get(key);
     if (!current) throw new Error(`trabalho desconhecido: ${key}`);
     await this.persist(appendLog(current, message));
+  }
+
+  private async update(key: string, changes: Partial<Pick<Job, "workspace">>): Promise<void> {
+    const current = this.jobs.get(key);
+    if (!current) throw new Error(`trabalho desconhecido: ${key}`);
+    await this.persist({ ...current, ...changes });
   }
 
   private async persist(job: Job): Promise<void> {

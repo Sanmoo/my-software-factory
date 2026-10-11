@@ -7,6 +7,8 @@ import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
 import { FakeRunner, finished } from "../src/runtime/fake-runner.js";
 import type { RunnerContext, RunnerOutput } from "../src/runtime/runner.js";
+import { createFileCommandQueue } from "../src/state/command-queue.js";
+import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker } from "../src/tracker/memory.js";
 import { runStatus } from "../src/cli/status.js";
@@ -91,6 +93,8 @@ async function prepare(extraJobFile?: { name: string; content: string }): Promis
     tracker,
     runner: new FakeRunner(script),
     store: createFileJobStore(stateDir),
+    commands: createFileCommandQueue(stateDir),
+    control: createFileInstanceControl(stateDir),
   });
   await admission.poll();
   assert.deepEqual(await admission.settle(), []);

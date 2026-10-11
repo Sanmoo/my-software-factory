@@ -1,4 +1,5 @@
 import { refKey, type IssueRef } from "../tracker/port.js";
+import type { Workspace } from "../runtime/runner.js";
 import type { PrRef } from "./result.js";
 
 // Job states (R04, R05, R08, R09, R12). `running` is the only state that holds a slot:
@@ -10,6 +11,7 @@ export const JOB_STATES = [
   "interrupted",
   "intervention-required",
   "done",
+  "released",
 ] as const;
 export type JobState = (typeof JOB_STATES)[number];
 
@@ -25,6 +27,10 @@ export interface Job {
   question?: string;
   context?: string;
   pr?: PrRef;
+  // Session and area reported by the runner; a resume continues them (P03).
+  workspace?: Workspace;
+  // Operator replies not yet delivered to an invocation (R09).
+  replies?: string[];
   pending?: Continuation;
   log: string[];
 }
@@ -37,13 +43,17 @@ export interface TransitionDetails {
   pr?: PrRef;
 }
 
+// `released` is the operator ending the tracking of a job that is not running (R09): the
+// claim is removed, the record keeps area, session and PR, and nothing else is changed.
 const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   running: ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required", "done"],
-  "waiting-for-help": ["running", "interrupted", "intervention-required", "done"],
-  "waiting-for-pr": ["running", "interrupted", "intervention-required", "done"],
-  interrupted: ["running"],
-  "intervention-required": ["running"],
+  // A resume that cannot continue the session asks for help again (P03).
+  "waiting-for-help": ["running", "waiting-for-help", "interrupted", "intervention-required", "done", "released"],
+  "waiting-for-pr": ["running", "interrupted", "intervention-required", "done", "released"],
+  interrupted: ["running", "waiting-for-help", "released"],
+  "intervention-required": ["running", "released"],
   done: [],
+  released: [],
 };
 
 export const holdsSlot = (state: JobState): boolean => state === "running";
@@ -70,6 +80,8 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
   delete next.pending;
   if (to === "running") {
     // Resuming keeps the PR reference: the PR stays the one tracked by this job.
+    // Replies are delivered by the invocation that starts now (R09).
+    delete next.replies;
     return next;
   }
   if (details.reason !== undefined) next.reason = details.reason;
