@@ -117,7 +117,7 @@ function adfText(node: AdfNode): string {
 }
 
 // One ADF paragraph per line of the text.
-function adfFromText(text: string): AdfNode {
+function adfFromText(text: string): { type: "doc"; version: 1; content: AdfNode[] } {
   return {
     type: "doc",
     version: 1,
@@ -125,7 +125,7 @@ function adfFromText(text: string): AdfNode {
       type: "paragraph",
       content: line === "" ? [] : [{ type: "text", text: line }],
     })),
-  } as unknown as AdfNode;
+  };
 }
 
 // Shapes of the Jira REST responses the adapter reads; only the fields it uses.
@@ -174,8 +174,15 @@ function claimedOf(labels: Known<string[]>, category: Known<StatusCategory>, cla
   const byStatus = category.known ? category.value !== "to-do" : undefined;
   if (byLabel === true || byStatus === true) return { known: true, value: true };
   if (byLabel === false && byStatus === false) return { known: true, value: false };
-  const reason = !labels.known ? labels.reason : !category.known ? category.reason : "claim indeterminado";
-  return { known: false, reason };
+  if (!labels.known) return { known: false, reason: labels.reason };
+  if (!category.known) return { known: false, reason: category.reason };
+  return { known: false, reason: "claim indeterminado" };
+}
+
+// Assignees is the single assignee as a list; an unknown assignee stays unknown.
+function assigneesOf(assignee: Known<string | null>): Known<string[]> {
+  if (!assignee.known) return { known: false, reason: assignee.reason };
+  return { known: true, value: assignee.value === null ? [] : [assignee.value] };
 }
 
 // Jira default priority names, most urgent first (P05: lower number = more urgent).
@@ -224,7 +231,7 @@ export class JiraTracker implements TrackerPort {
       ref,
       title: fields.summary ?? "",
       labels,
-      assignees: assignee.known ? { known: true, value: assignee.value === null ? [] : [assignee.value] } : assignee,
+      assignees: assigneesOf(assignee),
       claimed,
       blockers: this.blockersOf(fields.issuelinks),
       statusCategory: category,

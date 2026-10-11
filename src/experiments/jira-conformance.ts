@@ -128,7 +128,7 @@ function verdictOf(snapshot: IssueSnapshot, operator: string): Rejection[] {
 async function operatorAccount(connection: JiraConnection): Promise<string> {
   const me = await jiraRequest<{ accountId: string }>(connection, "GET", "/rest/api/3/myself");
   check(me !== undefined, "conta do operador não resolvida por JIRA_USERNAME");
-  return me!.accountId;
+  return me?.accountId ?? "";
 }
 
 async function readOnly(connection: JiraConnection, settings: JiraTrackerSettings): Promise<void> {
@@ -181,7 +181,7 @@ async function issueTypeId(connection: JiraConnection): Promise<{ id: string; na
   const types = (project?.issueTypes ?? []).filter((type) => !type.subtask);
   const chosen = types.find((type) => type.name === "Task" || type.name === "Tarefa") ?? types[0];
   check(chosen !== undefined, "nenhum tipo de issue não-subtarefa no projeto VAN");
-  return chosen!;
+  return chosen ?? { id: "", name: "" };
 }
 
 async function createTestIssue(connection: JiraConnection, operator: string, typeId: string, role: string): Promise<string> {
@@ -194,7 +194,7 @@ async function createTestIssue(connection: JiraConnection, operator: string, typ
     },
   });
   check(created !== undefined, "criação da issue de teste sem resposta");
-  const key = created!.key;
+  const key = created?.key ?? "";
   createdKeys.add(key);
   await jiraRequest(connection, "PUT", `/rest/api/3/issue/${key}`, { fields: { assignee: { accountId: operator } } });
   return key;
@@ -264,7 +264,7 @@ async function writeChecks(
   log("transicoes done disponíveis", doneCandidates);
   const doneName = doneOption ?? (doneCandidates.length === 1 ? doneCandidates[0] : undefined);
   check(doneName !== undefined && doneCandidates.includes(doneName), "nome da transição done não confirmado");
-  const tracker = new JiraTracker(connection, settingsFor(doingName, doneName!, linkType));
+  const tracker = new JiraTracker(connection, settingsFor(doingName, doneName ?? "", linkType));
 
   const commentId = await tracker.postComment(reference(blocker), "teste de conformidade do adapter Jira");
   const comments = await tracker.readComments(reference(blocker));
