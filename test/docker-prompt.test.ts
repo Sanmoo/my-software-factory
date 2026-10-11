@@ -33,6 +33,7 @@ test("the first invocation runs the installed /implement skill on the work item,
   assert.ok(prompt.includes(job.baseSha), "review base");
   assert.ok(prompt.includes(job.branch), "authorized branch");
   assert.ok(prompt.includes("/home/agent/workspace"), "work only in the job area");
+  assert.ok(prompt.includes("Authorized repository: acme/app."), "authorized repository");
 });
 
 test("every agent role is named with its explicit model, and the default role is used for other subagents", () => {

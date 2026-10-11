@@ -123,8 +123,8 @@ class DockerRunner implements Runner {
         : await this.resumeJob(context, saved, layout);
       const review = await this.reviewMaterial(layout.repoDir, repoRef.baseSha);
       const prompt = context.kind === "new"
-        ? implementPrompt({ ref: context.ref, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review })
-        : continuationPrompt({ kind: context.kind, note: context.note, ref: context.ref, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review });
+        ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review })
+        : continuationPrompt({ kind: context.kind, note: context.note, ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, review });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,

@@ -16,6 +16,7 @@ export interface ReviewMaterial {
 
 export interface JobPromptInput {
   ref: IssueRef;
+  repository: string;
   targetBranch: string;
   branch: string;
   baseSha: string;
@@ -60,7 +61,7 @@ const RESULT_PROTOCOL = [
 export function implementPrompt(input: JobPromptInput): string {
   return [
     "/skill:implement",
-    `Work item: ${refKey(input.ref)}.`,
+    `Work item: ${refKey(input.ref)}. Authorized repository: ${input.repository}.`,
     `Work only in /home/agent/workspace, on branch ${input.branch}, created from ${input.targetBranch} at base ${input.baseSha}.`,
     `Read the spec ${input.review.specPath} and the standards ${input.review.standardsPath} in the workspace before implementing.`,
     "Models:",

@@ -144,6 +144,7 @@ test("a new invocation runs in its own area at base, with the configured limit, 
   assert.equal(run.model, GPT);
   assert.equal(run.sessionsDir, layout.sessionsDir);
   assert.match(run.request.prompt, /\/skill:implement/);
+  assert.match(run.request.prompt, /Authorized repository: acme\/app\./);
   assert.ok(run.request.prompt.includes(await headOf(layout.repoDir)), "the prompt names the base");
 });
 
