@@ -214,7 +214,12 @@ class FakeJira {
 
   private comments(issue: FakeIssue, url: URL): { status: number; json?: unknown } {
     const startAt = Number(url.searchParams.get("startAt") ?? 0);
-    const page = issue.comments.slice(startAt, startAt + PAGE_SIZE);
+    const page = issue.comments.slice(startAt, startAt + PAGE_SIZE).map((comment) => ({
+      id: comment.id,
+      author: { accountId: comment.accountId, displayName: "Author", accountType: comment.accountType ?? "atlassian" },
+      body: comment.body,
+      created: comment.created,
+    }));
     return { status: 200, json: { startAt, maxResults: PAGE_SIZE, total: issue.comments.length, comments: page } };
   }
 
@@ -384,4 +389,46 @@ test("a blocker whose status cannot be read has unknown terminal state", async (
   ];
   const snapshot = await withTracker(issues, (tracker) => tracker.readIssue(ref("VAN-40")));
   assert.equal(snapshot.blockers.known && snapshot.blockers.value[0].terminal.known, false);
+});
+
+const adf = (...paragraphs: string[][]) => ({
+  type: "doc",
+  version: 1,
+  content: paragraphs.map((runs) => ({
+    type: "paragraph",
+    content: runs.map((text) => ({ type: "text", text })),
+  })),
+});
+
+test("readComments returns id, author, bot flag, body text and time across pages", async () => {
+  const issues = [
+    fakeIssue({
+      key: "VAN-50",
+      comments: [
+        { id: "101", accountId: "acc-human", body: adf(["primeira linha"], ["segunda ", "parte"]), created: "2026-05-01T10:00:00.000+0000" },
+        { id: "102", accountId: "acc-bot", accountType: "app", body: adf(["[msf] relato do agente"]), created: "2026-05-01T11:00:00.000+0000" },
+        { id: "103", accountId: "acc-human", body: adf(["agent: reavaliar"]), created: "2026-05-01T12:00:00.000+0000" },
+      ],
+    }),
+  ];
+  const comments = await withTracker(issues, (tracker) => tracker.readComments(ref("VAN-50")));
+  assert.deepEqual(comments, [
+    { id: "101", author: "acc-human", isBot: false, body: "primeira linha\nsegunda parte", createdAt: "2026-05-01T10:00:00.000+0000" },
+    { id: "102", author: "acc-bot", isBot: true, body: "[msf] relato do agente", createdAt: "2026-05-01T11:00:00.000+0000" },
+    { id: "103", author: "acc-human", isBot: false, body: "agent: reavaliar", createdAt: "2026-05-01T12:00:00.000+0000" },
+  ]);
+});
+
+test("postComment publishes the [msf] marker once and returns the comment id", async () => {
+  const issues = [fakeIssue({ key: "VAN-51" })];
+  const comments = await withTracker(issues, async (tracker) => {
+    const plain = await tracker.postComment(ref("VAN-51"), "resultado parcial");
+    const marked = await tracker.postComment(ref("VAN-51"), "[msf] já marcado");
+    assert.deepEqual([plain, marked], ["900", "901"]);
+    return tracker.readComments(ref("VAN-51"));
+  });
+  assert.deepEqual(comments.map((comment) => [comment.id, comment.body, comment.isBot]), [
+    ["900", "[msf] resultado parcial", false],
+    ["901", "[msf] já marcado", false],
+  ]);
 });

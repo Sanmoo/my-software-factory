@@ -85,6 +85,47 @@ export function jqlString(value: string): string {
 }
 
 const ISSUE_FIELDS = "summary,status,labels,assignee,priority,issuelinks";
+const PAGE_SIZE = 100;
+const JIRA_MARKER = "[msf]";
+
+// Atlassian Document Format node, as returned for comment bodies.
+interface AdfNode {
+  type: string;
+  text?: string;
+  attrs?: { text?: string };
+  content?: AdfNode[];
+}
+
+interface JiraComment {
+  id: string;
+  author?: { accountId?: string; accountType?: string };
+  body: AdfNode | string;
+  created: string;
+}
+
+const INLINE_NODES = new Set(["text", "hardBreak", "mention"]);
+
+// Plain text of an ADF body: blocks are separated by newlines, inline runs are concatenated.
+function adfText(node: AdfNode): string {
+  if (node.type === "text") return node.text ?? "";
+  if (node.type === "hardBreak") return "\n";
+  if (node.type === "mention") return node.attrs?.text ?? "";
+  const children = node.content ?? [];
+  const inline = children.every((child) => INLINE_NODES.has(child.type));
+  return children.map(adfText).join(inline ? "" : "\n");
+}
+
+// One ADF paragraph per line of the text.
+function adfFromText(text: string): AdfNode {
+  return {
+    type: "doc",
+    version: 1,
+    content: text.split("\n").map((line) => ({
+      type: "paragraph",
+      content: line === "" ? [] : [{ type: "text", text: line }],
+    })),
+  } as unknown as AdfNode;
+}
 
 // Shapes of the Jira REST responses the adapter reads; only the fields it uses.
 interface JiraStatus {
@@ -234,12 +275,42 @@ export class JiraTracker implements TrackerPort {
     throw new Error("não implementado");
   }
 
-  async readComments(_ref: IssueRef): Promise<Comment[]> {
-    throw new Error("não implementado");
+  async readComments(ref: IssueRef): Promise<Comment[]> {
+    const found: JiraComment[] = [];
+    let startAt = 0;
+    let total = 0;
+    do {
+      const page: { total?: number; comments?: JiraComment[] } | undefined = await jiraRequest(
+        this.connection,
+        "GET",
+        `/rest/api/3/issue/${encodeURIComponent(ref.id)}/comment?startAt=${startAt}&maxResults=${PAGE_SIZE}`,
+      );
+      const items = page?.comments ?? [];
+      total = page?.total ?? 0;
+      found.push(...items);
+      startAt += items.length;
+      if (items.length === 0) break;
+    } while (startAt < total);
+    return found.map((comment) => ({
+      id: comment.id,
+      author: comment.author?.accountId ?? "desconhecido",
+      isBot: comment.author?.accountType === "app",
+      body: typeof comment.body === "string" ? comment.body : adfText(comment.body),
+      createdAt: comment.created,
+    }));
   }
 
-  async postComment(_ref: IssueRef, _body: string): Promise<string> {
-    throw new Error("não implementado");
+  // Every comment the factory publishes starts with the [msf] marker, added once.
+  async postComment(ref: IssueRef, body: string): Promise<string> {
+    const text = body.startsWith(JIRA_MARKER) ? body : `${JIRA_MARKER} ${body}`;
+    const created = await jiraRequest<{ id: string }>(
+      this.connection,
+      "POST",
+      `/rest/api/3/issue/${encodeURIComponent(ref.id)}/comment`,
+      { body: adfFromText(text) },
+    );
+    if (created === undefined) throw new Error("Jira não devolveu o id do comentário");
+    return created.id;
   }
 
   async markDone(_ref: IssueRef): Promise<DoneOutcome> {
