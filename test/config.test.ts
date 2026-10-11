@@ -127,3 +127,12 @@ test("the documented example configuration validates and carries no credential v
   const text = await readFile(path, "utf8");
   assert.doesNotMatch(text, /ghp_|github_pat_|token"\s*:/i);
 });
+
+test("projects without label overrides use the default ready and claimed labels", async () => {
+  const result = await loadConfigFile(fixture("instances.json"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  for (const project of result.config.instances.flatMap((instance) => instance.projects)) {
+    assert.deepEqual(project.labels, { ready: "ready-for-agent", claimed: "agent-claimed" });
+  }
+});
