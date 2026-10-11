@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { coreRules, evaluateEligibility } from "../src/core/eligibility.js";
+import { jiraEligibilityRules } from "../src/tracker/jira-rules.js";
 import {
   JiraTracker,
   jiraConnectionFromEnv,
@@ -503,4 +505,60 @@ test("markDone without the configured done transition is not confirmed", async (
     const outcome = await tracker.markDone(ref("VAN-67"));
     assert.equal(outcome.status, "not-confirmed");
   });
+});
+
+// Eligibility of a real Jira snapshot under the core rules plus the Jira rules, for a
+// project routed by the "playbooks" label. Every negative filter must reject with a rule.
+const ROUTING = { kind: "label" as const, routingLabel: "playbooks", knownLabels: ["playbooks", "monolith"] };
+
+async function eligibilityOf(issues: FakeIssue[], key: string): Promise<string[]> {
+  return withTracker(issues, async (tracker) => {
+    const issue = await tracker.readIssue(ref(key));
+    const verdict = evaluateEligibility(
+      { project: { enabled: true, readyLabel: "ready-for-agent", routing: ROUTING }, issue, tracked: new Set() },
+      [...coreRules, ...jiraEligibilityRules(OPERATOR_ACCOUNT)],
+    );
+    return verdict.eligible ? [] : verdict.rejections.map((rejection) => rejection.rule);
+  });
+}
+
+test("a Jira issue ready, unclaimed, unblocked, in the open sprint and assigned to the operator is eligible", async () => {
+  assert.deepEqual(await eligibilityOf([fakeIssue({ key: "VAN-70" })], "VAN-70"), []);
+});
+
+test("each negative filter rejects the issue with its rule", async () => {
+  const cases: Array<{ name: string; issue: FakeIssue; issues?: FakeIssue[]; rule: string }> = [
+    { name: "outside the open sprint", issue: fakeIssue({ key: "VAN-71", openSprint: false }), rule: "sprint-atual" },
+    { name: "sprint state unreadable", issue: fakeIssue({ key: "VAN-72", summary: "NO_BOARD" }), rule: "sprint-atual" },
+    { name: "assigned to a colleague", issue: fakeIssue({ key: "VAN-73", assignee: "acc-colleague" }), rule: "assignee-operador" },
+    { name: "unassigned", issue: fakeIssue({ key: "VAN-74", assignee: null }), rule: "assignee-operador" },
+    { name: "already claimed by label", issue: fakeIssue({ key: "VAN-75", labels: ["ready-for-agent", "playbooks", "agent-claimed"] }), rule: "not-claimed" },
+    { name: "not ready for agent", issue: fakeIssue({ key: "VAN-76", labels: ["playbooks"] }), rule: "ready" },
+    { name: "terminal", issue: fakeIssue({ key: "VAN-77", statusName: "Concluído", category: "done" }), rule: "not-terminal" },
+    { name: "two routing labels", issue: fakeIssue({ key: "VAN-78", labels: ["ready-for-agent", "playbooks", "monolith"] }), rule: "routing" },
+    {
+      name: "blocked by an open issue",
+      issue: fakeIssue({ key: "VAN-79", links: [{ type: BLOCKS, inwardIssue: "VAN-80" }] }),
+      issues: [fakeIssue({ key: "VAN-80", category: "new", statusName: "A Fazer" })],
+      rule: "no-blockers",
+    },
+    {
+      name: "blocker state unreadable",
+      issue: fakeIssue({ key: "VAN-81", links: [{ type: BLOCKS, inwardIssue: "VAN-82" }] }),
+      issues: [fakeIssue({ key: "VAN-82", hideStatus: true })],
+      rule: "no-blockers",
+    },
+  ];
+  for (const testCase of cases) {
+    const rules = await eligibilityOf([testCase.issue, ...(testCase.issues ?? [])], testCase.issue.key);
+    assert.ok(rules.includes(testCase.rule), `${testCase.name} should be rejected by ${testCase.rule}, got ${rules.join(",")}`);
+  }
+});
+
+test("a link to a blocker that is already Done does not block", async () => {
+  const issues = [
+    fakeIssue({ key: "VAN-83", links: [{ type: BLOCKS, inwardIssue: "VAN-84" }] }),
+    fakeIssue({ key: "VAN-84", category: "done", statusName: "Concluído" }),
+  ];
+  assert.deepEqual(await eligibilityOf(issues, "VAN-83"), []);
 });
