@@ -299,6 +299,19 @@
       "blockers": [],
       "openSprint": true,
       "assignee": "samuel.santos"
+    },
+    {
+      "project": "Sanmoo/my-tasks",
+      "id": "1",
+      "title": "Personal eligible",
+      "labels": [
+        "ready-for-agent"
+      ],
+      "assignees": [],
+      "claimed": false,
+      "statusCategory": "to-do",
+      "priority": null,
+      "blockers": []
     }
   ]
 }

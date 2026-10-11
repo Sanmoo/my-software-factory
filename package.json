@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
+    "status": "tsx src/cli/status.ts",
     "smoke:pi": "tsx src/experiments/pi-smoke.ts",
     "smoke:implement": "tsx src/experiments/implement-help-smoke.ts"
   },
