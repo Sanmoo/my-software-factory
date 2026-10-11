@@ -52,7 +52,7 @@ const reply = (json: unknown): PiEvent[] => [
 
 // The boundary stands for Docker and Sandcastle: it records what the runner asked for and
 // may act in the work area the way the agent would (the area is a bind mount).
-function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<SandboxOutcome>, preflightError?: string) {
+function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<Omit<SandboxOutcome, "iterations">>, preflightError?: string) {
   const runs: SandboxRun[] = [];
   const boundary: SandboxBoundary = {
     async preflight() {
@@ -61,7 +61,7 @@ function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<Sandbox
     },
     async run(input) {
       runs.push(input);
-      return script(input, runs.length);
+      return { iterations: 1, ...(await script(input, runs.length)) };
     },
   };
   return { boundary, runs };
@@ -251,6 +251,7 @@ test("the effective limit and every use of the default model are written to the 
   const audit = await readFile(jobLayout(f.stateDir, key).auditPath, "utf8");
   assert.match(audit, /limite efetivo=5/);
   assert.match(audit, /default usado por researcher/);
+  assert.match(audit, /iterações do Sandcastle=1 de 5/);
   assert.ok(!audit.includes(TOKEN));
   const record = await readFile(jobLayout(f.stateDir, key).recordPath, "utf8");
   assert.ok(!record.includes(TOKEN), "run record holds no secret");

@@ -40,6 +40,7 @@ export interface SandboxRun {
 export interface SandboxOutcome {
   sessionId?: string;
   completed: boolean; // the completion signal was matched
+  iterations: number; // Sandcastle iterations used; each one is a fresh Pi session
   events: PiEvent[];
 }
 
@@ -141,6 +142,7 @@ class DockerRunner implements Runner {
 
       const sessionId = outcome.sessionId ?? repoRef.sessionId;
       await this.writeRecord(layout, { ...repoRef, sessionId });
+      await this.audit(layout, `iterações do Sandcastle=${outcome.iterations} de ${request.maxIterations}; completou=${outcome.completed}`);
       // The session and area of this invocation are reported so the admission can resume them (P03).
       const reportWorkspace = (output: RunnerOutput): RunnerOutput =>
         sessionId === undefined ? output : { ...output, workspace: { session: sessionId, area: layout.repoDir } };

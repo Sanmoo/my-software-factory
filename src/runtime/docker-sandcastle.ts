@@ -121,7 +121,7 @@ export function sandcastleBoundary(): SandboxBoundary {
         },
       });
       const sessionId = result.iterations.at(-1)?.sessionId ?? result.iterations[0]?.sessionId;
-      return { sessionId, completed: result.completionSignal !== undefined, events };
+      return { sessionId, completed: result.completionSignal !== undefined, iterations: result.iterations.length, events };
     },
   };
 }
