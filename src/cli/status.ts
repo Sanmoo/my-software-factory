@@ -4,6 +4,8 @@ import type { InstanceConfig, ProjectConfig } from "../config/types.js";
 import { evaluateEligibility } from "../core/eligibility.js";
 import type { Job } from "../core/job.js";
 import { projectEligibility } from "../core/project-eligibility.js";
+import { createFileCommandQueue } from "../state/command-queue.js";
+import { createFileInstanceControl } from "../state/instance-control.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../tracker/memory.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -40,6 +42,10 @@ interface ProjectReport {
 interface JobsReport {
   jobs: Job[];
   unreadable: string[];
+  // Admission state as the instance will have it after its queued commands (R09).
+  paused: boolean;
+  pausePending: boolean;
+  pendingCommands: number;
 }
 
 const USAGE = "uso: npm run status -- --config FILE --instance NAME --fixture FILE [--state-dir DIR]";
@@ -92,7 +98,12 @@ function displayRef(ref: IssueRef, project: ProjectConfig): string {
 }
 
 function renderJobs(jobs: JobsReport): string[] {
-  const lines = ["", `Trabalhos (${jobs.jobs.length}):`];
+  const lines = [
+    "",
+    `Admissões: ${jobs.paused ? "pausadas" : "ativas"}${jobs.pausePending ? " (comando aguarda o próximo ciclo)" : ""}`,
+    `Comandos pendentes: ${jobs.pendingCommands}`,
+    `Trabalhos (${jobs.jobs.length}):`,
+  ];
   for (const job of jobs.jobs) {
     const summary = summaryOf(job);
     lines.push(`  ${job.key} ${stateLabel(job.state)}${summary ? ` — ${summary}` : ""}`);
@@ -143,7 +154,18 @@ export async function runStatus(argv: readonly string[]): Promise<StatusRun> {
   let jobs: JobsReport | undefined;
   if (options.stateDir !== undefined) {
     const loadedJobs = await createFileJobStore(options.stateDir).load();
-    jobs = { jobs: loadedJobs.jobs, unreadable: loadedJobs.unreadable };
+    const queued = await createFileCommandQueue(options.stateDir).pending();
+    const applied = await createFileInstanceControl(options.stateDir).isPaused();
+    // The last queued pause or unpause decides the state once the queue is applied.
+    const switches = queued.commands.filter((command) => command.type === "pause" || command.type === "unpause");
+    const last = switches.at(-1);
+    jobs = {
+      jobs: loadedJobs.jobs,
+      unreadable: loadedJobs.unreadable,
+      paused: last ? last.type === "pause" : applied,
+      pausePending: last !== undefined && (last.type === "pause") !== applied,
+      pendingCommands: queued.commands.length + queued.unreadable.length,
+    };
   }
   const tracked = new Set((jobs?.jobs ?? []).map((job) => job.key));
 

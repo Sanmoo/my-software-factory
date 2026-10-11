@@ -43,6 +43,9 @@ export interface PollReport {
 
 export type ContinuationOutcome = { status: "queued" } | { status: "rejected"; reason: string };
 
+// Commands that address one job; pause and unpause address the instance.
+type JobCommand = Extract<OperatorCommand, { job: string }>;
+
 // Continuations allowed from each state: a resume answers a help request or continues an
 // interrupted job; a correction answers feedback on an open PR (R09, R10).
 const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
@@ -203,7 +206,7 @@ export class Admission {
   }
 
   // Returns the reason a command was refused, or undefined when it was applied.
-  private async operate(job: Job, command: OperatorCommand): Promise<string | undefined> {
+  private async operate(job: Job, command: JobCommand): Promise<string | undefined> {
     switch (command.type) {
       case "reply":
         return this.reply(job, command.message);
@@ -213,8 +216,6 @@ export class Admission {
       }
       case "release":
         return this.release(job);
-      default:
-        return "comando sem trabalho";
     }
   }
 
