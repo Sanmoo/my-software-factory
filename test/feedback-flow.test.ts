@@ -14,7 +14,7 @@ import type { PrRef } from "../src/core/result.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
 import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import type { Comment, IssueRef } from "../src/tracker/port.js";
+import type { IssueRef } from "../src/tracker/port.js";
 
 // Feedback reactivates a job through the same effects as a terminal reply (R09, R10, CA11, CA12).
 // The memory tracker, a fake PR port and the local reply path keep every scenario deterministic.
@@ -124,8 +124,6 @@ function gate() {
   const promise = new Promise<RunnerOutput>((resolve) => { release = resolve; });
   return { promise, release };
 }
-
-const human = (id: string, body: string, author = "ana"): Comment => ({ id, author, isBot: false, body, createdAt: "" });
 
 // ---- CA11: the tracker and the terminal take the same path --------------------------------
 
