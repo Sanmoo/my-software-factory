@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import type { PrRef } from "../core/result.js";
 import type { Known } from "../tracker/port.js";
-import type { CheckState, PrLookup, PrPort, PrSnapshot, ReviewState } from "./port.js";
+import type { CheckState, PrLookup, PrPort, PrSnapshot, PrState, ReviewState } from "./port.js";
 
 // github.com adapter for the PR port, through the `gh` CLI (R01, R11). Each call gets the
 // project account's token in its environment (GH_TOKEN), read with
@@ -45,6 +45,7 @@ const isObject = (value: unknown): value is Obj =>
 
 const CHECKS: Record<string, CheckState> = { SUCCESS: "passing", FAILURE: "failing", ERROR: "failing", PENDING: "pending", EXPECTED: "pending" };
 const REVIEWS: Record<string, ReviewState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes-requested", REVIEW_REQUIRED: "pending" };
+const STATES: Record<string, PrState> = { OPEN: "open", CLOSED: "closed", MERGED: "merged" };
 
 function knownFrom<T extends string>(table: Record<string, T>, value: unknown, label: string): Known<T> {
   if (value === null) return { known: true, value: "none" as T };
@@ -78,7 +79,7 @@ function parseSnapshot(ref: PrRef, body: unknown): PrSnapshot {
   const repository = isObject(body) && isObject(body.data) ? body.data.repository : undefined;
   const pullRequest = isObject(repository) ? repository.pullRequest : undefined;
   if (!isObject(pullRequest)) throw new Error("consulta de PR: resposta inesperada do github.com");
-  const state = pullRequest.state === "MERGED" ? "merged" : pullRequest.state === "CLOSED" ? "closed" : pullRequest.state === "OPEN" ? "open" : undefined;
+  const state = typeof pullRequest.state === "string" ? STATES[pullRequest.state] : undefined;
   if (state === undefined || typeof pullRequest.baseRefName !== "string" || typeof pullRequest.headRefName !== "string") {
     throw new Error("consulta de PR: resposta inesperada do github.com");
   }

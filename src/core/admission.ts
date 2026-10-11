@@ -1,12 +1,14 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
+import type { PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
 import type { Runner, RunKind, RunnerOutput } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
-import { appendLog, holdsSlot, newJob, transitionJob, type Continuation, type Job, type JobState } from "./job.js";
+import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
 import type { JobStore } from "./job-store.js";
 import { projectEligibility, type ProjectEligibility } from "./project-eligibility.js";
 import { normalizePriority } from "./priority.js";
-import { parseRunOutput } from "./result.js";
-import { refKey, type IssueRef, type IssueSnapshot, type TrackerPort } from "../tracker/port.js";
+import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
+import { parseRunOutput, type PrRef } from "./result.js";
+import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 
 // The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
 // and concurrency limits (R05), runs the runner and records its result (R08, R09), and
@@ -18,6 +20,8 @@ export interface AdmissionDeps {
   tracker: TrackerPort;
   runner: Runner;
   store: JobStore;
+  // Reads pull requests on github.com. It has no merge operation: the factory never merges (R11).
+  prs: PrPort;
 }
 
 export interface PollReport {
@@ -51,6 +55,14 @@ const byPriorityThenIdentity = (a: NewCandidate, b: NewCandidate) =>
   a.priority - b.priority || byKey(a.key, b.key);
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, status.review]);
+
+const describeKnown = <T extends string>(label: string, known: Known<T>): string =>
+  known.known ? `${label}: ${known.value}` : `${label}: desconhecido (${known.reason})`;
+
+const describeStatus = (status: PrStatus): string =>
+  `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}`;
 
 // Job files are named after their key (see file-job-store), so an unreadable file still
 // tells which issue it belongs to.
@@ -107,12 +119,16 @@ export class Admission {
     return [...this.runErrors];
   }
 
-  // One polling cycle: continuations first (CA07), then new work by priority (P05).
+  // One polling cycle: continuations first (CA07), then waiting PRs (R11), then new work by
+// priority (P05).
   async poll(): Promise<PollReport> {
     const report: PollReport = { admitted: [], skipped: [], errors: [] };
     const continuations = this.allJobs().filter((job) => job.pending !== undefined);
     for (const job of continuations) {
       await this.guard(job.key, report, () => this.admitContinuation(job, report));
+    }
+    for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
+      await this.guard(job.key, report, () => this.trackPr(job, report));
     }
     let candidates: NewCandidate[] = [];
     try {
@@ -228,12 +244,12 @@ export class Admission {
     }
     await this.note(key, `início confirmado; runner disparado (${this.deps.instance.maxIterations} iterações)`);
     report.admitted.push(key);
-    this.dispatch(key, ref, "new", this.deps.instance.maxIterations);
+    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref));
   }
 
   private async admitContinuation(job: Job, report: PollReport): Promise<void> {
     const kind = job.pending!;
-    const project = this.deps.instance.projects.find((candidate) => candidate.repository === job.repository && candidate.enabled);
+    const project = this.enabledProjectOf(job);
     if (!project) {
       report.skipped.push({ key: job.key, reason: "projeto do trabalho não está habilitado na instância" });
       return;
@@ -263,7 +279,7 @@ export class Admission {
     }
     const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração` });
     report.admitted.push(job.key);
-    this.dispatch(running.key, running.ref, kind, 1);
+    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref));
   }
 
   // Capacity and repository check. Synchronous with the reservation it guards, so
@@ -314,8 +330,8 @@ export class Admission {
     await this.apply(key, "intervention-required", { message: reason, reason });
   }
 
-  private dispatch(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations).catch((error: unknown) => {
+  private dispatch(key: string, ref: IssueRef, kind: RunKind, maxIterations: number, delivery: Delivery): void {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery).catch((error: unknown) => {
       this.runErrors.push(error);
     });
     this.runs.add(run);
@@ -324,7 +340,7 @@ export class Admission {
 
   // Up to maxIterations invocations of the runner. A final output that is absent,
   // ambiguous or invalid is never success and stops the job at once.
-  private async execute(key: string, ref: IssueRef, kind: RunKind, maxIterations: number): Promise<void> {
+  private async execute(key: string, ref: IssueRef, kind: RunKind, maxIterations: number, delivery: Delivery): Promise<void> {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
       try {
@@ -358,10 +374,7 @@ export class Admission {
           });
           return;
         case "pr_ready":
-          await this.apply(key, "waiting-for-pr", {
-            message: `PR pronto: ${result.pr.repository}#${result.pr.number}`,
-            pr: result.pr,
-          });
+          await this.acceptPr(key, result.pr, delivery);
           return;
         case "interrupted":
           await this.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason });
@@ -370,6 +383,128 @@ export class Admission {
     }
     const reason = `limite de iterações (${maxIterations}) atingido sem resultado válido`;
     await this.apply(key, "intervention-required", { message: reason, reason });
+  }
+
+  private enabledProjectOf(job: Job): ProjectConfig | undefined {
+    return this.deps.instance.projects.find((candidate) => candidate.repository === job.repository && candidate.enabled);
+  }
+
+  // A "PR pronto" result is accepted only after the PR port confirms it (R08, CA19). An
+  // invalid PR is a help request. A PR that cannot be read is neither success nor help: the
+  // operator decides (P02), so the job needs intervention.
+  private async acceptPr(key: string, pr: PrRef, delivery: Delivery): Promise<void> {
+    const misplaced = misplacedRepository(pr, delivery);
+    if (misplaced !== undefined) {
+      await this.refusePr(key, pr, misplaced);
+      return;
+    }
+    let lookup: PrLookup;
+    try {
+      lookup = await this.deps.prs.readPr(pr);
+    } catch (error) {
+      await this.apply(key, "intervention-required", {
+        message: `PR não pôde ser confirmado: ${messageOf(error)}`,
+        reason: `PR não pôde ser confirmado no github.com: ${messageOf(error)}`,
+      });
+      return;
+    }
+    const verdict = judgeReadyPr(lookup, delivery);
+    if (!verdict.valid) {
+      await this.refusePr(key, pr, verdict.reason);
+      return;
+    }
+    await this.apply(key, "waiting-for-pr", { message: `PR validado: ${pr.repository}#${pr.number}`, pr });
+    if (lookup.status === "found") await this.observe(key, lookup.pr);
+  }
+
+  private async refusePr(key: string, pr: PrRef, reason: string): Promise<void> {
+    await this.apply(key, "waiting-for-help", {
+      message: `PR pronto recusado: ${reason}`,
+      question: `PR pronto não confirmado (${pr.repository}#${pr.number}): ${reason}. Corrija o PR ou informe o próximo passo.`,
+      context: "",
+    });
+  }
+
+  // Polling of a PR the job waits for (R11, R12): CI and review are recorded, a merge into
+  // the target branch completes the job, and a PR closed without merge interrupts it.
+  private async trackPr(job: Job, report: PollReport): Promise<void> {
+    const project = this.enabledProjectOf(job);
+    if (!project) {
+      report.skipped.push({ key: job.key, reason: "projeto do trabalho não está habilitado na instância" });
+      return;
+    }
+    const pr = job.pr;
+    if (!pr) {
+      await this.apply(job.key, "intervention-required", {
+        message: "trabalho aguardando PR sem referência de PR",
+        reason: "trabalho aguardando PR sem referência de PR",
+      });
+      return;
+    }
+    let lookup: PrLookup;
+    try {
+      lookup = await this.deps.prs.readPr(pr);
+    } catch (error) {
+      report.errors.push({ key: job.key, message: `PR não pôde ser lido: ${messageOf(error)}` });
+      return;
+    }
+    const verdict = judgeTrackedPr(lookup, deliveryOf(project, job.ref));
+    switch (verdict.kind) {
+      case "open":
+        await this.observe(job.key, verdict.pr);
+        return;
+      case "merged":
+        await this.complete(job, report, project.targetBranch);
+        return;
+      case "closed": {
+        const reason = `PR fechado sem merge: ${pr.repository}#${pr.number}; não reaberto, issue fora de done`;
+        await this.apply(job.key, "interrupted", { message: reason, reason });
+        return;
+      }
+      case "invalid": {
+        const reason = `PR acompanhado não confere: ${verdict.reason}`;
+        await this.apply(job.key, "intervention-required", { message: reason, reason });
+        return;
+      }
+    }
+  }
+
+  // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
+  // reread (R11). Until then the job keeps waiting and the next poll tries again.
+  private async complete(job: Job, report: PollReport, targetBranch: string): Promise<void> {
+    let confirmed = false;
+    let why = "";
+    try {
+      const outcome = await this.deps.tracker.markDone(job.ref);
+      if (outcome.status === "not-confirmed") {
+        why = outcome.reason;
+      } else {
+        const snapshot = await this.deps.tracker.readIssue(job.ref);
+        confirmed = snapshot.statusCategory.known && snapshot.statusCategory.value === "done";
+        if (!confirmed) why = "releitura não mostra done";
+      }
+    } catch (error) {
+      why = messageOf(error);
+    }
+    if (!confirmed) {
+      report.errors.push({
+        key: job.key,
+        message: `PR mesclado; done ainda não confirmado pelo tracker (${why}): nova tentativa no próximo polling`,
+      });
+      return;
+    }
+    await this.apply(job.key, "done", {
+      message: `PR mesclado em ${targetBranch}: issue done confirmada por releitura`,
+    });
+  }
+
+  // Stores the latest PR observation; the log gets a line only when CI or review changed.
+  private async observe(key: string, pr: PrSnapshot): Promise<void> {
+    const current = this.jobs.get(key);
+    if (!current) throw new Error(`trabalho desconhecido: ${key}`);
+    const status: PrStatus = { checks: pr.checks, review: pr.review };
+    if (current.prStatus && statusKey(current.prStatus) === statusKey(status)) return;
+    await this.persist(recordPrStatus(current, status, describeStatus(status)));
   }
 
   private async apply(

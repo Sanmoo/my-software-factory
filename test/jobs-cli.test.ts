@@ -91,6 +91,7 @@ async function prepare(extraJobFile?: { name: string; content: string }): Promis
     tracker,
     runner: new FakeRunner(script),
     store: createFileJobStore(stateDir),
+    prs: { readPr: async () => ({ status: "not-found" }) },
   });
   await admission.poll();
   assert.deepEqual(await admission.settle(), []);
