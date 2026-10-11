@@ -1,5 +1,5 @@
 import type { Observer } from "../core/observability.js";
-import { issueChangeEvent, type IssueWriteContext } from "../core/ops-events.js";
+import { issueChangeEvent, issueWriteAttempt, type IssueWriteContext } from "../core/ops-events.js";
 import type { ChangeOperation, ChangeResult, IssueChange, IssueRef } from "../tracker/port.js";
 
 // Writes the agent makes on its issue by itself (issue #15, decisions 23-25). The orchestrator
@@ -73,7 +73,7 @@ function tokenize(command: string): string[] {
   return tokens;
 }
 
-const valueOf = (tokens: string[], index: number, flag: string): { value?: string; skip: number } => {
+const flagValue = (tokens: string[], index: number, flag: string): { value?: string; skip: number } => {
   const token = tokens[index]!;
   if (token.startsWith(`${flag}=`)) return { value: token.slice(flag.length + 1), skip: 0 };
   return { value: tokens[index + 1], skip: 1 };
@@ -89,17 +89,17 @@ function classifyGhIssue(words: string[]): Classified | undefined {
     const token = rest[index]!;
     const flag = token.split("=")[0]!;
     if (flag === "--add-label" || flag === "--remove-label") {
-      const { value, skip } = valueOf(rest, index, flag);
+      const { value, skip } = flagValue(rest, index, flag);
       index += skip;
       for (const label of (value ?? "").split(",").filter((entry) => entry !== "")) {
         intents.push({ operation: flag === "--add-label" ? "adicionar-label" : "remover-label", target: label });
       }
     } else if (flag === "--repo" || flag === "-R") {
-      const { value, skip } = valueOf(rest, index, flag);
+      const { value, skip } = flagValue(rest, index, flag);
       index += skip;
       repository = value;
     } else if (["--add-assignee", "--remove-assignee"].includes(flag)) {
-      const { value, skip } = valueOf(rest, index, flag);
+      const { value, skip } = flagValue(rest, index, flag);
       index += skip;
       for (const account of (value ?? "").split(",").filter((entry) => entry !== "")) {
         intents.push({ operation: flag === "--add-assignee" ? "atribuir" : "remover-atribuição", target: account });
@@ -119,6 +119,9 @@ function classifyGhIssue(words: string[]): Classified | undefined {
     ? { kind: "unidentified", why: `gh issue ${sub} sem operação reconhecida` }
     : { kind: "issue", issue, ...(repository === undefined ? {} : { repository }), intents };
 }
+
+// Without the state before the call, a change cannot be told from one made by someone else or earlier.
+const NO_BEFORE = "estado anterior desconhecido: a alteração não pode ser atribuída ao agente";
 
 const WRITE_METHOD = /^(POST|PATCH|PUT|DELETE)$/i;
 
@@ -195,11 +198,10 @@ export class AgentIssueWatch {
     for (const item of classified) {
       if (item.kind === "issue") {
         for (const intent of item.intents) {
-          this.options.observer.emit({
-            kind: "issue-escrita-tentativa", text: "tentativa de alteração na issue",
-            job: this.options.job, ...(this.options.invocation === undefined ? {} : { invocation: this.options.invocation }),
-            fields: { issue: `#${item.issue}`, origem: "agente", operação: intent.operation, alvo: intent.target, motivo: "chamada de ferramenta do agente; não é confirmação" },
-          });
+          this.options.observer.emit(issueWriteAttempt({
+            ...this.context(intent.operation, "chamada de ferramenta do agente; não é confirmação"),
+            refs: { issue_agente: `#${item.issue}`, alvo: intent.target },
+          }));
         }
       } else {
         this.options.observer.emit({
@@ -229,22 +231,21 @@ export class AgentIssueWatch {
     for (const item of pending.classified) {
       if (item.kind !== "issue") continue;
       if (item.repository !== undefined && item.repository !== this.options.repository) {
-        this.announce(item.issue, { operation: "transição", result: "attempted", detail: `outro repositório (${item.repository}): sem evidência` }, "agente");
+        this.announce(item.issue, { operation: "transição", result: "attempted", detail: `outro repositório (${item.repository}): sem evidência` });
         continue;
       }
       if (item.issue !== this.options.ref.id) {
-        this.announce(item.issue, { operation: "transição", result: "attempted", detail: "outra issue que não a do trabalho: sem evidência" }, "agente");
+        this.announce(item.issue, { operation: "transição", result: "attempted", detail: "outra issue que não a do trabalho: sem evidência" });
         continue;
       }
       for (const intent of item.intents) {
-        this.announce(item.issue, this.judge(intent, before, after, isError), "agente");
+        this.announce(item.issue, this.judge(intent, before, after, isError));
       }
     }
   }
 
-  private announce(issue: string, change: IssueChange, origin: string): void {
-    const reason = "escrita direta do agente";
-    const context = { ...this.context(change.operation, reason), origin, refs: { issue_agente: `#${issue}` } };
+  private announce(issue: string, change: IssueChange): void {
+    const context = { ...this.context(change.operation, "escrita direta do agente"), refs: { issue_agente: `#${issue}` } };
     this.options.observer.emit(issueChangeEvent(context, change));
   }
 
@@ -268,24 +269,23 @@ export class AgentIssueWatch {
         const present = after.labels.includes(intent.target ?? "");
         const hadBefore = before?.labels?.includes(intent.target ?? "");
         if (present !== adding) return make("attempted", unconfirmed);
+        if (hadBefore === undefined) return make("attempted", NO_BEFORE);
         if (hadBefore === adding) return make("unchanged", "o tracker já tinha esse estado antes da chamada");
-        return make("confirmed", undefined, {
-          ...(hadBefore === undefined ? {} : { before: hadBefore ? "presente" : "ausente" }),
-          after: present ? "presente" : "ausente",
-        });
+        return make("confirmed", undefined, { before: hadBefore ? "presente" : "ausente", after: present ? "presente" : "ausente" });
       }
       case "fechar": {
         if (after.done === undefined) return make("attempted", "estado da issue não lido: resultado não confirmado");
         if (!after.done) return make("attempted", unconfirmed);
-        return before?.done === true
+        if (before?.done === undefined) return make("attempted", NO_BEFORE);
+        return before.done
           ? make("unchanged", "a issue já estava fechada antes da chamada")
-          : make("confirmed", undefined, { ...(before?.done === undefined ? {} : { before: "open" }), after: "closed" });
+          : make("confirmed", undefined, { before: "open", after: "closed" });
       }
       case "transição": {
         if (after.done === undefined) return make("attempted", "estado da issue não lido: resultado não confirmado");
-        return after.done === false && before?.done !== false
-          ? make("confirmed", undefined, { ...(before?.done === undefined ? {} : { before: "closed" }), after: "open" })
-          : make("attempted", unconfirmed);
+        if (after.done !== false) return make("attempted", unconfirmed);
+        if (before?.done === undefined) return make("attempted", NO_BEFORE);
+        return before.done ? make("confirmed", undefined, { before: "closed", after: "open" }) : make("unchanged", "a issue já estava aberta antes da chamada");
       }
       case "comentar": {
         if (after.commentIds === undefined || before?.commentIds === undefined) {

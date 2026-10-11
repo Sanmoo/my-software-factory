@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,6 +126,15 @@ export function sandcastleBoundary(): SandboxBoundary {
         });
       } finally {
         clearInterval(timer);
+        // The dependency writes its own log as it likes; once the run is over, known credentials are
+        // taken out of it too. It is not redacted while the run is live (a limit of the dependency).
+        try {
+          const text = await readFile(input.runtimeLogPath, "utf8");
+          const clean = input.redact(text);
+          if (clean !== text) await writeFile(input.runtimeLogPath, clean, { mode: 0o600 });
+        } catch {
+          // No runtime log (the run failed before it): nothing to clean.
+        }
       }
       const sessionId = result.iterations.at(-1)?.sessionId ?? result.iterations[0]?.sessionId;
       return { sessionId, completed: result.completionSignal !== undefined, iterations: result.iterations.length, events };

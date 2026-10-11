@@ -177,11 +177,14 @@ export class Admission {
     for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
       await this.guard(job.key, report, () => this.trackPr(job, report));
     }
+    const continuations = this.allJobs().filter((job) => job.pending !== undefined);
     if (!report.paused) {
-      const continuations = this.allJobs().filter((job) => job.pending !== undefined);
       for (const job of continuations) {
         await this.guard(job.key, report, () => this.admitContinuation(job, report));
       }
+    } else {
+      // A pause is an impediment like a missing slot: the continuation waits and keeps its reason.
+      for (const job of continuations) this.announceWait(job.key, job.pending!, "instância pausada", this.triggersOf(job, job.pending!));
     }
     if (report.paused) return report;
     let candidates: NewCandidate[] = [];
@@ -366,6 +369,11 @@ export class Admission {
       changes = outcome?.changes;
     } catch (error) {
       if (!(await this.claimRemoved(job.ref))) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+      // The write failed or its answer was lost, and the reread shows the claim gone: the uncertainty
+      // is resolved by evidence, not by assumption.
+      this.obs.emit(issueChangeEvent(context, {
+        operation: "remover-label", result: "confirmed", after: "ausente", detail: "confirmada por releitura após erro de escrita",
+      }));
     }
     // The reread decides what the label change was: an accepted call alone is only an attempt.
     if (changes !== undefined) {
@@ -528,11 +536,7 @@ export class Admission {
       });
       return;
     }
-    // A job whose continuation was asked before triggers existed (an older state file) still says
-    // why, by the kind it was asked as, instead of inventing a cause.
-    const triggers: Trigger[] = job.triggers !== undefined && job.triggers.length > 0
-      ? job.triggers
-      : [{ reason: kind === "correction" ? "feedback-pr" : "retomada-manual", origin: "desconhecida" }];
+    const triggers = this.triggersOf(job, kind);
     const blocked = this.reserve(job);
     if (blocked) {
       this.announceWait(job.key, kind, blocked, triggers);
@@ -550,6 +554,14 @@ export class Admission {
       this.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, undefined, invocation);
     }
     this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, replies }, undefined, commands);
+  }
+
+  // The causes of the pending continuation of a job. One asked before triggers existed (an older state
+  // file) still says why, by the kind it was asked as, instead of inventing a cause.
+  private triggersOf(job: Job, kind: Continuation): Trigger[] {
+    return job.triggers !== undefined && job.triggers.length > 0
+      ? job.triggers
+      : [{ reason: kind === "correction" ? "feedback-pr" : "retomada-manual", origin: "desconhecida" }];
   }
 
   // The invocation that is about to run, announced with its operational reason (issue #15).

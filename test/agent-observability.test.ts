@@ -318,7 +318,7 @@ test("a write the agent makes on its issue is confirmed only by the tracker's ev
 
   const attempts = matching(h.lines, /tentativa de alteração na issue/);
   assert.equal(attempts.length, 2, "recognized writes are announced as attempts; a read is not");
-  assert.match(attempts[0]!, /origem=agente operação=adicionar-label alvo=needs-review/);
+  assert.match(attempts[0]!, /origem=agente operação=adicionar-label motivo=.* alvo=needs-review/);
   const confirmed = matching(h.lines, /alteração confirmada/);
   assert.equal(confirmed.length, 1);
   assert.match(confirmed[0]!, /origem=agente operação=adicionar-label alvo=needs-review estado=ausente→presente/);
@@ -338,4 +338,72 @@ test("without tracker evidence an agent write is reported as unconfirmable, neve
 
   assert.equal(matching(h.lines, /alteração confirmada/).length, 0);
   assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /operação=comentar.*confirmação indisponível/);
+});
+
+test("a change is not attributed to the agent when the state before the call is unknown", async () => {
+  let reads = 0;
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue close 6" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    // The read before the call fails; the one after shows the issue closed.
+    evidence: () => async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("tracker indisponível");
+      return { done: true };
+    },
+  });
+  await h.runner.run(context());
+
+  assert.equal(matching(h.lines, /alteração confirmada/).length, 0);
+  assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /estado anterior desconhecido/);
+});
+
+test("a failed run does not claim the reply was delivered, and says it is unconfirmed", async () => {
+  const h = await harness(async (_run, call) => {
+    if (call === 2) throw new Error("docker caiu");
+    return { sessionId: "session-1" };
+  });
+  await h.runner.run(context());
+  h.lines.length = 0;
+  await h.runner.run(context({
+    kind: "resume", invocation: "inv-test-2", replyCommands: ["cmd-2"],
+    continuation: { workspace: { session: "session-1", area: h.layout.repoDir }, replies: ["sim"] },
+  }));
+  assert.match(matching(h.lines, /entrega da resposta ao agente não confirmada/)[0]!, /comando=cmd-2/);
+});
+
+test("a detailed-log failure of one invocation stops standing in status once a later invocation writes it", async () => {
+  const f = await fixture();
+  const layout = jobLayout(f.stateDir, key);
+  const { createFileFailureStore, readFailures } = await import("../src/state/history.js");
+  const lines: string[] = [];
+  const observer = createObserver({
+    instance: "personal", console: (text) => lines.push(text), failures: createFileFailureStore(f.stateDir),
+  });
+  let call = 0;
+  const boundary: SandboxBoundary = {
+    async preflight() { return { token: TOKEN }; },
+    async run(input) {
+      call += 1;
+      input.activity.line(line({ type: "tool_execution_start", toolCallId: `c${call}`, toolName: "read", args: { path: "a" } }));
+      return { iterations: 1, completed: true, events: settled(PR_READY), sessionId: "session-1" };
+    },
+  };
+  const runner = createDockerRunner({
+    instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir,
+    image: "msf-docker-runner:test", repositorySource: () => f.source, boundary, observer,
+  });
+  await mkdir(layout.areaDir, { recursive: true });
+  await writeFile(join(layout.areaDir, "logs"), "blocks the directory");
+  await runner.run(context());
+  await observer.flush();
+  assert.equal((await readFailures(f.stateDir)).length, 1);
+
+  const { rm } = await import("node:fs/promises");
+  await rm(join(layout.areaDir, "logs"));
+  await runner.run(context({ kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: [] } }));
+  await observer.flush();
+  assert.deepEqual(await readFailures(f.stateDir), [], "the recovered sink no longer shows in status");
 });

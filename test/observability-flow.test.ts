@@ -356,3 +356,42 @@ test("a failing history is reported and does not stop, repeat or duplicate the w
   assert.equal(matching(s.lines, /falha de observabilidade/).length, 1);
   assert.match(s.lines.join("\n"), /ajuda solicitada/, "the main log still carries the events");
 });
+
+test("a pause is an impediment: the continuation waits with its original reason, and starts when unpaused", async () => {
+  const s = await setup({ runner: helpRunner() });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "pause" });
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "reply", job: KEY("1"), message: "siga" });
+  await s.admission.poll();
+  await s.admission.poll();
+
+  const waits = matching(s.lines, /invocação aguardando vaga/);
+  assert.equal(waits.length, 1);
+  assert.match(waits[0]!, /motivo=resposta-humana origem=terminal.*impedimento="instância pausada"/);
+  assert.equal((s.runner as FakeRunner).calls.length, 1, "nothing starts while paused");
+
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "unpause" });
+  await s.admission.poll();
+  await s.admission.settle();
+  assert.match(matching(s.lines, /invocação retomada/)[0]!, /motivo=resposta-humana origem=terminal/);
+});
+
+test("a release whose write errored but whose reread shows the claim gone is confirmed by evidence", async () => {
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => trackerWith(base, {
+      async releaseClaim(ref) {
+        await base.releaseClaim(ref);
+        throw new Error("resposta perdida");
+      },
+    }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  await s.admission.poll();
+
+  assert.match(matching(s.lines, /resultado da alteração incerto/)[0]!, /erro="resposta perdida"/);
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /confirmada por releitura após erro de escrita/);
+});

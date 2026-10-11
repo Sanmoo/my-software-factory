@@ -58,6 +58,8 @@ export interface Observer {
   flush(): Promise<void>;
   // Reports the failure of a sink that lives outside the observer (the detailed log, an artifact).
   failure(sink: string, error: unknown): void;
+  // A sink that failed before has written again: its failure no longer stands in `status`.
+  recovered(sink: string): void;
   redact(text: string): string;
   registerSecret(secret: string | undefined): void;
   // The detailed log of the job's latest invocation, so a help request can point to it.
@@ -70,6 +72,7 @@ export const noopObserver: Observer = {
   emit() {},
   async flush() {},
   failure() {},
+  recovered() {},
   redact: (text) => text,
   registerSecret() {},
   setDetailLog() {},
@@ -192,6 +195,9 @@ export function createObserver(options: ObserverOptions): Observer {
     },
     failure(sink, error) {
       sinkFailed(sink, error);
+    },
+    recovered(sink) {
+      sinkRecovered(sink);
     },
     redact: (text) => redactor.apply(text),
     registerSecret: (secret) => redactor.add(secret),

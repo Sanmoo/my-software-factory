@@ -51,6 +51,8 @@ export interface SandboxRun {
   idleWarningSeconds: number;
   // The runtime's own log (setup, warnings of the dependency); the detailed log is the activity's.
   runtimeLogPath: string;
+  // Hides the known credentials of this run in any text the boundary writes itself.
+  redact: (text: string) => string;
 }
 
 export interface SandboxOutcome {
@@ -174,6 +176,7 @@ class DockerRunner implements Runner {
         image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir, profileDir,
         model: models.implementer, token: preflight.token, request,
         activity, idleTimeoutSeconds: IDLE_TIMEOUT_SECONDS, idleWarningSeconds: IDLE_WARNING_SECONDS, runtimeLogPath,
+        redact: (text) => observer.redact(text),
       });
       await activity.close();
       this.reportReplyDelivery(observer, context, activity);
@@ -195,7 +198,11 @@ class DockerRunner implements Runner {
       const reason = observer.redact(redact(messageOf(error), secret));
       // A real timeout is a transition of its own; the warnings before it were only warnings.
       if (/Agent idle for \d+ seconds/.test(reason)) activity?.timedOut(reason);
-      await activity?.close();
+      if (activity) {
+        await activity.close();
+        // A run that failed has not shown that the reply reached the agent, unless the stream did.
+        this.reportReplyDelivery(observer, context, activity);
+      }
       await this.audit(layout, `interrompido: ${reason}`);
       return interrupted(reason);
     }
@@ -206,8 +213,11 @@ class DockerRunner implements Runner {
   private reportReplyDelivery(observer: Observer, context: RunnerContext, activity: AgentActivity): void {
     const replies = context.continuation?.replies ?? [];
     if (replies.length === 0) return;
-    const seen = activity.userMessages();
-    const delivered = replies.filter((reply) => seen.some((message) => message.includes(reply))).length;
+    // The replies reach the agent inside the continuation prompt, as one block after the operator-input
+    // marker; a short reply alone could match any boilerplate, so the whole block must be there.
+    const block = `Operator input: ${replies.join("\n").trim()}`;
+    const reached = activity.userMessages().some((message) => message.includes(block));
+    const delivered = reached ? replies.length : 0;
     const base = {
       job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
     };

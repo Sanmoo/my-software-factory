@@ -43,5 +43,3 @@ export function createRedactor(initial: ReadonlyArray<string | undefined> = []):
   for (const secret of initial) redactor.add(secret);
   return redactor;
 }
-
-export const noRedaction: Redactor = { add() {}, apply: (text) => text };

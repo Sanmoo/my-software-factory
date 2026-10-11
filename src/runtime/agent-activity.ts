@@ -266,7 +266,7 @@ export class AgentActivity {
     this.lastActivity = `ferramenta ${name} id=${id} atualização`;
     this.detail(`… ferramenta ${name} id=${id} atualização`, this.bounded(text, id, "atualização", "update", DEFAULT_UPDATE_SUMMARY));
     const child = this.children.get(id);
-    if (child) this.childLine(child, `atividade observada: ${text.slice(0, DEFAULT_UPDATE_SUMMARY)}`);
+    if (child) this.childLine(child, `atividade observada: ${this.summary(text, DEFAULT_UPDATE_SUMMARY)}`);
   }
 
   private toolEnd(event: Obj): void {
@@ -299,8 +299,9 @@ export class AgentActivity {
     });
     if (!this.limitationAnnounced) {
       this.limitationAnnounced = true;
-      this.event("filho-limitação", "limitação do runtime: a atividade interna dos filhos não é exposta pelo stream do Pi; só lançamento, atualizações recebidas e desfecho são observados", {});
+      this.event("filho-limitação", "limitação do runtime: o stream do Pi não expõe a atividade interna nem pedidos de ajuda dos filhos; só lançamento, atualizações recebidas e desfecho são observados", {});
     }
+    this.detail(`filho ${agent} id=${id}: log próprio em ${child.path}`);
     this.childLine(child, `filho ${agent} lançado (assíncrono=${String(child.async)}); argumentos: ${this.redact(JSON.stringify(args))}`);
   }
 
@@ -338,8 +339,9 @@ export class AgentActivity {
 
   // ---- output ---------------------------------------------------------------------------------
 
+  // Redacts first, then shortens: a credential cut in two by the summary would no longer be recognized.
   private summary(text: string, length = SUMMARY_LENGTH): string {
-    const flat = text.replace(/\s+/g, " ").trim();
+    const flat = this.redact(text).replace(/\s+/g, " ").trim();
     return flat.length > length ? `${flat.slice(0, length)}…` : flat;
   }
 
@@ -381,6 +383,7 @@ export class AgentActivity {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
         if (replace) await writeFile(path, text, { mode: 0o600 });
         else await appendFile(path, text, { mode: 0o600 });
+        this.options.observer.recovered(sink);
       } catch (error) {
         if (sink === "log detalhado") this.detailBroken = true;
         this.options.observer.failure(sink, error);
