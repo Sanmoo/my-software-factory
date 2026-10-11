@@ -8,6 +8,7 @@ import { loadConfigFile } from "../src/config/load.js";
 import { runLogs } from "../src/cli/logs.js";
 import { runStatus } from "../src/cli/status.js";
 import { runSupervision } from "../src/cli/supervision.js";
+import type { PrPort } from "../src/pr/port.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
 import type { RunnerContext, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
@@ -60,6 +61,24 @@ const WORKSPACE: Workspace = { session: "session-1", area: "area-1" };
 const HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
 const PR_READY = { status: "pr_ready", pr: { repository: "acme/app", number: 7 } };
 
+// The github.com boundary: every PR the runner reports is open, based on the target branch
+// and headed by the job branch (msf/<issue id>), so a ready result is accepted.
+const openPrs: PrPort = {
+  async readPr(ref) {
+    return {
+      status: "found",
+      pr: {
+        ref,
+        state: "open",
+        baseBranch: "main",
+        headBranch: "msf/1",
+        checks: { known: true, value: "pending" },
+        review: { known: true, value: "none" },
+      },
+    };
+  },
+};
+
 interface Fixtures {
   configPath: string;
   fixturePath: string;
@@ -101,6 +120,7 @@ async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (co
     store: createFileJobStore(fixtures.stateDir),
     commands: createFileCommandQueue(fixtures.stateDir),
     control: createFileInstanceControl(fixtures.stateDir),
+    prs: openPrs,
   });
 }
 

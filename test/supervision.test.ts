@@ -6,6 +6,7 @@ import test from "node:test";
 import { Admission, type PollReport } from "../src/core/admission.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
+import type { PrPort } from "../src/pr/port.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
 import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
@@ -22,6 +23,24 @@ const HELP = { status: "needs_help", question: "Which seam?", context: "slugify"
 const PR_READY = { status: "pr_ready", pr: { repository: "acme/app", number: 7 } };
 const WORKSPACE: Workspace = { session: "session-1", area: "area-1" };
 const dir = () => mkdtemp(join(tmpdir(), "msf-supervision-"));
+
+// The github.com boundary: every PR the runner reports is open, based on the target branch
+// and headed by the job branch (msf/<issue id>), so a ready result is accepted.
+const openPrs: PrPort = {
+  async readPr(ref) {
+    return {
+      status: "found",
+      pr: {
+        ref,
+        state: "open",
+        baseBranch: "main",
+        headBranch: "msf/1",
+        checks: { known: true, value: "pending" },
+        review: { known: true, value: "none" },
+      },
+    };
+  },
+};
 
 const github = (repository: string) => ({
   name: repository,
@@ -110,6 +129,7 @@ const open = (options: OpenOptions) => Admission.open({
   store: createFileJobStore(options.stateDir),
   commands: createFileCommandQueue(options.stateDir),
   control: createFileInstanceControl(options.stateDir),
+  prs: openPrs,
 });
 
 // The operator side: the same queue the CLI writes to.

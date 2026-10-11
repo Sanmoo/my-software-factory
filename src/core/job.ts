@@ -1,5 +1,6 @@
-import { refKey, type IssueRef } from "../tracker/port.js";
+import { refKey, type IssueRef, type Known } from "../tracker/port.js";
 import type { Workspace } from "../runtime/runner.js";
+import type { CheckState, ReviewState } from "../pr/port.js";
 import type { PrRef } from "./result.js";
 
 // Job states (R04, R05, R08, R09, R12). `running` is the only state that holds a slot:
@@ -31,9 +32,20 @@ export interface Job {
   workspace?: Workspace;
   // Operator replies not yet delivered to an invocation (R09).
   replies?: string[];
+  // Last PR observation by polling (R11). Kept across states; it never changes the state.
+  prStatus?: PrStatus;
   pending?: Continuation;
   log: string[];
 }
+
+export interface PrStatus {
+  checks: Known<CheckState>;
+  review: Known<ReviewState>;
+}
+
+// The branch the implementation of an issue works on and that its PR must have as head.
+// The runner creates it with this name; the PR validation checks it (R08).
+export const jobBranch = (ref: IssueRef): string => `msf/${ref.id}`;
 
 export interface TransitionDetails {
   message: string;
@@ -94,4 +106,11 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
 // Adds a log line without a state change (for example, an iteration starting).
 export function appendLog(job: Job, message: string): Job {
   return { ...job, log: [...job.log, message] };
+}
+
+// Stores the latest PR observation without a state change. A message is logged only when
+// given, so polls that see no change leave the log alone.
+export function recordPrStatus(job: Job, status: PrStatus, message?: string): Job {
+  const next: Job = { ...job, prStatus: status };
+  return message === undefined ? next : { ...next, log: [...job.log, message] };
 }

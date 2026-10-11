@@ -10,6 +10,7 @@ import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.
 import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
+import type { PrLookup, PrPort } from "../src/pr/port.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { ClaimOutcome, TrackerPort } from "../src/tracker/port.js";
@@ -98,7 +99,11 @@ interface OpenOptions {
   maxConcurrent?: number;
   maxIterations?: number;
   tracker?: (base: MemoryTracker) => TrackerPort;
+  prs?: PrPort;
 }
+
+// Without PR state of its own a test sees no PR: a ready result is then refused.
+const NO_PRS: PrPort = { readPr: async (): Promise<PrLookup> => ({ status: "not-found" }) };
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
@@ -107,6 +112,7 @@ const open = (options: OpenOptions) => Admission.open({
   store: createFileJobStore(options.stateDir),
   commands: createFileCommandQueue(options.stateDir),
   control: createFileInstanceControl(options.stateDir),
+  prs: options.prs ?? NO_PRS,
 });
 
 function gate() {
@@ -473,7 +479,11 @@ test("a PR-ready result moves the job to waiting-for-pr with its reference and r
   const runner = new FakeRunner((context) => (context.ref.id === "1"
     ? finished({ status: "pr_ready", pr: { repository: "acme/app", number: 9 } })
     : finished(NEEDS_HELP)));
-  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  const prs: PrPort = { readPr: async () => ({ status: "found", pr: {
+    ref: { repository: "acme/app", number: 9 }, state: "open", baseBranch: "main", headBranch: "msf/1",
+    checks: { known: true, value: "pending" }, review: { known: true, value: "none" },
+  } }) };
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"], prs });
 
   await admission.poll();
   await admission.settle();
