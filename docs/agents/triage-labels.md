@@ -1,6 +1,8 @@
 # Triage Labels
 
-The skills speak in terms of five canonical triage roles. > **Status:** proposed vocabulary. These labels have not been created on GitHub yet; create them only with explicit confirmation.
+The skills speak in terms of five canonical triage roles.
+
+> **Status:** proposed vocabulary. These labels have not been created on GitHub yet; create them only with explicit confirmation.
 
 This file maps those roles to the actual label strings used in this repo's issue tracker.
 
