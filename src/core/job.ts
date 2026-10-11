@@ -78,3 +78,8 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
   if (details.pr !== undefined) next.pr = details.pr;
   return next;
 }
+
+// Adds a log line without a state change (for example, an iteration starting).
+export function appendLog(job: Job, message: string): Job {
+  return { ...job, log: [...job.log, message] };
+}
