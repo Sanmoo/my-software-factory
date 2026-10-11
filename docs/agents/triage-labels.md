@@ -2,7 +2,7 @@
 
 The skills speak in terms of five canonical triage roles.
 
-> **Status:** proposed vocabulary. These labels have not been created on GitHub yet; create them only with explicit confirmation.
+> **Status:** `ready-for-agent` and `ready-for-human` exist on GitHub. Create the others (`needs-triage`, `needs-info`) only with explicit confirmation; `wontfix` is GitHub's default label.
 
 This file maps those roles to the actual label strings used in this repo's issue tracker.
 
