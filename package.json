@@ -9,7 +9,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "smoke:pi": "tsx src/experiments/pi-smoke.ts"
+    "smoke:pi": "tsx src/experiments/pi-smoke.ts",
+    "smoke:implement": "tsx src/experiments/implement-help-smoke.ts"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "0.12.0"

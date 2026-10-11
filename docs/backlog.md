@@ -5,8 +5,10 @@
    Manter provider/modelo explícito e modelo barato nos próximos testes.
    Codex/CA Fortinet é pendência opcional, não bloqueador do caminho Copilot;
    [diagnóstico](results/002-tls-diagnosis.md). Não desabilitar TLS.
-2. Testar pedido de ajuda, resultado estruturado e insumos TDD/review de `/implement`;
-   preservar área/sessão em bloqueio. Não iniciar o orquestrador completo antes disso.
+2. **Pedido de ajuda comprovado** com `/implement` real e Luna:
+   [fase parcial](results/004-implement-help.md). Aguardando aprovação humana da
+   seam TDD da fixture; depois retomar a mesma sessão e verificar implementação,
+   testes e revisão em dois eixos. Não iniciar o orquestrador completo antes disso.
 3. Refinar porta de issue tracker e critérios GitHub Issues (não exige sprint Jira).
    Implementar adapters Jira/GitHub, transições e configuração por projeto/repo.
 4. Admissão com N, uma implementação ativa por repo, prioridades e deduplicação.

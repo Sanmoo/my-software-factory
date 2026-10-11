@@ -26,11 +26,7 @@ export function parseEvent(line: string): PiEvent | undefined {
   return undefined;
 }
 
-export function verifyPhase(
-  events: PiEvent[],
-  marker: string,
-  phase: "initial" | "resume",
-) {
+export function finalAssistantText(events: PiEvent[]): string {
   assert.equal(events.at(-1)?.type, "agent_settled", "missing stable completion");
   assert.equal(events.at(-1)?.aborted, false, "Pi aborted");
   const finalMessage = events.filter(
@@ -39,10 +35,18 @@ export function verifyPhase(
   assert.ok(finalMessage, "missing final assistant message");
   assert.ok(!["error", "aborted"].includes(finalMessage.message?.stopReason ?? ""),
     finalMessage.message?.errorMessage ?? "model request failed");
-  const finalText = finalMessage?.message?.content
+  return finalMessage?.message?.content
     ?.filter((block) => block.type === "text")
     .map((block) => block.text ?? "").join("") ?? "";
-  assert.ok(finalText.includes(marker), "final response missing hidden child marker");
+}
+
+export function verifyPhase(
+  events: PiEvent[],
+  marker: string,
+  phase: "initial" | "resume",
+) {
+  assert.ok(finalAssistantText(events).includes(marker),
+    "final response missing hidden child marker");
 
   const calls = events.filter((event) => event.type === "tool_execution_start");
   for (const call of calls) {
