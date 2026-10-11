@@ -24,6 +24,21 @@ for entry in settings.json auth.json keybindings.json AGENTS.md models-store.jso
 done
 chmod 600 "$DST/auth.json"
 
+# pi-lens starts per-platform language servers. In this Linux container its marksman
+# server crashed and dumped a 65 MB core into the workspace (observed in run 2026-10-11).
+# Only the container copy of settings.json drops it; the host profile is not touched.
+if [ -f "$DST/settings.json" ]; then
+  node -e '
+    const fs = require("node:fs");
+    const file = process.argv[1];
+    const settings = JSON.parse(fs.readFileSync(file, "utf8"));
+    const before = (settings.packages || []).length;
+    settings.packages = (settings.packages || []).filter((p) => (typeof p === "string" ? p : p.source) !== "npm:pi-lens");
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+    if (settings.packages.length !== before) console.error("profile-prepare: excluded npm:pi-lens from container settings");
+  ' "$DST/settings.json"
+fi
+
 for dir in agents extensions skills; do
   for item in $(ls -A "$PROFILE_SRC/$dir" 2>/dev/null); do
     copy_entry "$PROFILE_SRC/$dir/$item" "$DST/$dir"
