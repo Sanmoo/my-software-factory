@@ -38,6 +38,7 @@ async function checkout(files: string[]): Promise<string> {
   await writeFile(join(dir, "README.md"), "x\n");
   await git(dir, "add", ".");
   await git(dir, "commit", "-q", "-m", "init");
+  await git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
   return dir;
 }
 
@@ -97,7 +98,6 @@ test("a failing Docker preflight and a wrong origin are reported, not thrown", a
 
 test("a checkout whose target branch is ahead of origin fails: those commits would ride in the PR", async () => {
   const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
-  await git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
   await writeFile(join(dir, "local.txt"), "x\n");
   await git(dir, "add", ".");
   await git(dir, "commit", "-q", "-m", "unpushed");
@@ -106,4 +106,14 @@ test("a checkout whose target branch is ahead of origin fails: those commits wou
     local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
   });
   assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /1 commit\(s\) que não estão em origin\/main/);
+});
+
+test("a checkout that never fetched origin/main fails instead of skipping the unpushed-commit check", async () => {
+  const dir = await checkout(["docs/spec.md", "CODING_STANDARDS.md"]);
+  await git(dir, "update-ref", "-d", "refs/remotes/origin/main");
+  const lines = await checkInstance({
+    config: config.config, instance, deps, sandbox,
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+  });
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /origin\/main desconhecida/);
 });

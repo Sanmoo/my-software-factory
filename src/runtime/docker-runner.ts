@@ -56,6 +56,8 @@ export interface ReviewInputs {
   standardsPath: string;
 }
 
+export const DEFAULT_REVIEW_INPUTS: ReviewInputs = { specPath: "docs/spec.md", standardsPath: "CODING_STANDARDS.md" };
+
 export interface DockerRunnerOptions {
   instance: InstanceConfig;
   credentials: Readonly<Record<string, CredentialRef>>;
@@ -106,7 +108,7 @@ class DockerRunner implements Runner {
   private readonly reviewInputs: ReviewInputs;
 
   constructor(private readonly options: DockerRunnerOptions) {
-    this.reviewInputs = options.reviewInputs ?? { specPath: "docs/spec.md", standardsPath: "CODING_STANDARDS.md" };
+    this.reviewInputs = options.reviewInputs ?? DEFAULT_REVIEW_INPUTS;
   }
 
   async run(context: RunnerContext): Promise<RunnerOutput> {

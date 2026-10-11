@@ -185,6 +185,7 @@ finish() {
 
 TOTAL_STAGES=12
 
+[[ -f package.json && -f docs/pilot/config.template.json ]] || { echo "Rode da raiz do checkout do my-software-factory."; exit 1; }
 PILOT_DIR=".pilot"
 mkdir -p "$PILOT_DIR"
 ENV_FILE="$PILOT_DIR/pilot.env"     # git-ignored: holds the Jira token and the choices of this machine
@@ -196,7 +197,6 @@ JIRA_BASE="https://bancojohndeere.atlassian.net"
 ACCOUNT_PESSOAL="Sanmoo"
 ACCOUNT_TRABALHO="samuel-santos_bjd"
 
-[[ -f package.json && -f "$TEMPLATE" ]] || { echo "Run this from the root of the my-software-factory checkout."; exit 1; }
 
 # ask_or KEY "Prompt" DEFAULT: like ask, but offers DEFAULT on the first run.
 ask_or() {
@@ -212,12 +212,12 @@ ask_or() {
 # no_spaces VALUE: the env file is sourced by the run helper, so values stay free of whitespace.
 no_spaces() { [[ "$1" != *[[:space:]]* ]]; }
 
-# all_projects: instance|name|repository|adapter|account — straight from the template.
+# all_projects: instance|name|repository|adapter|account|jiraKey — straight from the template.
 all_projects() {
   node -e '
     const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     for (const i of c.instances) for (const p of i.projects)
-      console.log([i.name, p.name, p.repository, p.adapter, p.githubAccount].join("|"));
+      console.log([i.name, p.name, p.repository, p.adapter, p.githubAccount, p.jira?.projectKey ?? ""].join("|"));
   ' "$TEMPLATE"
 }
 
@@ -325,7 +325,8 @@ for pair in "PESSOAL:$PROFILE_PESSOAL" "TRABALHO:${PROFILE_TRABALHO}"; do
   for file in auth.json settings.json skills/implement/SKILL.md; do
     [[ -e "$dir/$file" ]] && say "ok   $name: $file" || { warn "$name: falta $dir/$file"; exit 1; }
   done
-  if PI_CODING_AGENT_DIR="$dir" pi --list-models gpt-6-luna 2>/dev/null | grep -q "gpt-6-luna"; then
+  models_out=$(PI_CODING_AGENT_DIR="$dir" pi --list-models gpt-6-luna 2>/dev/null || true)
+  if grep -q "gpt-6-luna" <<<"$models_out"; then
     say "ok   $name: modelo gpt-6-luna disponível no perfil"
   else
     warn "$name: não vi gpt-6-luna em 'pi --list-models' com esse perfil; faça login do github-copilot nele (pi /login) antes de seguir"
@@ -336,12 +337,56 @@ write_env PROFILE_PESSOAL "$PROFILE_PESSOAL"
 write_env PROFILE_TRABALHO "$PROFILE_TRABALHO"
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
-stage "Checkouts locais dos 16 repositórios do §7"
+stage "Alvos do piloto e insumos de review"
+say "Os reviewers leem a spec e os padrões do repositório NO COMMIT BASE: docs/spec.md e AGENTS.md."
+say "Hoje só my-software-factory tem docs/spec.md; os demais alvos precisam ganhar o arquivo para rodar."
+say "Todos os 16 alvos ficam na configuração; só os escolhidos abaixo ficam enabled."
+echo
+all_projects | awk -F'|' '{ printf "    %-9s %-18s %s\n", $1, $2, $3 }'
+echo
+is_project() { all_projects | awk -F'|' -v n="$1" '$2==n {found=1} END {exit !found}'; }
+while true; do
+  ask_or PILOT_GH_PROJECT "Projeto GitHub Issues do piloto (nome):" "my-software-factory"
+  ask_or PILOT_JIRA_PROJECT "Projeto Jira do piloto (nome, ex.: van-playbooks):" ""
+  ask_or PILOT_EXTRA_PROJECTS "Outros a habilitar (nomes separados por vírgula, opcional; precisa para o N=2):" ""
+  invalid=""
+  for name in "$PILOT_GH_PROJECT" "$PILOT_JIRA_PROJECT" ${PILOT_EXTRA_PROJECTS//,/ }; do
+    is_project "$name" || invalid="$invalid '${name}'"
+  done
+  [[ -z "$invalid" ]] && break
+  warn "nome(s) inválidos ou ausentes (o projeto Jira é obrigatório):${invalid}"
+  [[ -t 0 ]] || exit 1
+done
+write_env PILOT_GH_PROJECT "$PILOT_GH_PROJECT"
+write_env PILOT_JIRA_PROJECT "$PILOT_JIRA_PROJECT"
+write_env PILOT_EXTRA_PROJECTS "$PILOT_EXTRA_PROJECTS"
+ENABLED=",$PILOT_GH_PROJECT,$PILOT_JIRA_PROJECT,$PILOT_EXTRA_PROJECTS,"
+bad=0
+while IFS='|' read -r -u 3 _instance name repo _adapter account _jirakey; do
+  [[ "$ENABLED" == *",$name,"* ]] || continue
+  for file in docs/spec.md AGENTS.md; do
+    if gh_as "$account" api "repos/$repo/contents/$file?ref=main" --silent >/dev/null 2>&1; then say "ok   $name: $file na main"
+    else warn "$name ($repo): falta $file na main"; bad=1; fi
+  done
+done 3< <(all_projects)
+if (( bad )); then
+  warn "Adicione os arquivos que faltam na main (PR normal de vocês): docs/spec.md descreve a tarefa piloto"
+  warn "(o que construir e como validar); AGENTS.md traz os padrões do repositório."
+  warn "Depois de mergear, atualize também a main local do checkout (git pull): é dela que o trabalho clona."
+  pause "Quando estiverem na main, Enter para conferir de novo"
+  exec "$0"
+fi
+
+# ── 7 ─────────────────────────────────────────────────────────────────────
+stage "Checkouts locais dos alvos habilitados"
 say "Cada trabalho clona a partir do seu checkout local (e empurra para o github.com)."
 ask_or CHECKOUT_ROOT "Raiz dos checkouts (espera <raiz>/<owner>/<repo>):" "$HOME/dev/github.com"
+CHECKOUT_ROOT="${CHECKOUT_ROOT/#\~/$HOME}"
 no_spaces "$CHECKOUT_ROOT" || { warn "caminho com espaço não é suportado"; exit 1; }
+[[ "$CHECKOUT_ROOT" == /* ]] || { warn "use um caminho absoluto"; exit 1; }
 write_env CHECKOUT_ROOT "$CHECKOUT_ROOT"
-while IFS='|' read -r _instance _name repo _adapter account; do
+while IFS='|' read -r -u 3 _instance name repo _adapter account _jirakey; do
+  [[ "$ENABLED" == *",$name,"* ]] || continue
   path="$CHECKOUT_ROOT/$repo"
   if [[ ! -d "$path/.git" ]]; then
     warn "falta $path"
@@ -361,53 +406,15 @@ while IFS='|' read -r _instance _name repo _adapter account; do
   else
     warn "$repo: não consegui atualizar origin/main"
   fi
-done < <(all_projects)
-note "O check do estágio 9 avisa se a main local de algum repositório está atrás da origin; atualize-a você mesmo."
-
-# ── 7 ─────────────────────────────────────────────────────────────────────
-stage "Alvos do piloto e insumos de review"
-say "Os reviewers leem a spec e os padrões do repositório NO COMMIT BASE: docs/spec.md e AGENTS.md."
-say "Hoje só my-software-factory tem docs/spec.md; os demais alvos precisam ganhar o arquivo para rodar."
-say "Todos os 16 alvos ficam na configuração; só os escolhidos abaixo ficam enabled."
-echo
-all_projects | awk -F'|' '{ printf "    %-9s %-18s %s\n", $1, $2, $3 }'
-echo
-is_project() { all_projects | awk -F'|' -v n="$1" '$2==n {found=1} END {exit !found}'; }
-while true; do
-  ask_or PILOT_GH_PROJECT "Projeto GitHub Issues do piloto (nome):" "my-software-factory"
-  ask_or PILOT_JIRA_PROJECT "Projeto Jira do piloto (nome, ex.: van-playbooks):" ""
-  ask_or PILOT_EXTRA_PROJECTS "Outros a habilitar (nomes separados por vírgula, opcional; precisa para o N=2):" ""
-  invalid=""
-  for name in "$PILOT_GH_PROJECT" "$PILOT_JIRA_PROJECT" ${PILOT_EXTRA_PROJECTS//,/ }; do
-    is_project "$name" || invalid="$invalid $name"
-  done
-  [[ -z "$invalid" ]] && break
-  warn "nome(s) que não existem na tabela acima:${invalid:- (o projeto Jira é obrigatório)}"
-  [[ -t 0 ]] || exit 1
-done
-write_env PILOT_GH_PROJECT "$PILOT_GH_PROJECT"
-write_env PILOT_JIRA_PROJECT "$PILOT_JIRA_PROJECT"
-write_env PILOT_EXTRA_PROJECTS "$PILOT_EXTRA_PROJECTS"
-ENABLED=",$PILOT_GH_PROJECT,$PILOT_JIRA_PROJECT,$PILOT_EXTRA_PROJECTS,"
-bad=0
-while IFS='|' read -r _instance name repo _adapter account; do
-  [[ "$ENABLED" == *",$name,"* ]] || continue
-  for file in docs/spec.md AGENTS.md; do
-    if gh_as "$account" api "repos/$repo/contents/$file?ref=main" --silent >/dev/null 2>&1; then say "ok   $name: $file na main"
-    else warn "$name ($repo): falta $file na main"; bad=1; fi
-  done
-done < <(all_projects)
-if (( bad )); then
-  warn "Adicione os arquivos que faltam na main (PR normal de vocês): docs/spec.md descreve a tarefa piloto"
-  warn "(o que construir e como validar); AGENTS.md traz os padrões do repositório."
-  pause "Quando estiverem na main, Enter para conferir de novo"
-  exec "$0"
-fi
+done 3< <(all_projects)
+note "A main LOCAL é a base do clone: se estiver atrás ou adiante da origin, o check do estágio 9 falha/avisa; atualize-a você mesmo (git pull)."
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Gerar configuração e ajustes locais (.pilot/)"
 say "Config: $CONFIG (a partir de $TEMPLATE) e $LOCAL (caminhos desta máquina). Ambos git-ignored."
-node -e '
+regenerate=1
+if [[ -f "$CONFIG" ]] && ! confirm "$CONFIG já existe; regenerar? (perde edições manuais, como N e enabled)"; then regenerate=0; fi
+(( regenerate )) && node -e '
   const fs = require("fs");
   const [template, out, localOut, enabledCsv, operator, conDone, pessoal, trabalho, root, image] = process.argv.slice(1);
   const enabled = new Set(enabledCsv.split(",").filter(Boolean));
@@ -432,10 +439,10 @@ cat > "$PILOT_DIR/run.sh" <<'RUN_EOF'
 set -euo pipefail
 cd "$(dirname "$0")/.."
 instance="${1:?uso: .pilot/run.sh <pessoal|trabalho> [--check|--once]}"; shift || true
-# Only the Jira variables are exported: the other values in the file may hold spaces.
-set -a; eval "$(grep -E '^(JIRA_URL|JIRA_USERNAME|JIRA_API_TOKEN)=' .pilot/pilot.env)"; set +a
+# Só as variáveis do Jira são exportadas, lidas como texto (sem eval): o resto do arquivo pode ter espaços.
+while IFS='=' read -r key value; do export "$key=$value"; done < <(grep -E '^(JIRA_URL|JIRA_USERNAME|JIRA_API_TOKEN)=' .pilot/pilot.env)
 exec npm run --silent run -- --config .pilot/config.json --local .pilot/local.json \
-  --instance "$instance" --state-dir ".pilot/state/$instance" "$@"
+  --instance "$instance" --state-dir "$PWD/.pilot/state/$instance" "$@"
 RUN_EOF
 chmod +x "$PILOT_DIR/run.sh"
 say "ok   $PILOT_DIR/run.sh"
@@ -444,11 +451,11 @@ note "Trocar N, polling ou enabled depois: edite $CONFIG (maxConcurrent, pollInt
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Labels do GitHub e check de prontidão (somente leitura)"
 say "Crio as labels (só se não existirem) ready-for-agent e agent-claimed nos repositórios GitHub habilitados."
-while IFS='|' read -r _instance name repo adapter account; do
+while IFS='|' read -r -u 3 _instance name repo adapter account _jirakey; do
   [[ "$adapter" == "github" && "$ENABLED" == *",$name,"* ]] || continue
   ensure_label "$account" "$repo" ready-for-agent 0e8a16 "Pronta para o agente"
   ensure_label "$account" "$repo" agent-claimed fbca04 "Reivindicada pela factory"
-done < <(all_projects)
+done 3< <(all_projects)
 say "Agora o check: Docker, imagem, perfil, token, tracker (descoberta), operador Jira, checkouts e insumos de review."
 for instance in pessoal trabalho; do
   while true; do
@@ -474,7 +481,7 @@ say "    • projeto e label de roteamento do alvo (a label do projeto, uma só)
 say "    • label ready-for-agent;"
 say "    • na sprint ATUAL e atribuída a você;"
 say "    • sem links de bloqueio (Blocks) e sem a label agent-claimed."
-open_url "$JIRA_BASE/browse/$(all_projects | awk -F'|' -v n="$PILOT_JIRA_PROJECT" '$2==n {print $2}' | cut -d- -f1 | tr '[:lower:]' '[:upper:]')"
+open_url "$JIRA_BASE/browse/$(all_projects | awk -F'|' -v n="$PILOT_JIRA_PROJECT" '$2==n {print $6}')"
 pause "Issue Jira criada? Enter"
 
 # ── 11 ────────────────────────────────────────────────────────────────────
@@ -505,11 +512,26 @@ done
 # ── 12 ────────────────────────────────────────────────────────────────────
 stage "Rodada N=2 e fechamento"
 say "N=2 exige duas tarefas em REPOSITÓRIOS diferentes da MESMA instância (um repo só roda uma implementação por vez)."
-say "Habilite um segundo projeto na instância escolhida (precisa de docs/spec.md e AGENTS.md na main):"
-say "edite $CONFIG: 'enabled': true no segundo projeto e 'maxConcurrent': 2 na instância."
+say "O segundo projeto precisa de docs/spec.md e AGENTS.md na main (e do checkout local atualizado)."
 ask_or N2_INSTANCIA "Instância usada no N=2 (pessoal|trabalho):" "trabalho"
+ask_or N2_PROJETO "Segundo projeto a habilitar nessa instância (nome da tabela do estágio 6):" ""
+is_project "$N2_PROJETO" || { warn "projeto desconhecido: '$N2_PROJETO'"; exit 1; }
 write_env N2_INSTANCIA "$N2_INSTANCIA"
-pause "Config ajustada? Crie as DUAS issues autorizadas (ready-for-agent) e rode .pilot/run.sh $N2_INSTANCIA. Enter ao terminar"
+write_env N2_PROJETO "$N2_PROJETO"
+if confirm "Aplicar em $CONFIG: maxConcurrent=2 em $N2_INSTANCIA e enabled=true em $N2_PROJETO?"; then
+  node -e '
+    const fs = require("fs");
+    const [file, instance, project] = process.argv.slice(1);
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    const inst = cfg.instances.find((i) => i.name === instance);
+    const proj = inst?.projects.find((p) => p.name === project);
+    if (!proj) { console.error("projeto não pertence a essa instância"); process.exit(1); }
+    inst.maxConcurrent = 2; proj.enabled = true;
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$CONFIG" "$N2_INSTANCIA" "$N2_PROJETO" && say "ok   config ajustada para N=2"
+fi
+say "Rode '.pilot/run.sh $N2_INSTANCIA --check', crie as DUAS issues autorizadas (ready-for-agent) e rode .pilot/run.sh $N2_INSTANCIA."
+pause "Enter ao terminar as duas tarefas (merge humano incluído)"
 ask_or N2_MINUTOS "Minutos até as duas chegarem a done (aprox.):" "?"
 ask_or N2_PARALELOS "Os dois rodaram em paralelo de fato? (sim/nao):" "sim"
 ask_or N2_FALHAS "Falhas/surpresas (curto):" "nenhuma"

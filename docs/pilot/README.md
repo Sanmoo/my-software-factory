@@ -48,7 +48,10 @@ Supervisão enquanto roda: `npm run logs`, `reply`, `resume`, `release`, `pause`
    transições. Decidir se o container precisa de acesso ao Jira.
 3. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o
    wizard pergunta e o piloto valida.
-4. **Modelo e perfil do trabalho.** O piloto usa `github-copilot/gpt-6-luna` nos dois perfis
+4. **Credencial Jira por nome.** O adapter lê `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` do
+   ambiente; o nome em `credentials.JIRA_TRABALHO.ref` é validado mas não escolhe a variável (R01
+   pede referência). Suficiente para uma conta Jira; decidir se vale generalizar.
+5. **Modelo e perfil do trabalho.** O piloto usa `github-copilot/gpt-6-luna` nos dois perfis
    (envelope barato da spec §6). O perfil de trabalho precisa dele autenticado.
 
 ## Critérios da #10 e como são cobertos

@@ -4,7 +4,7 @@ import { git } from "../runtime/docker-area.js";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
 import { messageOf } from "../core/values.js";
-import type { SandboxBoundary } from "../runtime/docker-runner.js";
+import { DEFAULT_REVIEW_INPUTS, type SandboxBoundary } from "../runtime/docker-runner.js";
 import { resolveModelAuth, resolveRuntimeProfile } from "../runtime/docker-config.js";
 import { jiraConnectionFromEnv, jiraRequest } from "../tracker/jira.js";
 import type { LocalSettings } from "./local-settings.js";
@@ -28,7 +28,6 @@ export interface CheckOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-const DEFAULT_REVIEW_INPUTS = { specPath: "docs/spec.md", standardsPath: "CODING_STANDARDS.md" };
 
 async function attempt(what: string, run: () => Promise<string>): Promise<CheckLine> {
   try {
@@ -47,6 +46,9 @@ async function checkoutLines(project: ProjectConfig, local: LocalSettings): Prom
       await git(checkout, "rev-parse", "--verify", `refs/heads/${branch}`);
       const remote = (await git(checkout, "remote", "get-url", "origin")).trim();
       if (!remote.includes(project.repository)) throw new Error(`origin (${remote}) não aponta para ${project.repository}`);
+      await git(checkout, "rev-parse", "--verify", `refs/remotes/origin/${branch}`).catch(() => {
+        throw new Error(`origin/${branch} desconhecida neste checkout; rode git fetch (o wizard faz isso)`);
+      });
       // Commits not on origin would ride along in the job's PR: the area is cloned from this branch.
       const ahead = await git(checkout, "rev-list", "--count", `origin/${branch}..${branch}`).catch(() => "0");
       if (Number(ahead) > 0) throw new Error(`${branch} local tem ${ahead.trim()} commit(s) que não estão em origin/${branch}; eles iriam no PR do trabalho`);
@@ -97,11 +99,11 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
 
   const accounts = new Set<string>();
   for (const project of projects) {
-    const auth = resolveModelAuth(instance, config.credentials, local.profiles);
     if (!accounts.has(project.githubAccount)) {
       accounts.add(project.githubAccount);
       lines.push(await attempt(`Docker, imagem, perfil e token da conta ${project.githubAccount}`, async () => {
-        await sandbox.preflight({ image: local.image, profileDir: auth.agentDir, account: project.githubAccount });
+        const { agentDir } = resolveModelAuth(instance, config.credentials, local.profiles);
+        await sandbox.preflight({ image: local.image, profileDir: agentDir, account: project.githubAccount });
         return `imagem ${local.image}`;
       }));
     }
