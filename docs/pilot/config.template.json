@@ -17,7 +17,7 @@
     {
       "name": "pessoal",
       "maxConcurrent": 1,
-      "pollIntervalSeconds": 120,
+      "pollIntervalSeconds": 15,
       "maxIterations": 5,
       "modelAuth": "PI_AUTH_PESSOAL",
       "projects": [
@@ -126,7 +126,7 @@
     {
       "name": "trabalho",
       "maxConcurrent": 1,
-      "pollIntervalSeconds": 120,
+      "pollIntervalSeconds": 15,
       "maxIterations": 5,
       "modelAuth": "PI_AUTH_TRABALHO",
       "projects": [
