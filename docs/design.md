@@ -1,7 +1,7 @@
 # Design e evidências — My Software Factory
 
-A [spec do MVP](spec.md) é a fonte consolidada dos requisitos e das propostas
-para aprovação; o [glossário](../GLOSSARY.md) define linguagem. Este documento
+A [spec do MVP](spec.md) é a fonte consolidada dos requisitos e das decisões
+técnicas aprovadas; o [glossário](../GLOSSARY.md) define linguagem. Este documento
 preserva contexto e aponta evidências, sem duplicar o contrato da spec.
 
 ## Contexto e decisões
@@ -21,8 +21,8 @@ preserva contexto e aponta evidências, sem duplicar o contrato da spec.
 Registro inicial da entrevista:
 [PKM, snapshot f651e75](https://github.com/Sanmoo/pkm/blob/f651e75/.scratch/sandcastle-laptop/spec.md).
 Esse snapshot antecede as decisões finais de Docker e elegibilidade GitHub;
-não deve substituí-las. Propostas técnicas ainda não aprovadas ficam explícitas
-na spec, sem ADR de adoção irreversível.
+não deve substituí-las. As decisões técnicas aprovadas ficam na spec (§4),
+sem ADR de adoção irreversível.
 
 ## Evidências e limites
 

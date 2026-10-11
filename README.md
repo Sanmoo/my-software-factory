@@ -6,7 +6,7 @@ engenharia supervisionado. Repositório privado; spec de MVP consolidada para re
 ## Estado atual
 
 - [Spec do MVP](docs/spec.md): **Docker, Jira e GitHub Issues desde o início**;
-  requisitos confirmados, propostas técnicas e critérios de aceite separados.
+  requisitos e decisões técnicas aprovados, critérios de aceite e alvos configurados.
   Tickets ainda não criados. [Glossário](GLOSSARY.md).
 - Bootstrap TypeScript e teste reproduzível de Pi headless/subagentes/retomada.
 - **Teste real passou com Pi + github-copilot/gpt-6-luna**: filho async, resultado

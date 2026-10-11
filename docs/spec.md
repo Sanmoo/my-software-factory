@@ -1,7 +1,7 @@
 # My Software Factory — spec do MVP
 
-**Estado:** rascunho consolidado para aprovação final, anterior à criação de tickets.
-Requisitos abaixo refletem decisões confirmadas; propostas técnicas são identificadas.
+**Estado:** aprovada para derivar tickets. Requisitos (§3) e decisões técnicas (§4)
+estão confirmados; tickets vivem nas GitHub Issues de `Sanmoo/my-software-factory`.
 Linguagem: [GLOSSARY](../GLOSSARY.md). Histórico e provas: [design](design.md).
 
 ## 1. Objetivo
@@ -20,7 +20,8 @@ não é uma verificação independente de política corporativa.
 ## 2. Recorte e exclusões
 
 **MVP inclui desde a primeira entrega:** Jira **e** GitHub Issues, runtime
-**Docker**, múltiplos projetos/repositórios configurados, limite global N,
+**Docker**, múltiplos projetos/repositórios configurados em instâncias
+independentes (trabalho e pessoal), limite N por instância,
 Pi + subagentes e `/implement`, ajuda/resposta, retomada manual e acompanhamento
 do ciclo de PR. Não retirar um tracker ou substituir Docker silenciosamente
 para diminuir o escopo.
@@ -39,15 +40,33 @@ para todo esse escopo. Adaptação extensa volta ao operador, não vira novo mot
 
 ### R01 — Projetos e configuração
 
-Operar somente projetos/repositórios habilitados pelo operador. Cada configuração
-associa identidade do projeto, adapter de tracker, repositório local/remoto,
-branch de destino, integração de PR, workflow do tracker e perfil Docker/Pi.
-Modelos são explícitos por provider/model, incluindo os dos subagentes; não
-inferir um provider pela coincidência do model ID nem aplicar fallback silencioso.
+Operar somente projetos/repositórios habilitados pelo operador. Cada **instância**
+(ex.: trabalho, pessoal) é um orquestrador independente, com configuração,
+estado, N, fila de comandos e pause próprios; as duas podem rodar ao mesmo
+tempo, e cada projeto pertence a exatamente uma instância. Todos os alvos do
+§7 são configurados desde a primeira entrega.
+
+Cada projeto associa um escopo de tracker a **exatamente um** repositório:
+no GitHub Issues, o próprio repositório das issues; no Jira, a chave do projeto
+mais uma label de roteamento. Também declara adapter, branch de destino,
+integração de PR, workflow do tracker, perfil Docker/Pi e a conta GitHub usada.
+Issue com `ready-for-agent` num projeto Jira configurado mas sem label de
+roteamento, ou com mais de uma, não é admitida e aparece no status como
+"sem roteamento"/"roteamento ambíguo"; o repositório nunca é inferido do título.
+
+Modelos são explícitos por provider/model e configurados por instância e por
+papel agêntico: `implementer` (agente principal), `reviewer-standards`,
+`reviewer-spec` e um `default` obrigatório para outros subagentes criados por
+`/implement`, registrado no log a cada uso. Não inferir provider pela coincidência
+do model ID nem aplicar fallback silencioso. A autenticação do modelo pertence
+à instância; não há fallback entre auth corporativa e pessoal. Só a invocação
+do Pi e seus subagentes são agênticas: o orquestrador decide por regras.
 
 N, máximo de iterações e intervalos de polling são configuráveis. Credenciais
-são referências a autenticação autorizada, não valores versionados. Configuração
-inválida ou capacidades necessárias indisponíveis são visíveis ao operador.
+são referências a autenticação autorizada, não valores versionados. O token da
+conta GitHub do projeto é obtido do keyring (`gh auth token --user <conta>`) e
+injetado só no processo/container do trabalho, sem trocar a conta ativa do `gh`.
+Configuração inválida ou capacidades necessárias indisponíveis são visíveis ao operador.
 
 ### R02 — Porta de issue tracker
 
@@ -61,6 +80,21 @@ dependências e transições de cada adapter. `claimed` não é sinônimo de ass
 no Jira, a issue deve estar atribuída ao operador e ainda assim não claimed.
 Não considerar um campo não consultado como ausência de impedimento.
 
+Representações concretas:
+
+| Conceito | Jira Cloud | GitHub Issues |
+| --- | --- | --- |
+| Pronta para agente | label `ready-for-agent` (nome configurável) | label `ready-for-agent` (nome configurável) |
+| Claimed | label `agent-claimed` ou categoria de status diferente de *To Do* | qualquer assignee ou label `agent-claimed` |
+| Claim pela factory | adiciona `agent-claimed` e transiciona para doing | adiciona `agent-claimed` e atribui a conta do projeto |
+| Doing | transição configurada (padrão "Em andamento") | não existe; o claim registra o início |
+| Terminal/done | categoria de status *Done*; transição para done configurada | issue fechada como *completed* |
+| Bloqueio | link "is blocked by" (tipos configuráveis) para issue não terminal | dependência nativa `blocked_by` aberta |
+| Sprint atual | `sprint in openSprints()`, sem board configurado | não se aplica |
+
+Estados Jira são mapeados por **categoria** de status, não por nome; apenas os
+nomes das transições para doing e done são configurados por projeto.
+
 ### R03 — Elegibilidade nos dois trackers
 
 Exigir cumulativamente: projeto habilitado, `ready-for-agent`, **não claimed**,
@@ -72,9 +106,10 @@ No **Jira**, exigir também sprint atual e atribuição ao operador. No **GitHub
 Issues**, não adicionar requisito de sprint ou assignee que não foi solicitado.
 Relação em que a issue bloqueia outra não significa, por si só, que ela é bloqueada.
 
-A redação preserva a regra de ausência de bloqueios/dependências: não introduz
-por conta própria uma exceção para links de dependência ainda presentes. Sua
-representação efetiva precisa ser verificável no adapter configurado.
+Só bloqueador/dependência **não terminal** impede admissão; link para issue já
+terminal não bloqueia. Se o estado do bloqueador não puder ser lido, a issue
+não é admitida (CA04). A representação efetiva precisa ser verificável no
+adapter configurado.
 
 ### R04 — Admissão e claim
 
@@ -141,8 +176,14 @@ O agente informa resultado estruturado: pedido de ajuda com pergunta/contexto;
 PR pronto para acompanhamento com referência; ou interrupção/falha com motivo.
 Logs livres não substituem esse contrato. Saída ausente, inválida ou ambígua
 não é sucesso. Sinal presente no prompt/stdout bruto não comprova entrega.
+Um resultado "PR pronto" só é aceito depois de a factory confirmar no adapter
+de PR que ele existe, está aberto, tem como base a branch de destino e como head
+a branch do trabalho; caso contrário é resultado inválido. O vínculo issue ↔ PR
+é o registrado pela factory no trabalho, não texto do PR.
 
-Máximo inicial confirmado: **5 iterações Sandcastle**, facilmente alterável.
+Máximo inicial confirmado: **5 iterações Sandcastle por invocação nova**,
+facilmente alterável. Retomadas e correções são invocações de 1 iteração; não há
+contador acumulado por trabalho.
 Cada uma é uma invocação completa do Pi, não um turn/tool call; normalmente uma
 basta. Ajuda e entrega pronta encerram antes do máximo. Atingir o limite sem
 resultado válido gera pedido de intervenção, não execução ilimitada.
@@ -160,19 +201,29 @@ Pedido de ajuda termina a invocação ativa, preserva área/sessão e libera vag
 Só esse trabalho fica bloqueado; o script pode admitir outros. Mostrar a
 pergunta no terminal/log e em status, sem exigir serviço remoto de notificação.
 
-CLI mínima: status, logs de um trabalho, reply, resume e pause. Reply transmite
-resposta dirigida; resume solicita continuidade sem informação nova; pause
-impede novas admissões e não significa encerrar trabalhos já ativos. Os nomes
-vistos como `runner` são exemplos, não nome de ferramenta obrigatório.
+CLI mínima, sempre dirigida a uma instância: `status`, `logs <trabalho>`,
+`reply <trabalho>`, `resume <trabalho>`, `pause`, `unpause` e `release <trabalho>`.
+Reply transmite resposta dirigida; resume solicita continuidade sem informação
+nova; pause impede novas admissões e não encerra trabalhos já ativos; unpause
+volta a admitir. Release remove o claim e encerra o acompanhamento, preservando
+área, sessão e PR; não move a issue para done nem fecha o PR. Os nomes vistos
+como `runner` são exemplos, não nome de ferramenta obrigatório.
 
 O operador acompanha por tail de logs. Feedback recebido enquanto um agente
 está ativo fica pendente para a próxima invocação; não há steering ao vivo no MVP.
 
 ### R10 — Feedback Jira, PR e terminal
 
-No Jira, comentários com `agent:` são dirigidos ao trabalho. No PR, feedback
-humano novo e checks relevantes falhos podem disparar correção. A resposta
-local via terminal deve produzir o mesmo efeito de uma resposta dirigida,
+Tudo o que a factory/agente publica leva um marcador invisível (GitHub:
+`<!-- msf:agent -->`; Jira: prefixo fixo `[msf]`); comentário com marcador nunca
+é feedback. Isso é necessário porque o agente publica com as credenciais do operador.
+
+Nas issues (Jira e GitHub), só comentário humano sem marcador iniciado por
+`agent:` é resposta dirigida ao trabalho; os demais são conversa entre pessoas.
+No PR, qualquer review/comentário novo sem marcador e de autor que não seja bot
+é feedback humano, e checks *required* da proteção da branch de destino com
+falha (ou, sem required, quaisquer checks com falha) podem disparar correção.
+A resposta local via terminal produz o mesmo efeito de uma resposta dirigida,
 sem depender de comentário externo para destravar a tarefa.
 
 Registrar identidade/revisão do feedback consumido para não repetir eventos nem
@@ -192,8 +243,8 @@ fechamento sem merge ou afirmação do modelo não bastam. Done só é confirmad
 quando o tracker reconhece a atualização ou já está no estado esperado.
 
 Não escolher fornecedor de PR com base no tracker: issue Jira não define onde
-vive seu repositório. Identificar a integração Git/PR dos projetos do piloto na
-configuração; não prometer suporte a todo fornecedor sem adapter implementado.
+vive seu repositório. O MVP tem um único adapter de PR, para **github.com**;
+outros fornecedores (inclusive GitHub Enterprise Server) ficam fora.
 
 ### R12 — Falhas e retomada manual
 
@@ -208,12 +259,12 @@ a sessão principal não retoma automaticamente todos os filhos: verificar seus
 estados/resultados e pedir ajuda quando a continuidade não puder ser determinada.
 Recuperação manual não exige reconstrução integral de processos após crash.
 
-## 4. Propostas técnicas para revisão
+## 4. Decisões técnicas do MVP
 
-As escolhas seguintes completam o desenho mínimo, mas **não são decisões
-humanas já confirmadas** nem exigências de uma plataforma durável:
+As escolhas seguintes completam o desenho mínimo e foram aprovadas; não são
+exigências de uma plataforma durável:
 
-- **P01:** uma instância coordenadora local por configuração; estado simples por
+- **P01:** uma instância coordenadora local por configuração (§R01); estado simples por
   trabalho e uma fila de comandos locais. JSON em disco com gravação substitutiva
   é candidato, não imposição de banco/event sourcing ou promessa de fsync/replay.
   Deduplicação local não constitui lock distribuído contra outros operadores.
@@ -231,17 +282,17 @@ humanas já confirmadas** nem exigências de uma plataforma durável:
   usar nível padrão e desempate por identidade estável. Nenhuma política de
   deadline, preempção ou fairness sofisticada é exigida.
 
-Esquema de dados, APIs concretas de claim/dependências e integração de PR devem
-ser especificados nos tickets a partir das capacidades observadas dos projetos
+Esquema de dados e detalhes de API dos adapters (além das representações de R02)
+devem ser especificados nos tickets a partir das capacidades observadas dos projetos
 configurados, sem remover requisito nem assumir ausência de um campo não lido.
-A escolha de onde publicar esses tickets continua separada desta spec; nenhum
-ticket é criado ou publicado pela sua redação.
+Os tickets são publicados nas GitHub Issues de `Sanmoo/my-software-factory`
+(ver `docs/agents/issue-tracker.md`); a redação desta spec não cria tickets.
 
 ## 5. Critérios de aceite para derivar tickets
 
 | ID | Demonstração verificável | Requisitos |
 | --- | --- | --- |
-| CA01 | Uma configuração habilita Jira e GitHub Issues; núcleo usa a mesma porta, sem exigir campos Jira no GitHub. | R01, R02 |
+| CA01 | Duas instâncias (trabalho e pessoal) carregam todos os alvos do §7, com Jira e GitHub Issues e vários repositórios por instância; núcleo usa a mesma porta, sem exigir campos Jira no GitHub. | R01, R02 |
 | CA02 | Jira só admite ready-for-agent, unclaimed, sem bloqueios/dependências, sprint atual e assignee operador; cada filtro negativo impede início. | R03 |
 | CA03 | GitHub só admite projeto habilitado, ready-for-agent, unclaimed e sem bloqueios/dependências; não exige sprint/assignee Jira. | R03 |
 | CA04 | Metadata de impedimento/claim desconhecida e issues terminais não são presumidas elegíveis. | R02, R03 |
@@ -251,12 +302,15 @@ ticket é criado ou publicado pela sua redação.
 | CA08 | Docker inicia Pi e filhos com o perfil autorizado; falha não aciona noSandbox; área/sessão sobrevivem ao ciclo do container. | R06 |
 | CA09 | /implement recebe contexto/base, executa testes e review dos dois eixos com diff explícito; revisão inconclusiva não vira aprovação. | R07 |
 | CA10 | Ajuda/maxIterations/resultado inválido interrompem atividade, preservam sessão/área e ficam visíveis sem bloquear outras tarefas. | R08, R09 |
-| CA11 | Reply no terminal e resposta Jira dirigida reativam o trabalho; feedback ativo fica pendente; eventos consumidos não se repetem. | R09, R10 |
+| CA11 | Reply no terminal e comentário `agent:` no Jira ou GitHub reativam o trabalho; comentários sem `agent:` ou com marcador da factory não; feedback ativo fica pendente; eventos consumidos não se repetem. | R09, R10 |
 | CA12 | Falha CI/feedback humano novo provoca correção com vaga; relatos próprios não geram loop. | R10, R11 |
 | CA13 | Merge externo confirmado leva a done; PR apenas aberto/fechado sem merge não leva; nenhuma chamada de merge parte da factory. | R11 |
 | CA14 | Após interrupção, resume explícito continua o mesmo trabalho/sessão; sem continuidade disponível volta à ajuda, não a novo trabalho silencioso. | R12, P03 |
 | CA15 | Operador acompanha logs/status e pode pausar novas admissões; agentes não executam deploy produtivo nem alteram perfil global como setup. | R06, R07, R09 |
-| CA16 | Piloto usa os dois trackers e Docker, primeiro N=1 e depois N=2, com ao menos uma tarefa real autorizada para medir ganho/limitações. | R01, R05, R06 |
+| CA16 | Piloto usa os dois trackers e Docker, com todos os alvos configurados, primeiro N=1 e depois N=2, com ao menos uma tarefa real autorizada para medir ganho/limitações. | R01, R05, R06 |
+| CA17 | Issue Jira `ready-for-agent` sem label de roteamento ou com duas aparece no status e não é admitida; com uma, vai ao repositório mapeado. | R01, R03 |
+| CA18 | Cada papel agêntico usa o provider/model e a auth da sua instância; `default` aparece no log; papel sem configuração ou auth ausente é erro visível, sem fallback; conta ativa do `gh` não muda. | R01, R06 |
+| CA19 | Resultado "PR pronto" com PR inexistente, fechado ou com base/head divergentes é inválido; `release` remove o claim sem done. | R08, R09 |
 
 Os exemplos concretos e seams de teste devem acompanhar os tickets, sobretudo
 para que /implement não precise buscar aprovação rotineira que já possa constar
@@ -283,3 +337,30 @@ Credenciais/configuração corporativa e transcrições brutas não são version
 A validação necessária não é uma bateria de segurança/auditoria do projeto
 definitivo. Se Docker, um dos trackers ou a composição excederem o envelope
 simples acordado, devolver o trade-off ao operador antes de mudar o MVP.
+
+## 7. Alvos configurados
+
+Todos github.com. Labels de roteamento valem dentro do projeto Jira indicado.
+
+**Instância pessoal** (conta `Sanmoo`, tracker GitHub Issues do próprio repo):
+`Sanmoo/my-tasks`, `Sanmoo/my-software-factory`, `Sanmoo/my-finances`,
+`Sanmoo/lorebase-frontend`, `Sanmoo/lorebase-backend`.
+
+**Instância trabalho** (conta `samuel-santos_bjd`):
+
+| Tracker | Escopo | Repositório |
+| --- | --- | --- |
+| GitHub Issues | repo | `samuel-santos_bjd/dora-metrics` |
+| Jira VAN | label `monolith` | `bancojohndeere/revolving-credit-monolith-backend` |
+| Jira VAN | label `dealer-services` | `bancojohndeere/revolving-credit-dealer-services` |
+| Jira VAN | label `mfe` | `bancojohndeere/revolving-credit-mfe` |
+| Jira VAN | label `fdm` | `bancojohndeere/revolving-credit-fiscal-document-management` |
+| Jira VAN | label `common-infra` | `bancojohndeere/revolving-credit-products-common-infra` |
+| Jira VAN | label `lambda-auth` | `bancojohndeere/revolving-credit-multi-issuer-lambda-authorizer` |
+| Jira VAN | label `playbooks` | `bancojohndeere/revolving-credit-playbooks` |
+| Jira CON | label `monolith` | `bancojohndeere/consorcio-monolith-backend` |
+| Jira CON | label `mfe` | `bancojohndeere/consorcio-mfe` |
+| Jira CON | label `playbooks` | `bancojohndeere/consorcio-playbooks` |
+
+Jira: `https://bancojohndeere.atlassian.net` (Cloud). O nome da transição para
+done é confirmado no teste de conformidade do adapter.

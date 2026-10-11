@@ -10,6 +10,16 @@ Responsável por admitir trabalhos, acionar agentes, acompanhar resultados e
 procurar o humano quando uma decisão ou informação é necessária.
 _Avoid_: motor durável, plataforma definitiva
 
+**Instância**:
+Orquestrador local em execução com sua configuração própria, como trabalho ou
+pessoal. Limites, estado e comandos não são compartilhados entre instâncias.
+_Avoid_: ambiente, perfil
+
+**Roteamento**:
+Associação de uma issue a exatamente um repositório de um projeto habilitado.
+Roteamento ausente ou ambíguo impede a admissão e fica visível ao operador.
+_Avoid_: inferir o repositório pelo título ou pelo tracker
+
 **Trabalho**:
 Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento,
 intervenções humanas e acompanhamento do PR até seu desfecho.
@@ -21,8 +31,9 @@ Não se confunde com atribuição a uma pessoa nem com capacidade de execução.
 _Avoid_: assignee como claim, claim como vaga
 
 **Issue elegível**:
-Issue de projeto habilitado, pronta para agente, sem claim e sem bloqueios ou
-dependências, que também satisfaz as regras específicas do seu tracker.
+Issue roteada a um projeto habilitado, pronta para agente, sem claim e sem
+bloqueios ou dependências pendentes, que também satisfaz as regras específicas
+do seu tracker.
 _Avoid_: label como garantia de contexto completo, campos Jira como regra universal
 
 **Vaga**:
@@ -37,8 +48,9 @@ _Avoid_: falha silenciosa, processo indefinidamente esperando uma pessoa
 
 **Feedback acionável**:
 Informação nova dirigida ao trabalho por uma pessoa ou falha de check relevante
-do PR, capaz de motivar resposta ou correção.
-_Avoid_: qualquer comentário como comando, relato do próprio agente como feedback
+do PR, capaz de motivar resposta ou correção. Na issue, só conta o que a pessoa
+endereça explicitamente ao agente; no PR, todo review humano é dirigido ao trabalho.
+_Avoid_: qualquer comentário da issue como comando, relato do próprio agente como feedback
 
 **Retomada manual**:
 Continuidade de um trabalho solicitada explicitamente pelo operador a partir
