@@ -6,8 +6,11 @@ engenharia supervisionado. Repositório privado; em fase de teste de compatibili
 ## Estado atual
 
 - Bootstrap TypeScript e teste reproduzível de Pi headless/subagentes/retomada.
-- **Teste real bloqueado por TLS no endpoint Codex**: certificado Fortinet
-  não validado pelo Node, antes da delegação. [Diagnóstico](docs/results/002-tls-diagnosis.md).
+- **Teste real passou com Pi + github-copilot/gpt-6-luna**: filho async, resultado
+  incorporado e retomada da mesma sessão, com uma iteração em cada fase.
+  [Resultado e limites](docs/results/003-copilot-luna.md).
+- Codex continua com bloqueio TLS independente, documentado no
+  [diagnóstico](docs/results/002-tls-diagnosis.md); não é requisito deste piloto.
 - Ainda não há polling, concorrência, CLI operacional nem adapters de tracker.
 - Issue tracker será acessado por porta e adapters: Jira no trabalho e GitHub
   Issues nos projetos pessoais. Campos Jira não pertencem ao contrato central.
@@ -25,7 +28,7 @@ npm run typecheck
 O teste real faz chamadas ao modelo já autenticado e não roda em `npm test`:
 
 ```sh
-SMOKE_MODEL=provider/model npm run smoke:pi
+SMOKE_MODEL=github-copilot/gpt-6-luna npm run smoke:pi
 ```
 
 `SMOKE_MODEL` é obrigatório e inclui provider: o teste não escolhe nem troca
@@ -38,6 +41,6 @@ Fixture, sessões e logs ficam em `.smoke/`, ignorado pelo Git; não use código
 O teste mantém extensões/autenticação locais, mas desabilita contexto, skills,
 MCP e ferramentas de projeto. Não valida ainda `/implement` completa.
 
-Detalhes: [design](docs/design.md), [resultado](docs/results/001-pi-compatibility.md)
+Detalhes: [design](docs/design.md), [resultado atual](docs/results/003-copilot-luna.md)
 e [próximos passos](docs/backlog.md). Não versionar transcrições brutas,
 credenciais ou configuração corporativa.

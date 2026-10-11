@@ -47,3 +47,7 @@ por eventos, não apenas pelo sinal de conclusão Sandcastle.
 A biblioteca é fixada em 0.12.0, revisão e99f832f26dc9d245c019a9ddd19fa5dee792427;
 a pesquisa inicial examinou 7a4e7f7d93056600d979d79a090256feddf653ea. Referências
 antigas não são prova da versão instalada. O experimento usa a API publicada.
+
+**Resultado:** [protocolo mínimo aprovado com github-copilot/gpt-6-luna](results/003-copilot-luna.md).
+Provider/modelo explícito; usar esse modelo barato nos próximos testes conforme
+pedido do operador, sem trocar silenciosamente nem alterar configuração global.

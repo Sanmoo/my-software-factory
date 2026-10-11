@@ -39,7 +39,9 @@ Run local `.smoke/f6cf576d-0278-47b4-9a1d-b2d970c2d513/` preservado:
 
 ## Próximo passo
 
-Decidir com o operador como resolver o acesso de transporte ao provider ou se
-outro provider/modelo já autenticado deve ser usado. Sem fallback automático.
-Não afirmar causa exata de rede: os eventos apenas mostram fetch failed.
-O script ainda não deve operar em Jira/GitHub Issues nem em projeto real.
+Histórico: investigação seguinte identificou
+[inspeção TLS Fortinet no endpoint Codex](002-tls-diagnosis.md).
+O operador depois autorizou github-copilot/gpt-6-luna e o
+[protocolo mínimo passou](003-copilot-luna.md), sem fallback silencioso.
+Este resultado inicial continua falho, não foi reinterpretado como sucesso.
+O script ainda não opera em Jira/GitHub Issues nem em projeto real.

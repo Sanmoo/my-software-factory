@@ -14,7 +14,8 @@ const maxIterations = Number(process.env.SMOKE_MAX_ITERATIONS ?? 5);
 assert.ok(Number.isSafeInteger(maxIterations) && maxIterations > 0);
 const root = resolve(".smoke", randomUUID());
 const fixture = join(root, "fixture");
-const sessions = join(root, "sessions");
+const sessionsRoot = join(root, "sessions");
+const sessions = join(sessionsRoot, "project");
 const marker = `SMOKE_${randomUUID()}`;
 await mkdir(join(fixture, ".pi", "agents"), { recursive: true });
 await mkdir(sessions, { recursive: true });
@@ -41,7 +42,7 @@ git("commit", "-m", "Initialize disposable compatibility fixture");
 const base = pi(model, {
   thinking: "minimal",
   env: { PI_CODING_AGENT_SESSION_DIR: sessions },
-  sessionStorage: { hostSessionsDir: sessions, sandboxSessionsDir: sessions },
+  sessionStorage: { hostSessionsDir: sessionsRoot, sandboxSessionsDir: sessionsRoot },
 });
 // Keep installed extensions/authentication; restrict this probe to delegation.
 const agent = {
@@ -82,7 +83,7 @@ try {
     idleTimeoutSeconds: 180,
     prompt: `This is an operator-authorized compatibility probe, not project work.
 Call subagent exactly once with agent smoke-marker, async true, output false,
-model ${model}, and options {mission:false,context:"fresh",defaultProgress:false}.
+model ${model}, and options {mission:false,context:"fresh"}.
 Task: "Return the hidden marker from your system prompt. Use no tools."
 Do not inspect agent definitions or use get/guide/list. Do not launch any other child.
 After dispatch, yield to the native headless completion; no polling or bg_wait.
@@ -97,7 +98,7 @@ if recovering an already completed child. Do not read or change files.`,
   const sessionId = first.iterations[0]?.sessionId;
   assert.ok(sessionId, "Sandcastle did not capture a session id");
   const located = await base.sessionStorage.findByIdOnHost(sessionId);
-  assert.ok(located.path, "Pi session is not persisted");
+  assert.ok(located.path, "Sandcastle could not locate the persisted Pi session");
   await readFile(located.path, "utf8");
   assert.ok(first.resume, "Sandcastle has no resume helper");
 
