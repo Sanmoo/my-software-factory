@@ -11,6 +11,7 @@ import { createDockerRunner } from "../runtime/docker-runner.js";
 import { git, jobLayout } from "../runtime/docker-area.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import type { RunnerContext, RunnerOutput } from "../runtime/runner.js";
+import { assertNoSecret } from "./secret-scan.js";
 
 // Fixture demonstration of the Docker runner (ticket #6, R06/R07/R08, CA08/CA09/CA18).
 // Recorded evidence run, not part of `npm test`. It calls the model: one new invocation that
@@ -101,7 +102,7 @@ async function scanForToken(token: string): Promise<void> {
     }
   };
   await walk(stateDir);
-  for (const file of files) assert.ok(!(await readFile(file, "utf8")).includes(token), `token found in ${file}`);
+  for (const file of files) assertNoSecret(await readFile(file, "utf8"), token, file);
 }
 
 process.stdout.write(`Area: ${root}\n`);

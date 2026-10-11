@@ -13,6 +13,7 @@ import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
 import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
+import { messageOf } from "./values.js";
 
 // The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
 // and concurrency limits (R05), runs the runner and records its result (R08, R09), and
@@ -82,8 +83,6 @@ const byKey = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const byPriorityThenIdentity = (a: NewCandidate, b: NewCandidate) =>
   a.priority - b.priority || byKey(a.key, b.key);
-
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, status.review]);
 

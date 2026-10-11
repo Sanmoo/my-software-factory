@@ -8,9 +8,9 @@ import { join, resolve } from "node:path";
 import { pi, run, type AgentStreamEvent } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { implementResult } from "../implement-result.js";
+import { assertNoSecret } from "../secret-scan.js";
 import { parseEvent, type PiEvent } from "../pi-evidence.js";
 import {
-  assertNoSecret,
   CHILD_AGENT,
   resolveSpikeModel,
   spikeMounts,

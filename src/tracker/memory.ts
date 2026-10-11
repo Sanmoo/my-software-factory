@@ -11,6 +11,7 @@ import type {
   TrackerScope,
 } from "./port.js";
 import { refKey } from "./port.js";
+import { isObject, type Obj } from "../core/values.js";
 
 // In-memory tracker adapter for tests and the status fixture. It implements the
 // normalized port over records loaded from a JSON fixture. Any metadata field may
@@ -33,9 +34,6 @@ interface StoredIssue {
 
 export class MemoryFixtureError extends Error {}
 
-type Obj = Record<string, unknown>;
-const isObject = (value: unknown): value is Obj =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === "string";
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";

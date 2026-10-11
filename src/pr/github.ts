@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import type { PrRef } from "../core/result.js";
 import type { Known } from "../tracker/port.js";
 import type { CheckState, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, ReviewState } from "./port.js";
+import { isObject, type Obj } from "../core/values.js";
 
 // github.com adapter for the PR port, through the `gh` CLI (R01, R11). Each call gets the
 // project account's token in its environment (GH_TOKEN), read with
@@ -50,9 +51,6 @@ const runGh: GhCall = (args, env) => new Promise((resolve, reject) => {
   });
 });
 
-type Obj = Record<string, unknown>;
-const isObject = (value: unknown): value is Obj =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const CHECKS: Record<string, CheckState> = { SUCCESS: "passing", FAILURE: "failing", ERROR: "failing", PENDING: "pending", EXPECTED: "pending" };
 const REVIEWS: Record<string, ReviewState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes-requested", REVIEW_REQUIRED: "pending" };

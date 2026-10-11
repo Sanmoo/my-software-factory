@@ -1,6 +1,7 @@
 import type { PiEvent } from "./pi-events.js";
 import type { RunModels } from "./docker-config.js";
 import type { RunnerOutput } from "./runner.js";
+import { isObject } from "../core/values.js";
 
 // Turns the Pi event stream of one invocation into the runner's output (R07, R08, R09).
 // Fail-closed: anything that cannot be reconciled is an interruption, never a success.
@@ -39,9 +40,6 @@ const interrupted = (reason: string, audit: string[]): Interpretation => ({
   output: { kind: "finished", results: [{ status: "interrupted", reason }] },
   audit,
 });
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export function interpretOutput(input: InterpretInput): Interpretation {
   const audit: string[] = [];

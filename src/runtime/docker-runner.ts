@@ -21,6 +21,7 @@ import { interpretOutput } from "./docker-output.js";
 import { continuationPrompt, implementPrompt, type ReviewMaterial } from "./docker-prompt.js";
 import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
+import { messageOf } from "../core/values.js";
 
 // Docker runner (R06, R07, R08, CA08, CA09, CA18). Each job gets its own git area and Pi
 // session on the host; the agent runs only inside the sandbox boundary. Any failure before or
@@ -85,8 +86,6 @@ interface JobRecord {
   baseSha: string;
   sessionId?: string;
 }
-
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 // Operator replies delivered with a continuation (R09); the admission hands them over in `continuation`.
 const operatorInput = (context: RunnerContext): string => (context.continuation?.replies ?? []).join("\n");

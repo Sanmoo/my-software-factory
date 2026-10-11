@@ -11,6 +11,7 @@ import type {
   TrackerPort,
   TrackerScope,
 } from "./port.js";
+import { isObject, type Obj } from "../core/values.js";
 
 // GitHub Issues adapter (R02, R03, R10). The adapter talks to the REST API through a
 // small injected boundary: it asks for the project account's token and then performs
@@ -50,9 +51,6 @@ export interface GitHubTrackerOptions {
   boundary: GitHubBoundary;
 }
 
-type Obj = Record<string, unknown>;
-const isObject = (value: unknown): value is Obj =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 interface RestIssue {
   id: number;

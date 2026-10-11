@@ -1,3 +1,5 @@
+import { isObject, type Obj } from "./values.js";
+
 // Result contract of a runner invocation (R08). Only a structurally valid result is a
 // success. Absent (no result), ambiguous (more than one) and invalid outputs become
 // ParseFailure, which the admission turns into intervention-required.
@@ -14,9 +16,6 @@ export type RunResult =
 
 export type ParsedOutput = { ok: true; result: RunResult } | { ok: false; reason: string };
 
-type Obj = Record<string, unknown>;
-const isObject = (value: unknown): value is Obj =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const nonEmptyString = (value: unknown): value is string => typeof value === "string" && value.trim() !== "";
 
 function parsePr(value: unknown): PrRef | undefined {

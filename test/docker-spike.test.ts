@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PiEvent } from "../src/experiments/pi-evidence.js";
+import { assertNoSecret } from "../src/experiments/secret-scan.js";
 import {
-  assertNoSecret,
   resolveSpikeModel,
   spikeMounts,
   summarizeUsage,

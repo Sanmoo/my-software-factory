@@ -9,8 +9,7 @@ import {
   type MsfConfig,
   type ProjectConfig,
 } from "./types.js";
-
-type Obj = Record<string, unknown>;
+import { isObject, type Obj } from "../core/values.js";
 
 const PROJECT_KEYS = ["name", "enabled", "adapter", "repository", "targetBranch", "prIntegration",
   "runtimeProfile", "githubAccount", "labels", "models", "jira"];
@@ -32,9 +31,6 @@ class Issues {
     this.list.push({ path, message });
   }
 }
-
-const isObject = (value: unknown): value is Obj =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const join = (path: string, key: string) => (path ? `${path}.${key}` : key);
 
