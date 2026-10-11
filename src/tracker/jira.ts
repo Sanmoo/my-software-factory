@@ -78,7 +78,7 @@ export async function jiraRequest<T = unknown>(
   }
   const credentials = Buffer.from(`${connection.username}:${connection.apiToken}`).toString("base64");
   const headers: Record<string, string> = { accept: "application/json", authorization: `Basic ${credentials}` };
-  if (serializedBody !== undefined) headers["content-type"] = "application/json";
+  if (body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(`${connection.baseUrl.replace(/\/+$/, "")}${path}`, {
     method,
     headers,
