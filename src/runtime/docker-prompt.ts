@@ -2,7 +2,8 @@ import type { IssueRef } from "../tracker/port.js";
 import { refKey } from "../tracker/port.js";
 import { COMPLETION_SIGNAL } from "./docker-invocation.js";
 import type { RunModels } from "./docker-config.js";
-import type { IssueContext } from "./runner.js";
+import { TRIAGE_SKILL } from "./docker-config.js";
+import type { IssueContext, TriageStep } from "./runner.js";
 
 // Prompts for the Pi invocation inside the container (R07). The result protocol is the
 // contract the runner checks in docker-output.ts; keep the two in step.
@@ -158,7 +159,7 @@ function chosenRules(): string {
 // triage, which is the one correction that invokes gh-address-comments (issue #21).
 // Corrections carry the PR feedback, so they carry the answer and resolve rules; so does the resume that
 // applies the operator's choice after the triage.
-export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean; triage?: "list" | "apply" }): string {
+export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean; triage?: TriageStep }): string {
   // After a conflict rebase the work sits on the remote target, so that is its base: the old base of the
   // job would make the reviewers see the target's own commits as part of the work.
   const base = input.conflict ? { ...input, baseSha: `origin/${input.targetBranch}` } : input;
@@ -168,7 +169,7 @@ export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "c
   const header = `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${base.baseSha}.`;
   if (input.triage === "list") {
     return [
-      "/skill:gh-address-comments",
+      `/skill:${TRIAGE_SKILL}`,
       header,
       operator,
       triageRules(),
@@ -182,6 +183,10 @@ export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "c
     ...(input.triage === "apply" ? [chosenRules()] : []),
     ...(input.conflict ? [conflictRules(input)] : []),
     ...(input.kind === "correction" || input.triage === "apply" ? [threadRules()] : []),
+    // The conflict was seen before the operator read the triage: it may be gone by now (decision 10).
+    ...(input.conflict && input.triage === "apply"
+      ? [`The conflict was seen before the operator answered: confirm it still exists (\`gh pr view --json mergeable\`) and rebase and force-push only if the pull request still conflicts with ${input.targetBranch}.`]
+      : []),
     "Models stay the same:",
     roleLines(input.models),
     reviewRules(base),

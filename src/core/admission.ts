@@ -5,7 +5,7 @@ import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type HeldFeedback, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
-import { directedReply, judgeConflict, judgePrFeedback, needsTriage, receiveFeedback } from "./feedback.js";
+import { directedReply, judgeConflict, judgePrFeedback, needsTriage, planContinuation, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
@@ -562,7 +562,7 @@ export class Admission {
       report.skipped.push({ key: job.key, reason: blocked });
       return;
     }
-    const plan = this.planContinuation(job, kind, triggers);
+    const plan = planContinuation(job, kind, triggers);
     const delivered = plan.replies.length > 0 ? `; ${plan.replies.length} resposta(s) entregue(s)` : "";
     const how = plan.triage === "list" ? " (triagem do feedback do PR)" : plan.triage === "apply" ? " (aplica a escolha da triagem)" : "";
     const running = await this.apply(job.key, "running", {
@@ -582,35 +582,6 @@ export class Admission {
         ...(plan.conflict ? { conflict: true } : {}),
         ...(plan.triage === undefined ? {} : { triage: plan.triage }),
       }, undefined, commands);
-  }
-
-  // What the continuation delivers (issue #21). A batch with a human comment of the PR is the triage:
-  // the invocation gets the comments only and changes no code, and the failing checks and the conflict
-  // of the batch are held back. The resume that follows the triage applies the operator's choice and
-  // takes those held items with it, so the work is done in one invocation after the choice.
-  private planContinuation(job: Job, kind: Continuation, triggers: Trigger[]): {
-    triage?: "list" | "apply"; replies: string[]; triggers: Trigger[]; conflict: boolean; held?: HeldFeedback[];
-  } {
-    const replies = job.replies ?? [];
-    if (kind === "correction" && needsTriage(job.triggers)) {
-      const held = job.actionable ?? [];
-      const heldMessages = [...held.map((item) => item.message)];
-      const comments = replies.filter((reply) => {
-        const at = heldMessages.indexOf(reply);
-        if (at < 0) return true;
-        heldMessages.splice(at, 1);
-        return false;
-      });
-      return { triage: "list", replies: comments, triggers, conflict: false, held };
-    }
-    if (kind === "resume" && job.afterTriage !== undefined) {
-      const all = [...triggers, ...job.afterTriage.map((item) => item.trigger)];
-      return {
-        triage: "apply", replies: [...replies, ...job.afterTriage.map((item) => item.message)], triggers: all,
-        conflict: all.some((trigger) => trigger.reason === "conflito-pr"),
-      };
-    }
-    return { replies, triggers, conflict: triggers.some((trigger) => trigger.reason === "conflito-pr") };
   }
 
   // The causes of the pending continuation of a job. One asked before triggers existed (an older state

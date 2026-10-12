@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Continuation, HeldFeedback, Job, JobState, Trigger } from "./job.js";
 import { isConflicting } from "./pr-rules.js";
 import type { PrCheck, PrComment, PrFeedback, PrSnapshot } from "../pr/port.js";
+import type { TriageStep } from "../runtime/runner.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
 
@@ -179,4 +180,33 @@ export function receiveFeedback(job: Job, inputs: FeedbackInput[], origin: strin
       log: [...job.log, ...log],
     },
   };
+}
+
+// What the continuation delivers (issue #21). A batch with a human comment of the PR is the triage:
+// the invocation gets the comments only and changes no code, and the failing checks and the conflict
+// of the batch are held back. The resume that follows the triage applies the operator's choice and
+// takes those held items with it, so the work is done in one invocation after the choice.
+export function planContinuation(job: Job, kind: Continuation, triggers: Trigger[]): {
+  triage?: TriageStep; replies: string[]; triggers: Trigger[]; conflict: boolean; held?: HeldFeedback[];
+} {
+  const replies = job.replies ?? [];
+  if (kind === "correction" && needsTriage(job.triggers)) {
+    const held = job.actionable ?? [];
+    const heldMessages = [...held.map((item) => item.message)];
+    const comments = replies.filter((reply) => {
+      const at = heldMessages.indexOf(reply);
+      if (at < 0) return true;
+      heldMessages.splice(at, 1);
+      return false;
+    });
+    return { triage: "list", replies: comments, triggers, conflict: false, held };
+  }
+  if (kind === "resume" && job.afterTriage !== undefined) {
+    const all = [...triggers, ...job.afterTriage.map((item) => item.trigger)];
+    return {
+      triage: "apply", replies: [...replies, ...job.afterTriage.map((item) => item.message)], triggers: all,
+      conflict: all.some((trigger) => trigger.reason === "conflito-pr"),
+    };
+  }
+  return { replies, triggers, conflict: triggers.some((trigger) => trigger.reason === "conflito-pr") };
 }

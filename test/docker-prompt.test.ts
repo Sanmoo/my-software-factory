@@ -232,6 +232,12 @@ test("the resume after the triage rebases with force-with-lease only on the job 
   assert.ok(prompt.includes("the review base origin/main"));
 });
 
+test("a conflict held by the triage is rechecked before the rebase, since it may be gone when the operator answers", () => {
+  const prompt = continuationPrompt({ ...job, kind: "resume", triage: "apply", conflict: true });
+  assert.match(prompt, /confirm it still exists/);
+  assert.match(prompt, /only if the pull request still conflicts with main/);
+});
+
 test("a correction without a human comment does not invoke the triage", () => {
   const prompt = continuationPrompt({ ...job, kind: "correction" });
   assert.doesNotMatch(prompt, /gh-address-comments/);

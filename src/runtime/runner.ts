@@ -13,6 +13,9 @@ export interface Workspace {
 
 // What a continuation invocation receives: the session and area to continue, and the
 // operator replies (R09) that this invocation delivers.
+// The two invocations of the triage of PR feedback (issue #21).
+export type TriageStep = "list" | "apply";
+
 export interface ContinuationContext {
   workspace: Workspace;
   replies: string[];
@@ -21,7 +24,7 @@ export interface ContinuationContext {
   // The triage of PR feedback (issue #21): "list" is the correction that numbers the items of new human
   // comments and asks the operator, changing no code; "apply" is the resume that applies only what the
   // operator chose, together with the failing checks and the conflict held back by the triage.
-  triage?: "list" | "apply";
+  triage?: TriageStep;
 }
 
 // What an implementation invocation knows about its issue: the title and body as the tracker
