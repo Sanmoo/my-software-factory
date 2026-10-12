@@ -28,40 +28,37 @@ function assertStoppedBeforeTests(output: string) {
   assert.doesNotMatch(output, /> my-software-factory@[^\n]+ test/);
 }
 
-test("verify stops at typecheck failure before lint and tests", async () => {
-  const result = await verifyWithProbe(
+test("verify reports failures with locations and stops at the failing step", async () => {
+  const typeFailure = await verifyWithProbe(
     `src/verify-type-${process.pid}.ts`,
     "const invalid: VerifyGatewayMissingType = 1;\n",
   );
-  assert.notEqual(result.status, 0);
-  assert.match(result.output, /VerifyGatewayMissingType/);
-  assert.doesNotMatch(result.output, /> my-software-factory@[^\n]+ lint/);
-  assertStoppedBeforeTests(result.output);
-});
+  assert.notEqual(typeFailure.status, 0);
+  assert.match(typeFailure.output, /VerifyGatewayMissingType/);
+  assert.doesNotMatch(typeFailure.output, /> my-software-factory@[^\n]+ lint/);
+  assertStoppedBeforeTests(typeFailure.output);
 
-test("verify reports a src lint failure with a location and stops before tests", async () => {
-  const relativePath = `src/verify-lint-${process.pid}.ts`;
-  const result = await verifyWithProbe(relativePath, "export const probe: any = 1;\n");
-  assert.notEqual(result.status, 0);
-  assert.match(result.output, new RegExp(`${relativePath}:1:`));
-  assert.match(result.output, /no-explicit-any/);
-  assertStoppedBeforeTests(result.output);
-});
+  const srcPath = `src/verify-lint-${process.pid}.ts`;
+  const srcFailure = await verifyWithProbe(srcPath, "export const probe: any = 1;\n");
+  assert.notEqual(srcFailure.status, 0);
+  assert.match(srcFailure.output, new RegExp(`${srcPath}:1:`));
+  assert.match(srcFailure.output, /no-explicit-any/);
+  assertStoppedBeforeTests(srcFailure.output);
 
-test("verify stops after suppression-policy failure before Oxlint and tests", async () => {
-  const relativePath = `src/verify-suppression-${process.pid}.ts`;
-  const result = await verifyWithProbe(relativePath, "// oxlint-disable\nexport const probe: any = 1;\n");
-  assert.notEqual(result.status, 0);
-  assert.match(result.output, new RegExp(`${relativePath}:1: invalid suppression`));
-  assert.doesNotMatch(result.output, /no-explicit-any/);
-  assertStoppedBeforeTests(result.output);
-});
+  const suppressionPath = `src/verify-suppression-${process.pid}.ts`;
+  const suppressionFailure = await verifyWithProbe(
+    suppressionPath,
+    "// oxlint-disable\nexport const probe: any = 1;\n",
+  );
+  assert.notEqual(suppressionFailure.status, 0);
+  assert.match(suppressionFailure.output, new RegExp(`${suppressionPath}:1: invalid suppression`));
+  assert.doesNotMatch(suppressionFailure.output, /no-explicit-any/);
+  assertStoppedBeforeTests(suppressionFailure.output);
 
-test("verify reports a test lint failure with a location and stops before tests", async () => {
-  const relativePath = `test/verify-lint-${process.pid}.ts`;
-  const result = await verifyWithProbe(relativePath, "export const probe: any = 1;\n");
-  assert.notEqual(result.status, 0);
-  assert.match(result.output, new RegExp(`${relativePath}:1:`));
-  assert.match(result.output, /no-explicit-any/);
-  assertStoppedBeforeTests(result.output);
+  const testPath = `test/verify-lint-${process.pid}.ts`;
+  const testFailure = await verifyWithProbe(testPath, "export const probe: any = 1;\n");
+  assert.notEqual(testFailure.status, 0);
+  assert.match(testFailure.output, new RegExp(`${testPath}:1:`));
+  assert.match(testFailure.output, /no-explicit-any/);
+  assertStoppedBeforeTests(testFailure.output);
 });
