@@ -866,7 +866,7 @@ export class Admission {
     this.announceFeedback(current.key, [input]);
   }
 
-  // Feedback on an open PR (R10, CA12): human reviews and comments, and failing checks, become
+  // Feedback on an open PR (R10, CA12): human comments (conversation, inline, review bodies), and failing checks, become
   // a correction with a slot and priority. A case the factory cannot decide goes to the human,
   // and its items are consumed so they are not asked again.
   private async collectPrFeedback(job: Job, pr: PrRef, report: PollReport): Promise<void> {
@@ -880,7 +880,7 @@ export class Admission {
     const current = this.jobs.get(job.key);
     if (!current || current.state !== "waiting-for-pr") return;
     const judgement = judgePrFeedback(feedback, new Set(current.consumed ?? []));
-    if (judgement.inputs.length === 0) return;
+    if (judgement.inputs.length === 0 && judgement.undecidable === undefined) return;
     const consumed = judgement.inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
     if (judgement.undecidable === undefined) {
       const prRef = `#${pr.number}`;
@@ -895,11 +895,11 @@ export class Admission {
       this.announceFeedback(job.key, inputs);
       return;
     }
-    const items = judgement.inputs.map((input) => input.message).join("; ");
+    const items = judgement.inputs.length === 0 ? "" : ` Itens: ${judgement.inputs.map((input) => input.message).join("; ")}.`;
     await this.apply(job.key, "waiting-for-help", {
       message: `feedback do PR exige decisão humana: ${judgement.undecidable}`,
-      question: `Feedback do PR (${pr.repository}#${pr.number}) não pode ser decidido pela factory: ${judgement.undecidable}. `
-        + `Itens: ${items}. Responda com a orientação ou libere o trabalho.`,
+      question: `Feedback do PR (${pr.repository}#${pr.number}) não pode ser decidido pela factory: ${judgement.undecidable}.`
+        + `${items} Responda com a orientação ou libere o trabalho.`,
       context: "",
       consumed,
     });

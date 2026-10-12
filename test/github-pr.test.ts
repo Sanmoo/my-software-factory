@@ -150,9 +150,13 @@ test("the PR port exposes reads only: there is no merge operation to call", asyn
 
 // ---- CA12: feedback read from the PR (reviews, conversation comments, checks) ---------------
 
-const pullRequestFeedback = (parts: { comments?: unknown[]; reviews?: unknown[]; contexts?: unknown[] | null }) => ({
-  comments: { nodes: parts.comments ?? [] },
-  reviews: { nodes: parts.reviews ?? [] },
+// `more` marks a connection GitHub did not read to its end (pageInfo), by name.
+const pullRequestFeedback = (parts: {
+  comments?: unknown[]; reviews?: unknown[]; threads?: unknown[]; contexts?: unknown[] | null; more?: string[];
+}) => ({
+  comments: { pageInfo: { hasPreviousPage: parts.more?.includes("comments") ?? false }, nodes: parts.comments ?? [] },
+  reviews: { pageInfo: { hasPreviousPage: parts.more?.includes("reviews") ?? false }, nodes: parts.reviews ?? [] },
+  reviewThreads: { pageInfo: { hasNextPage: parts.more?.includes("threads") ?? false }, nodes: parts.threads ?? [] },
   commits: {
     nodes: [{
       commit: {
@@ -163,6 +167,15 @@ const pullRequestFeedback = (parts: { comments?: unknown[]; reviews?: unknown[];
 });
 
 const actor = (login: string, typename = "User") => ({ login, __typename: typename });
+
+const thread = (id: string, path: string, comments: unknown[], options: { resolved?: boolean; more?: boolean } = {}) => ({
+  id,
+  path,
+  isResolved: options.resolved ?? false,
+  comments: { pageInfo: { hasNextPage: options.more ?? false }, nodes: comments },
+});
+const inlineNode = (id: string, login: string, body: string, state = "SUBMITTED") =>
+  ({ id, author: actor(login), body, state, createdAt: "2026-05-01T12:00:00Z" });
 
 test("PR feedback keeps human reviews and comments, marks bots, and leaves out pending reviews", async () => {
   const { run } = ghWith(pullRequestFeedback({
@@ -247,4 +260,79 @@ test("the feedback query sent to gh is well formed: every selection set opens an
   const query = calls.flatMap((call) => call.args).find((arg) => arg.startsWith("query="));
   assert.ok(query, "the adapter sends a GraphQL query");
   assert.equal([...query].filter((char) => char === "{").length, [...query].filter((char) => char === "}").length);
+});
+
+// ---- issue #18: inline comments of review threads, one item per comment --------------------
+
+const readFeedbackOf = async (parts: Parameters<typeof pullRequestFeedback>[0]) => {
+  const { run } = ghWith(pullRequestFeedback({ contexts: [], ...parts }));
+  return createGithubPrPort({ accountOf: () => "acme-bot", run }).readFeedback(ref);
+};
+
+test("inline comments of review threads are read with their text, file and thread, resolved or not", async () => {
+  const feedback = await readFeedbackOf({
+    threads: [
+      thread("PRRT_1", "README.md", [inlineNode("PRRC_1", "ana", "troque este título"), inlineNode("PRRC_2", "acme-bot", "feito")]),
+      thread("PRRT_2", "src/a.ts", [inlineNode("PRRC_3", "bruno", "e este nome?")], { resolved: true }),
+    ],
+  });
+
+  assert.deepEqual(feedback.comments, [
+    { id: "PRRC_1", kind: "inline", author: "ana", isBot: false, body: "troque este título", createdAt: "2026-05-01T12:00:00Z", thread: { id: "PRRT_1", path: "README.md", resolved: false } },
+    { id: "PRRC_2", kind: "inline", author: "acme-bot", isBot: false, body: "feito", createdAt: "2026-05-01T12:00:00Z", thread: { id: "PRRT_1", path: "README.md", resolved: false } },
+    { id: "PRRC_3", kind: "inline", author: "bruno", isBot: false, body: "e este nome?", createdAt: "2026-05-01T12:00:00Z", thread: { id: "PRRT_2", path: "src/a.ts", resolved: true } },
+  ]);
+  assert.equal(feedback.incomplete, undefined);
+});
+
+test("a review with a body and inline comments yields the body and each comment as their own item", async () => {
+  const feedback = await readFeedbackOf({
+    reviews: [{ id: "PRR_1", author: actor("ana"), body: "no geral ok", state: "COMMENTED", submittedAt: "2026-05-01T11:00:00Z" }],
+    threads: [thread("PRRT_1", "a.ts", [inlineNode("PRRC_1", "ana", "um"), inlineNode("PRRC_2", "ana", "dois")])],
+  });
+
+  assert.deepEqual(feedback.comments.map((comment) => [comment.id, comment.kind]), [
+    ["PRR_1", "review"], ["PRRC_1", "inline"], ["PRRC_2", "inline"],
+  ]);
+});
+
+test("an empty-bodied review is read as it is, with its empty body", async () => {
+  const feedback = await readFeedbackOf({
+    reviews: [{ id: "PRR_9", author: actor("acme-bot"), body: "", state: "COMMENTED", submittedAt: "2026-05-01T11:00:00Z" }],
+  });
+
+  assert.deepEqual(feedback.comments.map((comment) => [comment.id, comment.kind, comment.body]), [["PRR_9", "review", ""]]);
+});
+
+test("inline comments of a draft review are not published, so they are not read", async () => {
+  const feedback = await readFeedbackOf({
+    threads: [thread("PRRT_1", "a.ts", [inlineNode("PRRC_1", "ana", "rascunho", "PENDING"), inlineNode("PRRC_2", "ana", "publicado")])],
+  });
+
+  assert.deepEqual(feedback.comments.map((comment) => comment.id), ["PRRC_2"]);
+});
+
+test("a read that a pagination limit cut short says so, whichever connection was cut", async () => {
+  for (const more of ["comments", "reviews", "threads"]) {
+    const feedback = await readFeedbackOf({ more: [more] });
+    assert.match(feedback.incomplete ?? "", /incompleta/, `${more} cut short`);
+  }
+  const cutThread = await readFeedbackOf({ threads: [thread("PRRT_1", "a.ts", [inlineNode("PRRC_1", "ana", "x")], { more: true })] });
+  assert.match(cutThread.incomplete ?? "", /incompleta/, "comments of a thread cut short");
+  assert.deepEqual(cutThread.comments.map((comment) => comment.id), ["PRRC_1"], "what was read is still reported");
+});
+
+test("an answer without the paging information is unexpected, never read as complete", async () => {
+  const { run } = ghWith({ ...pullRequestFeedback({ contexts: [] }), reviewThreads: { nodes: [] } });
+  await assert.rejects(createGithubPrPort({ accountOf: () => "acme-bot", run }).readFeedback(ref), /feedback do PR/);
+});
+
+test("the feedback query asks for the threads and the paging information it relies on", async () => {
+  const { run, calls } = ghWith(pullRequestFeedback({ contexts: [] }));
+  await createGithubPrPort({ accountOf: () => "acme-bot", run }).readFeedback(ref);
+
+  const query = calls.flatMap((call) => call.args).find((arg) => arg.startsWith("query=")) ?? "";
+  for (const needle of ["reviewThreads", "isResolved", "path", "hasNextPage", "hasPreviousPage"]) {
+    assert.ok(query.includes(needle), `the query selects ${needle}`);
+  }
 });

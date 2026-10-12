@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import type { PrRef } from "../core/result.js";
 import type { Known } from "../tracker/port.js";
-import type { CheckState, Mergeability, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, ReviewState } from "./port.js";
+import type { CheckState, Mergeability, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, PrThread, ReviewState } from "./port.js";
 import { isObject, type Obj } from "../core/values.js";
 
 // github.com adapter for the PR port, through the `gh` CLI (R01, R11). Each call gets the
@@ -30,13 +30,17 @@ const PULL_REQUEST_QUERY =
   + "pullRequest(number: $number) { state baseRefName headRefName headRefOid baseRefOid mergeable reviewDecision "
   + "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } }";
 
-// Feedback of the PR (R10): conversation comments, reviews (the last 100 of each) and the checks of the
-// head commit. `isRequired` answers for the branch protection of the PR's base branch.
+// Feedback of the PR (R10): conversation comments and reviews (the last 100 of each), review threads
+// with their comments (the first 100 of each) and the checks of the head commit. `pageInfo` tells when a
+// connection was cut short, which makes the read incomplete rather than empty (issue #18). `isRequired`
+// answers for the branch protection of the PR's base branch.
 const FEEDBACK_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { "
   + "pullRequest(number: $number) { "
-  + "comments(last: 100) { nodes { id author { __typename login } body createdAt } } "
-  + "reviews(last: 100) { nodes { id author { __typename login } body state submittedAt } } "
+  + "comments(last: 100) { pageInfo { hasPreviousPage } nodes { id author { __typename login } body createdAt } } "
+  + "reviews(last: 100) { pageInfo { hasPreviousPage } nodes { id author { __typename login } body state submittedAt } } "
+  + "reviewThreads(first: 100) { pageInfo { hasNextPage } nodes { id isResolved path "
+  + "comments(first: 100) { pageInfo { hasNextPage } nodes { id author { __typename login } body state createdAt } } } } "
   + "commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename "
   + "... on CheckRun { id name status conclusion isRequired(pullRequestNumber: $number) } "
   + "... on StatusContext { id context state isRequired(pullRequestNumber: $number) } } } } } } } } } }";
@@ -105,7 +109,15 @@ function nodesOf(connection: unknown): Obj[] {
   return nodes as Obj[];
 }
 
-function commentOf(node: Obj, kind: PrComment["kind"], body: unknown, createdAt: unknown): PrComment {
+// Whether GitHub left more items than it returned. Missing paging information is an unexpected
+// answer: completeness is never assumed.
+function isCut(connection: unknown, flag: "hasNextPage" | "hasPreviousPage"): boolean {
+  const pageInfo = isObject(connection) ? connection.pageInfo : undefined;
+  if (!isObject(pageInfo) || typeof pageInfo[flag] !== "boolean") throw unexpectedFeedback();
+  return pageInfo[flag];
+}
+
+function commentOf(node: Obj, kind: PrComment["kind"], body: unknown, createdAt: unknown, thread?: PrThread): PrComment {
   if (typeof node.id !== "string" || typeof body !== "string") throw unexpectedFeedback();
   return {
     id: node.id,
@@ -113,7 +125,25 @@ function commentOf(node: Obj, kind: PrComment["kind"], body: unknown, createdAt:
     ...authorOf(node),
     body,
     createdAt: typeof createdAt === "string" ? createdAt : "",
+    ...(thread === undefined ? {} : { thread }),
   };
+}
+
+// The comments of the review threads, one item per comment. A comment of a draft review is not
+// published yet, so it is not feedback; a resolved thread is read like any other, since a new comment
+// there reopens the conversation.
+function inlineCommentsOf(threads: Obj[], cut: string[]): PrComment[] {
+  const comments: PrComment[] = [];
+  for (const node of threads) {
+    if (typeof node.id !== "string" || typeof node.path !== "string" || typeof node.isResolved !== "boolean") throw unexpectedFeedback();
+    const thread: PrThread = { id: node.id, path: node.path, resolved: node.isResolved };
+    if (isCut(node.comments, "hasNextPage")) cut.push(`comentários do thread ${node.id}`);
+    for (const comment of nodesOf(node.comments)) {
+      if (comment.state === "PENDING") continue;
+      comments.push(commentOf(comment, "inline", comment.body, comment.createdAt, thread));
+    }
+  }
+  return comments;
 }
 
 // A check run reports its status until it completes and its conclusion after that. The required
@@ -147,11 +177,20 @@ function parseFeedback(body: unknown): PrFeedback {
     .filter((node) => node.state !== "PENDING") // a draft review is not published, so it is not feedback yet
     .map((node) => commentOf(node, "review", node.body, node.submittedAt));
   const comments = nodesOf(pullRequest.comments).map((node) => commentOf(node, "comment", node.body, node.createdAt));
+  const cut: string[] = [];
+  if (isCut(pullRequest.comments, "hasPreviousPage")) cut.push("comentários de conversa");
+  if (isCut(pullRequest.reviews, "hasPreviousPage")) cut.push("reviews");
+  if (isCut(pullRequest.reviewThreads, "hasNextPage")) cut.push("threads de review");
+  const inline = inlineCommentsOf(nodesOf(pullRequest.reviewThreads), cut);
   const commits = nodesOf(pullRequest.commits);
   const commit = isObject(commits[0]) && isObject(commits[0].commit) ? commits[0].commit : undefined;
   const rollup = commit?.statusCheckRollup;
   const contexts = isObject(rollup) ? nodesOf(rollup.contexts) : [];
-  return { comments: [...comments, ...reviews], checks: contexts.map(checkOf) };
+  return {
+    comments: [...comments, ...reviews, ...inline],
+    checks: contexts.map(checkOf),
+    ...(cut.length === 0 ? {} : { incomplete: `leitura incompleta do PR: limite de paginação em ${cut.join(", ")}` }),
+  };
 }
 
 // UNKNOWN is GitHub still computing the answer: it is not a verdict either way (R10).

@@ -120,3 +120,102 @@ test("green checks and checks that are still running call for nothing", () => {
 
   assert.deepEqual(judged.inputs, []);
 });
+
+// ---- issue #18: feedback per comment, no loop with the agent's own reply -------------------
+
+const inlineBy = (author: string, body: string, overrides: Partial<PrComment> = {}): PrComment => ({
+  id: "PRRC_1",
+  kind: "inline",
+  author,
+  isBot: false,
+  body,
+  createdAt: CREATED,
+  thread: { id: "PRRT_1", path: "README.md", resolved: false },
+  ...overrides,
+});
+
+test("a human inline comment is feedback that carries its text, file and thread", () => {
+  const judged = judgePrFeedback(feedback({ comments: [inlineBy("ana", "troque este título")] }), new Set());
+
+  assert.equal(judged.inputs.length, 1);
+  const [input] = judged.inputs;
+  assert.match(input?.message ?? "", /ana/);
+  assert.match(input?.message ?? "", /troque este título/);
+  assert.match(input?.message ?? "", /README\.md/);
+  assert.match(input?.message ?? "", /PRRT_1/);
+  assert.equal(input?.trigger?.reason, "feedback-pr");
+  assert.equal(input?.trigger?.author, "ana");
+});
+
+test("a review body and each of its inline comments are separate items with their own identity", () => {
+  const judged = judgePrFeedback(feedback({
+    comments: [
+      reviewBy("ana", "no geral, ok", { id: "PRR_1" }),
+      inlineBy("ana", "um", { id: "PRRC_1" }),
+      inlineBy("ana", "dois", { id: "PRRC_2" }),
+    ],
+  }), new Set());
+
+  assert.equal(judged.inputs.length, 3);
+  assert.equal(new Set(judged.inputs.map((input) => input.key)).size, 3, "three distinct identities");
+});
+
+test("a review with an empty body is not feedback; only its comments count", () => {
+  const judged = judgePrFeedback(feedback({
+    comments: [reviewBy("ana", "", { id: "PRR_1" }), reviewBy("ana", "  \n ", { id: "PRR_2" }), inlineBy("ana", "um")],
+  }), new Set());
+
+  assert.deepEqual(judged.inputs.map((input) => input.trigger?.ref?.startsWith("comentário inline")), [true]);
+  assert.ok(judged.inputs.every((input) => !input.message.includes("(sem texto)")));
+});
+
+test("the agent's marked inline reply inside an unmarked empty review triggers nothing (CA12)", () => {
+  const judged = judgePrFeedback(feedback({
+    comments: [
+      reviewBy("acme-bot", "", { id: "PRR_own" }),
+      inlineBy("acme-bot", "<!-- msf:agent -->\nfeito no commit abc1234", { id: "PRRC_own" }),
+    ],
+  }), new Set());
+
+  assert.deepEqual(judged.inputs, []);
+  assert.equal(judged.undecidable, undefined);
+});
+
+test("an inline comment edited after it was consumed is a new event; an unchanged one is not repeated", () => {
+  const comment = inlineBy("ana", "troque este título");
+  const key = judgePrFeedback(feedback({ comments: [comment] }), new Set()).inputs[0]?.key;
+  assert.ok(key);
+
+  assert.deepEqual(judgePrFeedback(feedback({ comments: [comment] }), new Set([key])).inputs, []);
+  const edited = judgePrFeedback(feedback({ comments: [inlineBy("ana", "troque este título por outro")] }), new Set([key]));
+  assert.equal(edited.inputs.length, 1);
+});
+
+test("a new human comment in an already resolved thread is feedback", () => {
+  const judged = judgePrFeedback(feedback({
+    comments: [inlineBy("ana", "ainda não ficou bom", { thread: { id: "PRRT_1", path: "README.md", resolved: true } })],
+  }), new Set());
+
+  assert.equal(judged.inputs.length, 1);
+});
+
+test("bot inline comments are not feedback", () => {
+  assert.deepEqual(judgePrFeedback(feedback({ comments: [inlineBy("ci[bot]", "sugestão", { isBot: true })] }), new Set()).inputs, []);
+});
+
+test("a read that did not cover every comment is undecidable, never an absence of feedback", () => {
+  const judged = judgePrFeedback(feedback({ incomplete: "leitura incompleta do PR: limite de paginação em reviews" }), new Set());
+
+  assert.deepEqual(judged.inputs, []);
+  assert.match(judged.undecidable ?? "", /incompleta/);
+});
+
+test("an incomplete read and an undecidable check are both told to the human", () => {
+  const judged = judgePrFeedback(feedback({
+    incomplete: "leitura incompleta do PR: limite de paginação em reviews",
+    checks: [checkOf("deploy", known("failing"), unknown("branch protection não legível"))],
+  }), new Set());
+
+  assert.match(judged.undecidable ?? "", /incompleta/);
+  assert.match(judged.undecidable ?? "", /obrigatoriedade/);
+});

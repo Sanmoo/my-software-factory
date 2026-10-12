@@ -383,6 +383,88 @@ test("a PR feedback read that fails is reported and the job keeps waiting for th
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
 });
 
+// ---- issue #18: PR feedback read per comment, without looping on the agent's own reply -----
+
+const README_THREAD = { id: "PRRT_1", path: "README.md", resolved: false };
+
+async function waitingForPr(prs: FakePrs, runner: FakeRunner) {
+  const admission = await open({ memory: memoryOf(["1"]), stateDir: await dir(), runner, prs });
+  await admission.poll();
+  await admission.settle();
+  return admission;
+}
+
+test("a new human inline comment reactivates the job as a correction carrying its text, file and thread", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = {
+    comments: [{ id: "PRRC_1", kind: "inline", author: "ana", isBot: false, body: "troque este título", createdAt: "", thread: README_THREAD }],
+    checks: [],
+  };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+
+  assert.equal(runner.calls[1]?.kind, "correction");
+  const [reply] = runner.calls[1]?.continuation?.replies ?? [];
+  assert.match(reply ?? "", /troque este título/);
+  assert.match(reply ?? "", /README\.md/);
+  assert.match(reply ?? "", /PRRT_1/);
+
+  assert.deepEqual((await admission.poll()).admitted, [], "a consumed comment is not repeated");
+  await admission.settle();
+  assert.equal(runner.calls.length, 2);
+});
+
+test("the agent's marked inline reply, wrapped in an unmarked empty review, does not trigger another correction", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = {
+    comments: [
+      { id: "PRR_own", kind: "review", author: "acme", isBot: false, body: "", createdAt: "" },
+      { id: "PRRC_own", kind: "inline", author: "acme", isBot: false, body: "<!-- msf:agent -->\nfeito em abc1234", createdAt: "", thread: README_THREAD },
+    ],
+    checks: [],
+  };
+  assert.deepEqual((await admission.poll()).admitted, []);
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+  assert.equal(runner.calls.length, 1);
+});
+
+test("a review with a body and inline comments is delivered as one item per body and per comment", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = {
+    comments: [
+      { id: "PRR_1", kind: "review", author: "ana", isBot: false, body: "no geral ok", createdAt: "" },
+      { id: "PRRC_1", kind: "inline", author: "ana", isBot: false, body: "um", createdAt: "", thread: README_THREAD },
+      { id: "PRRC_2", kind: "inline", author: "ana", isBot: false, body: "dois", createdAt: "", thread: README_THREAD },
+    ],
+    checks: [],
+  };
+  await admission.poll();
+  await admission.settle();
+
+  assert.equal(runner.calls[1]?.continuation?.replies?.length, 3);
+});
+
+test("a read that did not cover every comment goes to the human as undecidable, and is not taken as no feedback", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = { comments: [], checks: [], incomplete: "leitura incompleta do PR: limite de paginação em reviews" };
+  assert.deepEqual((await admission.poll()).admitted, []);
+
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
+  assert.match(admission.job(KEY("1"))?.question ?? "", /incompleta/);
+});
+
 // ---- issue #19: a conflict of the PR with its target branch is a correction -------------
 
 const CONFLICTING: Known<Mergeability> = { known: true, value: "conflicting" };

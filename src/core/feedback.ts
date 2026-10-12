@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Continuation, Job, JobState, Trigger } from "./job.js";
 import { isConflicting } from "./pr-rules.js";
-import type { PrCheck, PrFeedback, PrSnapshot } from "../pr/port.js";
+import type { PrCheck, PrComment, PrFeedback, PrSnapshot } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
 
@@ -79,23 +79,35 @@ export interface PrJudgement {
   undecidable?: string;
 }
 
-// Human reviews and comments are all feedback on the PR; the factory's own posts and bots are not
-// (R10). A failing check calls for correction: only required checks when the branch protection has
+// How a comment reads to the agent and where it came from. An inline comment brings its file and
+// thread so the agent knows where the feedback is and which thread to answer (issue #18).
+function describe(comment: PrComment, text: string): { message: string; ref: string } {
+  if (comment.kind === "inline" && comment.thread !== undefined) {
+    const { id, path, resolved } = comment.thread;
+    const where = `em ${path} (thread ${id}${resolved ? ", resolvido" : ""})`;
+    return { message: `comentário inline de ${comment.author} ${where}: ${text}`, ref: `comentário inline ${comment.id}` };
+  }
+  const label = comment.kind === "review" ? "revisão" : "comentário";
+  return { message: `${label} de ${comment.author}: ${text}`, ref: `${label} ${comment.id}` };
+}
+
+// Human comments are all feedback on the PR, one item per comment: conversation, inline and the
+// body of a review. A review with an empty body is only the envelope of its comments, and the
+// factory's own posts and bots are not feedback (R10, CA12): the marker is checked on each comment,
+// so a marked inline reply inside an unmarked review triggers nothing. A comment in a resolved
+// thread counts. A read that did not cover every comment is not the absence of feedback: it is
+// undecidable. A failing check calls for correction: only required checks when the branch protection has
 // any, otherwise any failing check (R10). Checks whose state or required flag cannot be read make the
 // case undecidable when a failing check is among the new items.
 export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<string>): PrJudgement {
   const inputs: FeedbackInput[] = [];
   for (const comment of feedback.comments) {
-    if (comment.isBot || isFactoryComment("github", comment.body)) continue;
+    const text = comment.body.trim();
+    if (text === "" || comment.isBot || isFactoryComment("github", comment.body)) continue;
     const key = commentKey("pr", comment.id, comment.body);
     if (consumed.has(key)) continue;
-    const label = comment.kind === "review" ? "revisão" : "comentário";
-    const text = comment.body.trim() === "" ? "(sem texto)" : comment.body.trim();
-    inputs.push({
-      key,
-      message: `${label} de ${comment.author}: ${text}`,
-      trigger: { reason: "feedback-pr", origin: "pr", ref: `${label} ${comment.id}`, author: comment.author },
-    });
+    const { message, ref } = describe(comment, text);
+    inputs.push({ key, message, trigger: { reason: "feedback-pr", origin: "pr", ref, author: comment.author } });
   }
 
   const suspects = feedback.checks
@@ -115,11 +127,11 @@ export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<stri
     });
   }
 
-  if (!blind) return { inputs };
-  return {
-    inputs,
-    undecidable: "não é possível dizer, pelas regras da factory, se o check exige correção (estado ou obrigatoriedade desconhecidos)",
-  };
+  const reasons = [
+    ...(feedback.incomplete === undefined ? [] : [feedback.incomplete]),
+    ...(blind ? ["não é possível dizer, pelas regras da factory, se o check exige correção (estado ou obrigatoriedade desconhecidos)"] : []),
+  ];
+  return reasons.length === 0 ? { inputs } : { inputs, undecidable: reasons.join("; ") };
 }
 
 // What directed input does in each state: the continuation it requests (if any) and the log wording.

@@ -27,11 +27,22 @@ export interface PrSnapshot {
 // `not-found` is a definitive answer. Any other failure is thrown, never read as absence.
 export type PrLookup = { status: "found"; pr: PrSnapshot } | { status: "not-found" };
 
-// Feedback on a PR (R10, CA12): human reviews and conversation comments, and the checks of the
-// head commit with the branch protection's required flag. Each item keeps its identity so the
-// job can record what it already consumed.
+// Feedback on a PR (R10, CA12): the unit is the comment. Conversation comments, inline comments of
+// review threads and the bodies of reviews are read one by one, plus the checks of the head commit
+// with the branch protection's required flag. Each item keeps its identity so the job can record
+// what it already consumed. A review with an empty body is still listed (its body is empty); the
+// judgement decides that it is not feedback.
+export interface PrThread {
+  id: string;
+  // The file the thread is anchored to.
+  path: string;
+  resolved: boolean;
+}
+
 export interface PrComment extends Comment {
-  kind: "review" | "comment";
+  // "inline" is a comment of a review thread and always carries its `thread`.
+  kind: "review" | "comment" | "inline";
+  thread?: PrThread;
 }
 
 export interface PrCheck {
@@ -44,6 +55,9 @@ export interface PrCheck {
 export interface PrFeedback {
   comments: PrComment[];
   checks: PrCheck[];
+  // Set when the read did not cover every comment (pagination limits). Items not read are not
+  // absent: the judgement sends the case to the human instead of treating it as no feedback.
+  incomplete?: string;
 }
 
 export interface PrPort {
