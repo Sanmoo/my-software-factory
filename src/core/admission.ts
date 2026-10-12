@@ -620,7 +620,7 @@ export class Admission {
   }
 
   private clearWaits(key: string): void {
-    for (const entry of [...this.announcedWaits]) if (entry.startsWith(`${key}|`)) this.announcedWaits.delete(entry);
+    for (const entry of this.announcedWaits) if (entry.startsWith(`${key}|`)) this.announcedWaits.delete(entry);
   }
 
   // A job that waits for a slot or another impediment keeps its original reason (decision 21).

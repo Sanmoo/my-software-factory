@@ -12,7 +12,7 @@ const MIN_SECRET_LENGTH = 6;
 const TOKEN_SHAPES: readonly RegExp[] = [
   /\bgh[pousr]_[A-Za-z0-9_]{16,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{16,}/g,
-  /\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]{16,}/g,
+  /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g,
 ];
 
 export interface Redactor {
