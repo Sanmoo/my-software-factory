@@ -48,6 +48,15 @@ test("verify reports a src lint failure with a location and stops before tests",
   assertStoppedBeforeTests(result.output);
 });
 
+test("verify stops after suppression-policy failure before Oxlint and tests", async () => {
+  const relativePath = `src/verify-suppression-${process.pid}.ts`;
+  const result = await verifyWithProbe(relativePath, "// oxlint-disable\nexport const probe: any = 1;\n");
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, new RegExp(`${relativePath}:1: invalid suppression`));
+  assert.doesNotMatch(result.output, /no-explicit-any/);
+  assertStoppedBeforeTests(result.output);
+});
+
 test("verify reports a test lint failure with a location and stops before tests", async () => {
   const relativePath = `test/verify-lint-${process.pid}.ts`;
   const result = await verifyWithProbe(relativePath, "export const probe: any = 1;\n");
