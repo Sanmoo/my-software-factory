@@ -15,6 +15,12 @@ Orquestrador local em execução com sua configuração própria, como trabalho 
 pessoal. Limites, estado e comandos não são compartilhados entre instâncias.
 _Avoid_: ambiente, perfil
 
+**Perfil de runtime**:
+Configuração do agente do operador (autenticação, pacotes, skills, extensões e agents)
+que um trabalho reproduz ao rodar fora do host. Delimitado pelas origens permitidas e
+por itens obrigatórios: sem um obrigatório, o trabalho não é admitido.
+_Avoid_: instância, ambiente, perfil global do operador como sinônimo
+
 **Roteamento**:
 Associação de uma issue a exatamente um repositório de um projeto habilitado.
 Roteamento ausente ou ambíguo impede a admissão e fica visível ao operador.
