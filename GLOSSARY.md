@@ -75,6 +75,12 @@ Fluxo de uma única invocação, próximo da experiência interativa do agente:
 mensagens públicas, chamadas de ferramentas e seus resultados.
 _Avoid_: log principal, log do runtime como sinônimo
 
+**Trabalho interrompido**:
+Trabalho cuja invocação parou sem desfecho válido, seja por queda do
+orquestrador, falha na execução ou parada declarada pelo agente. Fica parado
+até uma retomada manual ou uma liberação; nunca é reexecutado automaticamente.
+_Avoid_: pedido de ajuda, intervenção necessária, falha como conclusão
+
 **Retomada manual**:
 Continuidade de um trabalho solicitada explicitamente pelo operador a partir
 da sessão anterior e da área preservada.
