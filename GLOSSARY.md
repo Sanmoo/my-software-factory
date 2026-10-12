@@ -75,6 +75,10 @@ Fluxo de uma única invocação, próximo da experiência interativa do agente:
 mensagens públicas, chamadas de ferramentas e seus resultados.
 _Avoid_: log principal, log do runtime como sinônimo
 
+**Log do filho**:
+Registro, próprio de um subagente lançado pelo agente principal, do que o principal observou dele: lançamento, atualizações recebidas e desfecho. Não contém a atividade interna do filho, que o stream não expõe.
+_Avoid_: log detalhado, log do subagente como atividade completa
+
 **Trabalho interrompido**:
 Trabalho cuja invocação parou sem desfecho válido, seja por queda do
 orquestrador, falha na execução ou parada declarada pelo agente. Fica parado

@@ -274,16 +274,35 @@ test("subagents are identified, summarized with a log of their own, and the runt
   await h.runner.run(context());
   await h.observer.flush();
 
-  assert.match(matching(h.lines, /filho iniciado/)[0]!, /filho=k1 agente=reviewer-spec assíncrono=não modelo=\S+ log-do-filho=\S+k1\.log/);
+  assert.match(matching(h.lines, /filho iniciado/)[0]!, /filho=k1 agente=reviewer-spec assíncrono=não modelo=\S+ log-do-filho=\S+\.log/);
   assert.equal(matching(h.lines, /limitação do runtime/).length, 1, "the limitation is announced once");
   assert.match(matching(h.lines, /filho concluído/)[0]!, /filho=k1 agente=reviewer-spec resultado="sem achados"/);
   assert.match(matching(h.lines, /filho lançado em segundo plano/)[0]!, /agente=reviewer-standards/);
   assert.match(matching(h.lines, /filho sem desfecho observado/)[0]!, /filho=k2/, "launch is not progress or success");
-  const childLog = /log-do-filho=(\S+k1\.log)/.exec(h.lines.join("\n"))![1]!;
+  const childLog = /log-do-filho=(\S+\.log)/.exec(h.lines.join("\n"))![1]!;
   const child = await readFile(childLog, "utf8");
   assert.match(child, /lançado/);
   assert.match(child, /atividade observada: lendo a spec/);
   assert.match(child, /desfecho: sem achados/);
+});
+
+test("a subagent call id longer than a file name allows still yields a valid child log, with the full id on its first line", async () => {
+  const id = `call_${"a".repeat(200)}|${"B".repeat(300)}`;
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: id, toolName: "subagent", args: { agent: "reviewer-spec", async: false, model: GPT } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: id, toolName: "subagent", result: "sem achados", isError: false }));
+    return {};
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  const reference = /filho iniciado.*log-do-filho=(\S+\.log)/.exec(h.lines.join("\n"))?.[1];
+  assert.ok(reference, "the main log says where the child log is");
+  assert.ok(Buffer.byteLength(basename(reference)) <= 255, `file name too long: ${Buffer.byteLength(basename(reference))} bytes`);
+  const child = await readFile(reference, "utf8");
+  assert.equal(child.split("\n")[0], id, "the full call id is the first line of the child log");
+  assert.match(child, /desfecho: sem achados/);
+  assert.equal(matching(h.lines, /falha de observabilidade/).length, 0, "the child log write does not fail");
 });
 
 test("an async child reported by notification is concluded, not left unknown", async () => {
