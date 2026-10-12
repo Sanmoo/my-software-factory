@@ -1,3 +1,8 @@
+## Quality gateway
+
+Before reporting implementation work complete, run `npm run verify` (typecheck, lint, and tests).
+This is the repository's local quality gateway.
+
 ## Agent skills
 
 ### Issue tracker
