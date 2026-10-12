@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "../config/types.js";
-import type { PrLookup, PrSnapshot } from "../pr/port.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { Mergeability, PrLookup, PrSnapshot } from "../pr/port.js";
+import type { IssueRef, Known } from "../tracker/port.js";
 import { jobBranch } from "./job.js";
 import type { PrRef } from "./result.js";
 
@@ -18,6 +18,11 @@ export interface Delivery {
 export function deliveryOf(project: ProjectConfig, ref: IssueRef): Delivery {
   return { repository: project.repository, targetBranch: project.targetBranch, headBranch: jobBranch(ref) };
 }
+
+// A known conflict of the PR with its base branch (R10). Unknown mergeability is neither a conflict
+// nor the absence of one, so it is not reported as either.
+export const isConflicting = (mergeable: Known<Mergeability> | undefined): boolean =>
+  mergeable?.known === true && mergeable.value === "conflicting";
 
 export type ReadyVerdict = { valid: true } | { valid: false; reason: string };
 

@@ -16,8 +16,7 @@ export interface Workspace {
 export interface ContinuationContext {
   workspace: Workspace;
   replies: string[];
-  // The correction answers a conflict of the PR with its target branch (issue #19): the work is
-  // rebased onto the target, never merged into it.
+  // The correction answers a conflict of the PR with its target branch (issue #19).
   conflict?: boolean;
 }
 

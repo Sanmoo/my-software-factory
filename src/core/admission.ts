@@ -95,8 +95,10 @@ const describeKnown = <T extends string>(label: string, known: Known<T>): string
   known.known ? `${label}: ${known.value}` : `${label}: desconhecido (${known.reason})`;
 
 // Unknown mergeability is said as unknown: it is neither a conflict nor the absence of one (R10).
-const describeMergeable = (mergeable: Known<Mergeability>): string =>
-  mergeable.known ? (mergeable.value === "conflicting" ? "PR em conflito" : "sem conflito") : `mergeabilidade desconhecida (${mergeable.reason})`;
+const describeMergeable = (mergeable: Known<Mergeability>): string => {
+  if (!mergeable.known) return `mergeabilidade desconhecida (${mergeable.reason})`;
+  return mergeable.value === "conflicting" ? "PR em conflito" : "sem conflito";
+};
 
 const describeStatus = (status: PrStatus): string =>
   `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}; ${describeMergeable(status.mergeable)}`;

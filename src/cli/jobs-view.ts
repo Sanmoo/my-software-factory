@@ -1,4 +1,5 @@
 import type { Job, JobState } from "../core/job.js";
+import { isConflicting } from "../core/pr-rules.js";
 
 // Operator-facing wording for job states, shared by `status` and `logs`.
 const LABELS: Record<JobState, string> = {
@@ -13,10 +14,6 @@ const LABELS: Record<JobState, string> = {
 
 export const stateLabel = (state: JobState): string => LABELS[state];
 
-// Known conflict of the PR with its target branch. Unknown mergeability is not a conflict.
-const conflicting = (job: Job): boolean =>
-  job.prStatus?.mergeable?.known === true && job.prStatus.mergeable.value === "conflicting";
-
 // One line summary: the question for a help request, the reason for an interruption or
 // an intervention, the PR reference for a PR waiting for its checks.
 export function summaryOf(job: Job): string {
@@ -25,7 +22,7 @@ export function summaryOf(job: Job): string {
       return job.question ?? "";
     case "waiting-for-pr":
       if (!job.pr) return "";
-      return `${job.pr.repository}#${job.pr.number}${conflicting(job) ? " — PR em conflito" : ""}`;
+      return `${job.pr.repository}#${job.pr.number}${isConflicting(job.prStatus?.mergeable) ? " — PR em conflito" : ""}`;
     case "interrupted":
     case "intervention-required":
     case "released":

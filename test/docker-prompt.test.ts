@@ -120,7 +120,9 @@ test("a conflict correction asks for help when it cannot decide how to resolve a
 
 test("a conflict correction reviews against the target it was rebased onto, not the old base", () => {
   const prompt = continuationPrompt({ ...job, kind: "correction", conflict: true });
-  assert.match(prompt, /review base is the commit origin\/main points to after the rebase, not the base above/);
+  assert.ok(prompt.includes("the review base origin/main"), "the reviewers are given the rebased target");
+  assert.ok(prompt.includes("--binary origin/main <HEAD sha>"), "the exact diff is measured from the rebased target");
+  assert.ok(!prompt.includes(job.baseSha), "the old base of the job is never a review base after the rebase");
 });
 
 test("a correction for any other feedback does not carry the conflict rules", () => {

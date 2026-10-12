@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Continuation, Job, JobState, Trigger } from "./job.js";
+import { isConflicting } from "./pr-rules.js";
 import type { PrCheck, PrFeedback, PrSnapshot } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
 import { GITHUB_MARKER, JIRA_MARKER } from "./markers.js";
@@ -57,7 +58,7 @@ export function directedReply(tracker: TrackerKind, comment: Comment): { key: st
 // not move the head does not repeat, while a new conflicting pair calls for it again. Unknown
 // mergeability is no verdict: it is neither a conflict nor its absence, and the next poll reads it again.
 export function judgeConflict(pr: PrSnapshot, consumed: ReadonlySet<string>): FeedbackInput | undefined {
-  if (!pr.mergeable.known || pr.mergeable.value !== "conflicting") return undefined;
+  if (!isConflicting(pr.mergeable)) return undefined;
   const key = `pr:conflict:${pr.headSha}@${pr.baseSha}`;
   if (consumed.has(key)) return undefined;
   const head = shortSha(pr.headSha);

@@ -107,7 +107,6 @@ function conflictRules(input: JobPromptInput): string {
     `run \`git fetch origin ${target}\`, then \`git rebase origin/${target}\`, and resolve each conflict keeping the intent of the work.`,
     `Push only the job branch: \`git push --force-with-lease origin ${input.branch}\`.`,
     `Never merge ${target} into the branch. Never merge the pull request.`,
-    `The review base is the commit origin/${target} points to after the rebase, not the base above.`,
     "After the push, report pr_ready only when both reviews approve the rebased work.",
     "If you cannot decide how to resolve a conflict, ask for help with needs_help instead of guessing.",
   ].join("\n");
@@ -115,16 +114,19 @@ function conflictRules(input: JobPromptInput): string {
 
 // A resume or correction continues the same Pi session; the skill is not invoked again.
 export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean }): string {
+  // After a conflict rebase the work sits on the remote target, so that is its base: the old base of the
+  // job would make the reviewers see the target's own commits as part of the work.
+  const base = input.conflict ? { ...input, baseSha: `origin/${input.targetBranch}` } : input;
   const operator = input.note && input.note.trim() !== ""
     ? `Operator input: ${input.note.trim()}`
     : "No new operator input was supplied with this continuation.";
   return [
-    `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${input.baseSha}.`,
+    `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${base.baseSha}.`,
     operator,
     ...(input.conflict ? [conflictRules(input)] : []),
     "Models stay the same:",
     roleLines(input.models),
-    reviewRules(input),
+    reviewRules(base),
     commentRules(input.ref),
     RESULT_PROTOCOL,
   ].join("\n\n");
