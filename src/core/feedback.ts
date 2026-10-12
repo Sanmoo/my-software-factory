@@ -192,7 +192,7 @@ export function planContinuation(job: Job, kind: Continuation, triggers: Trigger
   const replies = job.replies ?? [];
   if (kind === "correction" && needsTriage(job.triggers)) {
     const held = job.actionable ?? [];
-    const heldMessages = [...held.map((item) => item.message)];
+    const heldMessages = held.map((item) => item.message);
     const comments = replies.filter((reply) => {
       const at = heldMessages.indexOf(reply);
       if (at < 0) return true;
