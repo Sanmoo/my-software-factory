@@ -1,7 +1,7 @@
 import { projectEligibility } from "../config/project-eligibility.js";
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
 import { evaluateEligibility } from "../core/eligibility.js";
-import type { Job } from "../core/job.js";
+import { holdsSlot, type Job } from "../core/job.js";
 import { refForCommand } from "../core/job-ref.js";
 import { trackedKeys } from "../core/job-store.js";
 import { jobCommands, type CliHints } from "../core/observability.js";
@@ -113,7 +113,7 @@ const RESUMABLE: ReadonlySet<Job["state"]> = new Set(["interrupted", "interventi
 function renderJobs(state: LocalState, instance: InstanceConfig, cli: CliHints): string[] {
   const keys = state.jobs.map((job) => job.key);
   const nameOf = (job: Job): string => refForCommand(job.key, keys);
-  const lines: string[] = [`Vagas: ${state.jobs.filter((job) => job.state === "running").length}/${instance.maxConcurrent}`];
+  const lines: string[] = [`Vagas: ${state.jobs.filter((job) => holdsSlot(job.state)).length}/${instance.maxConcurrent}`];
 
   const helps = state.jobs.filter((job) => job.state === "waiting-for-help");
   lines.push("", `Pedidos de ajuda (${helps.length}):`);
@@ -132,7 +132,7 @@ function renderJobs(state: LocalState, instance: InstanceConfig, cli: CliHints):
     lines.push(`    ${commands.resume}`, `    ${commands.logs}`);
   }
 
-  const count = (state_: Job["state"]): number => state.jobs.filter((job) => job.state === state_).length;
+  const count = (wanted: Job["state"]): number => state.jobs.filter((job) => job.state === wanted).length;
   lines.push("", `Encerrados: concluídos: ${count("done")}, liberados: ${count("released")}`);
   lines.push(
     "",
@@ -184,19 +184,20 @@ export async function runStatus(options: StatusOptions): Promise<CliRun> {
 
   let failed = false;
   const reports: ProjectReport[] = [];
+  const unavailable = (project: ProjectConfig, reason: string): void => {
+    failed = true;
+    reports.push({ project, scope: projectEligibility(instance, project).scope.project, unavailable: redactor.apply(reason) });
+  };
   for (const project of instance.projects) {
-    const scope = projectEligibility(instance, project).scope.project;
     const reason = project.enabled ? composed.unavailable(project) : undefined;
     if (reason !== undefined) {
-      failed = true;
-      reports.push({ project, scope, unavailable: redactor.apply(reason) });
+      unavailable(project, reason);
       continue;
     }
     try {
       reports.push(await reportProject(composed.tracker, instance, project, local.tracked));
     } catch (error) {
-      failed = true;
-      reports.push({ project, scope, unavailable: redactor.apply(messageOf(error)) });
+      unavailable(project, messageOf(error));
     }
   }
 

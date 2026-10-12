@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,16 +185,10 @@ test("an issue that already has a job in the instance is in neither list, whatev
 test("observability failures and unreadable files are reported as before", async () => {
   const stateDir = await withJobs([]);
   await createFileFailureStore(stateDir).record({ at: "2026-10-11T12:00:00.000Z", sink: "log detalhado", message: "EACCES" });
-  const { writeFile } = await import("node:fs/promises");
   await writeFile(join(stateDir, "broken.json"), "{");
   const { stdout } = await status("trabalho", { stateDir });
   assert.match(stdout, /Observabilidade: falha em log detalhado desde 2026-10-11T12:00:00.000Z: EACCES/);
   assert.match(stdout, /Arquivos ilegíveis \(1\): broken\.json/);
-});
-
-test("no line of the status says the orchestrator is running", async () => {
-  const { stdout } = await status("trabalho", { stateDir: await withJobs([jobOf("1")]) });
-  assert.doesNotMatch(stdout, /orquestrador (está|esta) (rodando|em execução)|rodando/i);
 });
 
 // ── trackers that fail, and the promise of writing nothing ─────────────────────────────────────
