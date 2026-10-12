@@ -119,12 +119,12 @@ function threadRules(): string {
   return [
     "Answering feedback: answer every pull request comment you handle, whatever you decide about it.",
     "- For an inline comment, answer in the same thread, never in a new top-level comment: use the thread id of the feedback item with the GraphQL mutation addPullRequestReviewThreadReply (input pullRequestReviewThreadId and body).",
-    "- A conversation comment is not in a thread: reply with a new comment on the pull request, with the marker. There is nothing to resolve.",
+    "- A conversation comment (or the body of a review) is not in a thread: reply with a new comment on the pull request, with the marker. There is nothing to resolve.",
     "- Every reply you write, inline replies included, must start with <!-- msf:agent --> so it is not read as human feedback.",
     "- When you changed something for the comment, commit and push first, then reply citing the SHA of the pushed commit and a short description of the change.",
     "  The description must still explain the change if the history is rewritten later and the SHA no longer exists.",
     "- Resolve a thread only after the change it asked for was pushed: use the GraphQL mutation resolveReviewThread (input threadId) once, after the reply.",
-    "- If you refuse the request, or answer with a question, reply but leave the thread open; so does a thread you did not handle.",
+    "- If you refuse the request, answer with a question, or could not push the change, reply but leave the thread open; so does a thread you did not handle.",
     "- Never resolve a thread for any other reason: reading or consuming a comment is not resolving it.",
   ].join("\n");
 }
