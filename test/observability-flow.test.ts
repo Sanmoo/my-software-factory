@@ -452,6 +452,72 @@ test("a release whose write errored but whose reread shows the claim gone is con
   assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /confirmada por releitura após erro de escrita/);
 });
 
+test("a release confirms each removal by reread: the label and the account are both confirmed", async () => {
+  // Before the release the reread shows the label and the account present, so a confirmation
+  // can only come from the removal itself.
+  let released = false;
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => trackerWith(base, {
+      async releaseClaim(ref) {
+        await base.releaseClaim(ref);
+        released = true;
+        return { changes: [
+          { operation: "remover-label", target: "agent-claimed", before: "presente", after: "ausente", result: "attempted" },
+          { operation: "remover-atribuição", target: "acme", result: "attempted" },
+        ] };
+      },
+      async readIssue(ref) {
+        const snapshot = await base.readIssue(ref);
+        return released
+          ? snapshot
+          : { ...snapshot, labels: { known: true, value: ["ready-for-agent", "agent-claimed"] }, assignees: { known: true, value: ["acme"] } };
+      },
+    }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  await s.admission.poll();
+  await s.observer.flush();
+
+  assert.equal(matching(s.lines, /não confirmada/).length, 0, "no change is reported as unconfirmed");
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=agent-claimed/);
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-atribuição/)[0]!, /alvo=acme/);
+});
+
+test("a release whose reread still shows the account assigned keeps the account removal as attempted", async () => {
+  let released = false;
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => trackerWith(base, {
+      async releaseClaim(ref) {
+        await base.releaseClaim(ref);
+        released = true;
+        return { changes: [
+          { operation: "remover-label", target: "agent-claimed", before: "presente", after: "ausente", result: "attempted" },
+          { operation: "remover-atribuição", target: "acme", result: "attempted" },
+        ] };
+      },
+      async readIssue(ref) {
+        const snapshot = await base.readIssue(ref);
+        return released
+          ? { ...snapshot, claimed: { known: true, value: true }, assignees: { known: true, value: ["acme"] } }
+          : snapshot;
+      },
+    }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  await s.admission.poll();
+  await s.observer.flush();
+
+  assert.match(matching(s.lines, /alteração tentada, não confirmada.*operação=remover-atribuição/)[0]!, /alvo=acme/);
+  assert.equal(matching(s.lines, /alteração confirmada.*operação=remover-atribuição/).length, 0, "no false positive");
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=agent-claimed/);
+});
+
 test("a PR conflict is announced on the main line and in the history with its reason, and the correction names it", async () => {
   const s = await setup({ runner: new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE)) });
   await s.admission.poll();

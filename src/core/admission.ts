@@ -70,6 +70,16 @@ const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
 // Jobs an operator can release: none of them has an invocation running (R09).
 const RELEASABLE: readonly JobState[] = ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required"];
 
+// A removal the reread shows as done: the label is no longer on the issue, or the account is no
+// longer among its assignees. Each change is judged by its own field, so a removal the reread
+// cannot see, or a change without a target, stays attempted.
+const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot | undefined): boolean => {
+  if (snapshot === undefined || change.result !== "attempted" || change.target === undefined) return false;
+  if (change.operation === "remover-label") return snapshot.labels.known && !snapshot.labels.value.includes(change.target);
+  if (change.operation === "remover-atribuição") return snapshot.assignees.known && !snapshot.assignees.value.includes(change.target);
+  return false;
+};
+
 // Jobs whose issue is read for directed replies (CA11). A job that is done, released or needs
 // intervention takes no input from the tracker.
 const TRACKER_FEEDBACK_STATES: readonly JobState[] = ["waiting-for-help", "running", "interrupted", "waiting-for-pr"];
@@ -377,18 +387,19 @@ export class Admission {
       const outcome = await this.writeIssue(context, async () => this.deps.tracker.releaseClaim(job.ref));
       changes = outcome?.changes;
     } catch (error) {
-      if (!(await this.claimRemoved(job.ref))) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+      const snapshot = await this.reread(job.ref);
+      if (snapshot === undefined || !(snapshot.claimed.known && !snapshot.claimed.value)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
       // The write failed or its answer was lost, and the reread shows the claim gone: the uncertainty
       // is resolved by evidence, not by assumption.
       this.obs.emit(issueChangeEvent(context, {
         operation: "remover-label", result: "confirmed", after: "ausente", detail: "confirmada por releitura após erro de escrita",
       }));
     }
-    // The reread decides what the label change was: an accepted call alone is only an attempt.
+    // The reread decides what each change was: an accepted call alone is only an attempt.
     if (changes !== undefined) {
-      const removed = await this.claimRemoved(job.ref);
+      const snapshot = await this.reread(job.ref);
       this.reportChanges(context, changes.map((change) =>
-        change.operation === "remover-label" && change.result === "attempted" && removed ? { ...change, result: "confirmed" as const } : change));
+        removalConfirmedByReread(change, snapshot) ? { ...change, result: "confirmed" as const } : change));
     }
     await this.apply(job.key, "released", {
       message: "claim removido pelo operador; acompanhamento encerrado; área, sessão e PR preservados",
@@ -397,12 +408,12 @@ export class Admission {
     return undefined;
   }
 
-  private async claimRemoved(ref: IssueRef): Promise<boolean> {
+  // Rereads the issue: undefined when the reread itself fails, so nothing is confirmed by it.
+  private async reread(ref: IssueRef): Promise<IssueSnapshot | undefined> {
     try {
-      const snapshot = await this.deps.tracker.readIssue(ref);
-      return snapshot.claimed.known && !snapshot.claimed.value;
+      return await this.deps.tracker.readIssue(ref);
     } catch {
-      return false;
+      return undefined;
     }
   }
 
