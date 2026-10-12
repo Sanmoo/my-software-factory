@@ -7,7 +7,7 @@ import test from "node:test";
 const validator = resolve("scripts/lint-suppressions.mjs");
 
 async function runLint(source: string, extraFiles: Record<string, string> = {}) {
-  const directory = await mkdtemp(join(resolve("test"), ".lint-suppressions-"));
+  const directory = await mkdtemp(join(resolve("."), "lint-suppressions-fixture-"));
   try {
     const sourceFile = join(directory, "fixture.ts");
     await writeFile(sourceFile, source);
