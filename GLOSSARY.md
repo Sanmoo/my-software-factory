@@ -50,6 +50,18 @@ fechar o PR. Só vale quando a releitura do tracker não mostra mais essa marca;
 status da issue e atribuições de outras pessoas ficam como estão.
 _Avoid_: liberação como fim de todo claim, liberação como volta à elegibilidade, liberação de vaga
 
+**Confirmação por releitura**:
+Reconhecimento de uma alteração na issue só quando a leitura do tracker depois da
+escrita a mostra e a leitura de antes não a mostrava. Sem a leitura de antes, a
+alteração fica apenas tentada. Vale igual para as escritas da factory e do agente.
+_Avoid_: gradação, graduação, confirmação sozinho, escrita aceita como confirmada
+
+**Escrita direta do agente**:
+Alteração que o agente faz sozinho na issue do seu trabalho, reconhecida pela
+chamada de ferramenta e confirmada só por releitura. Em outra issue ou outro
+repositório, é relatada sem confirmação.
+_Avoid_: chamada de ferramenta como alteração feita, relato do agente como confirmação
+
 **Issue elegível**:
 Issue roteada a um projeto habilitado, pronta para agente, sem claim e sem
 bloqueios ou dependências pendentes, que também satisfaz as regras específicas

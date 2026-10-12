@@ -28,5 +28,6 @@ um teste de contrato.
 - Pré-condições normalizadas (já claimed, já done, estado desconhecido) são decididas
   pelo núcleo a partir da leitura anterior; o adapter só recusa o que o fornecedor não
   permite (por exemplo, transição indisponível).
-- Escritas que o agente faz sozinho na issue ainda têm sua própria graduação
-  (`agent-issue-writes`); unificá-las é trabalho posterior.
+- As escritas diretas do agente usam a mesma comparação por mudança (`gradeChange`,
+  função pura do núcleo), sem decisão de desfecho; o diff de comentários fica só do
+  lado do agente (#40).
