@@ -146,7 +146,7 @@ a solução final sem atender legibilidade, sigilo e falhas.
 - **Principal e histórico** — `src/core/observability.ts` (`Observer`): cada evento sai na hora
   no log principal do `run` e é anexado ao histórico local `<state-dir>/history/<trabalho>.jsonl`
   (`src/state/history.ts`), com instância, trabalho, invocação, motivo e id do comando.
-  `npm run logs` lê a linha do tempo desse histórico; perguntas, contexto e respostas ficam nele.
+  `./msf <instância> logs` lê a linha do tempo desse histórico; perguntas, contexto e respostas ficam nele.
   Falhas de gravação aparecem no principal (uma vez por destino) e em `npm run status`
   (`<state-dir>/observability/failures.json`); a execução continua e nada é repetido.
 - **Motivos, espera, merge e escritas na issue** — `src/core/admission.ts` + `src/core/ops-events.ts`.
