@@ -21,7 +21,7 @@ const rawConfig = (projects: unknown[]) => ({
 });
 
 const github: GitHubBoundary = { accountToken: async () => "t", api: async () => ({ status: 200, body: [] }) };
-const sandbox: SandboxBoundary = { preflight: async () => ({ token: "t" }), run: async () => { throw new Error("unused"); } };
+const sandbox: SandboxBoundary = { preflight: async () => ({ token: "t" }), imageHas: async () => true, run: async () => { throw new Error("unused"); } };
 const env = { JIRA_URL: "https://x.atlassian.net", JIRA_USERNAME: "u", JIRA_API_TOKEN: "t" };
 
 function build(projects: unknown[], over: { env?: NodeJS.ProcessEnv; checkouts?: Record<string, string> } = {}) {

@@ -325,6 +325,14 @@ for pair in "PESSOAL:$PROFILE_PESSOAL" "TRABALHO:${PROFILE_TRABALHO}"; do
   for file in auth.json settings.json skills/implement/SKILL.md; do
     [[ -e "$dir/$file" ]] && say "ok   $name: $file" || { warn "$name: falta $dir/$file"; exit 1; }
   done
+  # The triage of PR comments needs this skill in the profile. The operator links it deliberately: the
+  # wizard never changes the profile, it only says what is missing.
+  if [[ -e "$dir/skills/gh-address-comments/SKILL.md" ]]; then
+    say "ok   $name: skills/gh-address-comments/SKILL.md"
+  else
+    warn "$name: falta a skill gh-address-comments em $dir/skills; sem ela, comentário humano no PR vira pedido de ajuda"
+    SKIPPED+=("linkar a skill gh-address-comments em $dir/skills (ex.: ln -s ~/.agents/skills/gh-address-comments $dir/skills/gh-address-comments)")
+  fi
   models_out=$(PI_CODING_AGENT_DIR="$dir" pi --list-models gpt-6-luna 2>/dev/null || true)
   if grep -q "gpt-6-luna" <<<"$models_out"; then
     say "ok   $name: modelo gpt-6-luna disponível no perfil"

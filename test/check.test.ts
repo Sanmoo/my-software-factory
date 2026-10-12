@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,13 +42,15 @@ async function checkout(files: string[]): Promise<string> {
   return dir;
 }
 
-const sandbox: SandboxBoundary = { preflight: async () => ({ token: "t" }), run: async () => { throw new Error("unused"); } };
+const sandbox: SandboxBoundary = { preflight: async () => ({ token: "t" }), imageHas: async () => true, run: async () => { throw new Error("unused"); } };
 const deps = { tracker: { discoverCandidates: async () => [{}, {}] }, eligibility: (p: ProjectConfig) => projectEligibility(instance, p) } as unknown as AdmissionDeps;
 
 async function profile(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "msf-profile-"));
   await mkdir(join(dir, "skills", "implement"), { recursive: true });
   await writeFile(join(dir, "skills", "implement", "SKILL.md"), "x\n");
+  await mkdir(join(dir, "skills", "gh-address-comments"), { recursive: true });
+  await writeFile(join(dir, "skills", "gh-address-comments", "SKILL.md"), "x\n");
   return dir;
 }
 
@@ -105,4 +107,28 @@ test("a checkout that never fetched origin/main fails instead of skipping the un
     local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
   });
   assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /origin\/main desconhecida/);
+});
+
+test("a profile without the gh-address-comments skill fails the check, and the check does not link it", async () => {
+  const dir = await checkout([]);
+  const personal = await profile();
+  await rm(join(personal, "skills", "gh-address-comments"), { recursive: true });
+  const lines = await checkInstance({
+    config: config.config, instance, deps, sandbox,
+    local: { image: "img", profiles: { personal }, checkouts: { "acme/app": dir } },
+  });
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /gh-address-comments.*não existe.*triagem/);
+  await assert.rejects(access(join(personal, "skills", "gh-address-comments")), "the operator's profile is left as it was");
+});
+
+test("an image without python3 fails the check, naming the skill that needs it", async () => {
+  const dir = await checkout([]);
+  const asked: Array<[string, string]> = [];
+  const lines = await checkInstance({
+    config: config.config, instance, deps,
+    sandbox: { ...sandbox, imageHas: async (image, command) => { asked.push([image, command]); return false; } },
+    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+  });
+  assert.deepEqual(asked, [["img", "python3"]]);
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /python3.*img.*gh-address-comments/);
 });

@@ -54,6 +54,7 @@ const reply = (json: unknown): PiEvent[] => [
 function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<Omit<SandboxOutcome, "iterations">>, preflightError?: string) {
   const runs: SandboxRun[] = [];
   const boundary: SandboxBoundary = {
+    async imageHas() { return true; },
     async preflight() {
       if (preflightError) throw new Error(preflightError);
       return { token: TOKEN };
@@ -292,4 +293,38 @@ test("a pr_ready result reaches the admission as it is: the PR port, not the run
   }));
   const output = await runnerFor(f, boundary).run(newContext());
   assert.deepEqual(output.kind === "finished" ? output.results : undefined, [{ status: "pr_ready", pr: { repository: "acme/app", number: 7 } }]);
+});
+
+// ---- issue #21: triage of PR feedback -------------------------------------------------------
+
+test("a triage continuation reaches the sandbox as the explicit gh-address-comments invocation", async () => {
+  const f = await fixture();
+  const layout = jobLayout(f.stateDir, key);
+  const { boundary, runs } = fakeBoundary(async () => ({ sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) }));
+  const runner = runnerFor(f, boundary);
+  await runner.run(newContext());
+  await runner.run(newContext({
+    kind: "correction",
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["comentário de ana"], triage: "list" },
+  }));
+  assert.ok(runs[1]!.request.prompt.startsWith("/skill:gh-address-comments"));
+  assert.match(runs[1]!.request.prompt, /Operator input: comentário de ana/);
+
+  await runner.run(newContext({
+    kind: "resume",
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["1"], triage: "apply" },
+  }));
+  assert.match(runs[2]!.request.prompt, /Apply only the items the operator chose/);
+});
+
+test("the triage is unavailable when the authorized profile has no gh-address-comments skill, and available when it has", async () => {
+  const f = await fixture();
+  const { boundary } = fakeBoundary(async () => ({ completed: true, events: [] }));
+  const runner = runnerFor(f, boundary);
+  const job = { ref, repository: "acme/app" };
+  assert.match(await runner.triageUnavailable?.(job) ?? "", /gh-address-comments/);
+
+  await mkdir(join(f.agentDir, "skills", "gh-address-comments"), { recursive: true });
+  await writeFile(join(f.agentDir, "skills", "gh-address-comments", "SKILL.md"), "x\n");
+  assert.equal(await runner.triageUnavailable?.(job), undefined);
 });

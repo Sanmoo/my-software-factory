@@ -11,8 +11,9 @@ ARG PI_VERSION=1.1.0
 
 # gh opens the pull request and reads CI from inside the container, authenticated by GH_TOKEN
 # (the project account's token); git pushes through the credential helper of the job area.
+# python3 runs the script of the gh-address-comments skill (triage of PR feedback).
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates curl \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates curl python3 \
  && mkdir -p -m 755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \

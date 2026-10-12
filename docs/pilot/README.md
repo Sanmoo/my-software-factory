@@ -51,6 +51,23 @@ exato, a issue como spec e o `AGENTS.md` como padrões, e manda reportar `pr_rea
 reviews aprovados. A factory confirma o PR no adapter (R08) e continua exigindo modelo explícito por
 subagente e filhos reconciliados. O piloto demonstra a CA09 pelo log e pela sessão.
 
+## Triagem de comentários do PR (issue #21)
+
+Comentário humano novo no PR (conversa, inline ou corpo de review) não vira correção direta: a
+correção invoca `/skill:gh-address-comments`, que numera threads e comentários com resumo e proposta
+e termina como pedido de ajuda (sem mudar código nem fazer push). Responda por `reply` ou `agent:` na
+issue; a retomada aplica só o que você escolheu (`1 e 3`, `2: responda que X`), junto com os checks com
+falha e o conflito do mesmo lote. Item não citado fica sem ação e com o thread aberto. Lote só com
+check com falha e/ou conflito vai direto para correção.
+
+Pré-requisitos, verificados por `.pilot/run.sh <instância> --check`:
+
+- **Skill no perfil Pi autorizado.** O operador a linka, o setup não mexe no perfil:
+  `ln -s ~/.agents/skills/gh-address-comments <perfil>/skills/gh-address-comments`. Sem ela, comentário
+  humano vira pedido de ajuda visível (nunca correção sem triagem) e nada é consumido.
+- **`python3` na imagem do runner**, exigido pelo script da skill: reconstrua a imagem
+  (`docker build ... src/runtime/docker-image`).
+
 ## Pendências que dependem do operador
 
 1. **Jira fora do container (decidido).** O container só recebe o `GH_TOKEN`; o agente não escreve

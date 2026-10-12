@@ -6,6 +6,8 @@ export type FakeScript = (context: RunnerContext) => RunnerOutput | Error | Prom
 
 export class FakeRunner implements Runner {
   readonly calls: RunnerContext[] = [];
+  // Set to say the triage skill is missing, as a runner whose profile lacks it would.
+  triageBlocker: string | undefined;
 
   constructor(private readonly script: FakeScript) {}
 
@@ -14,6 +16,10 @@ export class FakeRunner implements Runner {
     const step = await this.script(context);
     if (step instanceof Error) throw step;
     return step;
+  }
+
+  async triageUnavailable(): Promise<string | undefined> {
+    return this.triageBlocker;
   }
 }
 

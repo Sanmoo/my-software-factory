@@ -179,3 +179,61 @@ test("the thread rules ride on corrections, which carry PR feedback, and not on 
 test("a conflict correction carries the thread rules too, so feedback delivered with a rebase is still answered", () => {
   assert.match(continuationPrompt({ ...job, kind: "correction", conflict: true }), /resolveReviewThread/);
 });
+// ---- issue #21: triage of PR feedback -------------------------------------------------------
+
+test("the triage invokes the gh-address-comments skill explicitly and forbids any change of code and any push", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", triage: "list", note: "comentário inline de ana em README.md (thread PRRT_1): troque" });
+  assert.ok(prompt.startsWith("/skill:gh-address-comments"), "the skill is invoked by name, as the model cannot invoke it");
+  assert.match(prompt, /Do not change any code, do not commit and do not push/);
+  assert.match(prompt, /Operator input: comentário inline de ana em README\.md/);
+});
+
+test("the triage ends as a help request whose question is the numbered list, and does not ask for a ready PR", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction", triage: "list" });
+  assert.match(prompt, /Number every thread and comment/);
+  assert.match(prompt, /summary and a proposed treatment/);
+  assert.match(prompt, /end with needs_help whose question is that numbered list/);
+  assert.match(prompt, /1 and 3/, "the question shows how to choose");
+  assert.match(prompt, /<msf-result>/, "same result protocol");
+  assert.doesNotMatch(prompt, /report a PR as ready/i, "nothing is reviewed or delivered by the triage");
+  assert.doesNotMatch(prompt, /force-with-lease|rebase/, "the branch is not rewritten while the operator reads the list");
+});
+
+test("the resume after the triage applies only the items the operator chose", () => {
+  const prompt = continuationPrompt({ ...job, kind: "resume", triage: "apply", note: "1 e 3" });
+  assert.doesNotMatch(prompt, /^\/skill:/, "the session already carries the triage");
+  assert.match(prompt, /Operator input: 1 e 3/);
+  assert.match(prompt, /Apply only the items the operator chose/);
+  assert.match(prompt, /item the operator did not cite: take no action, write no reply and leave its thread open/);
+  assert.match(prompt, /do not ask about it again/);
+  assert.match(prompt, /"2: reply that X".*reply in the thread without resolving it/s);
+});
+
+test("the resume after the triage answers and resolves by the thread rules: marker, cited SHA, resolve only after the push", () => {
+  const prompt = continuationPrompt({ ...job, kind: "resume", triage: "apply" });
+  assert.match(prompt, /reply[^.]*must start with <!-- msf:agent -->/i, "inline replies carry the marker too");
+  assert.match(prompt, /SHA of the pushed commit/);
+  assert.match(prompt, /resolve a thread only after[^.]*change[^.]*pushed/i);
+  assert.match(prompt, /refuse[^.]*question[^.]*(leave|stays?)[^.]*open/i);
+  assert.match(prompt, /conversation comment[^.]*not in a thread[^.]*reply[^.]*marker/i);
+});
+
+test("the resume after the triage keeps the review of both axes and the result protocol", () => {
+  const prompt = continuationPrompt({ ...job, kind: "resume", triage: "apply" });
+  assert.match(prompt, /review it on two axes, standards and spec/);
+  assert.ok(prompt.includes("<msf-result>"));
+  assert.ok(prompt.includes(job.baseSha));
+});
+
+test("the resume after the triage rebases with force-with-lease only on the job branch when the batch had a conflict", () => {
+  const prompt = continuationPrompt({ ...job, kind: "resume", triage: "apply", conflict: true });
+  assert.ok(prompt.includes(`git push --force-with-lease origin ${job.branch}`));
+  assert.match(prompt, /Never merge main into the branch/);
+  assert.ok(prompt.includes("the review base origin/main"));
+});
+
+test("a correction without a human comment does not invoke the triage", () => {
+  const prompt = continuationPrompt({ ...job, kind: "correction" });
+  assert.doesNotMatch(prompt, /gh-address-comments/);
+  assert.doesNotMatch(prompt, /Apply only the items/);
+});

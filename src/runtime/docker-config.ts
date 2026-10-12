@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { MODEL_ROLES, type CredentialRef, type InstanceConfig, type ModelRole, type ProjectConfig } from "../config/types.js";
 import { refKey, type IssueRef } from "../tracker/port.js";
 
@@ -62,6 +63,12 @@ export function resolveRuntimeProfile(
   }
   return dir;
 }
+
+// The skill the triage of PR feedback invokes (issue #21). It comes from the operator's Pi profile, which
+// the operator links it into on purpose; the factory only checks that it is there, never installs it.
+export const TRIAGE_SKILL = "gh-address-comments";
+
+export const skillFileOf = (profileDir: string, skill: string): string => join(profileDir, "skills", skill, "SKILL.md");
 
 // Routing by tracker scope: a GitHub ref names the repository, a Jira ref names the project key.
 // A Jira key shared by several projects is ambiguous without the repository of the job, so it is

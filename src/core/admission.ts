@@ -4,8 +4,8 @@ import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind,
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
-import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
-import { directedReply, judgeConflict, judgePrFeedback, receiveFeedback } from "./feedback.js";
+import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type HeldFeedback, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
+import { directedReply, judgeConflict, judgePrFeedback, needsTriage, receiveFeedback } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
@@ -562,19 +562,55 @@ export class Admission {
       report.skipped.push({ key: job.key, reason: blocked });
       return;
     }
-    const replies = job.replies ?? [];
-    const delivered = replies.length > 0 ? `; ${replies.length} resposta(s) entregue(s)` : "";
-    const running = await this.apply(job.key, "running", { message: `${kind} admitido; limite de 1 iteração${delivered}` });
+    const plan = this.planContinuation(job, kind, triggers);
+    const delivered = plan.replies.length > 0 ? `; ${plan.replies.length} resposta(s) entregue(s)` : "";
+    const how = plan.triage === "list" ? " (triagem do feedback do PR)" : plan.triage === "apply" ? " (aplica a escolha da triagem)" : "";
+    const running = await this.apply(job.key, "running", {
+      message: `${kind} admitido${how}; limite de 1 iteração${delivered}`,
+      ...(plan.held === undefined ? {} : { afterTriage: plan.held }),
+    });
     report.admitted.push(job.key);
     this.clearWaits(job.key);
     const commands = triggers.flatMap((trigger) => (trigger.reason === "resposta-humana" && trigger.command !== undefined ? [trigger.command] : []));
-    const invocation = this.startInvocation(job.key, kind, triggers, { sessão: workspace.session, área: workspace.area });
+    const invocation = this.startInvocation(job.key, kind, plan.triggers, { sessão: workspace.session, área: workspace.area });
     for (const command of commands) {
       this.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, { invocation });
     }
-    const conflict = triggers.some((trigger) => trigger.reason === "conflito-pr");
     this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation,
-      { workspace, replies, ...(conflict ? { conflict: true } : {}) }, undefined, commands);
+      {
+        workspace, replies: plan.replies,
+        ...(plan.conflict ? { conflict: true } : {}),
+        ...(plan.triage === undefined ? {} : { triage: plan.triage }),
+      }, undefined, commands);
+  }
+
+  // What the continuation delivers (issue #21). A batch with a human comment of the PR is the triage:
+  // the invocation gets the comments only and changes no code, and the failing checks and the conflict
+  // of the batch are held back. The resume that follows the triage applies the operator's choice and
+  // takes those held items with it, so the work is done in one invocation after the choice.
+  private planContinuation(job: Job, kind: Continuation, triggers: Trigger[]): {
+    triage?: "list" | "apply"; replies: string[]; triggers: Trigger[]; conflict: boolean; held?: HeldFeedback[];
+  } {
+    const replies = job.replies ?? [];
+    if (kind === "correction" && needsTriage(job.triggers)) {
+      const held = job.actionable ?? [];
+      const heldMessages = [...held.map((item) => item.message)];
+      const comments = replies.filter((reply) => {
+        const at = heldMessages.indexOf(reply);
+        if (at < 0) return true;
+        heldMessages.splice(at, 1);
+        return false;
+      });
+      return { triage: "list", replies: comments, triggers, conflict: false, held };
+    }
+    if (kind === "resume" && job.afterTriage !== undefined) {
+      const all = [...triggers, ...job.afterTriage.map((item) => item.trigger)];
+      return {
+        triage: "apply", replies: [...replies, ...job.afterTriage.map((item) => item.message)], triggers: all,
+        conflict: all.some((trigger) => trigger.reason === "conflito-pr"),
+      };
+    }
+    return { replies, triggers, conflict: triggers.some((trigger) => trigger.reason === "conflito-pr") };
   }
 
   // The causes of the pending continuation of a job. One asked before triggers existed (an older state
@@ -750,6 +786,12 @@ export class Admission {
           });
           return;
         case "pr_ready":
+          if (continuation?.triage === "list") {
+            // The operator has not chosen yet: a PR taken as ready now would drop the triaged comments.
+            const reason = "triagem terminou com PR pronto em vez de pedido de ajuda; os comentários não foram escolhidos pelo operador";
+            await this.apply(key, "intervention-required", { message: reason, reason, invocation });
+            return;
+          }
           await this.acceptPr(key, result.pr, delivery, invocation);
           return;
         case "interrupted":
@@ -830,8 +872,10 @@ export class Admission {
     switch (verdict.kind) {
       case "open":
         await this.observe(job.key, verdict.pr);
-        await this.collectConflict(job, verdict.pr, report);
+        // Comments first: a batch with a human comment waits for its triage, and a job that went to the
+        // human because of it takes no conflict (issue #21).
         await this.collectPrFeedback(job, pr, report);
+        await this.collectConflict(job, verdict.pr, report);
         return;
       case "merged":
         await this.announceMerge(job, pr, project.targetBranch);
@@ -883,6 +927,21 @@ export class Admission {
     if (judgement.inputs.length === 0 && judgement.undecidable === undefined) return;
     const consumed = judgement.inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
     if (judgement.undecidable === undefined) {
+      if (needsTriage(judgement.inputs.flatMap((input) => (input.trigger === undefined ? [] : [input.trigger])))) {
+        // A human comment is never corrected without its triage (issue #21): without the skill the
+        // operator is asked, and nothing is consumed, so the comments come back with the PR.
+        const unavailable = await this.deps.runner.triageUnavailable?.({ ref: current.ref, repository: current.repository });
+        if (unavailable !== undefined) {
+          await this.apply(job.key, "waiting-for-help", {
+            message: `triagem do feedback do PR indisponível: ${unavailable}`,
+            question: `Há comentário humano novo no PR (${pr.repository}#${pr.number}) e a triagem com /skill:gh-address-comments não pode rodar: ${unavailable}.`
+              + " Nenhuma correção foi feita e nenhum item foi consumido: eles voltam a ser lidos quando o PR for acompanhado de novo."
+              + " Resolva a causa e responda para retomar, ou libere o trabalho.",
+            context: "",
+          });
+          return;
+        }
+      }
       const prRef = `#${pr.number}`;
       const inputs = judgement.inputs.map((input) =>
         input.trigger === undefined ? input : { ...input, trigger: { ...input.trigger, pr: prRef } });
@@ -973,7 +1032,7 @@ export class Admission {
   private async apply(
     key: string,
     to: JobState,
-    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"]; consumed?: string[]; invocation?: string },
+    details: { message: string; reason?: string; question?: string; context?: string; pr?: Job["pr"]; consumed?: string[]; invocation?: string; afterTriage?: HeldFeedback[] },
   ): Promise<Job> {
     const current = this.jobs.get(key);
     if (!current) throw new Error(`trabalho desconhecido: ${key}`);

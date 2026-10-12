@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Continuation, Job, JobState, Trigger } from "./job.js";
+import type { Continuation, HeldFeedback, Job, JobState, Trigger } from "./job.js";
 import { isConflicting } from "./pr-rules.js";
 import type { PrCheck, PrComment, PrFeedback, PrSnapshot } from "../pr/port.js";
 import type { Comment, TrackerKind } from "../tracker/port.js";
@@ -134,6 +134,15 @@ export function judgePrFeedback(feedback: PrFeedback, consumed: ReadonlySet<stri
   return reasons.length === 0 ? { inputs } : { inputs, undecidable: reasons.join("; ") };
 }
 
+// Whether a batch of feedback has a human comment of the PR, and so goes through the triage before any
+// change of code (issue #21). Failing checks, conflict and directed replies do not call for one.
+export const needsTriage = (triggers: readonly Trigger[] | undefined): boolean =>
+  (triggers ?? []).some((trigger) => trigger.reason === "feedback-pr");
+
+// Failing checks and conflict are feedback the factory can act on without asking: when the batch also has
+// a human comment they wait for the triage (issue #21).
+const ACTIONABLE: readonly Trigger["reason"][] = ["check-falhou", "conflito-pr"];
+
 // What directed input does in each state: the continuation it requests (if any) and the log wording.
 const EFFECT_OF_STATE: Partial<Record<JobState, { pending?: Continuation; log: string }>> = {
   "waiting-for-help": { pending: "resume", log: "reativação quando houver vaga" },
@@ -157,11 +166,14 @@ export function receiveFeedback(job: Job, inputs: FeedbackInput[], origin: strin
   const log = inputs.map((input) => `${origin}; ${effect.log}: ${input.message}`);
   const consumed = inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
   const triggers = inputs.flatMap((input) => (input.trigger === undefined ? [] : [input.trigger]));
+  const actionable: HeldFeedback[] = inputs.flatMap((input) =>
+    input.trigger !== undefined && ACTIONABLE.includes(input.trigger.reason) ? [{ trigger: input.trigger, message: input.message }] : []);
   return {
     job: {
       ...job,
       ...(effect.pending === undefined ? {} : { pending: effect.pending }),
       ...(triggers.length === 0 ? {} : { triggers: [...(job.triggers ?? []), ...triggers] }),
+      ...(actionable.length === 0 ? {} : { actionable: [...(job.actionable ?? []), ...actionable] }),
       replies: [...(job.replies ?? []), ...inputs.map((input) => input.message)],
       consumed: [...(job.consumed ?? []), ...consumed],
       log: [...job.log, ...log],

@@ -5,7 +5,7 @@ import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.j
 import type { AdmissionDeps } from "../core/admission.js";
 import { messageOf } from "../core/values.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
-import { resolveModelAuth, resolveRuntimeProfile } from "../runtime/docker-config.js";
+import { resolveModelAuth, resolveRuntimeProfile, skillFileOf, TRIAGE_SKILL } from "../runtime/docker-config.js";
 import { jiraConnectionFromEnv, jiraRequest } from "../tracker/jira.js";
 import type { LocalSettings } from "./local-settings.js";
 
@@ -76,6 +76,22 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
       throw new Error(`${join(dir, "skills", "implement", "SKILL.md")} não existe; o container não teria /implement`);
     });
     return "skills/implement/SKILL.md";
+  }));
+  // The triage of PR feedback needs the skill and what it runs (issue #21). The operator links the skill
+  // into the profile on purpose; the check only reports it and never links anything.
+  lines.push(await attempt(`perfil Pi tem a skill ${TRIAGE_SKILL}`, async () => {
+    const dir = resolveModelAuth(instance, config.credentials, local.profiles).agentDir;
+    const file = skillFileOf(dir, TRIAGE_SKILL);
+    await access(file).catch(() => {
+      throw new Error(`${file} não existe; a triagem de comentários do PR não teria a skill (linke-a no perfil)`);
+    });
+    return `skills/${TRIAGE_SKILL}/SKILL.md`;
+  }));
+  lines.push(await attempt("imagem do runner tem python3", async () => {
+    if (!(await sandbox.imageHas(local.image, "python3"))) {
+      throw new Error(`python3 não existe na imagem ${local.image}; a skill ${TRIAGE_SKILL} o exige (reconstrua a imagem)`);
+    }
+    return "python3 presente";
   }));
 
   if (jiraProjects.length > 0) {

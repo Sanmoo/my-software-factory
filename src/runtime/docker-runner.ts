@@ -6,6 +6,8 @@ import {
   requireRunModels,
   resolveModelAuth,
   resolveRuntimeProfile,
+  skillFileOf,
+  TRIAGE_SKILL,
 } from "./docker-config.js";
 import {
   createJobRepo,
@@ -65,6 +67,8 @@ export interface SandboxOutcome {
 export interface SandboxBoundary {
   // Docker reachable, image present, profile complete, token available. Throws otherwise.
   preflight(input: { image: string; profileDir: string; account: string }): Promise<{ token: string }>;
+  // Whether the image has a command on its PATH (issue #21: the triage skill runs python3).
+  imageHas(image: string, command: string): Promise<boolean>;
   run(input: SandboxRun): Promise<SandboxOutcome>;
 }
 
@@ -145,7 +149,7 @@ class DockerRunner implements Runner {
         : await this.resumeJob(context, saved, layout);
       const prompt = context.kind === "new"
         ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, ...(context.issue ? { issue: context.issue } : {}) })
-        : continuationPrompt({ kind: context.kind, note: operatorInput(context), conflict: context.continuation?.conflict === true, ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
+        : continuationPrompt({ kind: context.kind, note: operatorInput(context), conflict: context.continuation?.conflict === true, ...(context.continuation?.triage === undefined ? {} : { triage: context.continuation.triage }), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,
@@ -205,6 +209,18 @@ class DockerRunner implements Runner {
       }
       await this.audit(layout, `interrompido: ${reason}`);
       return interrupted(reason);
+    }
+  }
+
+  // The triage runs the skill of the operator's profile; without it the agent would not have it (issue #21).
+  async triageUnavailable(job: { ref: IssueRef; repository: string }): Promise<string | undefined> {
+    try {
+      const project = findProject(this.options.instance.projects, job.ref, job.repository);
+      const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
+      const file = skillFileOf(resolveRuntimeProfile(project, this.options.profiles, auth.agentDir), TRIAGE_SKILL);
+      return (await exists(file)) ? undefined : `skill ${TRIAGE_SKILL} ausente do perfil Pi autorizado (${file}); o operador a linka no perfil`;
+    } catch (error) {
+      return `perfil Pi não resolvido: ${messageOf(error)}`;
     }
   }
 

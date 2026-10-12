@@ -71,6 +71,7 @@ async function harness(script: Script, options: {
   const runs: SandboxRun[] = [];
   const boundary: SandboxBoundary = {
     async preflight() { return { token: TOKEN }; },
+    async imageHas() { return true; },
     async run(input) {
       runs.push(input);
       calls += 1;
@@ -385,6 +386,7 @@ test("a detailed-log failure of one invocation stops standing in status once a l
   let call = 0;
   const boundary: SandboxBoundary = {
     async preflight() { return { token: TOKEN }; },
+    async imageHas() { return true; },
     async run(input) {
       call += 1;
       input.activity.line(line({ type: "tool_execution_start", toolCallId: `c${call}`, toolName: "read", args: { path: "a" } }));

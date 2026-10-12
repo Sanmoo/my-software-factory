@@ -286,10 +286,10 @@ test("a correction waits while another job holds the only slot, then runs when i
   await admission.settle();
 });
 
-test("a human review on the PR is a correction with its text, and it is not offered twice", async () => {
+test("a human review on the PR is triaged with its text, and it is not offered twice", async () => {
   const stateDir = await dir();
   const prs = new FakePrs();
-  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const runner = triagingRunner();
   const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
   await admission.poll();
   await admission.settle();
@@ -299,9 +299,9 @@ test("a human review on the PR is a correction with its text, and it is not offe
   await admission.settle();
   assert.equal(runner.calls[1]?.kind, "correction");
   assert.deepEqual(runner.calls[1]?.continuation?.replies, ["revisão de ana: troque o nome"]);
-  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
 
-  assert.deepEqual((await admission.poll()).admitted, [], "the same review does not call for correction again");
+  assert.deepEqual((await admission.poll()).admitted, [], "the same review does not call for triage again");
   await admission.settle();
   assert.equal(runner.calls.length, 2);
 });
@@ -454,25 +454,37 @@ test("a review with a body and inline comments is delivered as one item per body
 });
 
 test("an edited inline comment is new feedback, and a new comment in a resolved thread counts", async () => {
+  const stateDir = await dir();
   const prs = new FakePrs();
-  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
-  const admission = await waitingForPr(prs, runner);
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
   const inline = (id: string, body: string, resolved: boolean, author = "ana") =>
     ({ id, kind: "inline" as const, author, isBot: false, body, createdAt: "", thread: { ...README_THREAD, resolved } });
+  // Each triage waits for the operator; answering it brings the job back to waiting for the PR.
+  const answerTriage = async () => {
+    await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "nenhum" });
+    await admission.poll();
+    await admission.settle();
+  };
 
   prs.feedback = { comments: [inline("PRRC_1", "troque o título", false)], checks: [] };
   await admission.poll();
   await admission.settle();
   assert.equal(runner.calls.length, 2);
+  await answerTriage();
 
   prs.feedback = { comments: [inline("PRRC_1", "troque o título por outro", false)], checks: [] };
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the edit is a new event");
   await admission.settle();
+  await answerTriage();
 
   prs.feedback = { comments: [inline("PRRC_1", "troque o título por outro", true), inline("PRRC_2", "ainda não", true)], checks: [] };
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a new comment in a resolved thread counts");
   await admission.settle();
-  assert.equal(runner.calls.length, 4);
+  assert.equal(runner.calls.at(-1)?.continuation?.triage, "list");
+  assert.deepEqual(runner.calls.at(-1)?.continuation?.replies.length, 1, "only the new comment is triaged");
 });
 
 test("a read that did not cover every comment goes to the human as undecidable, and is not taken as no feedback", async () => {
@@ -578,4 +590,203 @@ test("a PR that is only behind its target branch, without conflict, calls for no
   assert.deepEqual((await admission.poll()).admitted, []);
   assert.equal(runner.calls.length, 1);
   assert.equal(summaryOf(admission.job(KEY("1"))!), "acme/app#9");
+});
+
+// ---- issue #21: a human comment is triaged before any change of code ---------------------
+
+const TRIAGE_LIST = "1. README.md (thread PRRT_1): troque este título — proposta: trocar";
+
+// A runner that behaves as the real ones are told to: the triage invocation lists the items and asks
+// for help; every other continuation ends with the PR ready.
+const triagingRunner = () => new FakeRunner((context) => {
+  if (context.continuation?.triage === "list") {
+    return withWorkspace(finished({ status: "needs_help", question: TRIAGE_LIST, context: "triagem" }), WORKSPACE);
+  }
+  return withWorkspace(finished(PR_READY), WORKSPACE);
+});
+
+const humanInline = (id: string, body: string) =>
+  ({ id, kind: "inline" as const, author: "ana", isBot: false, body, createdAt: "", thread: README_THREAD });
+const failingCheck = (id: string, name: string) =>
+  ({ id, name, state: { known: true as const, value: "failing" as const }, required: { known: true as const, value: true } });
+
+test("a new human comment, even a single one, is triaged: the invocation lists the items and ends as a help request", async () => {
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+
+  assert.equal(runner.calls[1]?.kind, "correction");
+  assert.equal(runner.calls[1]?.continuation?.triage, "list", "the correction is the triage, not the change");
+  assert.match(runner.calls[1]?.continuation?.replies.join("\n") ?? "", /troque este título/);
+
+  const job = admission.job(KEY("1"));
+  assert.equal(job?.state, "waiting-for-help", "the triage is a help request: it frees the slot");
+  assert.equal(job?.question, TRIAGE_LIST, "the numbered list is the question");
+  assert.deepEqual(job?.workspace, WORKSPACE, "session and area are kept for the resume");
+
+  assert.deepEqual((await admission.poll()).admitted, [], "the triaged comment is consumed: it is not triaged again");
+});
+
+test("the operator's choice, by reply, resumes in a single invocation that applies only what was chosen", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  await admission.poll();
+  await admission.settle();
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1; 2: responda que X" });
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+
+  assert.equal(runner.calls.length, 3);
+  assert.equal(runner.calls[2]?.kind, "resume");
+  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
+  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1; 2: responda que X"]);
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+  assert.deepEqual((await admission.poll()).admitted, [], "nothing of the triaged batch comes back, chosen or not");
+});
+
+test("the choice can also be given by an agent: comment on the issue", async () => {
+  const memory = memoryOf(["1"]);
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory, stateDir: await dir(), runner, prs });
+  await admission.poll();
+  await admission.settle();
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  await admission.poll();
+  await admission.settle();
+
+  await memory.postComment(REF("1"), "agent: 1");
+  await admission.poll();
+  await admission.settle();
+
+  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
+  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1"]);
+});
+
+test("comments that arrive during the triage are read when the job is back to waiting for the PR, and open a new triage", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  await admission.poll();
+  await admission.settle();
+
+  // While the triage waits for the operator, a new comment arrives: it is not read, not lost.
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título"), humanInline("PRRC_2", "e a seção 2")], checks: [] };
+  assert.deepEqual((await admission.poll()).admitted, []);
+  assert.equal(runner.calls.length, 2);
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
+  await admission.poll();
+  await admission.settle();
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the new comment opens a new triage");
+  await admission.settle();
+  assert.equal(runner.calls[3]?.continuation?.triage, "list");
+  assert.match(runner.calls[3]?.continuation?.replies.join("\n") ?? "", /e a seção 2/);
+  assert.doesNotMatch(runner.calls[3]?.continuation?.replies.join("\n") ?? "", /troque este título/);
+});
+
+test("failing checks and a conflict in the same batch wait for the triage and join the single resume", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.mergeable = { known: true, value: "conflicting" };
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [failingCheck("T", "test")] };
+  await admission.poll();
+  await admission.settle();
+
+  // The triage reads and lists; it neither rebases nor fixes the checks.
+  assert.equal(runner.calls[1]?.continuation?.triage, "list");
+  assert.notEqual(runner.calls[1]?.continuation?.conflict, true, "the branch is not rewritten while the operator reads the list");
+  assert.doesNotMatch(runner.calls[1]?.continuation?.replies.join("\n") ?? "", /check com falha/);
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
+  await admission.poll();
+  await admission.settle();
+
+  assert.equal(runner.calls.length, 3, "one resume, not one per kind of feedback");
+  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
+  assert.equal(runner.calls[2]?.continuation?.conflict, true, "the conflict rides along");
+  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1", "check com falha: test", "PR em conflito com main (head h1, base b1)"]);
+  assert.deepEqual((await admission.poll()).admitted, [], "the held items are not offered again");
+});
+
+test("a batch with only failing checks, or only a conflict, goes straight to correction, without triage", async () => {
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = { comments: [], checks: [failingCheck("T", "test")] };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+  assert.equal(runner.calls[1]?.kind, "correction");
+  assert.equal(runner.calls[1]?.continuation?.triage, undefined);
+
+  prs.feedback = { comments: [], checks: [] };
+  prs.mergeable = { known: true, value: "conflicting" };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+  assert.equal(runner.calls[2]?.kind, "correction");
+  assert.equal(runner.calls[2]?.continuation?.triage, undefined);
+  assert.equal(runner.calls[2]?.continuation?.conflict, true);
+});
+
+test("without the triage skill, a human comment becomes a visible help request and no correction runs", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  runner.triageBlocker = "skill gh-address-comments ausente do perfil Pi";
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  assert.deepEqual((await admission.poll()).admitted, []);
+
+  const job = admission.job(KEY("1"));
+  assert.equal(job?.state, "waiting-for-help");
+  assert.match(job?.question ?? "", /gh-address-comments/);
+  assert.equal(runner.calls.length, 1, "no correction without triage");
+
+  // Nothing was consumed: once the skill is there and the PR is followed again, the comment is triaged.
+  runner.triageBlocker = undefined;
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "skill linkada" });
+  await admission.poll();
+  await admission.settle();
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+  assert.equal(runner.calls.at(-1)?.continuation?.triage, "list");
+});
+
+test("a triage that ends with the PR ready, instead of a help request, is not accepted", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  await admission.poll();
+  await admission.settle();
+
+  assert.equal(admission.job(KEY("1"))?.state, "intervention-required", "the operator never chose; the comment is not silently dropped");
 });

@@ -38,6 +38,13 @@ export interface Trigger {
   command?: string;
 }
 
+// Feedback of a batch that waits for the triage of the PR comments (issue #21): a failing check or the
+// conflict, with the text the agent will read when the operator's choice resumes the work.
+export interface HeldFeedback {
+  trigger: Trigger;
+  message: string;
+}
+
 export interface Job {
   key: string; // identity: tracker + project + issue id (see refKey)
   ref: IssueRef;
@@ -59,6 +66,12 @@ export interface Job {
   pending?: Continuation;
   // The causes of the pending continuation, in the order they were taken (issue #15).
   triggers?: Trigger[];
+  // Failing checks and conflict among those causes, with their text. If the continuation turns out to be
+  // a triage, they are held back and move to `afterTriage` (issue #21).
+  actionable?: HeldFeedback[];
+  // Set while the operator's answer to a triage is awaited: what the resume after it must also deal
+  // with. Its presence says that the next resume is the one that applies the choice.
+  afterTriage?: HeldFeedback[];
   // When the external merge of the linked PR was first detected; it is announced only once.
   mergeDetected?: string;
   log: string[];
@@ -88,6 +101,8 @@ export interface TransitionDetails {
   question?: string;
   context?: string;
   pr?: PrRef;
+  // Entering `running`: what a triage held back, set by the invocation that starts the triage.
+  afterTriage?: HeldFeedback[];
 }
 
 // `released` is the operator ending the tracking of a job that is not running (R09): the
@@ -126,8 +141,11 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
   delete next.question;
   delete next.context;
   delete next.pending;
+  delete next.actionable;
   if (to === "running") {
     delete next.triggers;
+    delete next.afterTriage;
+    if (details.afterTriage !== undefined) next.afterTriage = details.afterTriage;
     // Resuming keeps the PR reference: the PR stays the one tracked by this job.
     // Replies are delivered by the invocation that starts now (R09).
     delete next.replies;

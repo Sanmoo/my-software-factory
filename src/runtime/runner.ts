@@ -18,6 +18,10 @@ export interface ContinuationContext {
   replies: string[];
   // The correction answers a conflict of the PR with its target branch (issue #19).
   conflict?: boolean;
+  // The triage of PR feedback (issue #21): "list" is the correction that numbers the items of new human
+  // comments and asks the operator, changing no code; "apply" is the resume that applies only what the
+  // operator chose, together with the failing checks and the conflict held back by the triage.
+  triage?: "list" | "apply";
 }
 
 // What an implementation invocation knows about its issue: the title and body as the tracker
@@ -57,4 +61,7 @@ export type RunnerOutput =
 
 export interface Runner {
   run(context: RunnerContext): Promise<RunnerOutput>;
+  // Why the triage of PR feedback cannot run for this job (the skill it needs is not available), or
+  // undefined when it can. A runner without the method has nothing to check (issue #21).
+  triageUnavailable?(job: { ref: IssueRef; repository: string }): Promise<string | undefined>;
 }

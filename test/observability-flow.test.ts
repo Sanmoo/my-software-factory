@@ -452,3 +452,27 @@ test("unknown mergeability is not announced as a conflict on the main line", asy
   assert.match(s.admission.job(KEY("1"))?.log.join("\n") ?? "", /mergeabilidade desconhecida/);
 });
 
+
+test("the triage of PR feedback shows in the main log as a help request with the numbered list and the reply command", async () => {
+  const list = "1. README.md (thread PRRT_1): troque este título";
+  const s = await setup({
+    runner: new FakeRunner((context) => withWorkspace(finished(context.continuation?.triage === "list"
+      ? { status: "needs_help", question: list, context: "triagem" }
+      : PR_READY), WORKSPACE)),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  s.prs.feedback = {
+    comments: [{ id: "PRRC_1", kind: "inline", author: "ana", isBot: false, body: "troque este título", createdAt: "", thread: { id: "PRRT_1", path: "README.md", resolved: false } }],
+    checks: [],
+  };
+  await s.admission.poll();
+  await s.admission.settle();
+  await s.observer.flush();
+
+  assert.match(matching(s.lines, /invocação retomada/)[0]!, /motivo=feedback-pr/);
+  const help = s.lines.join("\n");
+  assert.match(help, /ajuda solicitada/);
+  assert.match(help, /pergunta: 1\. README\.md \(thread PRRT_1\)/);
+  assert.match(help, /responder: .*reply/, "the reply command is copyable");
+});

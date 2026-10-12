@@ -43,6 +43,16 @@ async function preflight(input: { image: string; profileDir: string; account: st
   return { token };
 }
 
+// Asks the image itself, without starting the agent: the entrypoint is replaced for this one command.
+async function imageHas(image: string, command: string): Promise<boolean> {
+  try {
+    await execFileAsync("docker", ["run", "--rm", "--entrypoint", "sh", image, "-c", `command -v ${command}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Pi with the flags the spike proved (print mode, no MCP, the tools /implement needs). The
 // Pi session is written to the host through the sessionStorage mount, outside the container.
 function agentFor(model: string, sessionsDir: string) {
@@ -84,6 +94,7 @@ async function mountsFor(input: SandboxRun) {
 export function sandcastleBoundary(): SandboxBoundary {
   return {
     preflight,
+    imageHas,
     async run(input) {
       await mkdir(input.sessionsDir, { recursive: true });
       const events: PiEvent[] = [];

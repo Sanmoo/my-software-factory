@@ -128,21 +128,60 @@ function threadRules(): string {
     "- Never resolve a thread for any other reason: reading or consuming a comment is not resolving it.",
   ].join("\n");
 }
+// The triage of PR feedback (issue #21): new human comments are listed for the operator before any change
+// of code. The skill has model invocation disabled, so the prompt invokes it by name. The skill numbers
+// threads and comments; the prompt adds what it does not cover: no change, no push, and how to end.
+function triageRules(): string {
+  return [
+    "PR feedback triage: new human comments reached the pull request. Use the skill above to read them.",
+    "Do not change any code, do not commit and do not push. Do not write to the pull request either: no replies, no resolved threads.",
+    "Number every thread and comment, each with a summary and a proposed treatment (apply a change, reply only, or leave it).",
+    "Then end with needs_help whose question is that numbered list, asking which items to handle and how.",
+    `The operator answers with item numbers ("1 and 3") or an instruction per item ("2: reply that X"); an item not cited gets no action.`,
+  ].join("\n");
+}
 
-// A resume or correction continues the same Pi session; the skill is not invoked again.
-// Corrections carry the PR feedback, so they carry the answer and resolve rules.
-export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean }): string {
+// The resume that applies the operator's choice after the triage (issue #21). One invocation: the chosen
+// items, plus the failing checks and the conflict that waited for the choice. How replies, SHAs and
+// resolving work is threadRules; this adds only what the choice changes.
+function chosenRules(): string {
+  return [
+    "PR feedback triage answered: the operator chose what to handle; the answer is in the operator input.",
+    "Apply only the items the operator chose, in this invocation. Do not run the triage again and do not widen the scope.",
+    "For an item the operator did not cite: take no action, write no reply and leave its thread open; do not ask about it again.",
+    `An instruction such as "2: reply that X" is a reply in the thread without resolving it.`,
+    "If failing checks or a conflict came with the batch, they are part of the operator input: handle them in this same invocation.",
+  ].join("\n");
+}
+
+// A resume or correction continues the same Pi session; the skill is not invoked again, except by the
+// triage, which is the one correction that invokes gh-address-comments (issue #21).
+// Corrections carry the PR feedback, so they carry the answer and resolve rules; so does the resume that
+// applies the operator's choice after the triage.
+export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean; triage?: "list" | "apply" }): string {
   // After a conflict rebase the work sits on the remote target, so that is its base: the old base of the
   // job would make the reviewers see the target's own commits as part of the work.
   const base = input.conflict ? { ...input, baseSha: `origin/${input.targetBranch}` } : input;
   const operator = input.note && input.note.trim() !== ""
     ? `Operator input: ${input.note.trim()}`
     : "No new operator input was supplied with this continuation.";
+  const header = `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${base.baseSha}.`;
+  if (input.triage === "list") {
+    return [
+      "/skill:gh-address-comments",
+      header,
+      operator,
+      triageRules(),
+      `Comments: every comment or review you write must start with <!-- msf:agent -->. Write none in this invocation.`,
+      RESULT_PROTOCOL,
+    ].join("\n\n");
+  }
   return [
-    `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${base.baseSha}.`,
+    header,
     operator,
+    ...(input.triage === "apply" ? [chosenRules()] : []),
     ...(input.conflict ? [conflictRules(input)] : []),
-    ...(input.kind === "correction" ? [threadRules()] : []),
+    ...(input.kind === "correction" || input.triage === "apply" ? [threadRules()] : []),
     "Models stay the same:",
     roleLines(input.models),
     reviewRules(base),
