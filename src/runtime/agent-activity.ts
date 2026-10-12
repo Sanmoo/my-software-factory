@@ -354,7 +354,7 @@ export class AgentActivity {
     if (text === "") return [];
     if (text.length <= this.inlineLimit) return text.split("\n");
     this.artifactSeq += 1;
-    const hash = createHash("sha256").update(id).digest("hex").slice(0, 12);
+    const hash = createHash("sha256").update(this.redact(id)).digest("hex").slice(0, 12);
     const path = join(this.options.artifactsDir, "tool-output", `${this.artifactSeq}-${hash}-${suffix}.txt`);
     this.enqueue(path, `${this.redact(id)}\n${this.redact(text)}`, "artefato", true);
     return [`${label}: ${this.summary(this.redact(text), summaryLength)}`, `[${label} extenso: ${text.length} caracteres; conteúdo completo em ${path}]`];

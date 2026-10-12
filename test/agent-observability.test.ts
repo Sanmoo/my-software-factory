@@ -212,7 +212,7 @@ test("a tool call id longer than a file name allows still yields a valid artifac
   const text = await h.detail();
   const reference = /conteúdo completo em (\S+)\]/.exec(text)?.[1];
   assert.ok(reference, "the log says where the whole content is");
-  assert.ok(Buffer.byteLength(basename(reference)) <= 255, `file name too long: ${basename(reference).length}`);
+  assert.ok(Buffer.byteLength(basename(reference)) <= 255, `file name too long: ${Buffer.byteLength(basename(reference))} bytes`);
   assert.equal(await readFile(reference, "utf8"), `${id}\n${long}`, "the artifact is kept whole, with the full id first");
   assert.equal(matching(h.lines, /falha de observabilidade/).length, 0, "the artifact write does not fail");
 });
