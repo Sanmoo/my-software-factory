@@ -287,16 +287,21 @@ export class AgentActivity {
 
   // ---- children -----------------------------------------------------------------------------
 
+  // The same short hash names every per-call file (#25, #29): a hash of the redacted id keeps
+  // credentials out of the names and the id itself out of the file system.
+  private callHash(id: string): string {
+    return createHash("sha256").update(this.redact(id)).digest("hex").slice(0, 12);
+  }
+
   private childStarted(id: string, event: Obj): void {
     const args = isObject(event.args) ? event.args : {};
     const agent = typeof args.agent === "string" ? args.agent : "(sem nome)";
     // Like the tool-output artifacts (#25): a sequence and a short hash of the redacted call id, not
     // the id itself, which can exceed the file name limit. The full id opens the log, written first.
     this.childSeq += 1;
-    const hash = createHash("sha256").update(this.redact(id)).digest("hex").slice(0, 12);
     const child: Child = {
       id, agent, async: args.async === true, ended: false,
-      path: join(this.options.artifactsDir, "children", `${this.childSeq}-${hash}.log`),
+      path: join(this.options.artifactsDir, "children", `${this.childSeq}-${this.callHash(id)}.log`),
     };
     this.children.set(id, child);
     this.enqueue(child.path, `${this.redact(id)}\n`, "log do filho", true);
@@ -360,8 +365,7 @@ export class AgentActivity {
     if (text === "") return [];
     if (text.length <= this.inlineLimit) return text.split("\n");
     this.artifactSeq += 1;
-    const hash = createHash("sha256").update(this.redact(id)).digest("hex").slice(0, 12);
-    const path = join(this.options.artifactsDir, "tool-output", `${this.artifactSeq}-${hash}-${suffix}.txt`);
+    const path = join(this.options.artifactsDir, "tool-output", `${this.artifactSeq}-${this.callHash(id)}-${suffix}.txt`);
     this.enqueue(path, `${this.redact(id)}\n${this.redact(text)}`, "artefato", true);
     return [`${label}: ${this.summary(this.redact(text), summaryLength)}`, `[${label} extenso: ${text.length} caracteres; conteúdo completo em ${path}]`];
   }

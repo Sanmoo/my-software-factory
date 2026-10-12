@@ -274,13 +274,14 @@ test("subagents are identified, summarized with a log of their own, and the runt
   await h.runner.run(context());
   await h.observer.flush();
 
-  assert.match(matching(h.lines, /filho iniciado/)[0]!, /filho=k1 agente=reviewer-spec assíncrono=não modelo=\S+ log-do-filho=\S+\.log/);
+  assert.match(matching(h.lines, /filho iniciado/)[0]!, /filho=k1 agente=reviewer-spec assíncrono=não modelo=\S+ log-do-filho=\S+children\/\d+-[0-9a-f]{12}\.log/);
   assert.equal(matching(h.lines, /limitação do runtime/).length, 1, "the limitation is announced once");
   assert.match(matching(h.lines, /filho concluído/)[0]!, /filho=k1 agente=reviewer-spec resultado="sem achados"/);
   assert.match(matching(h.lines, /filho lançado em segundo plano/)[0]!, /agente=reviewer-standards/);
   assert.match(matching(h.lines, /filho sem desfecho observado/)[0]!, /filho=k2/, "launch is not progress or success");
   const childLog = /log-do-filho=(\S+\.log)/.exec(h.lines.join("\n"))![1]!;
   const child = await readFile(childLog, "utf8");
+  assert.equal(child.split("\n")[0], "k1", "the log named for k1 opens with k1's call id");
   assert.match(child, /lançado/);
   assert.match(child, /atividade observada: lendo a spec/);
   assert.match(child, /desfecho: sem achados/);
