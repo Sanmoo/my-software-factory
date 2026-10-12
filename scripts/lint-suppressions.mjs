@@ -85,7 +85,7 @@ async function main() {
   }
 
   const oxlint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../node_modules/oxlint/bin/oxlint");
-  const result = spawnSync(process.execPath, [oxlint, ...files], { stdio: "inherit" });
+  const result = spawnSync(process.execPath, [oxlint, ...roots], { stdio: "inherit" });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 }

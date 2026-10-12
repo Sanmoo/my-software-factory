@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const validator = resolve("scripts/lint-suppressions.mjs");
 
 async function runLint(source: string, extraFiles: Record<string, string> = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "lint-suppressions-"));
+  const directory = await mkdtemp(join(resolve("test"), ".lint-suppressions-"));
   try {
     const sourceFile = join(directory, "fixture.ts");
     await writeFile(sourceFile, source);
@@ -17,7 +16,7 @@ async function runLint(source: string, extraFiles: Record<string, string> = {}) 
       await mkdir(join(file, ".."), { recursive: true });
       await writeFile(file, content);
     }
-    return spawnSync(process.execPath, [validator, directory], { cwd: process.cwd(), encoding: "utf8" });
+    return spawnSync(process.execPath, [validator, relative(process.cwd(), directory)], { cwd: process.cwd(), encoding: "utf8" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -71,7 +70,12 @@ test("ignores excluded directories and non-TypeScript files", async () => {
     "nested/.pilot/bad.ts": "// oxlint-disable\nexport const bad: any = 1;\n",
     "nested/docs/bad.ts": "// oxlint-disable\nexport const bad: any = 1;\n",
     "bad.tsx": "// oxlint-disable\nexport const bad: any = 1;\n",
+    "bad.mts": "// oxlint-disable\nexport const bad: any = 1;\n",
+    "bad.cts": "// oxlint-disable\nexport const bad: any = 1;\n",
     "bad.js": "// eslint-disable\n",
+    "bad.jsx": "// eslint-disable\n",
+    "bad.mjs": "// eslint-disable\n",
+    "bad.cjs": "// eslint-disable\n",
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
