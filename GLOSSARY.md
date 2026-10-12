@@ -59,11 +59,26 @@ no PR, todo comentário humano é dirigido ao trabalho.
 _Avoid_: qualquer comentário da issue como comando, relato do próprio agente como feedback,
 conflito como impedimento, conflito desconhecido como ausência de conflito
 
+**Item de feedback**:
+Unidade de feedback acionável que guarda seu tipo e sua origem: comentário humano
+do PR, resposta dirigida, falha de check ou conflito do PR. A origem acompanha o
+item até a invocação que o trata; nunca é reconhecida pelo texto.
+_Avoid_: resposta como sinônimo de qualquer item, reconhecer a origem pelo texto
+
 **Triagem de feedback do PR**:
 Escolha, pelo operador, de quais comentários humanos do PR o trabalho vai tratar
 e como. É um pedido de ajuda: o que não for escolhido não é tratado nem perguntado
-de novo. Checks e conflitos não passam por ela.
+de novo. Checks, conflitos e respostas dirigidas do mesmo lote não passam por ela:
+ficam como itens retidos. Só termina com a resposta do operador; uma invocação
+que para antes dela não conclui a triagem.
 _Avoid_: agente decidindo sozinho quais comentários atender, triagem como aprovação de escopo novo
+
+**Item retido**:
+Item de feedback do lote de uma triagem que não é comentário do PR: falha de
+check, conflito ou resposta dirigida. Espera a escolha do operador e é tratado
+na mesma invocação que aplica essa escolha; enquanto a triagem não termina,
+continua retido.
+_Avoid_: retido como descartado, feedback acionável como só checks e conflitos
 
 **Log principal**:
 Fluxo contínuo de uma instância em que o operador acompanha transições de
