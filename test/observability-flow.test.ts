@@ -178,6 +178,27 @@ test("the question, the reply and the reason survive in the history after the jo
   assert.equal(matching(s.lines, /trabalho admitido/).length, 1, "a continuation is not a new admission");
 });
 
+test("the orchestrator says the severity: a help request needs attention, a merge and a done are progress", async () => {
+  const help = await setup({ runner: helpRunner() });
+  await help.admission.poll();
+  await help.admission.settle();
+  await help.observer.flush();
+  const asked = (await createFileHistory(help.stateDir).read(KEY("1"))).records;
+  assert.deepEqual(asked.filter((record) => record.kind === "ajuda-solicitada").map((record) => record.level), ["atenção"]);
+  assert.deepEqual(asked.filter((record) => record.kind === "trabalho-admitido").map((record) => record.level), ["info"]);
+
+  const done = await setup({ runner: new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE)) });
+  await done.admission.poll();
+  await done.admission.settle();
+  done.prs.state = "merged";
+  await done.admission.poll();
+  await done.observer.flush();
+  const levels = Object.fromEntries((await createFileHistory(done.stateDir).read(KEY("1"))).records.map((record) => [record.kind, record.level]));
+  assert.equal(levels["pr-aceito"], "progresso");
+  assert.equal(levels["merge-detectado"], "progresso");
+  assert.equal(levels["trabalho-concluído"], "progresso");
+});
+
 test("a new poll does not repeat the consumption of a reply or start a second invocation", async () => {
   const s = await setup({ runner: helpRunner() });
   await s.admission.poll();

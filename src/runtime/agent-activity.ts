@@ -1,6 +1,6 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { FieldValue, Observer } from "../core/observability.js";
+import type { FieldValue, Level, Observer } from "../core/observability.js";
 import { isObject, type Obj } from "../core/values.js";
 import { AgentIssueWatch, type AgentWriteOptions } from "./agent-issue-writes.js";
 
@@ -133,7 +133,7 @@ export class AgentActivity {
       "timeout-efetivo": `${this.options.idle.timeoutSeconds}s`,
       "última-atividade": this.lastActivity,
       "ferramentas-ativas": active === "" ? undefined : active,
-    });
+    }, "atenção");
     this.detail(`aviso: sem saída há ${silent}s; timeout efetivo ${this.options.idle.timeoutSeconds}s; última atividade: ${this.lastActivity}`);
   }
 
@@ -143,7 +143,7 @@ export class AgentActivity {
     this.event("agente-timeout", "timeout: sem saída do agente", {
       "sem-saída": `${silent}s`, "timeout-efetivo": `${this.options.idle.timeoutSeconds}s`,
       "última-atividade": this.lastActivity, motivo: reason,
-    });
+    }, "erro");
     this.detail(`timeout: ${reason}`);
   }
 
@@ -160,7 +160,7 @@ export class AgentActivity {
       if (child.ended) continue;
       this.event("filho-sem-desfecho", "filho sem desfecho observado (não é sucesso)", {
         filho: child.id, agente: child.agent, "log-do-filho": child.path,
-      });
+      }, "atenção");
       this.childLine(child, "invocação encerrada sem desfecho observado deste filho");
     }
     await this.watch?.drain();
@@ -314,7 +314,7 @@ export class AgentActivity {
     child.ended = true;
     this.event(failed ? "filho-erro" : "filho-concluído", failed ? "filho terminou com erro" : "filho concluído", {
       filho: child.id, agente: child.agent, resultado: this.summary(text), "log-do-filho": child.path,
-    });
+    }, failed ? "erro" : "info");
     this.childLine(child, `${failed ? "ERRO" : "desfecho"}: ${text}`);
   }
 
@@ -367,9 +367,9 @@ export class AgentActivity {
     this.enqueue(this.options.detailPath, text, "log detalhado");
   }
 
-  private event(kind: string, text: string, fields: Record<string, FieldValue>): void {
+  private event(kind: string, text: string, fields: Record<string, FieldValue>, level: Level = "info"): void {
     this.options.observer.emit({
-      kind, text, job: this.options.job,
+      kind, text, level, job: this.options.job,
       ...(this.options.invocation === undefined ? {} : { invocation: this.options.invocation }),
       fields,
     });

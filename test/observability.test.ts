@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createObserver, shellQuote, type HistoryRecord } from "../src/core/observability.js";
 import { createRedactor } from "../src/core/redaction.js";
+import type { MainLogEntry } from "../src/core/main-log.js";
 import { createFileFailureStore, createFileHistory, readFailures } from "../src/state/history.js";
 
 const SECRET = "synthetic-secret-value-123";
@@ -84,4 +85,22 @@ test("history keeps appended records in order and ignores unreadable lines", asy
   const read = await history.read("j");
   assert.deepEqual(read.records.map((entry) => entry.kind), ["um", "dois"]);
   assert.equal(read.unreadable, 1);
+});
+
+test("the level chosen by the emitter is kept in the history and given to the main log", async () => {
+  const stateDir = await dir();
+  const entries: MainLogEntry[] = [];
+  const observer = createObserver({
+    instance: "trabalho", history: createFileHistory(stateDir), now: clock,
+    mainLog: { event: (entry) => entries.push(entry), note: () => {}, failures: () => {} },
+  });
+  observer.emit({ kind: "ajuda-solicitada", text: "ajuda solicitada", level: "atenção", highlight: true, job: "j", fields: { sessão: "s-1" } });
+  observer.emit({ kind: "trabalho-admitido", text: "trabalho admitido", job: "j" });
+  await observer.flush();
+
+  const { records } = await createFileHistory(stateDir).read("j");
+  assert.deepEqual(records.map((record) => record.level), ["atenção", "info"]);
+  assert.equal(records[0]!.fields["sessão"], "s-1");
+  assert.deepEqual(entries.map((entry) => [entry.level, entry.highlight === true]), [["atenção", true], ["info", false]]);
+  assert.equal(entries[0]!.at.toISOString(), "2026-10-11T12:00:00.000Z");
 });

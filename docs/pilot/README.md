@@ -27,6 +27,13 @@ O wizard gera, em `.pilot/` (git-ignored: token Jira, caminhos desta máquina):
 Supervisão enquanto roda: `npm run logs`, `reply`, `resume`, `release`, `pause`, `unpause`
 (`--help` de cada um), com `--state-dir .pilot/state/<instância>`.
 
+No terminal, o log principal do `run` sai em formato humano: hora local, coluna curta do
+trabalho (`#13`, `PAY-7`), marcador e cor de severidade (`·` info, `✓` progresso, `!` atenção,
+`✗` erro); área, sessão e logs secundários ficam no histórico (`npm run logs`). `NO_COLOR` tira as
+cores; `FORCE_COLOR=1` liga o formato humano fora de um terminal. Redirecionado, o log mantém o
+formato plano (ISO UTC, `[instância]`, todos os campos). Nos dois, a mesma falha repetida sai
+uma vez, com lembrete a cada 5 min e aviso de recuperação.
+
 ## Lacunas encontradas ao ligar as peças (corrigidas para o piloto)
 
 - Nenhum comando executava o loop com adapters reais: `status` só lê fixture. Criado `run`.

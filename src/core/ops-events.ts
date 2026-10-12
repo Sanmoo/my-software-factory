@@ -1,5 +1,5 @@
 import type { Trigger } from "./job.js";
-import type { FieldValue, OpsEvent } from "./observability.js";
+import type { FieldValue, Level, OpsEvent } from "./observability.js";
 import type { ChangeResult, IssueChange, IssueRef } from "../tracker/port.js";
 import { refKey } from "../tracker/port.js";
 
@@ -59,6 +59,8 @@ export function triggerSummary(triggers: readonly Trigger[]): { fields: Record<s
   };
 }
 
+const RESULT_LEVEL: Record<ChangeResult, Level> = { confirmed: "info", attempted: "atenção", unchanged: "info", failed: "erro" };
+
 const RESULT_TEXT: Record<ChangeResult, string> = {
   confirmed: "alteração confirmada",
   attempted: "alteração tentada, não confirmada",
@@ -100,6 +102,7 @@ export function issueChangeEvent(context: IssueWriteContext, change: IssueChange
   return {
     kind: `issue-alteração-${change.result}`,
     text: RESULT_TEXT[change.result],
+    level: RESULT_LEVEL[change.result],
     ...eventBase(context),
     fields: {
       issue: refKey(context.ref),
@@ -119,6 +122,7 @@ export function issueWriteFailure(context: IssueWriteContext, reason: string, un
   return {
     kind: uncertain ? "issue-escrita-incerta" : "issue-escrita-falhou",
     text: uncertain ? "resultado da alteração incerto" : "alteração falhou",
+    level: uncertain ? "atenção" : "erro",
     ...eventBase(context),
     fields: { issue: refKey(context.ref), origem: context.origin, operação: context.operation, motivo: context.reason, erro: reason, ...context.refs },
   };

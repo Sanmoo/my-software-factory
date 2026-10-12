@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfigFile } from "../config/load.js";
 import { Admission, type PollReport } from "../core/admission.js";
+import { createMainLog, terminalMode, type MainLog } from "../core/main-log.js";
 import { createObserver } from "../core/observability.js";
 import { createRedactor } from "../core/redaction.js";
 import { messageOf } from "../core/values.js";
@@ -55,18 +56,17 @@ function parseArgs(argv: readonly string[]): Options | string {
   };
 }
 
-const stamp = (): string => new Date().toISOString();
-const log = (line: string): void => { process.stdout.write(`${stamp()} ${line}\n`); };
-
-function describe(report: PollReport): string[] {
-  return [
-    // Admissions are announced by the observer with their reason; the report does not repeat them.
-    ...report.commands.map((c) => `comando ${c.type}${c.job ? ` ${c.job}` : ""} comando=${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ""}`),
-    ...report.skipped.map((s) => `adiado ${s.key}: ${s.reason}`),
-    ...report.errors.map((e) => `ERRO ${e.key}: ${e.message}`),
-    ...(report.paused ? ["instância pausada: nada novo é admitido"] : []),
-  ];
+function describe(report: PollReport, log: MainLog): void {
+  // Admissions are announced by the observer with their reason; the report does not repeat them.
+  for (const c of report.commands) {
+    log.note(c.status === "rejected" ? "atenção" : "info", `comando ${c.type}${c.job ? ` ${c.job}` : ""} comando=${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ""}`);
+  }
+  for (const s of report.skipped) log.note("info", `adiado ${s.key}: ${s.reason}`);
+  log.failures(report.errors);
+  if (report.paused) log.note("atenção", "instância pausada: nada novo é admitido");
 }
+
+const withHuman = (human: { color: boolean } | undefined) => (human === undefined ? {} : { human });
 
 export async function main(argv: readonly string[]): Promise<number> {
   const options = parseArgs(argv);
@@ -85,12 +85,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   const local = await loadLocalSettings(options.localPath);
   if (typeof local === "string") { process.stderr.write(`${local}\n`); return 1; }
 
+  const mainLog = createMainLog({
+    instance: instance.name,
+    write: (line) => { process.stdout.write(`${line}\n`); },
+    ...withHuman(terminalMode(process.env, process.stdout.isTTY === true)),
+  });
   const sandbox = sandcastleBoundary();
   // Events reach the main log as they happen, also from invocations running in the background, and
   // the local history that `logs` reads. The commands it prints are the ones this process runs with.
   const observer = createObserver({
     instance: instance.name,
-    console: (line) => { process.stdout.write(`${line}\n`); },
+    mainLog,
     history: createFileHistory(options.stateDir),
     failures: createFileFailureStore(options.stateDir),
     redactor: createRedactor(),
@@ -111,27 +116,27 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   const admission = await Admission.open(deps);
-  if (admission.unreadable.length > 0) log(`ATENÇÃO: arquivos de trabalho ilegíveis (issues continuam rastreadas): ${admission.unreadable.join(", ")}`);
-  log(`instância ${instance.name}: N=${instance.maxConcurrent}, polling ${instance.pollIntervalSeconds}s, estado em ${options.stateDir}`);
+  if (admission.unreadable.length > 0) mainLog.note("atenção", `arquivos de trabalho ilegíveis (issues continuam rastreadas): ${admission.unreadable.join(", ")}`);
+  mainLog.note("info", `instância ${instance.name}: N=${instance.maxConcurrent}, polling ${instance.pollIntervalSeconds}s, estado em ${options.stateDir}`);
 
   const stop = new AbortController();
   process.on("SIGINT", () => {
-    if (stop.signal.aborted) { log("segundo sinal: saindo; trabalhos ativos ficam interrompidos e retomáveis"); process.exit(130); }
-    log("parando: sem novos ciclos; aguardando trabalhos ativos (Ctrl-C de novo para sair já)");
+    if (stop.signal.aborted) { mainLog.note("atenção", "segundo sinal: saindo; trabalhos ativos ficam interrompidos e retomáveis"); process.exit(130); }
+    mainLog.note("info", "parando: sem novos ciclos; aguardando trabalhos ativos (Ctrl-C de novo para sair já)");
     stop.abort();
   });
 
   while (!stop.signal.aborted) {
     try {
-      for (const line of describe(await admission.poll())) log(line);
+      describe(await admission.poll(), mainLog);
     } catch (error) {
-      log(`ERRO no ciclo: ${messageOf(error)}`);
+      mainLog.failures([{ key: "ciclo", message: messageOf(error) }], { cycleFailed: true });
     }
     if (options.once) break;
     await sleep(instance.pollIntervalSeconds * 1000, undefined, { signal: stop.signal }).catch(() => undefined);
   }
   const errors = await admission.settle();
-  for (const error of errors) log(`ERRO de persistência: ${messageOf(error)}`);
+  for (const error of errors) mainLog.note("erro", `de persistência: ${messageOf(error)}`);
   await observer.flush();
   return errors.length === 0 ? 0 : 1;
 }

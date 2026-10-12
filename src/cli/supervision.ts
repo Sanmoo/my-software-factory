@@ -115,7 +115,7 @@ export async function runSupervision(argv: readonly string[]): Promise<CliRun> {
   try {
     await createFileHistory(options.stateDir).append({
       at: new Date().toISOString(), instance: options.instanceName, kind: "comando-enfileirado",
-      text: `${options.command} enfileirado`, ...(options.job === undefined ? {} : { job: options.job }),
+      text: `${options.command} enfileirado`, level: "info", ...(options.job === undefined ? {} : { job: options.job }),
       fields: { comando: id }, lines: [],
     });
   } catch (error) {

@@ -223,10 +223,10 @@ class DockerRunner implements Runner {
     };
     const fields = { comando: context.replyCommands?.join(","), respostas: replies.length };
     if (delivered === replies.length) {
-      observer.emit({ kind: "resposta-entregue", text: "resposta entregue ao agente", ...base, fields: { ...fields, evidência: "mensagem do usuário no stream do runtime" } });
+      observer.emit({ kind: "resposta-entregue", text: "resposta entregue ao agente", level: "progresso", ...base, fields: { ...fields, evidência: "mensagem do usuário no stream do runtime" } });
     } else {
       observer.emit({
-        kind: "entrega-não-confirmada", text: "entrega da resposta ao agente não confirmada", ...base,
+        kind: "entrega-não-confirmada", text: "entrega da resposta ao agente não confirmada", level: "atenção", ...base,
         fields: { ...fields, confirmadas: delivered, motivo: "sem evidência no stream do runtime; a resposta foi incluída na retomada" },
       });
     }

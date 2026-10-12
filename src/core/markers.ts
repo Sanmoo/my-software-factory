@@ -35,7 +35,7 @@ export async function postFactoryComment(
     return id;
   } catch (error) {
     observed?.observer.emit({
-      kind: "issue-escrita-incerta", text: "resultado da alteração incerto", ...base,
+      kind: "issue-escrita-incerta", text: "resultado da alteração incerto", level: "atenção", ...base,
       fields: { ...fields, erro: error instanceof Error ? error.message : String(error) },
     });
     throw error;

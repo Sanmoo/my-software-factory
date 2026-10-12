@@ -1,3 +1,4 @@
+import { createMainLog, type FieldValue, type Level, type MainLog } from "./main-log.js";
 import { createRedactor, type Redactor } from "./redaction.js";
 import { messageOf } from "./values.js";
 
@@ -7,13 +8,17 @@ import { messageOf } from "./values.js";
 // orchestrator does: a failing sink is reported through the channels that are left and the
 // work goes on (decision 16). No event is ever the cause of a retry or of a second mutation.
 
-export type FieldValue = string | number | undefined;
+export { renderFields, type FieldValue, type Level } from "./main-log.js";
 
 export interface OpsEvent {
   // Stable machine name of the event, e.g. "ajuda-solicitada".
   kind: string;
   // Operator-facing label, e.g. "ajuda solicitada".
   text: string;
+  // Severity, decided by the emitter (issue #17). Absent: info.
+  level?: Level;
+  // The operator has to act now (a help request): stands out on the main log beyond its level.
+  highlight?: boolean;
   job?: string;
   invocation?: string;
   fields?: Record<string, FieldValue>;
@@ -26,6 +31,8 @@ export interface HistoryRecord {
   instance: string;
   kind: string;
   text: string;
+  // Absent in records written before issue #17.
+  level?: Level;
   job?: string;
   invocation?: string;
   fields: Record<string, string | number>;
@@ -84,19 +91,12 @@ export function shellQuote(argument: string): string {
   return /^[A-Za-z0-9_\/.:=@%+,-]+$/.test(argument) ? argument : `'${argument.replace(/'/g, `'\\''`)}'`;
 }
 
-const plain = (value: string): string => (/^[^\s"=\\]+$/.test(value) ? value : JSON.stringify(value));
-
-export function renderFields(fields: Record<string, FieldValue>): string {
-  return Object.entries(fields)
-    .filter((entry): entry is [string, string | number] => entry[1] !== undefined && entry[1] !== "")
-    .map(([name, value]) => `${name}=${plain(String(value))}`)
-    .join(" ");
-}
-
 export interface ObserverOptions {
   instance: string;
-  // The main log. Called synchronously for every event; one call per line.
-  console: (line: string) => void;
+  // The main log, as plain lines: called synchronously for every event, one call per line.
+  console?: (line: string) => void;
+  // The main log, already built (the human presentation of `run`); takes the place of `console`.
+  mainLog?: MainLog;
   history?: HistoryStore;
   failures?: FailureStore;
   cli?: CliHints;
@@ -107,13 +107,14 @@ export interface ObserverOptions {
 export function createObserver(options: ObserverOptions): Observer {
   const redactor = options.redactor ?? createRedactor();
   const now = options.now ?? (() => new Date());
+  const mainLog = options.mainLog ?? createMainLog({ instance: options.instance, write: options.console ?? (() => {}), now });
   const detailLogs = new Map<string, string>();
   const failing = new Set<string>();
   let queue: Promise<void> = Promise.resolve();
 
-  const print = (line: string): void => {
+  const print = (show: (log: MainLog) => void): void => {
     try {
-      options.console(line);
+      show(mainLog);
     } catch {
       // The main log itself is gone: the history and `status` are what is left.
     }
@@ -123,7 +124,10 @@ export function createObserver(options: ObserverOptions): Observer {
     const message = redactor.apply(messageOf(error));
     if (!failing.has(sink)) {
       failing.add(sink);
-      print(`${now().toISOString()} [${options.instance}] ATENÇÃO falha de observabilidade sink=${plain(sink)} motivo=${plain(message)}; a execução continua e não é repetida`);
+      print((log) => log.event({
+        at: now(), level: "atenção", text: "falha de observabilidade",
+        fields: { sink, motivo: message, efeito: "a execução continua e não é repetida" },
+      }));
     }
     if (options.failures) {
       const store = options.failures;
@@ -151,7 +155,8 @@ export function createObserver(options: ObserverOptions): Observer {
 
   return {
     emit(event) {
-      const at = now().toISOString();
+      const date = now();
+      const at = date.toISOString();
       const fields: Record<string, string | number> = {};
       for (const [name, value] of Object.entries(event.fields ?? {})) {
         if (value === undefined || value === "") continue;
@@ -162,23 +167,18 @@ export function createObserver(options: ObserverOptions): Observer {
         instance: options.instance,
         kind: event.kind,
         text: redactor.apply(event.text),
+        level: event.level ?? "info",
         ...(event.job === undefined ? {} : { job: event.job }),
         ...(event.invocation === undefined ? {} : { invocation: event.invocation }),
         fields,
         lines: (event.lines ?? []).map((line) => redactor.apply(line)),
       };
-      const head = [
-        at,
-        `[${options.instance}]`,
-        record.text,
-        renderFields({
-          ...(record.job === undefined ? {} : { trabalho: record.job }),
-          ...(record.invocation === undefined ? {} : { invocação: record.invocation }),
-          ...fields,
-        }),
-      ].filter((part) => part !== "").join(" ");
-      print(head);
-      for (const line of record.lines) print(`    ${line}`);
+      print((log) => log.event({
+        at: date, level: record.level ?? "info", text: record.text, fields: record.fields, lines: record.lines,
+        ...(event.highlight === true ? { highlight: true } : {}),
+        ...(record.job === undefined ? {} : { job: record.job }),
+        ...(record.invocation === undefined ? {} : { invocation: record.invocation }),
+      }));
       const history = options.history;
       if (!history) return;
       queue = queue
