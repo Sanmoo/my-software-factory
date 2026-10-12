@@ -71,17 +71,14 @@ export async function jiraRequest<T = unknown>(
   path: string,
   body?: unknown,
 ): Promise<T | undefined> {
-  const serializedBody = body === undefined ? undefined : JSON.stringify(body);
-  if (method === "GET" && serializedBody !== undefined) {
-    throw new TypeError("Request with GET/HEAD method cannot have body.");
-  }
   const credentials = Buffer.from(`${connection.username}:${connection.apiToken}`).toString("base64");
   const headers: Record<string, string> = { accept: "application/json", authorization: `Basic ${credentials}` };
   if (body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(`${connection.baseUrl.replace(/\/+$/, "")}${path}`, {
     method,
     headers,
-    ...(method === "GET" || serializedBody === undefined ? {} : { body: serializedBody }),
+    // oxlint-disable-next-line unicorn/no-invalid-fetch-options -- fetch rejects GET bodies; preserve its established behavior
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) throw new JiraRequestError(response.status, method, path.split("?")[0]);
   // Some successful writes (204, or 201 for issueLink) answer without a body.
