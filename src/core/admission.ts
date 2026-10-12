@@ -163,7 +163,7 @@ export class Admission {
   // Waits for every dispatched runner to finish; returns the errors of runs that failed
   // at the persistence level (runner failures are job results, not errors).
   async settle(): Promise<unknown[]> {
-    while (this.runs.size > 0) await Promise.all([...this.runs]);
+    while (this.runs.size > 0) await Promise.all(this.runs);
     return [...this.runErrors];
   }
 
@@ -620,7 +620,7 @@ export class Admission {
   }
 
   private clearWaits(key: string): void {
-    for (const entry of [...this.announcedWaits]) if (entry.startsWith(`${key}|`)) this.announcedWaits.delete(entry);
+    for (const entry of this.announcedWaits) if (entry.startsWith(`${key}|`)) this.announcedWaits.delete(entry);
   }
 
   // A job that waits for a slot or another impediment keeps its original reason (decision 21).

@@ -11,7 +11,6 @@ import {
 } from "./docker-config.js";
 import {
   createJobRepo,
-  headOf,
   jobLayout,
   type JobLayout,
 } from "./docker-area.js";

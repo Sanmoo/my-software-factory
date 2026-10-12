@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { createMainLog, terminalMode } from "../src/core/main-log.js";
 
 // Escape sequences are stripped where only the text matters.
+// oxlint-disable-next-line eslint/no-control-regex -- stripping ANSI sequences requires matching ESC
 const strip = (line: string): string => line.replace(/\u001b\[[0-9;]*m/g, "");
 
 function humanLog(color = false) {

@@ -98,7 +98,7 @@ export const noopObserver: Observer = {
 
 // Shell quoting for one argument: plain words stay as they are, anything else is single-quoted.
 export function shellQuote(argument: string): string {
-  return /^[A-Za-z0-9_\/.:=@%+,-]+$/.test(argument) ? argument : `'${argument.replace(/'/g, `'\\''`)}'`;
+  return /^[A-Za-z0-9_/.:=@%+,-]+$/.test(argument) ? argument : `'${argument.replace(/'/g, `'\\''`)}'`;
 }
 
 // The commands for one job, ready to paste: the form the main log and `status` both print.

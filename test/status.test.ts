@@ -216,8 +216,8 @@ test("a project whose tracker fails shows tracker indisponível, the others and 
   const stateDir = await withJobs([waitingForHelp(jobOf("13"), "Qual?")]);
   const run = await status("trabalho", { stateDir, tracker: failingFor(await memoryTracker(), REPO) });
   assert.equal(run.exitCode, 1);
-  assert.match(run.stdout, /\[dora-metrics\][^\[]*tracker indisponível: GitHub API 503/);
-  assert.match(run.stdout, /\[revolving-monolith-backend\][^\[]*elegíveis \(1\):\n {4}VAN-1 Monolith ready/);
+  assert.match(run.stdout, /\[dora-metrics\][^[]*tracker indisponível: GitHub API 503/);
+  assert.match(run.stdout, /\[revolving-monolith-backend\][^[]*elegíveis \(1\):\n {4}VAN-1 Monolith ready/);
   assert.match(run.stdout, /Pedidos de ajuda \(1\)/);
   assert.match(run.stdout, /Admissões: ativas/);
 });

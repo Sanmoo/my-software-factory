@@ -14,7 +14,7 @@ import type {
   TrackerScope,
 } from "./port.js";
 import { PartialWriteError } from "./port.js";
-import { isObject, type Obj } from "../core/values.js";
+import { isObject } from "../core/values.js";
 
 // GitHub Issues adapter (R02, R03, R10). The adapter talks to the REST API through a
 // small injected boundary: it asks for the project account's token and then performs

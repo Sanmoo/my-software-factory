@@ -15,10 +15,12 @@ if [ -n "\${GH_TOKEN:-}" ]; then echo "GH_TOKEN: set to $GH_TOKEN" >> "$log"; el
 if [ -n "\${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN: set" >> "$log"; else echo "GITHUB_TOKEN: unset" >> "$log"; fi
 case "$1" in
   auth)
+    cat > /dev/null
     echo "fake-token-for-$4"
     ;;
   api)
     if [ "$*" = "$MSF_FAKE_GH_NOT_FOUND" ]; then
+      cat > /dev/null
       printf 'HTTP/2.0 404 Not Found\\nContent-Type: application/json\\n\\n{"message":"Not Found"}'
       echo "gh: Not Found (HTTP 404)" >&2
       exit 1

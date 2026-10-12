@@ -25,13 +25,27 @@ engenharia supervisionado. Repositório privado; spec de MVP consolidada para re
 
 ## Desenvolvimento
 
-Requer Node 22+, Git, Pi no PATH e pi-subagents instalado no perfil local.
+Requer Node 22.12+, Git, Pi no PATH e pi-subagents instalado no perfil local.
+O gateway de qualidade (`npm run verify`) é local; este repositório não configura CI
+para PRs.
 
 ```sh
 npm ci --ignore-scripts
-npm test
-npm run typecheck
+npm run verify
 ```
+
+`verify` executa `typecheck`, `lint` e `test`, nessa ordem, parando no primeiro erro.
+Oxlint analisa `.ts` em `src/` e `test/`, sem formatação ou análise de tipos; portanto,
+não detecta de forma geral promessas não tratadas, condições dependentes de tipos,
+propagação de `any` ou todo erro engolido. `no-empty` reporta blocos vazios, exceto
+os comentados; por isso, não garante tratamento adequado de todo catch. Supressões
+justificadas exigem diretiva pontual, regra e motivo:
+
+```ts
+// oxlint-disable-next-line typescript/no-explicit-any -- entrada legada validada externamente
+```
+
+O validador rejeita supressões genéricas, de arquivo/faixa, sem regra/motivo e aliases ESLint.
 
 O teste real faz chamadas ao modelo já autenticado e não roda em `npm test`:
 

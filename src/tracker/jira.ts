@@ -1,6 +1,5 @@
 import {
   PartialWriteError,
-  refKey,
   type BlockerRef,
   type ClaimOutcome,
   type Comment,
@@ -78,6 +77,7 @@ export async function jiraRequest<T = unknown>(
   const response = await fetch(`${connection.baseUrl.replace(/\/+$/, "")}${path}`, {
     method,
     headers,
+    // oxlint-disable-next-line unicorn/no-invalid-fetch-options -- fetch rejects GET bodies; preserve its established behavior
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) throw new JiraRequestError(response.status, method, path.split("?")[0]);

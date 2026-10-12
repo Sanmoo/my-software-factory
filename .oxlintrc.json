@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/1.87.0/crates/oxc_linter/oxlintrc.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "eslint/no-empty": "error"
+  },
+  "options": {
+    "typeAware": false,
+    "typeCheck": false,
+    "respectEslintDisableDirectives": false,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/.worktrees/**",
+    "**/.smoke/**",
+    "**/.pilot/**",
+    "**/docs/**",
+    "**/*.js",
+    "**/*.jsx",
+    "**/*.mjs",
+    "**/*.cjs",
+    "**/*.tsx",
+    "**/*.mts",
+    "**/*.cts"
+  ]
+}

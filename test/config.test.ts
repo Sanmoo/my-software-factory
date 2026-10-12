@@ -61,7 +61,8 @@ test("the fixture carries all 16 targets of spec section 7: 5 personal and 11 wo
   assert.deepEqual(sorted(targets), sorted(SECTION_7));
 });
 
-type Raw = Record<string, any>; // mutable JSON fixture copy for error-case tests
+// oxlint-disable-next-line typescript/no-explicit-any -- error-case tests deliberately mutate arbitrary JSON fixture shapes
+type Raw = Record<string, any>;
 const readRaw = async (): Promise<Raw> => JSON.parse(await readFile(fixture("instances.json"), "utf8"));
 const parse = async (mutate: (raw: Raw) => void) => {
   const raw = await readRaw();
