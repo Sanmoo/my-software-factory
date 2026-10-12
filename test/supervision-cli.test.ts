@@ -7,6 +7,7 @@ import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
 import { runLogs } from "../src/cli/logs.js";
+import { loadInstance } from "../src/cli/instance.js";
 import { runStatus } from "../src/cli/status.js";
 import { runSupervision } from "../src/cli/supervision.js";
 import type { PrPort } from "../src/pr/port.js";
@@ -133,7 +134,11 @@ async function openAdmission(fixtures: Fixtures, runner: FakeRunner | { run: (co
 }
 
 const common = (f: Fixtures) => ["--config", f.configPath, "--instance", "trabalho", "--state-dir", f.stateDir];
-const statusArgs = (f: Fixtures) => [...common(f).slice(0, 4), "--fixture", f.fixturePath, "--state-dir", f.stateDir];
+const statusOf = async (f: Fixtures) => {
+  const loaded = await loadInstance(f.configPath, "trabalho");
+  assert.ok(loaded.ok);
+  return runStatus({ instance: loaded.instance, stateDir: f.stateDir, env: {}, tracker: f.tracker });
+};
 const logsArgs = (f: Fixtures) => [...common(f), JOB];
 
 test("reply records a directed answer without changing the job until the instance applies it", async () => {
@@ -203,18 +208,18 @@ test("pause and unpause are instance-wide, and status shows the admission state 
   const f = await prepare();
   assert.equal((await runSupervision(["pause", ...common(f)])).exitCode, 0);
 
-  const paused = await runStatus(statusArgs(f));
+  const paused = await statusOf(f);
   assert.match(paused.stdout, /Admissões: pausadas/);
   assert.match(paused.stdout, /Comandos pendentes: 1/);
 
   await openAdmission(f, new FakeRunner(() => finished(HELP))).then((admission) => admission.poll());
-  const afterPoll = await runStatus(statusArgs(f));
+  const afterPoll = await statusOf(f);
   assert.match(afterPoll.stdout, /Admissões: pausadas/);
   assert.match(afterPoll.stdout, /Comandos pendentes: 0/);
 
   assert.equal((await runSupervision(["unpause", ...common(f)])).exitCode, 0);
   await openAdmission(f, new FakeRunner(() => finished(HELP))).then((admission) => admission.poll());
-  assert.match((await runStatus(statusArgs(f))).stdout, /Admissões: ativas/);
+  assert.match((await statusOf(f)).stdout, /Admissões: ativas/);
 });
 
 test("a job that does not exist is refused and nothing is queued", async () => {
@@ -272,9 +277,9 @@ test("a command file written by an operator cannot hide the status of the other 
   const f = await prepare();
   assert.equal((await runSupervision(["pause", ...common(f)])).exitCode, 0);
   await writeFile(join(f.stateDir, "commands", "broken.json"), "{").catch(() => undefined);
-  const status = await runStatus(statusArgs(f));
+  const status = await statusOf(f);
   assert.equal(status.exitCode, 0, status.stderr);
-  assert.match(status.stdout, /memory:acme\/app#1 aguardando ajuda/);
+  assert.match(status.stdout, /Pedidos de ajuda \(1\):\n {2}#1 — /);
 });
 
 test("logs shows the timeline of a reply from the queue to the outcome, with ids and without promising delivery", async () => {
@@ -305,7 +310,7 @@ test("logs shows the timeline of a reply from the queue to the outcome, with ids
 test("status shows a failing observability, and a history that cannot be written does not lose the queued command", async () => {
   const f = await prepare();
   await createFileFailureStore(f.stateDir).record({ at: "2026-10-11T12:00:00.000Z", sink: "log detalhado", message: "EACCES" });
-  const status = await runStatus(statusArgs(f));
+  const status = await statusOf(f);
   assert.match(status.stdout, /Observabilidade: falha em log detalhado desde 2026-10-11T12:00:00.000Z: EACCES/);
 
   const blocked = await fixturesIn(await mkdtemp(join(tmpdir(), "msf-supervision-cli-")));

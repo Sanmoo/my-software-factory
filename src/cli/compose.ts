@@ -3,6 +3,7 @@ import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.j
 import type { AdmissionDeps } from "../core/admission.js";
 import { createGithubPrPort } from "../pr/github.js";
 import { noopObserver, type Observer } from "../core/observability.js";
+import { messageOf } from "../core/values.js";
 import { createDockerRunner, type SandboxBoundary } from "../runtime/docker-runner.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
@@ -10,6 +11,7 @@ import { createFileInstanceControl } from "../state/instance-control.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { createGhCliBoundary, GitHubTracker, type GitHubBoundary } from "../tracker/github.js";
 import { JIRA_ENV_VARS, JiraConfigError, JiraTracker, jiraConnectionFromEnv, type JiraConnection, type JiraTrackerSettings } from "../tracker/jira.js";
+import type { TrackerPort } from "../tracker/port.js";
 import { routeTrackers, type TrackerRoute } from "../tracker/routing.js";
 import type { LocalSettings } from "./local-settings.js";
 
@@ -81,13 +83,51 @@ function jiraRoutes(instance: InstanceConfig, projects: ProjectConfig[], env: No
   }));
 }
 
+// Credentials the process holds, hidden from every log and history before they are written.
+const SECRET_ENV_VARS = ["JIRA_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"] as const;
+export function registerSecrets(register: (secret: string | undefined) => void, env: NodeJS.ProcessEnv): void {
+  for (const name of SECRET_ENV_VARS) register(env[name]);
+}
+
+function githubRoutes(projects: ProjectConfig[], github: GitHubBoundary): TrackerRoute[] {
+  return projects.flatMap((project) => project.adapter === "github"
+    ? [{
+      tracker: "github" as const,
+      project: project.repository,
+      port: new GitHubTracker({ account: project.githubAccount, claimedLabel: project.labels.claimed, boundary: github }),
+    }]
+    : []);
+}
+
+// The trackers of an instance and nothing else: no checkout, no sandbox. It is what `status` needs;
+// `composeInstance` builds on it. Jira trouble (missing credentials, projects that disagree) does not
+// take the GitHub projects down: it is reported as the reason the Jira projects are unavailable.
+export interface ComposedTrackers {
+  tracker: TrackerPort;
+  // Why the tracker of a project cannot be reached, when it is known before any call.
+  unavailable(project: ProjectConfig): string | undefined;
+}
+
+export function composeTrackers(options: { instance: InstanceConfig; env?: NodeJS.ProcessEnv; github?: GitHubBoundary }): ComposedTrackers {
+  const env = options.env ?? process.env;
+  const projects = enabled(options.instance);
+  const routes = githubRoutes(projects, options.github ?? createGhCliBoundary());
+  try {
+    return { tracker: routeTrackers([...routes, ...jiraRoutes(options.instance, projects, env)]), unavailable: () => undefined };
+  } catch (error) {
+    const reason = messageOf(error);
+    return {
+      tracker: routeTrackers(routes),
+      unavailable: (project) => (project.adapter === "jira" ? reason : undefined),
+    };
+  }
+}
+
 export function composeInstance(options: ComposeOptions): AdmissionDeps {
   const { config, instance, local } = options;
   const observer = options.observer ?? noopObserver;
-  // Credentials the process holds are hidden from every log and history before they are written.
-  for (const name of ["JIRA_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) observer.registerSecret((options.env ?? process.env)[name]);
+  registerSecrets((secret) => observer.registerSecret(secret), options.env ?? process.env);
   const projects = enabled(instance);
-  const github = options.github ?? createGhCliBoundary();
 
   for (const project of projects) {
     if (!local.checkouts[project.repository]) {
@@ -95,14 +135,11 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     }
   }
 
-  const githubRoutes: TrackerRoute[] = projects.flatMap((project) => project.adapter === "github"
-    ? [{
-      tracker: "github" as const,
-      project: project.repository,
-      port: new GitHubTracker({ account: project.githubAccount, claimedLabel: project.labels.claimed, boundary: github }),
-    }]
-    : []);
-  const tracker = routeTrackers([...githubRoutes, ...jiraRoutes(instance, projects, options.env ?? process.env)]);
+  // The run needs every tracker: a Jira trouble stops the composition, as before.
+  const composed = composeTrackers({ instance, ...(options.env === undefined ? {} : { env: options.env }), ...(options.github === undefined ? {} : { github: options.github }) });
+  const trouble = projects.flatMap((project) => composed.unavailable(project) ?? []);
+  if (trouble.length > 0) throw new Error(trouble[0]);
+  const tracker = composed.tracker;
 
   const runner = createDockerRunner({
     instance,

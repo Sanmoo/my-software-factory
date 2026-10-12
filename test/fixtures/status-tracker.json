@@ -191,7 +191,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": true,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "VAN",
@@ -208,7 +208,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": true,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "VAN",
@@ -227,7 +227,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": true,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "VAN",
@@ -245,7 +245,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": false,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "VAN",
@@ -281,7 +281,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": true,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "VAN",
@@ -298,7 +298,7 @@
       "priority": 3,
       "blockers": [],
       "openSprint": true,
-      "assignee": "samuel.santos"
+      "assignee": "712020:0000-fixture-operator"
     },
     {
       "project": "Sanmoo/my-tasks",

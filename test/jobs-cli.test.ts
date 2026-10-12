@@ -12,6 +12,7 @@ import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker } from "../src/tracker/memory.js";
+import { loadInstance } from "../src/cli/instance.js";
 import { runStatus } from "../src/cli/status.js";
 import { runLogs } from "../src/cli/logs.js";
 
@@ -105,38 +106,35 @@ async function prepare(extraJobFile?: { name: string; content: string }): Promis
   return { dir, configPath, fixturePath, stateDir };
 }
 
-const statusArgs = (f: Fixtures) => ["--config", f.configPath, "--instance", "trabalho", "--fixture", f.fixturePath, "--state-dir", f.stateDir];
+async function status(f: Fixtures) {
+  const loaded = await loadInstance(f.configPath, "trabalho");
+  assert.ok(loaded.ok);
+  return runStatus({ instance: loaded.instance, stateDir: f.stateDir, env: {}, tracker: loadMemoryTracker(TRACKER) });
+}
 const logsArgs = (f: Fixtures, job: string) => ["--config", f.configPath, "--instance", "trabalho", "--state-dir", f.stateDir, job];
 
 test("status shows a job waiting for help with its question, without blocking the other jobs", async () => {
   const f = await prepare();
-  const run = await runStatus(statusArgs(f));
+  const run = await status(f);
   assert.equal(run.exitCode, 0, run.stderr);
-  assert.match(run.stdout, /memory:acme\/help#1 aguardando ajuda — Qual o contrato da API\?/);
-  assert.match(run.stdout, /memory:acme\/invalid#2 intervenção necessária — resultado inválido/);
-  assert.match(run.stdout, /memory:acme\/limit#3 intervenção necessária — limite de iterações \(3\) atingido/);
+  assert.match(run.stdout, /Pedidos de ajuda \(1\):\n {2}#1 — Qual o contrato da API\?/);
+  assert.match(run.stdout, /#2 intervenção necessária — resultado inválido/);
+  assert.match(run.stdout, /#3 intervenção necessária — limite de iterações \(3\) atingido/);
 });
 
-test("status does not offer a job that is already tracked as a candidate", async () => {
+test("status lists a tracked issue neither as eligible nor as rejected", async () => {
   const f = await prepare();
-  const run = await runStatus(statusArgs(f));
-  assert.match(run.stdout, /candidatas \(0\):/);
-  assert.match(run.stdout, /acme\/help#1 Needs a seam — já acompanhada pelo script/);
+  const run = await status(f);
+  assert.match(run.stdout, /elegíveis \(0\):\n {2}rejeitadas \(0\):/);
+  assert.doesNotMatch(run.stdout, /Needs a seam/);
 });
 
 test("status reports an unreadable job file and still shows the other jobs", async () => {
   const f = await prepare({ name: "broken.json", content: "{" });
-  const run = await runStatus(statusArgs(f));
+  const run = await status(f);
   assert.equal(run.exitCode, 0, run.stderr);
   assert.match(run.stdout, /Arquivos ilegíveis \(1\): broken\.json/);
-  assert.match(run.stdout, /memory:acme\/help#1 aguardando ajuda/);
-});
-
-test("status without --state-dir behaves as before and shows no jobs", async () => {
-  const f = await prepare();
-  const run = await runStatus(["--config", f.configPath, "--instance", "trabalho", "--fixture", f.fixturePath]);
-  assert.equal(run.exitCode, 0, run.stderr);
-  assert.doesNotMatch(run.stdout, /Trabalhos/);
+  assert.match(run.stdout, /#1 — Qual o contrato da API\?/);
 });
 
 test("logs shows the help question with the job's log lines", async () => {

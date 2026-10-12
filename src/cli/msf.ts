@@ -5,9 +5,11 @@ import { resolveJobRef } from "../core/job-ref.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import type { GitHubBoundary } from "../tracker/github.js";
+import type { TrackerPort } from "../tracker/port.js";
 import { loadInstance, type CliRun } from "./instance.js";
 import { showLogs } from "./logs.js";
 import { runInstance } from "./run.js";
+import { runStatus } from "./status.js";
 import { applySupervision } from "./supervision.js";
 
 // The operator's single entry point (issue #22):
@@ -18,7 +20,7 @@ import { applySupervision } from "./supervision.js";
 // reference and the help, and hands over to the commands that already exist. The main log prints
 // exactly this form, so what the operator copies from it works as printed.
 
-export const COMMANDS = ["run", "logs", "reply", "resume", "release", "pause", "unpause"] as const;
+export const COMMANDS = ["run", "status", "logs", "reply", "resume", "release", "pause", "unpause"] as const;
 type Command = (typeof COMMANDS)[number];
 
 // The default base directory, relative to the repository root.
@@ -42,6 +44,16 @@ const SPECS: Record<Command, CommandSpec> = {
     notes: [
       "--check  confere a prontidão sem escrever nada (nenhum claim, comentário ou outra escrita); sai com erro se algo falhar",
       "--once   um único ciclo de polling; espera os trabalhos despachados terminarem e sai",
+      "Instâncias com projeto Jira exigem JIRA_URL, JIRA_USERNAME e JIRA_API_TOKEN no ambiente.",
+    ],
+  },
+  status: {
+    usage: "./msf [--home DIR] <instância> status",
+    summary: "mostra o estado gravado da instância (vagas, pedidos de ajuda, trabalhos) e as issues elegíveis e rejeitadas de cada projeto, lidas dos trackers; não escreve nada",
+    needsJob: false,
+    notes: [
+      "O estado local aparece sempre; um projeto cujo tracker não respondeu mostra `tracker indisponível` e a saída é 1.",
+      "O detalhe de um trabalho está em `./msf <instância> logs <trabalho>`.",
       "Instâncias com projeto Jira exigem JIRA_URL, JIRA_USERNAME e JIRA_API_TOKEN no ambiente.",
     ],
   },
@@ -179,6 +191,8 @@ export interface MsfDeps {
   // Boundaries are injectable for tests; the defaults are the real ones.
   sandbox?: SandboxBoundary;
   github?: GitHubBoundary;
+  // Replaces the trackers `status` reads (tests inject one).
+  tracker?: TrackerPort;
 }
 
 const exists = (path: string): Promise<boolean> => access(path).then(() => true, () => false);
@@ -199,6 +213,17 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
   if (!loaded.ok) return loaded.run;
 
   if (request.command === "run") return runCommand(request, { deps, homeDir, defaultHome, configPath, stateDir });
+
+  if (request.command === "status") {
+    return runStatus({
+      instance: loaded.instance,
+      stateDir,
+      ...(homeDir === defaultHome ? {} : { home: homeDir }),
+      env: deps.env,
+      ...(deps.github === undefined ? {} : { github: deps.github }),
+      ...(deps.tracker === undefined ? {} : { tracker: deps.tracker }),
+    });
+  }
 
   let job: string | undefined;
   if (request.job !== undefined) {

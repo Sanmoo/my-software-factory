@@ -147,7 +147,7 @@ a solução final sem atender legibilidade, sigilo e falhas.
   no log principal do `run` e é anexado ao histórico local `<state-dir>/history/<trabalho>.jsonl`
   (`src/state/history.ts`), com instância, trabalho, invocação, motivo e id do comando.
   `./msf <instância> logs` lê a linha do tempo desse histórico; perguntas, contexto e respostas ficam nele.
-  Falhas de gravação aparecem no principal (uma vez por destino) e em `npm run status`
+  Falhas de gravação aparecem no principal (uma vez por destino) e em `./msf <instância> status`
   (`<state-dir>/observability/failures.json`); a execução continua e nada é repetido.
 - **Motivos, espera, merge e escritas na issue** — `src/core/admission.ts` + `src/core/ops-events.ts`.
   Os gatilhos ficam no job (`Job.triggers`) até a invocação iniciar; `trabalho admitido` é só a

@@ -70,9 +70,11 @@ Uma única forma de comando, versionada na raiz do repositório:
 ./msf [--home DIR] <instância> <comando> [trabalho] [opções]
 ```
 
-Comandos: `run` (`--check`, `--once`), `logs`, `reply --message TEXTO`, `resume`, `release`,
+Comandos: `run` (`--check`, `--once`), `status`, `logs`, `reply --message TEXTO`, `resume`, `release`,
 `pause` e `unpause`. `./msf --help` lista os comandos e `./msf <instância> <comando> --help` mostra o uso
 de cada um.
+`status` lê os trackers reais e o estado gravado da instância e não escreve nada: se um tracker não responde, o
+estado local continua na saída e o código de saída é 1.
 
 - **Diretório base.** O padrão é `.msf/` na raiz do repositório (git-ignored) e traz `config.json`,
   `local.json` e `state/<instância>/`. `--home DIR` aponta para outro diretório (um caminho relativo parte

@@ -101,6 +101,17 @@ export function shellQuote(argument: string): string {
   return /^[A-Za-z0-9_\/.:=@%+,-]+$/.test(argument) ? argument : `'${argument.replace(/'/g, `'\\''`)}'`;
 }
 
+// The commands for one job, ready to paste: the form the main log and `status` both print.
+export function jobCommands(cli: CliHints, job: string, jobs: readonly string[] = []): JobCommands {
+  const base = `./msf${cli.home === undefined ? "" : ` --home ${shellQuote(cli.home)}`} ${shellQuote(cli.instance)}`;
+  const ref = shellQuote(refForCommand(job, jobs));
+  return {
+    reply: `${base} reply ${ref} --message '<resposta>'`,
+    resume: `${base} resume ${ref}`,
+    logs: `${base} logs ${ref}`,
+  };
+}
+
 export interface ObserverOptions {
   instance: string;
   // The main log, as plain lines: called synchronously for every event, one call per line.
@@ -154,15 +165,8 @@ export function createObserver(options: ObserverOptions): Observer {
   const commands: Observer["commands"] = (job, jobs = []) => {
     const cli = options.cli;
     if (!cli) return undefined;
-    const base = `./msf${cli.home === undefined ? "" : ` --home ${shellQuote(cli.home)}`} ${shellQuote(cli.instance)}`;
-    const ref = shellQuote(refForCommand(job, jobs));
     const detail = detailLogs.get(job);
-    return {
-      reply: `${base} reply ${ref} --message '<resposta>'`,
-      resume: `${base} resume ${ref}`,
-      logs: `${base} logs ${ref}`,
-      ...(detail ? { detail: `tail -f ${shellQuote(detail)}` } : {}),
-    };
+    return { ...jobCommands(cli, job, jobs), ...(detail ? { detail: `tail -f ${shellQuote(detail)}` } : {}) };
   };
 
   return {

@@ -6,7 +6,7 @@ import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type HeldFeedback, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
 import { directedReply, judgeConflict, judgePrFeedback, needsTriage, planContinuation, receiveFeedback } from "./feedback.js";
-import type { JobStore } from "./job-store.js";
+import { unreadableKeys, type JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
 import { normalizePriority } from "./priority.js";
@@ -103,16 +103,6 @@ const describeMergeable = (mergeable: Known<Mergeability>): string => {
 const describeStatus = (status: PrStatus): string =>
   `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}; ${describeMergeable(status.mergeable)}`;
 
-// Job files are named after their key (see file-job-store), so an unreadable file still
-// tells which issue it belongs to.
-function keyFromFileName(name: string): string[] {
-  try {
-    return [decodeURIComponent(name.replace(/\.json$/, ""))];
-  } catch {
-    return [];
-  }
-}
-
 export class Admission {
   readonly unreadable: readonly string[];
   private readonly jobs = new Map<string, Job>();
@@ -129,7 +119,7 @@ export class Admission {
     this.obs = deps.observer ?? noopObserver;
     for (const job of loaded) this.jobs.set(job.key, job);
     this.unreadable = unreadable;
-    this.unreadableKeys = new Set(unreadable.flatMap(keyFromFileName));
+    this.unreadableKeys = new Set(unreadableKeys(unreadable));
   }
 
   // Opening recovers from a crash: any job that held a slot is interrupted and is not
