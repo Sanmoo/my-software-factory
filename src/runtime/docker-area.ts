@@ -10,6 +10,8 @@ const run = promisify(execFile);
 export interface JobLayout {
   areaDir: string;
   repoDir: string;
+  // The runtime profile snapshot of the job's invocations: next to the repository, never inside it.
+  snapshotDir: string;
   sessionsDir: string;
   recordPath: string;
   auditPath: string;
@@ -21,6 +23,7 @@ export function jobLayout(stateDir: string, key: string): JobLayout {
   return {
     areaDir,
     repoDir: join(areaDir, "repo"),
+    snapshotDir: join(areaDir, "profile"),
     sessionsDir: join(stateDir, "sessions", name),
     recordPath: join(stateDir, "runs", `${name}.json`),
     auditPath: join(stateDir, "runs", `${name}.audit.jsonl`),

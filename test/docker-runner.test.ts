@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { git, headOf, jobLayout } from "../src/runtime/docker-area.js";
 import { jobBranch } from "../src/core/job.js";
 import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
+import { DECLARATION, populateProfile, runtimeOptions } from "./support/runtime-profile.js";
 
 const GPT = "github-copilot/gpt-6-luna";
 const TOKEN = "ghp_fixture_token_value_0123";
@@ -40,6 +41,7 @@ async function fixture() {
   await git(source, "commit", "-q", "-m", "fixture");
   const stateDir = await mkdtemp(join(tmpdir(), "msf-state-"));
   const agentDir = await mkdtemp(join(tmpdir(), "msf-agent-"));
+  await populateProfile(agentDir);
   return { source, stateDir, agentDir };
 }
 
@@ -74,7 +76,7 @@ function runnerFor(f: { source: string; stateDir: string; agentDir: string }, bo
   return createDockerRunner({
     instance: instance(projects),
     credentials,
-    profiles: { PI_AUTH: f.agentDir, personal: f.agentDir },
+    profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, ...runtimeOptions("personal"),
     stateDir: f.stateDir,
     image: "msf-docker-runner:test",
     repositorySource: () => f.source,
@@ -97,7 +99,7 @@ test("the runner refuses to be built when a role model or the model auth is not 
   );
   assert.throws(
     () => createDockerRunner({
-      instance: instance(), credentials, profiles: {}, stateDir: f.stateDir, image: "x",
+      instance: instance(), credentials, profiles: {}, ...runtimeOptions("personal"), stateDir: f.stateDir, image: "x",
       repositorySource: () => f.source, boundary,
     }),
     /PI_AUTH.*sem fallback/,
@@ -327,4 +329,143 @@ test("the triage is unavailable when the authorized profile has no gh-address-co
   await mkdir(join(f.agentDir, "skills", "gh-address-comments"), { recursive: true });
   await writeFile(join(f.agentDir, "skills", "gh-address-comments", "SKILL.md"), "x\n");
   assert.equal(await runner.triageUnavailable?.(job), undefined);
+});
+
+
+// ---- ADR 0002: the runtime profile is resolved on the host and the container gets only the snapshot ----
+
+const doneBoundary = () => fakeBoundary(async () => ({ sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) }));
+
+test("the container receives only the profile snapshot: real files, packages filtered, no profile directory", async () => {
+  const f = await fixture();
+  // The operator's settings.json is a link into a directory that is an allowed root, as in the dotfiles setup.
+  const dotfiles = await mkdtemp(join(tmpdir(), "msf-dotfiles-"));
+  await rm(join(f.agentDir, "settings.json"));
+  await writeFile(join(dotfiles, "settings.json"), JSON.stringify({ packages: ["npm:pi-subagents", "npm:pi-lens"] }));
+  await symlink(join(dotfiles, "settings.json"), join(f.agentDir, "settings.json"));
+  const { boundary, runs } = doneBoundary();
+  const runner = createDockerRunner({
+    instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir },
+    runtimeProfiles: { personal: DECLARATION }, allowedRoots: { personal: [dotfiles] },
+    stateDir: f.stateDir, image: "x", repositorySource: () => f.source, boundary,
+  });
+  await runner.run(newContext());
+
+  const run = runs[0]!;
+  assert.equal("profileDir" in run, false, "the profile directory is not handed to the boundary");
+  const layout = jobLayout(f.stateDir, key);
+  assert.equal(run.snapshotDir, layout.snapshotDir);
+  assert.ok(!run.snapshotDir.startsWith(layout.repoDir), "the snapshot is outside the repository the agent works in");
+  assert.deepEqual(run.requiredPackages, ["npm:pi-subagents"]);
+  assert.deepEqual((await readdir(run.snapshotDir)).sort(), ["auth.json", "settings.json"]);
+  for (const name of await readdir(run.snapshotDir)) {
+    assert.equal((await lstat(join(run.snapshotDir, name))).isSymbolicLink(), false, `${name} is a real file`);
+  }
+  assert.deepEqual(JSON.parse(await readFile(join(run.snapshotDir, "settings.json"), "utf8")).packages, ["npm:pi-subagents"]);
+});
+
+test("the snapshot is recreated on every invocation: nothing of an earlier one stays", async () => {
+  const f = await fixture();
+  const layout = jobLayout(f.stateDir, key);
+  const { boundary, runs } = doneBoundary();
+  const runner = runnerFor(f, boundary);
+  await runner.run(newContext());
+  await writeFile(join(layout.snapshotDir, "stale.txt"), "left over\n");
+  await runner.run(newContext({
+    kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["ok"] },
+  }));
+  assert.equal(runs.length, 2);
+  assert.deepEqual((await readdir(layout.snapshotDir)).sort(), ["auth.json", "settings.json"]);
+});
+
+test("a required item that does not resolve interrupts with the item, the link and the destination: no Docker, no area", async () => {
+  const f = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "msf-work-"));
+  await writeFile(join(outside, "auth.json"), "{}");
+  await rm(join(f.agentDir, "auth.json"));
+  await symlink(join(outside, "auth.json"), join(f.agentDir, "auth.json"));
+  let preflights = 0;
+  const { boundary, runs } = doneBoundary();
+  const counted: SandboxBoundary = { ...boundary, preflight: async (input) => { preflights += 1; return boundary.preflight(input); } };
+  const output = await runnerFor(f, counted).run(newContext());
+  const reason = interruptedReason(output) ?? "";
+  assert.match(reason, /auth\.json/);
+  assert.match(reason, new RegExp(`${f.agentDir}/auth\\.json ->`), "names the link");
+  assert.match(reason, new RegExp(outside), "names the destination");
+  assert.match(reason, /fora das raízes permitidas/);
+  assert.equal(runs.length, 0);
+  assert.equal(preflights, 0, "the host check comes before Docker");
+  await assert.rejects(() => access(jobLayout(f.stateDir, key).areaDir), "no host job area was created");
+});
+
+test("a required package missing from the profile's settings.json interrupts before anything starts", async () => {
+  const f = await fixture();
+  await writeFile(join(f.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:other"] }));
+  const { boundary, runs } = doneBoundary();
+  const output = await runnerFor(f, boundary).run(newContext());
+  assert.match(interruptedReason(output) ?? "", /npm:pi-subagents/);
+  assert.equal(runs.length, 0);
+});
+
+test("a failed check inside the container interrupts the invocation with its reason", async () => {
+  const f = await fixture();
+  const { boundary, runs } = fakeBoundary(async () => {
+    throw new Error("Hook 'sh /msf-runtime/check-profile.sh npm:pi-subagents' failed: profile-check: required package not installed: npm:pi-subagents");
+  });
+  const output = await runnerFor(f, boundary).run(newContext());
+  assert.equal(runs.length, 1);
+  assert.match(interruptedReason(output) ?? "", /required package not installed: npm:pi-subagents/);
+});
+
+test("the detailed log of the invocation lists what entered the snapshot and what stayed out, with the reason", async () => {
+  const f = await fixture();
+  await mkdir(join(f.agentDir, "skills"), { recursive: true });
+  await symlink(join(f.agentDir, "skills", "nowhere"), join(f.agentDir, "skills", "broken"));
+  const { boundary } = doneBoundary();
+  await runnerFor(f, boundary).run(newContext());
+  const logs = join(jobLayout(f.stateDir, key).areaDir, "logs");
+  const name = (await readdir(logs)).find((entry) => entry.endsWith(".log") && !entry.endsWith(".runtime.log"))!;
+  const detail = await readFile(join(logs, name), "utf8");
+  assert.match(detail, /perfil de runtime/);
+  assert.match(detail, /incluído: settings\.json/);
+  assert.match(detail, /incluído: auth\.json/);
+  assert.match(detail, /fora: skills\/broken — link quebrado/);
+  assert.match(detail, /pacote excluído do settings\.json do container: npm:pi-lens/);
+});
+
+test("the admission asks the runner for the blocker of a job's runtime profile", async () => {
+  const f = await fixture();
+  const { boundary } = doneBoundary();
+  const runner = runnerFor(f, boundary);
+  const job = { ref, repository: "acme/app" };
+  assert.equal(await runner.runtimeBlocker?.(job), undefined);
+  await rm(join(f.agentDir, "auth.json"));
+  assert.match(await runner.runtimeBlocker?.(job) ?? "", /auth\.json/);
+  assert.match(await runner.runtimeBlocker?.({ ref, repository: "acme/unknown" }) ?? "", /projeto não configurado/);
+});
+
+test("the triage skill is judged by the same resolution: a link out of the roots is not available", async () => {
+  const f = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "msf-work-"));
+  await mkdir(join(outside, "gh"), { recursive: true });
+  await writeFile(join(outside, "gh", "SKILL.md"), "x\n");
+  await mkdir(join(f.agentDir, "skills"), { recursive: true });
+  await symlink(join(outside, "gh"), join(f.agentDir, "skills", "gh-address-comments"));
+  const { boundary } = doneBoundary();
+  const runner = runnerFor(f, boundary);
+  assert.match(await runner.triageUnavailable?.({ ref, repository: "acme/app" }) ?? "", /gh-address-comments/);
+});
+
+test("a project whose runtime profile has no declaration in both files is a configuration error when the runner is built", async () => {
+  const f = await fixture();
+  const { boundary } = doneBoundary();
+  const base = { instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir, image: "x", repositorySource: () => f.source, boundary };
+  assert.throws(
+    () => createDockerRunner({ ...base, runtimeProfiles: {}, allowedRoots: { personal: [] } }),
+    (error: unknown) => error instanceof RunnerConfigError && /personal.*config\.json.*sem fallback/.test(error.message),
+  );
+  assert.throws(
+    () => createDockerRunner({ ...base, runtimeProfiles: { personal: DECLARATION }, allowedRoots: {} }),
+    (error: unknown) => error instanceof RunnerConfigError && /personal.*local\.json.*sem fallback/.test(error.message),
+  );
 });

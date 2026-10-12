@@ -145,6 +145,8 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     instance,
     credentials: config.credentials,
     profiles: local.profiles,
+    runtimeProfiles: config.runtimeProfiles,
+    allowedRoots: local.allowedRoots,
     stateDir: options.stateDir,
     image: local.image,
     repositorySource: (project) => local.checkouts[project.repository]!,

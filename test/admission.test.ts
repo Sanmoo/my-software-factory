@@ -17,6 +17,7 @@ import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { ClaimOutcome, TrackerPort } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
+import { createObserver, type Observer } from "../src/core/observability.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 const NEEDS_HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
@@ -107,6 +108,7 @@ interface OpenOptions {
   maxIterations?: number;
   tracker?: (base: MemoryTracker) => TrackerPort;
   prs?: PrPort;
+  observer?: Observer;
 }
 
 // Without PR state of its own a test sees no PR: a ready result is then refused.
@@ -121,6 +123,7 @@ const open = (options: OpenOptions) => Admission.open({
   commands: createFileCommandQueue(options.stateDir),
   control: createFileInstanceControl(options.stateDir),
   prs: options.prs ?? NO_PRS,
+  ...(options.observer === undefined ? {} : { observer: options.observer }),
 });
 
 function gate() {
@@ -680,4 +683,73 @@ test("an issue whose job file is unreadable is not admitted again, even though t
   assert.deepEqual(report.admitted, []);
   assert.match(report.skipped[0]?.reason ?? "", /ilegível/);
   assert.deepEqual(runner.calls, []);
+});
+
+// ---- ADR 0002: a required item of the runtime profile blocks the admission -----------------------
+
+const BLOCKER = "obrigatório skills/gh-address-comments/SKILL.md: link quebrado: /p/skills/gh-address-comments -> /d/x";
+
+test("a required runtime item missing leaves the issue unclaimed, with the reason in the main log", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const lines: string[] = [];
+  const runner = new FakeRunner(() => finished(NEEDS_HELP));
+  runner.runtimeBlockerReason = BLOCKER;
+  let claimCalls = 0;
+  const admission = await open({
+    memory, stateDir: await dir(), runner, repos: ["acme/app"],
+    observer: createObserver({ instance: "trabalho", console: (line) => lines.push(line) }),
+    tracker: (base) => trackerWith(base, { claim: (ref) => { claimCalls += 1; return base.claim(ref); } }),
+  });
+
+  const report = await admission.poll();
+  await admission.settle();
+
+  assert.deepEqual(report.admitted, []);
+  assert.equal(claimCalls, 0, "the issue is not claimed");
+  assert.deepEqual(runner.calls, [], "no invocation");
+  assert.deepEqual(admission.allJobs(), [], "no job, no slot held");
+  assert.deepEqual((await memory.readIssue(refOf("acme/app", "1"))).claimed, { known: true, value: false });
+  assert.match(report.skipped[0]?.reason ?? "", /perfil de runtime/);
+  assert.match(report.skipped[0]?.reason ?? "", /gh-address-comments/);
+  const logged = lines.filter((line) => /perfil de runtime/.test(line));
+  assert.equal(logged.length, 1, lines.join("\n"));
+  assert.match(logged[0]!, /skills\/gh-address-comments\/SKILL\.md/);
+
+  // The same impediment is announced once, not on every poll.
+  await admission.poll();
+  assert.equal(lines.filter((line) => /perfil de runtime/.test(line)).length, 1);
+});
+
+test("the issue is admitted on a later poll once the required item is back", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(() => finished(NEEDS_HELP));
+  runner.runtimeBlockerReason = BLOCKER;
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  assert.deepEqual((await admission.poll()).admitted, []);
+  runner.runtimeBlockerReason = undefined;
+  assert.deepEqual((await admission.poll()).admitted, [keyOf("acme/app", "1")]);
+  await admission.settle();
+  assert.deepEqual(runKinds(runner), ["1:new:1/5"]);
+});
+
+test("a continuation whose runtime profile lost a required item asks for help instead of invoking", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(() => withWorkspace(finished(NEEDS_HELP), WORKSPACE));
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  await admission.poll();
+  await admission.settle();
+  assert.equal(runner.calls.length, 1);
+
+  runner.runtimeBlockerReason = BLOCKER;
+  assert.equal((await admission.requestContinuation(keyOf("acme/app", "1"), "resume")).status, "queued");
+  const report = await admission.poll();
+  await admission.settle();
+
+  assert.equal(runner.calls.length, 1, "no new invocation, so no container");
+  assert.deepEqual(report.admitted, []);
+  const job = admission.job(keyOf("acme/app", "1"));
+  assert.equal(job?.state, "waiting-for-help");
+  assert.match(job?.question ?? "", /perfil de runtime/);
+  assert.match(job?.question ?? "", /gh-address-comments/);
+  assert.equal(job?.pending, undefined, "the request is answered, not left pending");
 });

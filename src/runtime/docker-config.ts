@@ -1,6 +1,6 @@
-import { join } from "node:path";
-import { MODEL_ROLES, type CredentialRef, type InstanceConfig, type ModelRole, type ProjectConfig } from "../config/types.js";
+import { MODEL_ROLES, type CredentialRef, type InstanceConfig, type ModelRole, type ProjectConfig, type RuntimeProfileConfig } from "../config/types.js";
 import { refKey, type IssueRef } from "../tracker/port.js";
+import type { ProfileSource } from "./profile-snapshot.js";
 
 // Configuration the Docker runner needs before any container starts. Every problem is a
 // visible RunnerConfigError: nothing falls back to another model, auth or profile (CA18).
@@ -64,11 +64,39 @@ export function resolveRuntimeProfile(
   return dir;
 }
 
+// The runtime profile of a project is declared in two places (ADR 0002): what it must carry in config.json,
+// where it lives and where its links may lead in local.json. Missing either is a configuration error.
+export interface RuntimeProfileDeclarations {
+  runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
+  allowedRoots: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface RuntimeProfile {
+  source: ProfileSource;
+  declaration: RuntimeProfileConfig;
+}
+
+export function resolveRuntimeProfileDeclaration(
+  project: ProjectConfig,
+  dir: string,
+  declarations: RuntimeProfileDeclarations,
+): RuntimeProfile {
+  const declaration = declarations.runtimeProfiles[project.runtimeProfile];
+  if (!declaration) {
+    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem declaração em runtimeProfiles do config.json; sem fallback`);
+  }
+  const allowedRoots = declarations.allowedRoots[project.runtimeProfile];
+  if (!allowedRoots) {
+    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem raízes permitidas em allowedRoots do local.json; sem fallback`);
+  }
+  return { source: { dir, allowedRoots }, declaration };
+}
+
 // The skill the triage of PR feedback invokes (issue #21). It comes from the operator's Pi profile, which
 // the operator links it into on purpose; the factory only checks that it is there, never installs it.
 export const TRIAGE_SKILL = "gh-address-comments";
 
-export const skillFileOf = (profileDir: string, skill: string): string => join(profileDir, "skills", skill, "SKILL.md");
+export const skillPathOf = (skill: string): string => `skills/${skill}/SKILL.md`;
 
 // Routing by tracker scope: a GitHub ref names the repository, a Jira ref names the project key.
 // A Jira key shared by several projects is ambiguous without the repository of the job, so it is

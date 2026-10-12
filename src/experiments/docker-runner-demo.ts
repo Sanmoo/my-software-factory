@@ -42,6 +42,14 @@ const instance: InstanceConfig = {
 };
 const credentials: Record<string, CredentialRef> = { DEMO_MODEL_AUTH: { kind: "pi-auth", ref: "DEMO_PI_AUTH" } };
 const profiles = { DEMO_PI_AUTH: piAgentDir, "demo-profile": piAgentDir };
+// The demo's profile is the operator's own, with the pilot's declaration (ADR 0002).
+const runtimeProfiles = {
+  "demo-profile": {
+    required: { files: ["settings.json", "auth.json"], packages: [], skills: ["implement", "tdd"], agents: [] },
+    excludePackages: ["npm:pi-lens"],
+  },
+};
+const allowedRoots = { "demo-profile": [join(homedir(), ".agents"), join(homedir(), "dev")] };
 
 async function gh(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("gh", args, { encoding: "utf8" });
@@ -79,7 +87,7 @@ committed locally, stop with interrupted and the reason "fixture local: sem PR".
 
 function runnerFor(boundary = sandcastleBoundary(), image = IMAGE) {
   return createDockerRunner({
-    instance, credentials, profiles, stateDir, image,
+    instance, credentials, profiles, runtimeProfiles, allowedRoots, stateDir, image,
     repositorySource: () => source, boundary,
   });
 }

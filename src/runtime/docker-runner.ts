@@ -1,14 +1,17 @@
 import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { CredentialRef, InstanceConfig, ProjectConfig } from "../config/types.js";
+import type { CredentialRef, InstanceConfig, ProjectConfig, RuntimeProfileConfig } from "../config/types.js";
 import {
   findProject,
   requireRunModels,
   resolveModelAuth,
   resolveRuntimeProfile,
-  skillFileOf,
+  resolveRuntimeProfileDeclaration,
+  skillPathOf,
   TRIAGE_SKILL,
+  type RuntimeProfile,
 } from "./docker-config.js";
+import { checkRequired, describePlan, planSnapshot, resolves, writeSnapshot } from "./profile-snapshot.js";
 import {
   createJobRepo,
   jobLayout,
@@ -40,7 +43,11 @@ export interface SandboxRun {
   image: string;
   cwd: string; // job repository, the bind-mounted work area
   sessionsDir: string; // host directory for the Pi session, outside the container
-  profileDir: string; // host Pi agent directory, mounted read-only at the same path
+  // The runtime profile as real files, written by the runner for this invocation and mounted read-only. It
+  // is all the container sees of the operator's profile: no profile directory, no link roots (ADR 0002).
+  snapshotDir: string;
+  // Packages the container must find installed before the agent gets its prompt; otherwise it stops.
+  requiredPackages: readonly string[];
   model: string; // implementer model: the main agent of the invocation
   token: string; // GitHub token for the container environment only
   request: SandcastleRequest;
@@ -64,8 +71,8 @@ export interface SandboxOutcome {
 }
 
 export interface SandboxBoundary {
-  // Docker reachable, image present, profile complete, token available. Throws otherwise.
-  preflight(input: { image: string; profileDir: string; account: string }): Promise<{ token: string }>;
+  // Docker reachable, image present, token available. Throws otherwise. The profile is the runner's business.
+  preflight(input: { image: string; account: string }): Promise<{ token: string }>;
   // Whether the image has a command on its PATH (issue #21: the triage skill runs python3).
   imageHas(image: string, command: string): Promise<boolean>;
   run(input: SandboxRun): Promise<SandboxOutcome>;
@@ -75,6 +82,9 @@ export interface DockerRunnerOptions {
   instance: InstanceConfig;
   credentials: Readonly<Record<string, CredentialRef>>;
   profiles: Readonly<Record<string, string>>;
+  // What each runtime profile must carry (config.json) and where its links may lead (local.json).
+  runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
+  allowedRoots: Readonly<Record<string, readonly string[]>>;
   stateDir: string;
   image: string;
   // Local clone each project's job area is cloned from (the operator's checkout).
@@ -97,7 +107,7 @@ export function createDockerRunner(options: DockerRunnerOptions): Runner {
     if (!project.enabled) continue;
     requireRunModels(project);
     const auth = resolveModelAuth(options.instance, options.credentials, options.profiles);
-    resolveRuntimeProfile(project, options.profiles, auth.agentDir);
+    resolveRuntimeProfileDeclaration(project, resolveRuntimeProfile(project, options.profiles, auth.agentDir), options);
   }
   return new DockerRunner(options);
 }
@@ -135,10 +145,11 @@ class DockerRunner implements Runner {
       const project = findProject(this.options.instance.projects, context.ref, context.repository);
       const models = requireRunModels(project);
       const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
-      const profileDir = resolveRuntimeProfile(project, this.options.profiles, auth.agentDir);
-      const preflight = await this.options.boundary.preflight({
-        image: this.options.image, profileDir, account: project.githubAccount,
-      });
+      const profile = this.profileOf(project, auth.agentDir);
+      // Resolved on the host before anything is created: a required item missing stops here, with no container.
+      const plan = await planSnapshot(profile.source, profile.declaration);
+      if (plan.blockers.length > 0) throw new Error(`perfil de runtime bloqueado: ${plan.blockers.join("; ")}`);
+      const preflight = await this.options.boundary.preflight({ image: this.options.image, account: project.githubAccount });
       secret = preflight.token;
       observer.registerSecret(preflight.token);
 
@@ -155,6 +166,8 @@ class DockerRunner implements Runner {
       });
       await this.audit(layout, `invocação ${context.kind}; limite efetivo=${request.maxIterations}; implementer=${models.implementer}`);
       await mkdir(layout.sessionsDir, { recursive: true });
+      // Recreated on every invocation, outside the repository the agent works in.
+      await writeSnapshot(plan, layout.snapshotDir);
 
       // One invocation, one detailed log: the operator follows it with `tail -f` while it runs.
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -169,6 +182,7 @@ class DockerRunner implements Runner {
         idle: { timeoutSeconds: IDLE_TIMEOUT_SECONDS, warnEverySeconds: IDLE_WARNING_SECONDS },
         issueWrites: { ref: context.ref, repository: project.repository, ...(issueEvidence === undefined ? {} : { evidence: issueEvidence }) },
       });
+      activity.note("perfil de runtime", describePlan(plan));
       observer.setDetailLog(context.jobId, detailPath);
       observer.emit({
         kind: "logs-da-invocação", text: "logs da invocação", job: context.jobId,
@@ -177,7 +191,8 @@ class DockerRunner implements Runner {
         fields: { detalhado: detailPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
       });
       const outcome = await this.options.boundary.run({
-        image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir, profileDir,
+        image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir,
+        snapshotDir: layout.snapshotDir, requiredPackages: profile.declaration.required.packages,
         model: models.implementer, token: preflight.token, request,
         activity, idleTimeoutSeconds: IDLE_TIMEOUT_SECONDS, idleWarningSeconds: IDLE_WARNING_SECONDS, runtimeLogPath,
         redact: (text) => observer.redact(text),
@@ -212,13 +227,38 @@ class DockerRunner implements Runner {
     }
   }
 
+  // The runtime profile of a project: where it lives, what it must carry, where its links may lead.
+  private profileOf(project: ProjectConfig, authDir: string): RuntimeProfile {
+    return resolveRuntimeProfileDeclaration(project, resolveRuntimeProfile(project, this.options.profiles, authDir), this.options);
+  }
+
+  private profileForJob(job: { ref: IssueRef; repository: string }): RuntimeProfile {
+    const project = findProject(this.options.instance.projects, job.ref, job.repository);
+    const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
+    return this.profileOf(project, auth.agentDir);
+  }
+
+  // Asked by the admission before the claim and before a continuation (ADR 0002): the required items of the
+  // runtime profile resolve on the host, or the reason they do not.
+  async runtimeBlocker(job: { ref: IssueRef; repository: string }): Promise<string | undefined> {
+    try {
+      const profile = this.profileForJob(job);
+      const blockers = await checkRequired(profile.source, profile.declaration);
+      return blockers.length === 0 ? undefined : blockers.join("; ");
+    } catch (error) {
+      return `perfil de runtime não resolvido: ${messageOf(error)}`;
+    }
+  }
+
   // The triage runs the skill of the operator's profile; without it the agent would not have it (issue #21).
+  // It resolves the skill the way the snapshot does, so a skill the container would not get is unavailable.
   async triageUnavailable(job: { ref: IssueRef; repository: string }): Promise<string | undefined> {
     try {
-      const project = findProject(this.options.instance.projects, job.ref, job.repository);
-      const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
-      const file = skillFileOf(resolveRuntimeProfile(project, this.options.profiles, auth.agentDir), TRIAGE_SKILL);
-      return (await exists(file)) ? undefined : `skill ${TRIAGE_SKILL} ausente do perfil Pi autorizado (${file}); o operador a linka no perfil`;
+      const profile = this.profileForJob(job);
+      const path = skillPathOf(TRIAGE_SKILL);
+      return (await resolves(profile.source, path))
+        ? undefined
+        : `skill ${TRIAGE_SKILL} ausente do perfil de runtime (${profile.source.dir}/${path}, links só dentro das raízes permitidas); o operador a linka no perfil`;
     } catch (error) {
       return `perfil Pi não resolvido: ${messageOf(error)}`;
     }

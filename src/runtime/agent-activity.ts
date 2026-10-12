@@ -103,6 +103,11 @@ export class AgentActivity {
     return this.user;
   }
 
+  // A section the runner adds to the detailed log itself, outside the agent's stream (e.g. what the runtime profile holds).
+  note(head: string, body: string[] = []): void {
+    this.detail(head, body);
+  }
+
   // One raw stdout line of the agent. Any line, even one that is not an event, is output.
   line(raw: string): void {
     if (this.warned > 0) {

@@ -3,6 +3,17 @@
     "EXAMPLE_MODEL_AUTH": { "kind": "pi-auth", "ref": "EXAMPLE_PI_AUTH_PROFILE" },
     "EXAMPLE_JIRA_AUTH": { "kind": "env", "ref": "EXAMPLE_JIRA_TOKEN_VARIABLE" }
   },
+  "runtimeProfiles": {
+    "EXAMPLE_DOCKER_PROFILE": {
+      "required": {
+        "files": ["settings.json", "auth.json"],
+        "packages": ["npm:pi-subagents"],
+        "skills": ["implement", "tdd", "code-review", "gh-address-comments"],
+        "agents": ["implementer", "code-reviewer", "spec-reviewer"]
+      },
+      "excludePackages": ["npm:pi-lens"]
+    }
+  },
   "instances": [
     {
       "name": "EXAMPLE_INSTANCE",

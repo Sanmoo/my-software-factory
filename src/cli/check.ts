@@ -1,11 +1,10 @@
-import { access } from "node:fs/promises";
-import { join } from "node:path";
 import { git } from "../runtime/docker-area.js";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
 import { messageOf } from "../core/values.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
-import { resolveModelAuth, resolveRuntimeProfile, skillFileOf, TRIAGE_SKILL } from "../runtime/docker-config.js";
+import { resolveModelAuth, resolveRuntimeProfile, resolveRuntimeProfileDeclaration, skillPathOf, TRIAGE_SKILL } from "../runtime/docker-config.js";
+import { checkRequired, resolves } from "../runtime/profile-snapshot.js";
 import { jiraConnectionFromEnv, jiraRequest } from "../tracker/jira.js";
 import type { LocalSettings } from "./local-settings.js";
 
@@ -70,22 +69,31 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
     for (const project of projects) resolveRuntimeProfile(project, local.profiles, auth.agentDir);
     return auth.agentDir;
   }));
-  lines.push(await attempt("perfil Pi tem a skill implement", async () => {
-    const dir = resolveModelAuth(instance, config.credentials, local.profiles).agentDir;
-    await access(join(dir, "skills", "implement", "SKILL.md")).catch(() => {
-      throw new Error(`${join(dir, "skills", "implement", "SKILL.md")} não existe; o container não teria /implement`);
-    });
-    return "skills/implement/SKILL.md";
-  }));
-  // The triage of PR feedback needs the skill and what it runs (issue #21). The operator links the skill
-  // into the profile on purpose; the check only reports it and never links anything.
+  // The runtime profile is resolved on the host the way an admission would (ADR 0002): what it must carry
+  // has to resolve inside the allowed roots. The check reports it and never links or repairs anything.
+  const checkedProfiles = new Set<string>();
+  for (const project of projects) {
+    if (checkedProfiles.has(project.runtimeProfile)) continue;
+    checkedProfiles.add(project.runtimeProfile);
+    lines.push(await attempt(`perfil de runtime ${project.runtimeProfile}: obrigatórios resolvem no host`, async () => {
+      const dir = resolveRuntimeProfile(project, local.profiles, resolveModelAuth(instance, config.credentials, local.profiles).agentDir);
+      const profile = resolveRuntimeProfileDeclaration(project, dir, { runtimeProfiles: config.runtimeProfiles, allowedRoots: local.allowedRoots });
+      const blockers = await checkRequired(profile.source, profile.declaration);
+      if (blockers.length > 0) throw new Error(blockers.join("; "));
+      const { required } = profile.declaration;
+      return `${required.files.length} arquivo(s), ${required.skills.length} skill(s), ${required.agents.length} agent(s), ${required.packages.length} pacote(s)`;
+    }));
+  }
+  // The triage of PR feedback needs its skill (issue #21), resolved the way the snapshot resolves it.
   lines.push(await attempt(`perfil Pi tem a skill ${TRIAGE_SKILL}`, async () => {
-    const dir = resolveModelAuth(instance, config.credentials, local.profiles).agentDir;
-    const file = skillFileOf(dir, TRIAGE_SKILL);
-    await access(file).catch(() => {
-      throw new Error(`${file} não existe; a triagem de comentários do PR não teria a skill (linke-a no perfil)`);
-    });
-    return `skills/${TRIAGE_SKILL}/SKILL.md`;
+    const project = projects[0];
+    if (project === undefined) return "nenhum projeto habilitado";
+    const dir = resolveRuntimeProfile(project, local.profiles, resolveModelAuth(instance, config.credentials, local.profiles).agentDir);
+    const { source } = resolveRuntimeProfileDeclaration(project, dir, { runtimeProfiles: config.runtimeProfiles, allowedRoots: local.allowedRoots });
+    if (!(await resolves(source, skillPathOf(TRIAGE_SKILL)))) {
+      throw new Error(`${skillPathOf(TRIAGE_SKILL)} não existe no perfil ${dir} ou o link sai das raízes permitidas; a triagem de comentários do PR não teria a skill (linke-a no perfil)`);
+    }
+    return skillPathOf(TRIAGE_SKILL);
   }));
   lines.push(await attempt("imagem do runner tem python3", async () => {
     if (!(await sandbox.imageHas(local.image, "python3"))) {
@@ -109,9 +117,8 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
   for (const project of projects) {
     if (!accounts.has(project.githubAccount)) {
       accounts.add(project.githubAccount);
-      lines.push(await attempt(`Docker, imagem, perfil e token da conta ${project.githubAccount}`, async () => {
-        const { agentDir } = resolveModelAuth(instance, config.credentials, local.profiles);
-        await sandbox.preflight({ image: local.image, profileDir: agentDir, account: project.githubAccount });
+      lines.push(await attempt(`Docker, imagem e token da conta ${project.githubAccount}`, async () => {
+        await sandbox.preflight({ image: local.image, account: project.githubAccount });
         return `imagem ${local.image}`;
       }));
     }

@@ -8,6 +8,7 @@ import {
   type ModelRole,
   type MsfConfig,
   type ProjectConfig,
+  type RuntimeProfileConfig,
 } from "./types.js";
 import { isObject, type Obj } from "../core/values.js";
 
@@ -16,6 +17,10 @@ const PROJECT_KEYS = ["name", "enabled", "adapter", "repository", "targetBranch"
 const JIRA_KEYS = ["projectKey", "routingLabel", "doingTransition", "doneTransition",
   "blockingLinkTypes", "credential", "operator", "priorityRanks"];
 const INSTANCE_KEYS = ["name", "maxConcurrent", "pollIntervalSeconds", "maxIterations", "modelAuth", "projects"];
+const RUNTIME_PROFILE_KEYS = ["required", "excludePackages"];
+const REQUIRED_KEYS = ["files", "packages", "skills", "agents"];
+// A required file, skill or agent is a plain name inside the profile: no path, so it cannot point elsewhere.
+const PLAIN_NAME_PATTERN = /^(?!\.{1,2}$)[^/\\\s]+$/;
 const CREDENTIAL_KEYS = ["kind", "ref"];
 const CREDENTIAL_KINDS = ["env", "pi-auth"];
 const REPOSITORY_PATTERN = /^[^/\s]+\/[^/\s]+$/;
@@ -89,6 +94,62 @@ function parseCredentials(raw: unknown, issues: Issues): Record<string, Credenti
       continue;
     }
     result[name] = { kind: kind as CredentialRef["kind"], ref };
+  }
+  return result;
+}
+
+function nameList(obj: Obj, key: string, path: string, issues: Issues, pattern?: RegExp, hint?: string): string[] | undefined {
+  const value = obj[key];
+  if (value === undefined) return [];
+  const at = join(path, key);
+  if (!Array.isArray(value)) {
+    issues.add(at, "deve ser lista de textos");
+    return undefined;
+  }
+  let valid = true;
+  value.forEach((entry, index) => {
+    if (typeof entry !== "string" || entry.trim() === "" || (pattern && !pattern.test(entry))) {
+      issues.add(`${at}[${index}]`, hint ?? "texto não vazio esperado");
+      valid = false;
+    }
+  });
+  return valid ? (value as string[]) : undefined;
+}
+
+function parseRuntimeProfile(raw: unknown, path: string, issues: Issues): RuntimeProfileConfig | undefined {
+  if (!isObject(raw)) {
+    issues.add(path, "declaração do perfil de runtime deve ser objeto");
+    return undefined;
+  }
+  checkKeys(raw, RUNTIME_PROFILE_KEYS, path, issues);
+  const requiredRaw = raw.required ?? {};
+  let required: RuntimeProfileConfig["required"] | undefined;
+  if (!isObject(requiredRaw)) {
+    issues.add(join(path, "required"), "required deve ser objeto");
+  } else {
+    const at = join(path, "required");
+    checkKeys(requiredRaw, REQUIRED_KEYS, at, issues);
+    const hint = "deve ser um nome simples, sem caminho";
+    const files = nameList(requiredRaw, "files", at, issues, PLAIN_NAME_PATTERN, hint);
+    const packages = nameList(requiredRaw, "packages", at, issues);
+    const skills = nameList(requiredRaw, "skills", at, issues, PLAIN_NAME_PATTERN, hint);
+    const agents = nameList(requiredRaw, "agents", at, issues, PLAIN_NAME_PATTERN, hint);
+    if (files && packages && skills && agents) required = { files, packages, skills, agents };
+  }
+  const excludePackages = nameList(raw, "excludePackages", path, issues);
+  return required && excludePackages ? { required, excludePackages } : undefined;
+}
+
+function parseRuntimeProfiles(raw: unknown, issues: Issues): Record<string, RuntimeProfileConfig> {
+  if (raw === undefined) return {};
+  if (!isObject(raw)) {
+    issues.add("runtimeProfiles", "deve ser objeto de declarações por perfil de runtime");
+    return {};
+  }
+  const result: Record<string, RuntimeProfileConfig> = {};
+  for (const [name, entry] of Object.entries(raw)) {
+    const parsed = parseRuntimeProfile(entry, join("runtimeProfiles", name), issues);
+    if (parsed) result[name] = parsed;
   }
   return result;
 }
@@ -313,8 +374,9 @@ export function parseConfig(raw: unknown): ConfigResult {
     issues.add("", "configuração deve ser um objeto JSON");
     return { ok: false, issues: issues.list };
   }
-  checkKeys(raw, ["credentials", "instances"], "", issues);
+  checkKeys(raw, ["credentials", "runtimeProfiles", "instances"], "", issues);
   const credentials = parseCredentials(raw.credentials, issues) ?? {};
+  const runtimeProfiles = parseRuntimeProfiles(raw.runtimeProfiles, issues);
   if (!Array.isArray(raw.instances)) {
     issues.add("instances", "lista de instâncias obrigatória");
     return { ok: false, issues: issues.list };
@@ -326,6 +388,6 @@ export function parseConfig(raw: unknown): ConfigResult {
   if (issues.list.length > 0 || instances.length !== parsed.length) {
     return { ok: false, issues: issues.list };
   }
-  const config: MsfConfig = { credentials, instances };
+  const config: MsfConfig = { credentials, runtimeProfiles, instances };
   return { ok: true, config };
 }

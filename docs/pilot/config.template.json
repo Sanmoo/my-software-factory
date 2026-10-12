@@ -13,6 +13,58 @@
       "ref": "JIRA_API_TOKEN"
     }
   },
+  "runtimeProfiles": {
+    "pessoal": {
+      "required": {
+        "files": [
+          "settings.json",
+          "auth.json"
+        ],
+        "packages": [
+          "npm:pi-subagents"
+        ],
+        "skills": [
+          "implement",
+          "tdd",
+          "code-review",
+          "gh-address-comments"
+        ],
+        "agents": [
+          "implementer",
+          "code-reviewer",
+          "spec-reviewer"
+        ]
+      },
+      "excludePackages": [
+        "npm:pi-lens"
+      ]
+    },
+    "trabalho": {
+      "required": {
+        "files": [
+          "settings.json",
+          "auth.json"
+        ],
+        "packages": [
+          "npm:pi-subagents"
+        ],
+        "skills": [
+          "implement",
+          "tdd",
+          "code-review",
+          "gh-address-comments"
+        ],
+        "agents": [
+          "implementer",
+          "code-reviewer",
+          "spec-reviewer"
+        ]
+      },
+      "excludePackages": [
+        "npm:pi-lens"
+      ]
+    }
+  },
   "instances": [
     {
       "name": "pessoal",

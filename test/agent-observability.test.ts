@@ -12,6 +12,7 @@ import type { IssueState } from "../src/runtime/agent-issue-writes.js";
 import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
 import { createFileHistory } from "../src/state/history.js";
+import { populateProfile, runtimeOptions } from "./support/runtime-profile.js";
 
 // The runtime seam of issue #15: synthetic Pi events go through the real runner and the real
 // activity into the real detailed log and the main log. No Pi, Docker, model or tracker runs.
@@ -51,6 +52,7 @@ async function fixture() {
   await git(source, "commit", "-q", "-m", "fixture");
   const stateDir = await mkdtemp(join(tmpdir(), "msf-state-"));
   const agentDir = await mkdtemp(join(tmpdir(), "msf-agent-"));
+  await populateProfile(agentDir);
   return { source, stateDir, agentDir };
 }
 
@@ -84,7 +86,7 @@ async function harness(script: Script, options: {
     await writeFile(join(layout.areaDir, "logs"), "a file where the directory should be");
   }
   const runner = createDockerRunner({
-    instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir,
+    instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, ...runtimeOptions("personal"), stateDir: f.stateDir,
     image: "msf-docker-runner:test", repositorySource: () => f.source, boundary, observer,
     ...(options.now ? { now: options.now } : {}),
     ...(options.evidence ? { issueEvidence: options.evidence as never } : {}),
@@ -457,7 +459,7 @@ test("a detailed-log failure of one invocation stops standing in status once a l
     },
   };
   const runner = createDockerRunner({
-    instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir,
+    instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, ...runtimeOptions("personal"), stateDir: f.stateDir,
     image: "msf-docker-runner:test", repositorySource: () => f.source, boundary, observer,
   });
   await mkdir(layout.areaDir, { recursive: true });

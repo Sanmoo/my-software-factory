@@ -228,3 +228,47 @@ test("the Jira project of the fixture uses the done transition confirmed by the 
     assert.ok(project.adapter === "jira" && project.jira.doneTransition === "Itens concluídos");
   }
 });
+
+const withProfiles = (runtimeProfiles: unknown) => {
+  const raw = {
+    credentials: { copilot: { kind: "pi-auth", ref: "copilot" } },
+    runtimeProfiles,
+    instances: [{
+      name: "i", maxConcurrent: 1, pollIntervalSeconds: 60, maxIterations: 3, modelAuth: "copilot", projects: [],
+    }],
+  };
+  return parseConfig(raw);
+};
+
+test("a runtime profile declares required files, packages, skills and agents and the packages to exclude", () => {
+  const result = withProfiles({
+    pessoal: {
+      required: { files: ["settings.json", "auth.json"], packages: ["npm:pi-subagents"], skills: ["implement"], agents: ["implementer"] },
+      excludePackages: ["npm:pi-lens"],
+    },
+  });
+  assert.ok(result.ok, JSON.stringify(!result.ok && result.issues));
+  assert.deepEqual(result.config.runtimeProfiles.pessoal, {
+    required: { files: ["settings.json", "auth.json"], packages: ["npm:pi-subagents"], skills: ["implement"], agents: ["implementer"] },
+    excludePackages: ["npm:pi-lens"],
+  });
+});
+
+test("a configuration without runtime profiles still loads; the runner refuses a project that names one", () => {
+  const raw = withProfiles(undefined);
+  assert.ok(raw.ok);
+  assert.deepEqual(raw.config.runtimeProfiles, {});
+});
+
+test("a runtime profile declaration rejects unknown fields and required names that are paths", () => {
+  const result = withProfiles({
+    pessoal: { required: { skills: ["../x"], files: ["a/b"], extra: [] }, excludePackages: "npm:pi-lens", mount: [] },
+  });
+  assert.equal(result.ok, false);
+  const text = messages(result).join("\n");
+  assert.match(text, /runtimeProfiles\.pessoal\.mount.*campo desconhecido/);
+  assert.match(text, /runtimeProfiles\.pessoal\.required\.extra.*campo desconhecido/);
+  assert.match(text, /required\.skills\[0\].*nome simples/);
+  assert.match(text, /required\.files\[0\].*nome simples/);
+  assert.match(text, /excludePackages.*lista de textos/);
+});

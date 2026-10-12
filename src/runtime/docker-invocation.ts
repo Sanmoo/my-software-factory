@@ -1,3 +1,4 @@
+import { shellQuote } from "../core/observability.js";
 import type { RunKind } from "./runner.js";
 
 // Invocation rules of the Docker runner (R08). Kept pure so the limits and the Sandcastle
@@ -42,4 +43,28 @@ export function sandcastleRequest(input: {
     resumeSession: input.sessionId,
     completionSignal: COMPLETION_SIGNAL,
   };
+}
+
+// Where things are inside the container.
+export const SANDBOX_PROFILE_DIR = "/msf-profile";
+export const SANDBOX_RUNTIME_DIR = "/msf-runtime";
+export const SANDBOX_SESSIONS_DIR = "/home/agent/.pi/agent/sessions";
+
+// What the container mounts (ADR 0002): the profile snapshot and the image scripts read-only, the Pi session
+// read-write. The work area is the cwd Sandcastle bind-mounts. The operator's profile directory and the roots
+// its links lead to are not mounted: what they held was resolved on the host.
+export function sandboxMounts(input: { snapshotDir: string; sessionsDir: string }, imageDir: string) {
+  return [
+    { hostPath: input.snapshotDir, sandboxPath: SANDBOX_PROFILE_DIR, readonly: true },
+    { hostPath: imageDir, sandboxPath: SANDBOX_RUNTIME_DIR, readonly: true },
+    { hostPath: input.sessionsDir, sandboxPath: SANDBOX_SESSIONS_DIR, readonly: false },
+  ];
+}
+
+// One command, because Sandcastle runs the hooks of a sandbox concurrently: the snapshot is copied into the
+// writable Pi directory first, then the packages are installed and the required ones confirmed. A failure
+// stops the invocation with its reason before the agent receives the prompt.
+export function profileSetupCommand(requiredPackages: readonly string[]): string {
+  const check = ["sh", `${SANDBOX_RUNTIME_DIR}/check-profile.sh`, ...requiredPackages.map(shellQuote)].join(" ");
+  return `sh ${SANDBOX_RUNTIME_DIR}/prepare-profile.sh ${SANDBOX_PROFILE_DIR} && ${check}`;
 }

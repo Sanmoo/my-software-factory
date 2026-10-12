@@ -6,6 +6,7 @@ import test from "node:test";
 import { checkInstance } from "../src/cli/check.js";
 import type { AdmissionDeps } from "../src/core/admission.js";
 import { git } from "../src/runtime/docker-area.js";
+import { populateProfile } from "./support/runtime-profile.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { ProjectConfig } from "../src/config/types.js";
 import { projectEligibility } from "../src/config/project-eligibility.js";
@@ -13,6 +14,12 @@ import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 
 const MODEL = "github-copilot/gpt-6-luna";
 const config = parseConfig({
+  runtimeProfiles: {
+    personal: {
+      required: { files: ["settings.json", "auth.json"], packages: ["npm:pi-subagents"], skills: ["implement", "gh-address-comments"], agents: [] },
+      excludePackages: ["npm:pi-lens"],
+    },
+  },
   credentials: { MODEL: { kind: "pi-auth", ref: "personal" } },
   instances: [{
     name: "personal", maxConcurrent: 1, pollIntervalSeconds: 60, maxIterations: 5, modelAuth: "MODEL",
@@ -47,6 +54,7 @@ const deps = { tracker: { discoverCandidates: async () => [{}, {}] }, eligibilit
 
 async function profile(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "msf-profile-"));
+  await populateProfile(dir);
   await mkdir(join(dir, "skills", "implement"), { recursive: true });
   await writeFile(join(dir, "skills", "implement", "SKILL.md"), "x\n");
   await mkdir(join(dir, "skills", "gh-address-comments"), { recursive: true });
@@ -59,16 +67,16 @@ test("a profile without the implement skill fails the check", async () => {
   const empty = await mkdtemp(join(tmpdir(), "msf-profile-"));
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: empty }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: empty }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
-  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /não teria \/implement/);
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /skills\/implement\/SKILL\.md/);
 });
 
 test("a ready instance passes every line, read-only", async () => {
   const dir = await checkout([]);
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
   assert.deepEqual(lines.filter((l) => !l.ok), []);
   assert.ok(lines.some((l) => /2 issue\(s\)/.test(l.detail)));
@@ -80,7 +88,7 @@ test("a failing Docker preflight and a wrong origin are reported, not thrown", a
   const lines = await checkInstance({
     config: config.config, instance, deps,
     sandbox: { ...sandbox, preflight: async () => { throw new Error("Docker is unavailable"); } },
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
   const failed = lines.filter((l) => !l.ok).map((l) => l.detail).join("\n");
   assert.match(failed, /Docker is unavailable/);
@@ -94,7 +102,7 @@ test("a checkout whose target branch is ahead of origin fails: those commits wou
   await git(dir, "commit", "-q", "-m", "unpushed");
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
   assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /1 commit\(s\) que não estão em origin\/main/);
 });
@@ -104,7 +112,7 @@ test("a checkout that never fetched origin/main fails instead of skipping the un
   await git(dir, "update-ref", "-d", "refs/remotes/origin/main");
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
   assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /origin\/main desconhecida/);
 });
@@ -115,9 +123,9 @@ test("a profile without the gh-address-comments skill fails the check, and the c
   await rm(join(personal, "skills", "gh-address-comments"), { recursive: true });
   const lines = await checkInstance({
     config: config.config, instance, deps, sandbox,
-    local: { image: "img", profiles: { personal }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
-  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /gh-address-comments.*não existe.*triagem/);
+  assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /skills\/gh-address-comments\/SKILL\.md/);
   await assert.rejects(access(join(personal, "skills", "gh-address-comments")), "the operator's profile is left as it was");
 });
 
@@ -127,7 +135,7 @@ test("an image without python3 fails the check, naming the skill that needs it",
   const lines = await checkInstance({
     config: config.config, instance, deps,
     sandbox: { ...sandbox, imageHas: async (image, command) => { asked.push([image, command]); return false; } },
-    local: { image: "img", profiles: { personal: await profile() }, checkouts: { "acme/app": dir } },
+    local: { image: "img", profiles: { personal: await profile() }, allowedRoots: { personal: [] }, checkouts: { "acme/app": dir } },
   });
   assert.deepEqual(asked, [["img", "python3"]]);
   assert.match(lines.filter((l) => !l.ok).map((l) => l.detail).join("\n"), /python3.*img.*gh-address-comments/);

@@ -36,6 +36,7 @@ const instance = (name: string, projects: object[]) => ({
   name, maxConcurrent: 1, pollIntervalSeconds: 300, maxIterations: 3, modelAuth: "copilot", projects,
 });
 const CONFIG = {
+  runtimeProfiles: { "docker-default": { required: { files: ["settings.json"] } } },
   credentials: { copilot: { kind: "pi-auth", ref: "copilot" }, JIRA: { kind: "env", ref: "JIRA_API_TOKEN" } },
   instances: [
     instance("pessoal", [github("acme/app"), github("acme/other")]),
@@ -59,6 +60,7 @@ async function setup(options: { home?: string; jobs?: Array<[string, string]>; c
   if (options.config !== false) await writeFile(join(home, "config.json"), JSON.stringify(CONFIG));
   if (options.local !== false) await writeFile(join(home, "local.json"), JSON.stringify({
     profiles: { copilot: join(root, "profile"), "docker-default": join(root, "profile") },
+    allowedRoots: { "docker-default": [join(root, "roots")] },
     checkouts: { "acme/app": join(root, "app"), "acme/other": join(root, "other"), "acme/mono": join(root, "mono"), "acme/mixed": join(root, "mixed"), "acme/mixed-mono": join(root, "mixed-mono") },
   }));
   const store = createFileJobStore(join(home, "state", "pessoal"));

@@ -499,6 +499,13 @@ export class Admission {
       report.skipped.push({ key, reason: this.describe(verdict) });
       return;
     }
+    // Fail fast (ADR 0002): a required item of the runtime profile missing means no claim, no slot, no job.
+    const runtimeBlock = await this.runtimeBlocker(candidate.project.repository, ref);
+    if (runtimeBlock !== undefined) {
+      this.announceRuntimeBlock(key, runtimeBlock);
+      report.skipped.push({ key, reason: `perfil de runtime: ${runtimeBlock}` });
+      return;
+    }
     const job = newJob({ ref, repository: candidate.project.repository });
     const blocked = this.reserve(job);
     if (blocked) {
@@ -575,6 +582,17 @@ export class Admission {
       });
       return;
     }
+    // The same block holds for work already admitted: no container is created, the operator is asked.
+    const runtimeBlock = await this.runtimeBlocker(job.repository, job.ref);
+    if (runtimeBlock !== undefined) {
+      await this.apply(job.key, "waiting-for-help", {
+        message: `${kind} bloqueado pelo perfil de runtime: ${runtimeBlock}`,
+        question: `${kind} solicitado, mas o perfil de runtime não pode ser reproduzido: ${runtimeBlock}.`
+          + " Nenhum container foi criado. Corrija o perfil e responda para retomar, ou libere o trabalho.",
+        context: "nenhum container foi criado",
+      });
+      return;
+    }
     const triggers = this.triggersOf(job, kind);
     const blocked = this.reserve(job);
     if (blocked) {
@@ -626,6 +644,24 @@ export class Admission {
       { lines: reasons.lines.length > 1 ? reasons.lines : undefined, invocation },
     );
     return invocation;
+  }
+
+  // Why the runtime profile of a job cannot be reproduced, or undefined. A check that fails is a block: an
+  // unknown profile is not a complete one.
+  private async runtimeBlocker(repository: string, ref: IssueRef): Promise<string | undefined> {
+    try {
+      return await this.deps.runner.runtimeBlocker?.({ ref, repository });
+    } catch (error) {
+      return `o perfil não pôde ser verificado: ${messageOf(error)}`;
+    }
+  }
+
+  // The impediment is announced once per distinct reason, not on every poll that finds it again.
+  private announceRuntimeBlock(key: string, reason: string): void {
+    const signature = `${key}|perfil-de-runtime|${reason}`;
+    if (this.announcedWaits.has(signature)) return;
+    this.announcedWaits.add(signature);
+    this.emitFor(key, "admissão-bloqueada", "issue elegível não admitida: perfil de runtime incompleto", { motivo: reason }, { level: "atenção" });
   }
 
   private clearWaits(key: string): void {

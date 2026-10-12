@@ -41,3 +41,25 @@ test("the template carries placeholders only where the operator must supply a va
   const text = await readFile("docs/pilot/config.template.json", "utf8");
   assert.deepEqual([...new Set(text.match(/__[A-Z_]+__/g))].sort(), ["__CON_DONE_TRANSITION__", "__JIRA_OPERATOR_ACCOUNT_ID__"]);
 });
+
+test("the template declares the initial runtime profile for every profile a project names, the same for both", async () => {
+  const config = await template();
+  const initial = {
+    required: {
+      files: ["settings.json", "auth.json"], packages: ["npm:pi-subagents"],
+      skills: ["implement", "tdd", "code-review", "gh-address-comments"],
+      agents: ["implementer", "code-reviewer", "spec-reviewer"],
+    },
+    excludePackages: ["npm:pi-lens"],
+  };
+  const named = new Set(config.instances.flatMap((instance) => instance.projects.map((project) => project.runtimeProfile)));
+  assert.deepEqual([...named].sort(), ["pessoal", "trabalho"]);
+  for (const name of named) assert.deepEqual(config.runtimeProfiles[name], initial, name);
+});
+
+test("the documented example declares the runtime profile its projects name", async () => {
+  const parsed = parseConfig(JSON.parse(await readFile("docs/config.example.json", "utf8")));
+  assert.ok(parsed.ok, JSON.stringify(!parsed.ok && parsed.issues));
+  const named = new Set(parsed.config.instances.flatMap((instance) => instance.projects.map((project) => project.runtimeProfile)));
+  for (const name of named) assert.ok(parsed.config.runtimeProfiles[name], `${name} is declared`);
+});

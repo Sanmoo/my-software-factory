@@ -10,7 +10,8 @@ desta máquina:
 
 - `config.json`: copie [`config.template.json`](config.template.json) e habilite só os alvos do piloto
   (os demais ficam `enabled: false` até terem `docs/spec.md`);
-- `local.json`: perfis Pi, checkouts, imagem e insumos de review desta máquina;
+- `local.json`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), checkouts, imagem
+  e insumos de review desta máquina;
 - `state/<instância>/`: o estado de cada instância.
 
 O token do Jira não fica em arquivo: exporte `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` no ambiente
@@ -54,6 +55,30 @@ exato, a issue como spec e o `AGENTS.md` como padrões, e manda reportar `pr_rea
 reviews aprovados. A factory confirma o PR no adapter (R08) e continua exigindo modelo explícito por
 subagente e filhos reconciliados. O piloto demonstra a CA09 pelo log e pela sessão.
 
+## Perfil de runtime (ADR 0002)
+
+O container reproduz o perfil Pi do operador, mas não o monta: a factory percorre o perfil no host, resolve
+os links em todos os níveis e grava um retrato só com arquivos reais (em `state/<instância>/areas/<job>/profile`,
+recriado a cada invocação). O container monta só o retrato, somente leitura. Dois arquivos, a mesma divisão
+de sempre (o quê no `config.json`, o onde no `local.json`):
+
+- `config.json`, `runtimeProfiles.<perfil>`: `required` (`files`, `packages`, `skills`, `agents`) e
+  `excludePackages` (por exemplo `npm:pi-lens`, retirado do `settings.json` do container, nunca do seu).
+  A lista inicial está em `config.template.json`, igual para `pessoal` e `trabalho`.
+- `local.json`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio diretório do perfil
+  (`~/` vale). Para `pessoal`: `["~/.pi/agent", "~/.agents", "~/dev/github.com/Sanmoo/dotfiles"]`.
+
+Link com destino fora das raízes, quebrado ou cíclico é pulado e listado no log detalhado da invocação
+(`perfil de runtime`, linhas `incluído:` e `fora:`). Se for **obrigatório**, a issue não é claimed: o motivo
+(item, link e destino) aparece no log principal como `issue elegível não admitida`. Numa retomada ou correção,
+o mesmo bloqueio vira pedido de ajuda e nenhum container é criado. Um projeto habilitado cujo perfil não
+tem declaração nos dois arquivos é erro de configuração ao iniciar a instância, sem fallback.
+
+Já dentro do container, antes do prompt, `check-profile.sh` instala os pacotes do `settings.json` e confirma
+com `pi list` que os obrigatórios estão instalados; se não, a invocação é interrompida com o motivo. O Pi 1.1.0
+não lista ferramentas sem chamar o modelo, então a ferramenta `subagent` não é confirmada por aqui: o pacote
+`pi-subagents` instalado é a evidência.
+
 ## Triagem de comentários do PR (issue #21)
 
 Comentário humano novo no PR (conversa, inline ou corpo de review) não vira correção direta: a
@@ -66,8 +91,9 @@ check com falha e/ou conflito vai direto para correção.
 Pré-requisitos, verificados por `./msf <instância> run --check`:
 
 - **Skill no perfil Pi autorizado.** O operador a linka, o setup não mexe no perfil:
-  `ln -s ~/.agents/skills/gh-address-comments <perfil>/skills/gh-address-comments`. Sem ela, comentário
-  humano vira pedido de ajuda visível (nunca correção sem triagem) e nada é consumido.
+  `ln -s ~/.agents/skills/gh-address-comments <perfil>/skills/gh-address-comments`. Ela é obrigatória no perfil
+  de runtime e tem de resolver dentro das raízes permitidas (mesma resolução do retrato). Sem ela, a issue não
+  é admitida e comentário humano vira pedido de ajuda visível (nunca correção sem triagem), sem consumir nada.
 - **`python3` na imagem do runner**, exigido pelo script da skill: reconstrua a imagem
   (`docker build ... src/runtime/docker-image`).
 

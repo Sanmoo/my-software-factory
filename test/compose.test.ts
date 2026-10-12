@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { composeInstance } from "../src/cli/compose.js";
 import { parseLocalSettings } from "../src/cli/local-settings.js";
@@ -16,6 +18,7 @@ const jira = (routingLabel: string, doneTransition = "Done") => ({
     credential: "JIRA", operator: "op-1" },
 });
 const rawConfig = (projects: unknown[]) => ({
+  runtimeProfiles: { work: { required: { files: ["settings.json"] } } },
   credentials: { MODEL: { kind: "pi-auth", ref: "work" }, JIRA: { kind: "env", ref: "JIRA_API_TOKEN" } },
   instances: [{ name: "work", maxConcurrent: 1, pollIntervalSeconds: 60, maxIterations: 5, modelAuth: "MODEL", projects }],
 });
@@ -29,7 +32,7 @@ function build(projects: unknown[], over: { env?: NodeJS.ProcessEnv; checkouts?:
   assert.ok(parsed.ok, JSON.stringify(!parsed.ok && parsed.issues));
   const instance = parsed.config.instances[0]!;
   const checkouts = over.checkouts ?? Object.fromEntries(instance.projects.map((p) => [p.repository, `/src/${p.repository}`]));
-  const local = parseLocalSettings({ profiles: { work: "/home/op/.pi/agent" }, checkouts });
+  const local = parseLocalSettings({ profiles: { work: "/home/op/.pi/agent" }, allowedRoots: { work: ["/home/op/.agents"] }, checkouts });
   assert.ok(typeof local !== "string", String(local));
   return () => composeInstance({ config: parsed.config, instance, local, stateDir: "/tmp/msf-compose-test", env: over.env ?? env, github, sandbox });
 }
@@ -58,4 +61,16 @@ test("Jira projects need the Jira environment; GitHub-only instances do not", ()
 test("local settings must use absolute paths and say what is wrong", () => {
   assert.match(String(parseLocalSettings({ profiles: { a: "rel" }, checkouts: {} })), /profiles\.a .* absoluto/);
   assert.match(String(parseLocalSettings({ profiles: {} })), /checkouts deve ser um objeto/);
+});
+
+test("local settings carry the allowed roots of each runtime profile, with ~ expanded to the home directory", () => {
+  const parsed = parseLocalSettings({
+    profiles: { work: "/home/op/.pi/agent" }, checkouts: {},
+    allowedRoots: { work: ["~/.agents", "/srv/dotfiles"] },
+  });
+  assert.ok(typeof parsed !== "string", String(parsed));
+  assert.deepEqual(parsed.allowedRoots, { work: [join(homedir(), ".agents"), "/srv/dotfiles"] });
+  assert.deepEqual((parseLocalSettings({ profiles: {}, checkouts: {} }) as { allowedRoots: unknown }).allowedRoots, {});
+  assert.match(String(parseLocalSettings({ profiles: {}, checkouts: {}, allowedRoots: { work: ["rel/dir"] } })), /allowedRoots\.work\[0\] .* absoluto/);
+  assert.match(String(parseLocalSettings({ profiles: {}, checkouts: {}, allowedRoots: { work: "/x" } })), /allowedRoots\.work deve ser uma lista/);
 });

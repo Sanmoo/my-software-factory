@@ -64,6 +64,10 @@ export type RunnerOutput =
 
 export interface Runner {
   run(context: RunnerContext): Promise<RunnerOutput>;
+  // Why the runtime profile of this job cannot be reproduced (a required item is missing, broken, cyclic or
+  // outside the allowed roots), or undefined when it can. Asked before a job is claimed and before a continuation
+  // starts: a blocked job gets no container (ADR 0002). A runner without the method has no profile to check.
+  runtimeBlocker?(job: { ref: IssueRef; repository: string }): Promise<string | undefined>;
   // Why the triage of PR feedback cannot run for this job (the skill it needs is not available), or
   // undefined when it can. A runner without the method has nothing to check (issue #21).
   triageUnavailable?(job: { ref: IssueRef; repository: string }): Promise<string | undefined>;

@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   COMPLETION_SIGNAL,
   effectiveIterationLimit,
+  profileSetupCommand,
+  sandboxMounts,
   sandcastleRequest,
 } from "../src/runtime/docker-invocation.js";
 
@@ -46,4 +48,21 @@ test("a new invocation never resumes an old session", () => {
     () => sandcastleRequest({ kind: "new", prompt: "implement", configuredLimit: 5, sessionId: "old" }),
     /não retoma sessão/,
   );
+});
+
+test("the container mounts the profile snapshot, the image scripts and the session directory, and nothing of the operator's profile", () => {
+  const mounts = sandboxMounts({ snapshotDir: "/state/areas/job/profile", sessionsDir: "/state/sessions/job" }, "/repo/src/runtime/docker-image");
+  assert.deepEqual(mounts, [
+    { hostPath: "/state/areas/job/profile", sandboxPath: "/msf-profile", readonly: true },
+    { hostPath: "/repo/src/runtime/docker-image", sandboxPath: "/msf-runtime", readonly: true },
+    { hostPath: "/state/sessions/job", sandboxPath: "/home/agent/.pi/agent/sessions", readonly: false },
+  ]);
+});
+
+test("the setup copies the snapshot and then checks the required packages before the agent gets its prompt", () => {
+  assert.equal(
+    profileSetupCommand(["npm:pi-subagents", "npm:two words"]),
+    "sh /msf-runtime/prepare-profile.sh /msf-profile && sh /msf-runtime/check-profile.sh npm:pi-subagents 'npm:two words'",
+  );
+  assert.equal(profileSetupCommand([]), "sh /msf-runtime/prepare-profile.sh /msf-profile && sh /msf-runtime/check-profile.sh");
 });

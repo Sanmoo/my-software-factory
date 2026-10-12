@@ -54,8 +54,23 @@ export interface InstanceConfig {
   projects: ProjectConfig[];
 }
 
+// What a runtime profile must carry for a job to run (ADR 0002). Names, not paths: where they come
+// from is the machine's business (local settings). Without a required item the job is not admitted.
+export interface RuntimeProfileConfig {
+  required: {
+    files: string[]; // files at the root of the profile, e.g. settings.json
+    packages: string[]; // Pi package sources the profile's settings.json must list, e.g. npm:pi-subagents
+    skills: string[]; // skills/<name>/SKILL.md
+    agents: string[]; // agents/<name>.md
+  };
+  // Package sources dropped from the container's copy of settings.json (never from the host's).
+  excludePackages: string[];
+}
+
 export interface MsfConfig {
   credentials: Record<string, CredentialRef>;
+  // Declaration of each runtime profile a project may name; a project naming one without it is an error.
+  runtimeProfiles: Record<string, RuntimeProfileConfig>;
   instances: InstanceConfig[];
 }
 
