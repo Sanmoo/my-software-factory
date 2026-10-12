@@ -18,7 +18,7 @@ import { createFileHistory } from "../src/state/history.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import { PartialWriteError, type IssueRef, type TrackerPort } from "../src/tracker/port.js";
+import { PartialWriteError, type ClaimMark, type IssueRef, type IssueSnapshot, type TrackerPort } from "../src/tracker/port.js";
 
 // The operational events of the orchestrator (issue #15), read where the operator reads them:
 // the main log lines and the local history, through the real queue, store and history files.
@@ -118,6 +118,7 @@ async function setup(options: {
 }
 
 const trackerWith = (base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort => ({
+  claimMarkOf: (ref) => base.claimMarkOf(ref),
   discoverCandidates: (scope) => base.discoverCandidates(scope),
   readIssue: (ref) => base.readIssue(ref),
   claim: (ref) => base.claim(ref),
@@ -491,6 +492,7 @@ test("a release whose reread still shows the account assigned keeps the account 
   const s = await setup({
     runner: helpRunner(),
     tracker: (base) => trackerWith(base, {
+      claimMarkOf: () => ({ labels: ["agent-claimed"], assignees: ["acme"] }),
       async releaseClaim(ref) {
         await base.releaseClaim(ref);
         released = true;
@@ -519,6 +521,77 @@ test("a release whose reread still shows the account assigned keeps the account 
   assert.equal(report.commands[0]?.status, "rejected");
   assert.match(report.commands[0]?.reason ?? "", /liberação não confirmada pelo tracker: claim ainda visível na releitura/);
   assert.equal(s.admission.job(KEY("1"))?.state, "waiting-for-help", "the job keeps its state while the claim is visible");
+});
+
+// Models what an adapter shows once the factory has claimed: the issue stays claimed after the
+// factory's mark leaves, for a reason that is not the mark.
+const claimedBeyondMark = (base: MemoryTracker, mark: ClaimMark, otherwise: Partial<IssueSnapshot>, overrides: Partial<TrackerPort> = {}): TrackerPort => {
+  let claimedOnce = false;
+  return trackerWith(base, {
+    claimMarkOf: () => mark,
+    async claim(ref) {
+      claimedOnce = true;
+      return base.claim(ref);
+    },
+    async readIssue(ref) {
+      const snapshot = await base.readIssue(ref);
+      return claimedOnce ? { ...snapshot, claimed: { known: true, value: true }, ...otherwise } : snapshot;
+    },
+    ...overrides,
+  });
+};
+
+test("a Jira-like release is confirmed by the mark: the issue stays In Progress and still counts as claimed", async () => {
+  // Jira's claimed is any category other than To Do, so after the label leaves the issue is still claimed.
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: [] }, { statusCategory: { known: true, value: "in-progress" } }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  const report = await s.admission.poll();
+  await s.observer.flush();
+
+  assert.equal(report.commands[0]?.status, "applied");
+  assert.equal(s.admission.job(KEY("1"))?.state, "released");
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=claim/);
+  assert.deepEqual((await s.memory.readIssue(REF("1"))).statusCategory, { known: true, value: "in-progress" }, "the release leaves the status alone");
+});
+
+test("a GitHub-like release is confirmed with a co-assigned person, whose assignment stays", async () => {
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: ["acme"] }, { assignees: { known: true, value: ["maria"] } }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  const report = await s.admission.poll();
+
+  assert.equal(report.commands[0]?.status, "applied");
+  assert.equal(s.admission.job(KEY("1"))?.state, "released");
+});
+
+test("a release whose write errored is confirmed by the mark's absence, each part of the mark as a confirmed change", async () => {
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: ["acme"] }, {}, {
+      async releaseClaim(ref) {
+        await base.releaseClaim(ref);
+        throw new Error("resposta perdida");
+      },
+    }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  await s.admission.poll();
+  await s.observer.flush();
+
+  assert.equal(s.admission.job(KEY("1"))?.state, "released");
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=claim.*confirmada por releitura após erro de escrita/);
+  assert.match(matching(s.lines, /alteração confirmada.*operação=remover-atribuição/)[0]!, /alvo=acme.*confirmada por releitura após erro de escrita/);
 });
 
 test("a release whose reread fails after the write does not mark the job released", async () => {

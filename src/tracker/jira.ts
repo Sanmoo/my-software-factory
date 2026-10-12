@@ -1,6 +1,7 @@
 import {
   PartialWriteError,
   type BlockerRef,
+  type ClaimMark,
   type ClaimOutcome,
   type Comment,
   type DoneOutcome,
@@ -225,6 +226,11 @@ export class JiraTracker implements TrackerPort {
     const jql = `project = ${jqlString(scope.project)} AND labels = ${jqlString(scope.readyLabel)} ORDER BY key ASC`;
     const issues = await this.searchAll(jql, ["key"]);
     return issues.map((issue) => ({ tracker: "jira", project: scope.project, id: issue.key }));
+  }
+
+  // The claim itself leaves only the label; the doing transition is not part of the mark.
+  claimMarkOf(_ref: IssueRef): ClaimMark {
+    return { labels: [this.settings.claimedLabel], assignees: [] };
   }
 
   async readIssue(ref: IssueRef): Promise<IssueSnapshot> {

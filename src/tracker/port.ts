@@ -98,13 +98,23 @@ export interface ReleaseOutcome {
   changes: IssueChange[];
 }
 
+// What the factory's claim leaves on an issue, already normalized: the labels and the accounts
+// whose presence marks the claim as the factory's. A release is confirmed when none is left,
+// whatever else keeps the issue claimed (status, other people's assignments).
+export interface ClaimMark {
+  labels: string[];
+  assignees: string[];
+}
+
 export interface TrackerPort {
+  // The mark the factory's claim leaves on this issue's tracker (the routed port answers per issue).
+  claimMarkOf(ref: IssueRef): ClaimMark;
   // Ready-for-agent issues in scope, paginated by the adapter.
   discoverCandidates(scope: TrackerScope): Promise<IssueRef[]>;
   readIssue(ref: IssueRef): Promise<IssueSnapshot>;
   // Registers claim + start; the caller must confirm via readIssue before running any agent.
   claim(ref: IssueRef): Promise<ClaimOutcome>;
-  // Removes the claim only; never marks done. May report the concrete changes it made.
+  // Removes the claim mark only; never marks done. May report the concrete changes it made.
   releaseClaim(ref: IssueRef): Promise<void | ReleaseOutcome>;
   readComments(ref: IssueRef): Promise<Comment[]>;
   // The core prefixes the marker; adapters never strip it. Returns the comment id.

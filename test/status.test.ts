@@ -195,6 +195,7 @@ test("observability failures and unreadable files are reported as before", async
 
 // The memory tracker keeps its methods on the prototype: a wrapper has to name them.
 const delegating = (inner: TrackerPort): TrackerPort => ({
+  claimMarkOf: (ref) => inner.claimMarkOf(ref),
   discoverCandidates: (scope) => inner.discoverCandidates(scope),
   readIssue: (ref) => inner.readIssue(ref),
   claim: (ref) => inner.claim(ref),

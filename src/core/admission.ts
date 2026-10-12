@@ -14,7 +14,7 @@ import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Del
 import { parseRunOutput, type PrRef } from "./result.js";
 import { noopObserver, type FieldValue, type Level, type Observer } from "./observability.js";
 import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, triggerSummary, type IssueWriteContext } from "./ops-events.js";
-import { PartialWriteError, refKey, type IssueChange, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
+import { PartialWriteError, refKey, type ClaimMark, type IssueChange, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
 // The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
@@ -80,9 +80,13 @@ const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot |
   return false;
 };
 
-// The reread shows the claim gone: neither the label nor an assignee is left on the issue.
-const claimGone = (snapshot: IssueSnapshot | undefined): boolean =>
-  snapshot !== undefined && snapshot.claimed.known && !snapshot.claimed.value;
+// The reread shows the factory's claim mark gone: none of its labels or accounts is left on the
+// issue. Status and other people's assignments do not matter; an unreadable field proves nothing.
+const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean => {
+  const absent = (present: Known<string[]>, marked: string[]): boolean =>
+    marked.length === 0 || (present.known && !marked.some((item) => present.value.includes(item)));
+  return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
+};
 
 // Jobs whose issue is read for directed replies (CA11). A job that is done, released or needs
 // intervention takes no input from the tracker.
@@ -386,6 +390,7 @@ export class Admission {
   private async release(job: Job, command?: string): Promise<string | undefined> {
     if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
     const context = this.writeContext(job, "release", "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
+    const mark = this.deps.tracker.claimMarkOf(job.ref);
     let changes: IssueChange[] | undefined;
     let snapshot: IssueSnapshot | undefined;
     try {
@@ -394,12 +399,16 @@ export class Admission {
       snapshot = await this.reread(job.ref);
     } catch (error) {
       snapshot = await this.reread(job.ref);
-      if (!claimGone(snapshot)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
-      // The write failed or its answer was lost, and the reread shows the claim gone: the uncertainty
-      // is resolved by evidence, not by assumption.
-      this.obs.emit(issueChangeEvent(context, {
-        operation: "remover-label", result: "confirmed", after: "ausente", detail: "confirmada por releitura após erro de escrita",
-      }));
+      if (!markGone(snapshot, mark)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+      // The write failed or its answer was lost, and the reread shows the mark gone: the uncertainty
+      // is resolved by evidence, not by assumption. Each part of the mark is a confirmed change.
+      const detail = "confirmada por releitura após erro de escrita";
+      for (const target of mark.labels) {
+        this.obs.emit(issueChangeEvent(context, { operation: "remover-label", target, result: "confirmed", after: "ausente", detail }));
+      }
+      for (const target of mark.assignees) {
+        this.obs.emit(issueChangeEvent(context, { operation: "remover-atribuição", target, result: "confirmed", after: "ausente", detail }));
+      }
     }
     // The reread decides what each change was: an accepted call alone is only an attempt.
     if (changes !== undefined) {
@@ -408,7 +417,7 @@ export class Admission {
     }
     // A claim the reread still shows, or a reread that failed, is not a release: the job keeps its
     // state, so the claim is not left on the issue with the tracking already ended.
-    if (!claimGone(snapshot)) {
+    if (!markGone(snapshot, mark)) {
       return `liberação não confirmada pelo tracker: ${snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura"}`;
     }
     await this.apply(job.key, "released", {

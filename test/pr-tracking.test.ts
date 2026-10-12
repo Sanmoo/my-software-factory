@@ -241,6 +241,7 @@ test("a merge the tracker does not confirm stays waiting, and the next poll conf
   let refusals = 1;
   const flaky: TrackerPort = {
     ...memory,
+    claimMarkOf: (ref) => memory.claimMarkOf(ref),
     discoverCandidates: (scope) => memory.discoverCandidates(scope),
     readIssue: (ref) => memory.readIssue(ref),
     claim: (ref) => memory.claim(ref),

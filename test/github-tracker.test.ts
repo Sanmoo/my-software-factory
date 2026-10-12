@@ -423,6 +423,10 @@ test("releaseClaim removes the claimed label and the project assignment without 
   assert.equal(gh.issues.get(1)?.state, "open");
 });
 
+test("claimMark is the claimed label and the project account", () => {
+  assert.deepEqual(tracker(new FakeGitHub()).claimMarkOf(ref(1)), { labels: ["agent-claimed"], assignees: [ACCOUNT] });
+});
+
 test("releaseClaim keeps assignees that are not the project account", async () => {
   const gh = new FakeGitHub();
   gh.add({ number: 1, labels: ["ready-for-agent", "agent-claimed"], assignees: [ACCOUNT, "human"] });

@@ -1,5 +1,6 @@
 import type {
   BlockerRef,
+  ClaimMark,
   ClaimOutcome,
   Comment,
   DoneOutcome,
@@ -93,7 +94,14 @@ function parseIssue(raw: unknown, index: number): StoredIssue {
   return issue;
 }
 
+// The label the memory tracker's own claim leaves on an issue. `claimed` in a fixture models a
+// claim made by someone else; the factory's claim is this label.
+const CLAIM_LABEL = "claim";
+
 export class MemoryTracker implements TrackerPort {
+  claimMarkOf(_ref: IssueRef): ClaimMark {
+    return { labels: [CLAIM_LABEL], assignees: [] };
+  }
   private readonly issues = new Map<string, StoredIssue>();
 
   constructor(issues: StoredIssue[]) {
@@ -123,7 +131,7 @@ export class MemoryTracker implements TrackerPort {
       title: issue.title,
       labels: issue.labels,
       assignees: issue.assignees,
-      claimed: issue.claimed,
+      claimed: this.claimedOf(issue),
       blockers,
       statusCategory: issue.statusCategory,
       priority: issue.priority,
@@ -136,12 +144,12 @@ export class MemoryTracker implements TrackerPort {
 
   async claim(ref: IssueRef): Promise<ClaimOutcome> {
     const issue = this.require(ref);
-    if (issue.claimed.known && issue.claimed.value) {
-      return { status: "rejected", reason: "issue já claimed" };
-    }
-    issue.claimed = { known: true, value: true };
+    const claimed = this.claimedOf(issue);
+    if (claimed.known && claimed.value) return { status: "rejected", reason: "issue já claimed" };
+    if (!issue.labels.known) return { status: "rejected", reason: `labels não lidas: ${issue.labels.reason}` };
+    issue.labels = { known: true, value: [...issue.labels.value, CLAIM_LABEL] };
     const changes: IssueChange[] = [
-      { operation: "adicionar-label", target: "claim", before: "ausente", after: "presente", result: "confirmed" },
+      { operation: "adicionar-label", target: CLAIM_LABEL, before: "ausente", after: "presente", result: "confirmed" },
     ];
     if (issue.statusCategory.known && issue.statusCategory.value === "to-do") {
       issue.statusCategory = { known: true, value: "in-progress" };
@@ -152,13 +160,24 @@ export class MemoryTracker implements TrackerPort {
 
   async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
     const issue = this.require(ref);
-    const had = issue.claimed.known && issue.claimed.value;
-    issue.claimed = { known: true, value: false };
+    const had = issue.labels.known && issue.labels.value.includes(CLAIM_LABEL);
+    if (issue.labels.known) issue.labels = { known: true, value: issue.labels.value.filter((label) => label !== CLAIM_LABEL) };
     return {
       changes: [had
-        ? { operation: "remover-label", target: "claim", before: "presente", after: "ausente", result: "confirmed" }
-        : { operation: "remover-label", target: "claim", before: "ausente", after: "ausente", result: "unchanged" }],
+        ? { operation: "remover-label", target: CLAIM_LABEL, before: "presente", after: "ausente", result: "confirmed" }
+        : { operation: "remover-label", target: CLAIM_LABEL, before: "ausente", after: "ausente", result: "unchanged" }],
     };
+  }
+
+  // Fixture control: someone else's claim (not the factory's mark) appears or goes away.
+  setClaimedElsewhere(ref: IssueRef, claimed: boolean): void {
+    this.require(ref).claimed = { known: true, value: claimed };
+  }
+
+  // Claimed by the factory's label or, as the fixture says, by someone else.
+  private claimedOf(issue: StoredIssue): Known<boolean> {
+    if (issue.labels.known && issue.labels.value.includes(CLAIM_LABEL)) return { known: true, value: true };
+    return issue.claimed;
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {

@@ -7,6 +7,7 @@ import { routeTrackers } from "../src/tracker/routing.js";
 const stub = (name: string): TrackerPort => {
   const answer = async (ref: IssueRef) => `${name}:${ref.id}`;
   return {
+    claimMarkOf: (ref) => ({ labels: [`${name}:${ref.id}`], assignees: [] }),
     discoverCandidates: async (scope) => [{ tracker: "memory", project: scope.project, id: name }],
     readIssue: async (ref) => ({ title: await answer(ref) }) as never,
     claim: async (ref) => ({ status: "rejected", reason: await answer(ref) }),

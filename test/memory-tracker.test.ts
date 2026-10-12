@@ -30,6 +30,20 @@ test("readIssue reports a blocker terminal flag only when the blocker can be rea
   assert.equal(missing.blockers.known && missing.blockers.value[0].terminal.known, false);
 });
 
+test("the claim mark is a label: claim adds it, release removes it, and another claim stays", async () => {
+  const tracker = await load();
+  const ref = { tracker: "memory" as const, project: github.project, id: "1" };
+  assert.deepEqual(tracker.claimMarkOf(ref).assignees, []);
+  const [mark] = tracker.claimMarkOf(ref).labels;
+  assert.ok(mark);
+  const labelsOf = async () => { const l = (await tracker.readIssue(ref)).labels; return l.known ? l.value : []; };
+  assert.ok(!(await labelsOf()).includes(mark));
+  await tracker.claim(ref);
+  assert.ok((await labelsOf()).includes(mark));
+  await tracker.releaseClaim(ref);
+  assert.ok(!(await labelsOf()).includes(mark));
+});
+
 test("claim, release and done are observable through readIssue", async () => {
   const tracker = await load();
   const ref = { tracker: "memory" as const, project: github.project, id: "1" };

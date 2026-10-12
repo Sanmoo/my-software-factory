@@ -105,6 +105,7 @@ const refOf = (repo: string, id: string): IssueRef => ({ tracker: "memory", proj
 // to model a failing or lost write.
 function trackerWith(base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort {
   return {
+    claimMarkOf: (ref) => base.claimMarkOf(ref),
     discoverCandidates: (scope) => base.discoverCandidates(scope),
     readIssue: (ref) => base.readIssue(ref),
     claim: (ref) => base.claim(ref),

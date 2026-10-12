@@ -219,6 +219,7 @@ test("an instance without Jira is checked without the Jira variables", async () 
 // ── status (issue #23) ─────────────────────────────────────────────────────────────────────────
 
 const emptyTracker = (over: Partial<TrackerPort> = {}): TrackerPort => ({
+  claimMarkOf: () => ({ labels: [], assignees: [] }),
   discoverCandidates: async () => [],
   readIssue: async () => { throw new Error("unused"); },
   claim: async () => { throw new Error("write"); },

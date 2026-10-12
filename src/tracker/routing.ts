@@ -32,6 +32,7 @@ export function routeTrackers(routes: readonly TrackerRoute[]): TrackerPort {
     return matches[0]![1];
   };
   return {
+    claimMarkOf: (ref) => forRef(ref).claimMarkOf(ref),
     discoverCandidates: async (scope) => forScope(scope).discoverCandidates(scope),
     readIssue: async (ref) => forRef(ref).readIssue(ref),
     claim: async (ref) => forRef(ref).claim(ref),

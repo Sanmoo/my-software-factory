@@ -515,6 +515,12 @@ test("claim without the configured doing transition is rejected before the label
   });
 });
 
+test("claimMark is the claimed label only", async () => {
+  await withTracker([], async (tracker) => {
+    assert.deepEqual(tracker.claimMarkOf(ref("VAN-1")), { labels: ["agent-claimed"], assignees: [] });
+  });
+});
+
 test("releaseClaim removes only the claimed label and never transitions the issue", async () => {
   const issue = fakeIssue({ key: "VAN-64", labels: ["ready-for-agent", "agent-claimed"], statusName: "Em andamento", category: "indeterminate" });
   await withTracker([issue], async (tracker, fake) => {

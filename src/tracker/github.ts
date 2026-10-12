@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type {
+  ClaimMark,
   BlockerRef,
   ClaimOutcome,
   Comment,
@@ -195,6 +196,10 @@ export class GitHubTracker implements TrackerPort {
     return labelled && assigned
       ? { status: "accepted", changes }
       : { status: "rejected", reason: "claim não confirmado na releitura", changes };
+  }
+
+  claimMarkOf(_ref: IssueRef): ClaimMark {
+    return { labels: [this.options.claimedLabel], assignees: [this.options.account] };
   }
 
   async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {

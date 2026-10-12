@@ -86,6 +86,7 @@ const refOf = (repo: string, id: string) => ({ tracker: "memory" as const, proje
 // to model write errors and writes that are accepted but not visible.
 function trackerWith(base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort {
   return {
+    claimMarkOf: (ref) => base.claimMarkOf(ref),
     discoverCandidates: (scope) => base.discoverCandidates(scope),
     readIssue: (ref) => base.readIssue(ref),
     claim: (ref) => base.claim(ref),
@@ -385,7 +386,7 @@ test("a requested resume runs before new work, even when the new work has higher
 
   await admission.poll();
   await admission.settle();
-  await memory.releaseClaim(refOf("acme/b", "2"));
+  memory.setClaimedElsewhere(refOf("acme/b", "2"), false);
   assert.equal((await admission.requestContinuation(keyOf("acme/a", "1"), "resume")).status, "queued");
 
   assert.deepEqual((await admission.poll()).admitted, [keyOf("acme/a", "1")], "resume outranks the new job 2");
