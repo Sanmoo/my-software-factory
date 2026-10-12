@@ -202,7 +202,7 @@ Pedido de ajuda termina a invocação ativa, preserva área/sessão e libera vag
 Só esse trabalho fica bloqueado; o script pode admitir outros. Mostrar a
 pergunta no terminal/log e em status, sem exigir serviço remoto de notificação.
 
-CLI mínima, sempre dirigida a uma instância: `status`, `logs <trabalho>`,
+CLI mínima, sempre dirigida a uma instância (forma `./msf [--home DIR] <instância> <comando>`): `status`, `logs <trabalho>`,
 `reply <trabalho>`, `resume <trabalho>`, `pause`, `unpause` e `release <trabalho>`.
 Reply transmite resposta dirigida; resume solicita continuidade sem informação
 nova; pause impede novas admissões e não encerra trabalhos já ativos; unpause

@@ -46,7 +46,7 @@ async function checkoutLines(project: ProjectConfig, local: LocalSettings): Prom
       const remote = (await git(checkout, "remote", "get-url", "origin")).trim();
       if (!remote.includes(project.repository)) throw new Error(`origin (${remote}) não aponta para ${project.repository}`);
       await git(checkout, "rev-parse", "--verify", `refs/remotes/origin/${branch}`).catch(() => {
-        throw new Error(`origin/${branch} desconhecida neste checkout; rode git fetch (o wizard faz isso)`);
+        throw new Error(`origin/${branch} desconhecida neste checkout; rode git fetch`);
       });
       // Commits not on origin would ride along in the job's PR: the area is cloned from this branch.
       const ahead = await git(checkout, "rev-list", "--count", `origin/${branch}..${branch}`).catch(() => "0");

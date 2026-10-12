@@ -61,17 +61,25 @@ test("a failing history is visible on the main log and in status, once, and does
   assert.equal(failures[0]!.sink, "histórico");
 });
 
-test("copyable commands carry configuration, instance and state directory, shell escaped", () => {
-  const observer = createObserver({
-    instance: "trabalho", console: () => {},
-    cli: { config: "/home/o'neil/config file.json", instance: "trabalho", stateDir: "/tmp/state dir" },
-  });
+test("copyable commands use the ./msf form, omit --home for the default and quote what needs it", () => {
+  const observer = createObserver({ instance: "trabalho", console: () => {}, cli: { instance: "trabalho" } });
   const commands = observer.commands("github:acme/app#13")!;
-  assert.equal(
-    commands.reply,
-    "npm run reply -- --config '/home/o'\\''neil/config file.json' --instance trabalho --state-dir '/tmp/state dir' 'github:acme/app#13' --message '<resposta>'",
-  );
+  assert.equal(commands.reply, "./msf trabalho reply '#13' --message '<resposta>'");
+  assert.equal(commands.resume, "./msf trabalho resume '#13'");
+  assert.equal(commands.logs, "./msf trabalho logs '#13'");
   assert.equal(shellQuote("plain-word_1"), "plain-word_1");
+});
+
+test("copyable commands carry --home, absolute and quoted, when the base directory is not the default", () => {
+  const observer = createObserver({ instance: "trabalho", console: () => {}, cli: { instance: "trabalho", home: "/home/o'neil/.pilot" } });
+  assert.equal(observer.commands("jira:PAY#PAY-7")!.logs, "./msf --home '/home/o'\\''neil/.pilot' trabalho logs PAY-7");
+});
+
+test("a short reference shared by two jobs of the instance prints as the full key", () => {
+  const observer = createObserver({ instance: "pessoal", console: () => {}, cli: { instance: "pessoal" } });
+  const jobs = ["github:acme/app#13", "github:acme/other#13", "github:acme/app#14"];
+  assert.equal(observer.commands("github:acme/app#13", jobs)!.resume, "./msf pessoal resume 'github:acme/app#13'");
+  assert.equal(observer.commands("github:acme/app#14", jobs)!.resume, "./msf pessoal resume '#14'");
 });
 
 test("history keeps appended records in order and ignores unreadable lines", async () => {

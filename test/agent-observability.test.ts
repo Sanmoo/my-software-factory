@@ -65,7 +65,7 @@ async function harness(script: Script, options: {
   const lines: string[] = [];
   const observer: Observer = createObserver({
     instance: "personal", console: (text) => lines.push(text), history: createFileHistory(f.stateDir),
-    redactor: createRedactor([SECRET]), cli: { config: "/c.json", instance: "personal", stateDir: f.stateDir },
+    redactor: createRedactor([SECRET]), cli: { instance: "personal" },
   });
   let calls = 0;
   const runs: SandboxRun[] = [];

@@ -17,7 +17,7 @@ engenharia supervisionado. Repositório privado; spec de MVP consolidada para re
   dois eixos. [Resultado e ressalvas](docs/results/004-implement-help.md).
 - Codex continua com bloqueio TLS independente, documentado no
   [diagnóstico](docs/results/002-tls-diagnosis.md); não é requisito deste piloto.
-- Piloto da issue #10: wizard, config dos 16 alvos e `npm run run` em [docs/pilot](docs/pilot/README.md).
+- Piloto da issue #10: config dos 16 alvos e a CLI `./msf` em [docs/pilot](docs/pilot/README.md).
 - Observabilidade: [diagnóstico da atividade ausente nos logs](docs/results/010-agent-observability.md) e [plano/implementação](docs/plans/agent-observability.md)
   e [plano aprovado, implementação pendente](docs/plans/agent-observability.md).
 - Issue tracker será acessado por porta e adapters: Jira no trabalho e GitHub
@@ -61,6 +61,35 @@ SMOKE_REPLY='resposta humana real' npm run smoke:implement
 Ele habilita skills e ferramentas da fixture, mantendo MCP desativado. Não roda
 em projeto real nem usa tracker/PR/deploy. Consulte as ressalvas de TDD e dos
 reviewers no [relatório](docs/results/004-implement-help.md).
+
+## Operação: `./msf`
+
+Uma única forma de comando, versionada na raiz do repositório:
+
+```sh
+./msf [--home DIR] <instância> <comando> [trabalho] [opções]
+```
+
+Comandos: `run` (`--check`, `--once`), `logs`, `reply --message TEXTO`, `resume`, `release`,
+`pause` e `unpause`. `./msf --help` lista os comandos e `./msf <instância> <comando> --help` mostra o uso
+de cada um.
+
+- **Diretório base.** O padrão é `.msf/` na raiz do repositório (git-ignored) e traz `config.json`,
+  `local.json` e `state/<instância>/`. `--home DIR` aponta para outro diretório (um caminho relativo parte
+  da raiz do repositório). O log principal imprime `--home` só quando ele não é o padrão.
+- **Trabalho.** A referência curta que o log mostra (`#13`, `PAY-7`) ou a chave completa
+  (`github:dono/repo#13`). Com `#`, use aspas: `./msf pessoal resume '#13'`. Se a referência curta
+  corresponde a mais de um trabalho, o comando recusa e lista as chaves completas.
+- **Credenciais do Jira.** Só por variáveis de ambiente: `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN`,
+  exigidas apenas ao iniciar (`run`) uma instância com projeto Jira. Os comandos de supervisão não as
+  usam. Nenhum arquivo da factory guarda o token; por exemplo, a partir do Keychain do macOS:
+
+  ```sh
+  security add-generic-password -a "$USER" -s msf-jira-token -w   # uma vez; pede o token
+  export JIRA_API_TOKEN="$(security find-generic-password -a "$USER" -s msf-jira-token -w)"
+  export JIRA_URL=https://suaempresa.atlassian.net JIRA_USERNAME=voce@empresa.com
+  ./msf trabalho run
+  ```
 
 ## Configuração
 

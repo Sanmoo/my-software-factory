@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfigFile } from "../config/load.js";
 import { Admission, type PollReport } from "../core/admission.js";
@@ -8,52 +6,38 @@ import { createObserver } from "../core/observability.js";
 import { createRedactor } from "../core/redaction.js";
 import { messageOf } from "../core/values.js";
 import { createFileFailureStore, createFileHistory } from "../state/history.js";
+import type { SandboxBoundary } from "../runtime/docker-runner.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
+import type { GitHubBoundary } from "../tracker/github.js";
 import { checkInstance } from "./check.js";
 import { composeInstance } from "./compose.js";
 import { loadLocalSettings } from "./local-settings.js";
 
 // `run`: the instance's coordinator loop (R04, R05). It polls the trackers at the configured
 // interval and keeps the jobs the admission dispatches running in the background. The operator
-// supervises with status, logs, reply, resume, release and pause (R09) from other terminals.
+// supervises with logs, reply, resume, release, pause and unpause (R09) from other terminals. The
+// operator reaches it through `./msf <instância> run [--check] [--once]` (see msf.ts).
 //
-//   npm run run -- --config FILE --instance NAME --state-dir DIR --local FILE [--check] [--once]
-//
-// --check   read-only readiness check (no claim, no write); exits non-zero if anything fails.
-// --once    one polling cycle, then waits for the dispatched jobs to settle and exits.
+// check   read-only readiness check (no claim, no write); exits non-zero if anything fails.
+// once    one polling cycle, then waits for the dispatched jobs to settle and exits.
 
-const USAGE = "uso: npm run run -- --config FILE --instance NAME --state-dir DIR --local FILE [--check] [--once]";
-const VALUE_FLAGS = ["--config", "--instance", "--state-dir", "--local"];
-const SWITCHES = ["--check", "--once"];
-
-interface Options {
+export interface RunOptions {
   configPath: string;
   instanceName: string;
   stateDir: string;
   localPath: string;
+  // Absolute base directory, only when it is not the default: it is what the printed commands carry.
+  home?: string;
   check: boolean;
   once: boolean;
-}
-
-function parseArgs(argv: readonly string[]): Options | string {
-  const values = new Map<string, string>();
-  const switches = new Set<string>();
-  for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index]!;
-    if (SWITCHES.includes(flag)) { switches.add(flag); continue; }
-    if (!VALUE_FLAGS.includes(flag)) return `argumento desconhecido: ${flag}\n${USAGE}`;
-    const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) return `${flag} exige um valor\n${USAGE}`;
-    values.set(flag, value);
-    index += 1;
-  }
-  const missing = VALUE_FLAGS.filter((flag) => !values.has(flag));
-  if (missing.length > 0) return `faltam: ${missing.join(", ")}\n${USAGE}`;
-  return {
-    configPath: values.get("--config")!, instanceName: values.get("--instance")!,
-    stateDir: values.get("--state-dir")!, localPath: values.get("--local")!,
-    check: switches.has("--check"), once: switches.has("--once"),
-  };
+  env: NodeJS.ProcessEnv;
+  isTTY: boolean;
+  // Where the lines go, one call per line (stdout) or per message (stderr).
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+  // Boundaries are injectable for tests; the defaults are the real ones.
+  sandbox?: SandboxBoundary;
+  github?: GitHubBoundary;
 }
 
 function describe(report: PollReport, log: MainLog): void {
@@ -68,29 +52,26 @@ function describe(report: PollReport, log: MainLog): void {
 
 const withHuman = (human: { color: boolean } | undefined) => (human === undefined ? {} : { human });
 
-export async function main(argv: readonly string[]): Promise<number> {
-  const options = parseArgs(argv);
-  if (typeof options === "string") { process.stderr.write(`${options}\n`); return 2; }
-
+export async function runInstance(options: RunOptions): Promise<number> {
   const loaded = await loadConfigFile(options.configPath);
   if (!loaded.ok) {
-    process.stderr.write(`configuração inválida:\n${loaded.issues.map((i) => `${i.path}: ${i.message}`).join("\n")}\n`);
+    options.stderr(`configuração inválida:\n${loaded.issues.map((i) => `${i.path}: ${i.message}`).join("\n")}`);
     return 1;
   }
   const instance = loaded.config.instances.find((candidate) => candidate.name === options.instanceName);
   if (!instance) {
-    process.stderr.write(`instância '${options.instanceName}' não encontrada; disponíveis: ${loaded.config.instances.map((i) => i.name).join(", ")}\n`);
+    options.stderr(`instância '${options.instanceName}' não encontrada; disponíveis: ${loaded.config.instances.map((i) => i.name).join(", ")}`);
     return 2;
   }
   const local = await loadLocalSettings(options.localPath);
-  if (typeof local === "string") { process.stderr.write(`${local}\n`); return 1; }
+  if (typeof local === "string") { options.stderr(local); return 1; }
 
   const mainLog = createMainLog({
     instance: instance.name,
-    write: (line) => { process.stdout.write(`${line}\n`); },
-    ...withHuman(terminalMode(process.env, process.stdout.isTTY === true)),
+    write: options.stdout,
+    ...withHuman(terminalMode(options.env, options.isTTY)),
   });
-  const sandbox = sandcastleBoundary();
+  const sandbox = options.sandbox ?? sandcastleBoundary();
   // Events reach the main log as they happen, also from invocations running in the background, and
   // the local history that `logs` reads. The commands it prints are the ones this process runs with.
   const observer = createObserver({
@@ -99,19 +80,22 @@ export async function main(argv: readonly string[]): Promise<number> {
     history: createFileHistory(options.stateDir),
     failures: createFileFailureStore(options.stateDir),
     redactor: createRedactor(),
-    cli: { config: resolve(options.configPath), instance: instance.name, stateDir: resolve(options.stateDir) },
+    cli: { instance: instance.name, ...(options.home === undefined ? {} : { home: options.home }) },
   });
   let deps;
   try {
-    deps = composeInstance({ config: loaded.config, instance, local, stateDir: options.stateDir, sandbox, observer });
+    deps = composeInstance({
+      config: loaded.config, instance, local, stateDir: options.stateDir, sandbox, observer, env: options.env,
+      ...(options.github === undefined ? {} : { github: options.github }),
+    });
   } catch (error) {
-    process.stderr.write(`composição falhou: ${messageOf(error)}\n`);
+    options.stderr(`composição falhou: ${messageOf(error)}`);
     return 1;
   }
 
   if (options.check) {
-    const lines = await checkInstance({ config: loaded.config, instance, local, deps, sandbox });
-    for (const line of lines) process.stdout.write(`${line.ok ? "ok   " : "FALHA"} ${line.what}: ${line.detail}\n`);
+    const lines = await checkInstance({ config: loaded.config, instance, local, deps, sandbox, env: options.env });
+    for (const line of lines) options.stdout(`${line.ok ? "ok   " : "FALHA"} ${line.what}: ${line.detail}`);
     return lines.every((line) => line.ok) ? 0 : 1;
   }
 
@@ -139,8 +123,4 @@ export async function main(argv: readonly string[]): Promise<number> {
   for (const error of errors) mainLog.note("erro", `de persistência: ${messageOf(error)}`);
   await observer.flush();
   return errors.length === 0 ? 0 : 1;
-}
-
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = await main(process.argv.slice(2));
 }

@@ -85,7 +85,7 @@ const TEXT_STYLE: Record<Level, Format[]> = { info: ["bold"], progresso: ["bold"
 // Today's plain words for the loop's own lines.
 const PLAIN_PREFIX: Record<Level, string> = { info: "", progresso: "", "atenção": "ATENÇÃO: ", erro: "ERRO " };
 
-// What the human presentation leaves to the history and to `npm run logs`: the area, the session
+// What the human presentation leaves to the history and to `./msf <instância> logs`: the area, the session
 // and the logs nobody follows live. The detailed log stays, it is the one to `tail -f`.
 const SECONDARY = new Set(["área", "sessão", "runtime", "artefatos"]);
 const JOB_COLUMN = 6;

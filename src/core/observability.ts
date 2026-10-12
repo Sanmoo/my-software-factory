@@ -1,4 +1,5 @@
 import { createMainLog, type FieldValue, type Level, type MainLog } from "./main-log.js";
+import { refForCommand } from "./job-ref.js";
 import { createRedactor, type Redactor } from "./redaction.js";
 import { messageOf } from "./values.js";
 
@@ -52,11 +53,19 @@ export interface FailureStore {
   clear(sink: string): Promise<void>;
 }
 
-// What the main log needs to print commands the operator can paste.
+// What the main log needs to print commands the operator can paste: `./msf [--home DIR] <instance> ...`.
 export interface CliHints {
-  config: string;
   instance: string;
-  stateDir: string;
+  // Absolute base directory, only when it is not the default one.
+  home?: string;
+}
+
+// The commands the main log prints for one job, ready to paste.
+export interface JobCommands {
+  reply: string;
+  resume: string;
+  logs: string;
+  detail?: string;
 }
 
 export interface Observer {
@@ -71,8 +80,9 @@ export interface Observer {
   registerSecret(secret: string | undefined): void;
   // The detailed log of the job's latest invocation, so a help request can point to it.
   setDetailLog(job: string, path: string): void;
-  // Copyable commands for one job.
-  commands(job: string): { reply: string; logs: string; detail?: string } | undefined;
+  // Copyable commands for one job. `jobs` are the keys of the instance's jobs: a short reference
+  // that more than one of them shares is printed as the full key.
+  commands(job: string, jobs?: readonly string[]): JobCommands | undefined;
 }
 
 export const noopObserver: Observer = {
@@ -141,14 +151,16 @@ export function createObserver(options: ObserverOptions): Observer {
     if (store) queue = queue.then(() => store.clear(sink)).catch(() => undefined);
   };
 
-  const commands: Observer["commands"] = (job) => {
+  const commands: Observer["commands"] = (job, jobs = []) => {
     const cli = options.cli;
     if (!cli) return undefined;
-    const base = `--config ${shellQuote(cli.config)} --instance ${shellQuote(cli.instance)} --state-dir ${shellQuote(cli.stateDir)}`;
+    const base = `./msf${cli.home === undefined ? "" : ` --home ${shellQuote(cli.home)}`} ${shellQuote(cli.instance)}`;
+    const ref = shellQuote(refForCommand(job, jobs));
     const detail = detailLogs.get(job);
     return {
-      reply: `npm run reply -- ${base} ${shellQuote(job)} --message '<resposta>'`,
-      logs: `npm run logs -- ${base} ${shellQuote(job)}`,
+      reply: `${base} reply ${ref} --message '<resposta>'`,
+      resume: `${base} resume ${ref}`,
+      logs: `${base} logs ${ref}`,
       ...(detail ? { detail: `tail -f ${shellQuote(detail)}` } : {}),
     };
   };

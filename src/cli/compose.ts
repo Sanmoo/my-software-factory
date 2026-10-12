@@ -9,7 +9,7 @@ import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { createGhCliBoundary, GitHubTracker, type GitHubBoundary } from "../tracker/github.js";
-import { JiraTracker, jiraConnectionFromEnv, type JiraTrackerSettings } from "../tracker/jira.js";
+import { JIRA_ENV_VARS, JiraConfigError, JiraTracker, jiraConnectionFromEnv, type JiraConnection, type JiraTrackerSettings } from "../tracker/jira.js";
 import { routeTrackers, type TrackerRoute } from "../tracker/routing.js";
 import type { LocalSettings } from "./local-settings.js";
 
@@ -42,9 +42,24 @@ function jiraSettingsOf(project: Extract<ProjectConfig, { adapter: "jira" }>): J
   };
 }
 
+// The Jira credentials come from the environment only. When they are missing the message is enough
+// to fix it: the instance, the Jira projects and the variables to export.
+function jiraConnectionOf(instance: InstanceConfig, projects: ProjectConfig[], env: NodeJS.ProcessEnv): JiraConnection {
+  try {
+    return jiraConnectionFromEnv(env);
+  } catch (error) {
+    if (!(error instanceof JiraConfigError)) throw error;
+    const jira = projects.flatMap((project) => (project.adapter === "jira" ? [`${project.name} (${project.jira.projectKey})`] : []));
+    throw new Error(
+      `a instância ${instance.name} usa Jira (projetos: ${jira.join(", ")}) e ${error.message}; `
+      + `exporte ${JIRA_ENV_VARS.join(", ")} no ambiente antes de iniciar a instância`,
+    );
+  }
+}
+
 // One Jira adapter serves a project key. Projects that share a key (routing labels of VAN) must
 // agree on the workflow settings: the adapter is per key, and a silent winner would be a guess.
-function jiraRoutes(projects: ProjectConfig[], env: NodeJS.ProcessEnv): TrackerRoute[] {
+function jiraRoutes(instance: InstanceConfig, projects: ProjectConfig[], env: NodeJS.ProcessEnv): TrackerRoute[] {
   const byKey = new Map<string, { settings: JiraTrackerSettings; project: string }>();
   for (const project of projects) {
     if (project.adapter !== "jira") continue;
@@ -58,7 +73,7 @@ function jiraRoutes(projects: ProjectConfig[], env: NodeJS.ProcessEnv): TrackerR
     if (!known) byKey.set(project.jira.projectKey, { settings, project: project.name });
   }
   if (byKey.size === 0) return [];
-  const connection = jiraConnectionFromEnv(env);
+  const connection = jiraConnectionOf(instance, projects, env);
   return [...byKey.entries()].map(([key, { settings }]) => ({
     tracker: "jira" as const,
     project: key,
@@ -87,7 +102,7 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
       port: new GitHubTracker({ account: project.githubAccount, claimedLabel: project.labels.claimed, boundary: github }),
     }]
     : []);
-  const tracker = routeTrackers([...githubRoutes, ...jiraRoutes(projects, options.env ?? process.env)]);
+  const tracker = routeTrackers([...githubRoutes, ...jiraRoutes(instance, projects, options.env ?? process.env)]);
 
   const runner = createDockerRunner({
     instance,

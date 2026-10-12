@@ -7,7 +7,7 @@ import { projectEligibility } from "../src/config/project-eligibility.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { InstanceConfig } from "../src/config/types.js";
 import { Admission } from "../src/core/admission.js";
-import { jobBranch } from "../src/core/job.js";
+import { jobBranch, newJob, transitionJob, type Job } from "../src/core/job.js";
 import { createObserver, type Observer } from "../src/core/observability.js";
 import type { PrRef } from "../src/core/result.js";
 import type { PrFeedback, PrLookup, PrPort, PrSnapshot } from "../src/pr/port.js";
@@ -94,13 +94,16 @@ async function setup(options: {
   runner: Runner;
   tracker?: (base: MemoryTracker) => TrackerPort;
   historyBlocked?: boolean;
+  // Jobs of the instance that already exist in the state directory.
+  existing?: Job[];
 }): Promise<Setup> {
   const stateDir = await dir();
+  for (const job of options.existing ?? []) await createFileJobStore(stateDir).save(job);
   if (options.historyBlocked) await writeFile(join(stateDir, "history"), "blocks the directory");
   const lines: string[] = [];
   const observer = createObserver({
     instance: "trabalho", console: (line) => lines.push(line), history: createFileHistory(stateDir),
-    cli: { config: "/etc/msf/config.json", instance: "trabalho", stateDir },
+    cli: { instance: "trabalho" },
   });
   const memory = memoryOf(options.ids ?? ["1"]);
   const prs = new FakePrs();
@@ -145,8 +148,9 @@ test("a help request is on the main log with question, context and a copyable re
   assert.match(text, /ajuda solicitada trabalho=memory:acme\/app#1 invocação=inv-/);
   assert.match(text, /pergunta: Which seam\?/);
   assert.match(text, /contexto: slugify/);
-  assert.match(text, new RegExp(`responder: npm run reply -- --config /etc/msf/config.json --instance trabalho --state-dir ${s.stateDir} 'memory:acme/app#1' --message '<resposta>'`));
-  assert.match(text, /histórico: npm run logs -- /);
+  assert.match(text, /responder: \.\/msf trabalho reply '#1' --message '<resposta>'/);
+  assert.match(text, /histórico: \.\/msf trabalho logs '#1'/);
+  assert.doesNotMatch(text, /npm run/);
   // The first start says why: the first admission is the only one called "trabalho admitido".
   assert.equal(matching(s.lines, /trabalho admitido/).length, 1);
   assert.match(matching(s.lines, /invocação iniciada/)[0]!, /tipo=nova motivo=issue-elegível/);
@@ -267,6 +271,36 @@ test("several feedbacks behind one invocation are summarized with short referenc
   const before = s.lines.length;
   await s.admission.poll();
   assert.equal(matching(s.lines.slice(before), /feedback recebido|invocação/).length, 0, "no duplicate consumption events");
+});
+
+test("an interrupted job says how to resume and where the history is, and does not offer release", async () => {
+  const runner = new FakeRunner(() => withWorkspace(finished({ status: "interrupted", reason: "falha" }), WORKSPACE));
+  const s = await setup({ runner });
+  await s.admission.poll();
+  await s.admission.settle();
+  await s.observer.flush();
+  const text = s.lines.join("\n");
+  assert.match(text, /trabalho interrompido/);
+  assert.match(text, /retomar: \.\/msf trabalho resume '#1'/);
+  assert.match(text, /histórico: \.\/msf trabalho logs '#1'/);
+  assert.doesNotMatch(text, /liberar|release/);
+});
+
+test("a short reference shared with another job of the instance is printed as the full key", async () => {
+  const runner = new FakeRunner(() => withWorkspace(finished({ status: "interrupted", reason: "falha" }), WORKSPACE));
+  const other = newJob({ ref: { tracker: "memory", project: "acme/other", id: "1" }, repository: "acme/other" });
+  const s = await setup({ runner, existing: [transitionJob(other, "interrupted", { message: "x", reason: "caiu" })] });
+  await s.admission.poll();
+  await s.admission.settle();
+  await s.observer.flush();
+  assert.match(s.lines.join("\n"), /retomar: \.\/msf trabalho resume 'memory:acme\/app#1'/);
+});
+
+test("the commands printed carry --home only when the base directory is not the default", async () => {
+  const lines: string[] = [];
+  const observer = createObserver({ instance: "pessoal", console: (line) => lines.push(line), cli: { instance: "pessoal", home: "/repo/.pilot" } });
+  observer.emit({ kind: "x", text: "trabalho interrompido", job: KEY("1"), lines: [`retomar: ${observer.commands(KEY("1"))!.resume}`] });
+  assert.match(lines.join("\n"), /retomar: \.\/msf --home \/repo\/\.pilot pessoal resume '#1'/);
 });
 
 test("a manual resume is its own reason", async () => {

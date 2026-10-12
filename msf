@@ -1,0 +1,5 @@
+#!/bin/sh
+# Entrada única do operador: ./msf [--home DIR] <instância> <comando> [trabalho] [opções]
+# `./msf --help` lista os comandos. O diretório base padrão é .msf/ nesta raiz.
+root=$(cd "$(dirname "$0")" && pwd -P) || exit 1
+exec "$root/node_modules/.bin/tsx" --tsconfig "$root/tsconfig.json" "$root/src/cli/msf.ts" "$@"

@@ -1023,7 +1023,7 @@ export class Admission {
     const { invocation } = details;
     switch (job.state) {
       case "waiting-for-help": {
-        const commands = this.obs.commands(key);
+        const commands = this.obs.commands(key, [...this.jobs.keys()]);
         const lines = [
           `pergunta: ${details.question ?? ""}`,
           ...(details.context ? [`contexto: ${details.context}`] : []),
@@ -1038,7 +1038,11 @@ export class Admission {
         }, { invocation, level: "progresso" });
         return;
       case "interrupted":
-        this.emitFor(key, "trabalho-interrompido", "trabalho interrompido", { motivo: details.reason }, { invocation, level: "atenção" });
+        // How to resume and how to see what happened; releasing is not offered ready to paste, so a
+        // paste does not end the follow-up by mistake.
+        this.emitFor(key, "trabalho-interrompido", "trabalho interrompido", { motivo: details.reason }, {
+          invocation, level: "atenção", lines: this.interruptedCommands(key),
+        });
         return;
       case "intervention-required":
         this.emitFor(key, "intervenção-necessária", "intervenção necessária", { motivo: details.reason }, { invocation, level: "atenção" });
@@ -1052,6 +1056,12 @@ export class Admission {
       case "running":
         return;
     }
+  }
+
+  private interruptedCommands(key: string): string[] {
+    const commands = this.obs.commands(key, [...this.jobs.keys()]);
+    if (!commands) return [];
+    return [`retomar: ${commands.resume}`, `histórico: ${commands.logs}`, ...(commands.detail ? [`log detalhado: ${commands.detail}`] : [])];
   }
 
   private async note(key: string, message: string): Promise<void> {

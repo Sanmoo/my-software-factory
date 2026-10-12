@@ -1,6 +1,6 @@
 # Piloto 009 — instâncias trabalho e pessoal (issue #10)
 
-Data: AAAA-MM-DD. Preencher a partir de `.pilot/pilot.env` e de `.pilot/state/*` (jobs, `runs/*.audit.jsonl`).
+Data: AAAA-MM-DD. Preencher a partir do diretório base do piloto (`config.json`, `local.json`) e de `state/*` (jobs, `runs/*.audit.jsonl`).
 Não colar tokens nem transcrições brutas.
 
 ## Setup
@@ -8,7 +8,7 @@ Não colar tokens nem transcrições brutas.
 - Versões (Pi, Sandcastle, Docker/colima, Node): …
 - Instâncias e alvos habilitados (16 configurados; quais rodaram): …
 - Perfis Pi usados por instância e modelo: …
-- Tempo de setup com o wizard e passos manuais que sobraram: …
+- Tempo de setup e passos manuais: …
 
 ## Tarefas reais
 

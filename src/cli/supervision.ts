@@ -10,8 +10,8 @@ import { loadInstance, type CliRun } from "./instance.js";
 // CLI validates the request and writes it to the instance's local command queue; it never
 // changes job state itself. The instance applies the queue on its next poll, in order.
 
-const COMMANDS = ["reply", "resume", "release", "pause", "unpause"] as const;
-type Command = (typeof COMMANDS)[number];
+export const COMMANDS = ["reply", "resume", "release", "pause", "unpause"] as const;
+export type Command = (typeof COMMANDS)[number];
 const NEEDS_JOB: readonly Command[] = ["reply", "resume", "release"];
 const FLAGS = ["--config", "--instance", "--state-dir", "--message"];
 const USAGE = [
@@ -19,7 +19,7 @@ const USAGE = [
   "     npm run <pause|unpause> -- --config FILE --instance NAME --state-dir DIR",
 ].join("\n");
 
-interface Options {
+export interface SupervisionOptions {
   command: Command;
   configPath: string;
   instanceName: string;
@@ -30,7 +30,7 @@ interface Options {
 
 const usageError = (message: string): CliRun => ({ exitCode: 2, stdout: "", stderr: `${message}\n${USAGE}\n` });
 
-function parseArgs(argv: readonly string[]): Options | CliRun {
+function parseArgs(argv: readonly string[]): SupervisionOptions | CliRun {
   const [command, ...rest] = argv;
   if (command === undefined || !(COMMANDS as readonly string[]).includes(command)) {
     return usageError(`comando desconhecido: ${command ?? ""}`.trim());
@@ -87,7 +87,11 @@ const CONFIRMATION: Record<Command, string> = {
 export async function runSupervision(argv: readonly string[]): Promise<CliRun> {
   const options = parseArgs(argv);
   if ("exitCode" in options) return options;
+  return applySupervision(options);
+}
 
+// The request, already validated: the job (when the command takes one) is a full key.
+export async function applySupervision(options: SupervisionOptions): Promise<CliRun> {
   const loaded = await loadInstance(options.configPath, options.instanceName);
   if (!loaded.ok) return loaded.run;
 

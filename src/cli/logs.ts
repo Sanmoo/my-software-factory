@@ -12,14 +12,14 @@ import { stateLabel, summaryOf } from "./jobs-view.js";
 const USAGE = "uso: npm run logs -- --config FILE --instance NAME --state-dir DIR TRABALHO";
 const FLAGS = ["--config", "--instance", "--state-dir"];
 
-interface Options {
+export interface LogsOptions {
   configPath: string;
   instanceName: string;
   stateDir: string;
   job: string;
 }
 
-function parseArgs(argv: readonly string[]): Options | string {
+function parseArgs(argv: readonly string[]): LogsOptions | string {
   const values = new Map<string, string>();
   const positional: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -66,7 +66,11 @@ async function timeline(stateDir: string, job: string): Promise<string[]> {
 export async function runLogs(argv: readonly string[]): Promise<CliRun> {
   const options = parseArgs(argv);
   if (typeof options === "string") return { exitCode: 2, stdout: "", stderr: `${options}\n` };
+  return showLogs(options);
+}
 
+// The job is a full key.
+export async function showLogs(options: LogsOptions): Promise<CliRun> {
   const loaded = await loadInstance(options.configPath, options.instanceName);
   if (!loaded.ok) return loaded.run;
 

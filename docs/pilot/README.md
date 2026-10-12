@@ -2,34 +2,37 @@
 
 Roda a factory de verdade: instâncias `pessoal` e `trabalho`, trackers GitHub Issues e Jira,
 Docker, primeiro N=1 e depois N=2. A parte que só uma pessoa pode fazer (credenciais, tarefas
-reais, merge) é conduzida por um wizard.
+reais, merge) é sua.
 
-```sh
-./scripts/pilot-wizard.sh      # idempotente: lembra o que já salvou em .pilot/pilot.env
-```
+Tudo passa pela CLI `./msf [--home DIR] <instância> <comando> [trabalho] [opções]` (veja o
+[README](../../README.md#operação-msf)). O diretório base (padrão `.msf/`, git-ignored) guarda o que é
+desta máquina:
 
-O wizard gera, em `.pilot/` (git-ignored: token Jira, caminhos desta máquina):
-
-- `config.json`: a partir de [`config.template.json`](config.template.json), com todos os alvos do §7;
+- `config.json`: copie [`config.template.json`](config.template.json) e habilite só os alvos do piloto
+  (os demais ficam `enabled: false` até terem `docs/spec.md`);
 - `local.json`: perfis Pi, checkouts, imagem e insumos de review desta máquina;
-- `run.sh`: `.pilot/run.sh <pessoal|trabalho> [--check|--once]`.
+- `state/<instância>/`: o estado de cada instância.
+
+O token do Jira não fica em arquivo: exporte `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` no ambiente
+antes de iniciar a instância `trabalho` (exemplo com o Keychain no README).
 
 ## O que existe para o piloto
 
 | Peça | Onde |
 | --- | --- |
 | Config dos alvos do §7 (**16** alvos, não 13: 5 pessoais + 11 do trabalho) | `config.template.json` |
-| Loop da instância (polling, admissão, runner Docker, PR, feedback) | `npm run run` (`src/cli/run.ts`) |
-| Check de prontidão, só leitura | `.pilot/run.sh <instância> --check` |
+| Loop da instância (polling, admissão, runner Docker, PR, feedback) | `./msf <instância> run` (`src/cli/run.ts`) |
+| Check de prontidão, só leitura | `./msf <instância> run --check` |
 | Composição dos adapters reais | `src/cli/compose.ts`, `src/tracker/routing.ts` |
 | Modelo do relatório | [`report-template.md`](report-template.md) → `docs/results/009-pilot.md` |
 
-Supervisão enquanto roda: `npm run logs`, `reply`, `resume`, `release`, `pause`, `unpause`
-(`--help` de cada um), com `--state-dir .pilot/state/<instância>`.
+Supervisão enquanto roda: `./msf <instância> logs|reply|resume|release|pause|unpause` (`--help` de
+cada um). O log principal imprime os comandos prontos para copiar, na mesma forma; um trabalho
+interrompido mostra `retomar:` e `histórico:`.
 
 No terminal, o log principal do `run` sai em formato humano: hora local, coluna curta do
 trabalho (`#13`, `PAY-7`), marcador e cor de severidade (`·` info, `✓` progresso, `!` atenção,
-`✗` erro); área, sessão e logs secundários ficam no histórico (`npm run logs`). `NO_COLOR` tira as
+`✗` erro); área, sessão e logs secundários ficam no histórico (`./msf <instância> logs <trabalho>`). `NO_COLOR` tira as
 cores; `FORCE_COLOR=1` liga o formato humano fora de um terminal. Redirecionado, o log mantém o
 formato plano (ISO UTC, `[instância]`, todos os campos). Nos dois, a mesma falha repetida sai
 uma vez, com lembrete a cada 5 min e aviso de recuperação.
@@ -55,12 +58,12 @@ subagente e filhos reconciliados. O piloto demonstra a CA09 pelo log e pela sess
 
 Comentário humano novo no PR (conversa, inline ou corpo de review) não vira correção direta: a
 correção invoca `/skill:gh-address-comments`, que numera threads e comentários com resumo e proposta
-e termina como pedido de ajuda (sem mudar código nem fazer push). Responda por `reply` ou `agent:` na
+e termina como pedido de ajuda (sem mudar código nem fazer push). Responda por `./msf <instância> reply` ou `agent:` na
 issue; a retomada aplica só o que você escolheu (`1 e 3`, `2: responda que X`), junto com os checks com
 falha e o conflito do mesmo lote. Item não citado fica sem ação e com o thread aberto. Lote só com
 check com falha e/ou conflito vai direto para correção.
 
-Pré-requisitos, verificados por `.pilot/run.sh <instância> --check`:
+Pré-requisitos, verificados por `./msf <instância> run --check`:
 
 - **Skill no perfil Pi autorizado.** O operador a linka, o setup não mexe no perfil:
   `ln -s ~/.agents/skills/gh-address-comments <perfil>/skills/gh-address-comments`. Sem ela, comentário
@@ -74,8 +77,7 @@ Pré-requisitos, verificados por `.pilot/run.sh <instância> --check`:
    no Jira e reporta pelo resultado estruturado. Hoje a factory não posta a pergunta no card nem o
    bloqueia: a ajuda aparece em `status`/`logs` e se responde por `reply` ou comentário `agent:`.
    Modo unattended (comentar e bloquear o card) seria um ticket à parte.
-2. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o
-   wizard pergunta e o piloto valida.
+2. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o piloto valida.
 3. **Credencial Jira por nome.** O adapter lê `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` do
    ambiente; o nome em `credentials.JIRA_TRABALHO.ref` é validado mas não escolhe a variável (R01
    pede referência). Suficiente para uma conta Jira; decidir se vale generalizar.
@@ -86,8 +88,8 @@ Pré-requisitos, verificados por `.pilot/run.sh <instância> --check`:
 
 | Critério | Como |
 | --- | --- |
-| 16 alvos configurados nas duas instâncias | template + `config.test.ts`/`pilot-config.test.ts`; wizard habilita só os do piloto (os demais ficam `enabled: false` até terem `docs/spec.md`) |
-| Tarefa real ponta a ponta em GitHub e em Jira | wizard, estágios 10–11; **merge feito por você** |
-| N=1 e depois N=2 | estágios 11–12 |
-| Relatório | estágio 12 salva medições; `report-template.md` |
-| Estouro do envelope volta ao operador | estágio 12 registra e avisa; nada muda no MVP sem decisão |
+| 16 alvos configurados nas duas instâncias | template + `config.test.ts`/`pilot-config.test.ts`; você habilita só os do piloto (os demais ficam `enabled: false` até terem `docs/spec.md`) |
+| Tarefa real ponta a ponta em GitHub e em Jira | `./msf <instância> run` com uma issue autorizada (`ready-for-agent`) em cada tracker; **merge feito por você** |
+| N=1 e depois N=2 | `maxConcurrent` da instância no `config.json` |
+| Relatório | medições do `state/` do piloto; `report-template.md` |
+| Estouro do envelope volta ao operador | registre no relatório; nada muda no MVP sem decisão |

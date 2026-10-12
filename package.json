@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "run": "tsx src/cli/run.ts",
+    "msf": "tsx src/cli/msf.ts",
     "status": "tsx src/cli/status.ts",
     "logs": "tsx src/cli/logs.ts",
     "reply": "tsx src/cli/supervision.ts reply",
