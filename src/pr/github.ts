@@ -55,7 +55,6 @@ const runGh: GhCall = (args, env) => new Promise((resolve, reject) => {
   });
 });
 
-
 const CHECKS: Record<string, CheckState> = { SUCCESS: "passing", FAILURE: "failing", ERROR: "failing", PENDING: "pending", EXPECTED: "pending" };
 const REVIEWS: Record<string, ReviewState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes-requested", REVIEW_REQUIRED: "pending" };
 const STATES: Record<string, PrState> = { OPEN: "open", CLOSED: "closed", MERGED: "merged" };

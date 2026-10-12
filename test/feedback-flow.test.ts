@@ -453,6 +453,28 @@ test("a review with a body and inline comments is delivered as one item per body
   assert.equal(runner.calls[1]?.continuation?.replies?.length, 3);
 });
 
+test("an edited inline comment is new feedback, and a new comment in a resolved thread counts", async () => {
+  const prs = new FakePrs();
+  const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
+  const admission = await waitingForPr(prs, runner);
+  const inline = (id: string, body: string, resolved: boolean, author = "ana") =>
+    ({ id, kind: "inline" as const, author, isBot: false, body, createdAt: "", thread: { ...README_THREAD, resolved } });
+
+  prs.feedback = { comments: [inline("PRRC_1", "troque o título", false)], checks: [] };
+  await admission.poll();
+  await admission.settle();
+  assert.equal(runner.calls.length, 2);
+
+  prs.feedback = { comments: [inline("PRRC_1", "troque o título por outro", false)], checks: [] };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the edit is a new event");
+  await admission.settle();
+
+  prs.feedback = { comments: [inline("PRRC_1", "troque o título por outro", true), inline("PRRC_2", "ainda não", true)], checks: [] };
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a new comment in a resolved thread counts");
+  await admission.settle();
+  assert.equal(runner.calls.length, 4);
+});
+
 test("a read that did not cover every comment goes to the human as undecidable, and is not taken as no feedback", async () => {
   const prs = new FakePrs();
   const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
