@@ -136,3 +136,46 @@ test("a conflict correction still carries the operator's input, when there is on
   assert.match(prompt, /Operator input: prefira a versão nova/);
   assert.match(prompt, /force-with-lease/);
 });
+
+// ---- issue #20: the agent answers in the threads and resolves those with a delivered change ----
+
+const correction = () => continuationPrompt({ ...job, kind: "correction" });
+
+test("a correction tells the agent to answer in the thread itself, with the marker, citing the pushed SHA and a short description", () => {
+  const prompt = correction();
+  assert.match(prompt, /inline comment[^.]*answer in the same thread/i);
+  assert.match(prompt, /addPullRequestReviewThreadReply/, "how to answer in a thread");
+  assert.match(prompt, /reply[^.]*must start with <!-- msf:agent -->/i, "the inline reply carries the marker too");
+  assert.match(prompt, /SHA of the pushed commit/);
+  assert.match(prompt, /short description of the change/);
+  assert.match(prompt, /description[^.]*still explain the change[^.]*history is rewritten/i, "the description outlives a rewritten SHA");
+});
+
+test("a correction resolves only the thread whose change was already pushed, and leaves refused or questioned threads open", () => {
+  const prompt = correction();
+  assert.match(prompt, /resolveReviewThread/, "how to resolve a thread");
+  assert.match(prompt, /resolve a thread only after[^.]*change[^.]*pushed/i);
+  assert.match(prompt, /refuse[^.]*question[^.]*(leave|stays?)[^.]*open/i);
+});
+
+test("a conversation comment, which belongs to no thread, gets a marked reply and nothing to resolve", () => {
+  const prompt = correction();
+  assert.match(prompt, /conversation comment[^.]*not in a thread[^.]*reply[^.]*marker/i);
+});
+
+test("the prompt says that reading feedback is not resolving it: only a delivered change resolves a thread", () => {
+  assert.match(correction(), /never resolve a thread for any other reason/i);
+});
+
+test("the answer and resolve rules do not widen the correction into a rebase or a force-push", () => {
+  assert.doesNotMatch(correction(), /force-with-lease|rebase/);
+});
+
+test("the thread rules ride on corrections, which carry PR feedback, and not on the first invocation or a plain resume", () => {
+  assert.doesNotMatch(implementPrompt(job), /resolveReviewThread/);
+  assert.doesNotMatch(continuationPrompt({ ...job, kind: "resume" }), /resolveReviewThread/);
+});
+
+test("a conflict correction carries the thread rules too, so feedback delivered with a rebase is still answered", () => {
+  assert.match(continuationPrompt({ ...job, kind: "correction", conflict: true }), /resolveReviewThread/);
+});
