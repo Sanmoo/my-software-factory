@@ -22,7 +22,7 @@ import { continuationPrompt, implementPrompt } from "./docker-prompt.js";
 import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
 import { messageOf } from "../core/values.js";
-import { noopObserver, type Observer } from "../core/observability.js";
+import { noopObserver, shellQuote, type Observer } from "../core/observability.js";
 import type { IssueRef } from "../tracker/port.js";
 import { AgentActivity } from "./agent-activity.js";
 import type { IssueState } from "./agent-issue-writes.js";
@@ -174,6 +174,7 @@ class DockerRunner implements Runner {
       observer.emit({
         kind: "logs-da-invocação", text: "logs da invocação", job: context.jobId,
         ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
+        lines: [`tail -f ${shellQuote(detailPath)}`],
         fields: { detalhado: detailPath, runtime: runtimeLogPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
       });
       const outcome = await this.options.boundary.run({

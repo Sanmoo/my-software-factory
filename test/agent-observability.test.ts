@@ -130,6 +130,16 @@ test("tool calls and results, with ids and arguments, reach the detailed log whi
   assert.match(matching(h.lines, /logs da invocação/)[0]!, /invocação=inv-test-1 detalhado=\S+\.log/);
 });
 
+test("the start of an invocation prints the tail -f of the detailed log, not of the runtime log", async () => {
+  const h = await harness(async () => ({}));
+  await h.runner.run(context());
+  const detailed = /detalhado=(\S+\.log)/.exec(matching(h.lines, /logs da invocação/)[0]!)![1]!;
+  const tails = matching(h.lines, /tail -f/);
+  assert.equal(tails.length, 1);
+  assert.ok(tails[0]!.includes(`tail -f ${detailed}`), tails[0]);
+  assert.doesNotMatch(tails[0]!, /runtime\.log/);
+});
+
 test("silence is a technical warning with duration, last activity and effective timeout; output resuming is announced; nothing is retried", async () => {
   let clock = 1_000_000;
   const h = await harness(async (run) => {
