@@ -33,7 +33,16 @@ _Avoid_: turn como invocação, invocação encerrada como trabalho concluído
 **Claim**:
 Indicação de que uma issue está reservada para atendimento por alguém ou algum trabalho.
 Não se confunde com atribuição a uma pessoa nem com capacidade de execução.
-_Avoid_: assignee como claim, claim como vaga
+O claim feito pela factory deixa na issue uma marca própria; a issue pode
+continuar claimed depois que essa marca sai.
+_Avoid_: assignee como claim, claim como vaga, todo claim como marca da factory
+
+**Liberação**:
+Encerramento, pelo operador, do acompanhamento de um trabalho que não está em
+invocação: remove a marca de claim da factory, sem levar a issue a done nem
+fechar o PR. Só vale quando a releitura do tracker não mostra mais essa marca;
+status da issue e atribuições de outras pessoas ficam como estão.
+_Avoid_: liberação como fim de todo claim, liberação como volta à elegibilidade, liberação de vaga
 
 **Issue elegível**:
 Issue roteada a um projeto habilitado, pronta para agente, sem claim e sem
