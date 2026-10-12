@@ -7,7 +7,7 @@ import { relative } from "node:path";
 // invocation has registered its runtime log; everything else passes untouched. If Sandcastle changes
 // the text, the line simply shows up again.
 
-const STARTED = /^\[[^\]]+\] Started\b/;
+const STARTED = /^\[Agent\] Started\b/;
 
 export class SandcastleLineFilter {
   private readonly active = new Map<string, number>();
