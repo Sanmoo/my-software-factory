@@ -510,12 +510,41 @@ test("a release whose reread still shows the account assigned keeps the account 
   await s.admission.poll();
   await s.admission.settle();
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
-  await s.admission.poll();
+  const report = await s.admission.poll();
   await s.observer.flush();
 
   assert.match(matching(s.lines, /alteração tentada, não confirmada.*operação=remover-atribuição/)[0]!, /alvo=acme/);
   assert.equal(matching(s.lines, /alteração confirmada.*operação=remover-atribuição/).length, 0, "no false positive");
   assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=agent-claimed/);
+  assert.equal(report.commands[0]?.status, "rejected");
+  assert.match(report.commands[0]?.reason ?? "", /liberação não confirmada pelo tracker: claim ainda visível na releitura/);
+  assert.equal(s.admission.job(KEY("1"))?.state, "waiting-for-help", "the job keeps its state while the claim is visible");
+});
+
+test("a release whose reread fails after the write does not mark the job released", async () => {
+  let released = false;
+  const s = await setup({
+    runner: helpRunner(),
+    tracker: (base) => trackerWith(base, {
+      async releaseClaim(ref) {
+        await base.releaseClaim(ref);
+        released = true;
+        return { changes: [] };
+      },
+      async readIssue(ref) {
+        if (released) throw new Error("releitura indisponível");
+        return base.readIssue(ref);
+      },
+    }),
+  });
+  await s.admission.poll();
+  await s.admission.settle();
+  await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
+  const report = await s.admission.poll();
+
+  assert.equal(report.commands[0]?.status, "rejected");
+  assert.match(report.commands[0]?.reason ?? "", /liberação não confirmada pelo tracker: releitura indisponível/);
+  assert.equal(s.admission.job(KEY("1"))?.state, "waiting-for-help");
 });
 
 test("a PR conflict is announced on the main line and in the history with its reason, and the correction names it", async () => {

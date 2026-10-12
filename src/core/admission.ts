@@ -80,6 +80,10 @@ const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot |
   return false;
 };
 
+// The reread shows the claim gone: neither the label nor an assignee is left on the issue.
+const claimGone = (snapshot: IssueSnapshot | undefined): boolean =>
+  snapshot !== undefined && snapshot.claimed.known && !snapshot.claimed.value;
+
 // Jobs whose issue is read for directed replies (CA11). A job that is done, released or needs
 // intervention takes no input from the tracker.
 const TRACKER_FEEDBACK_STATES: readonly JobState[] = ["waiting-for-help", "running", "interrupted", "waiting-for-pr"];
@@ -383,12 +387,14 @@ export class Admission {
     if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
     const context = this.writeContext(job, "release", "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
     let changes: IssueChange[] | undefined;
+    let snapshot: IssueSnapshot | undefined;
     try {
       const outcome = await this.writeIssue(context, async () => this.deps.tracker.releaseClaim(job.ref));
       changes = outcome?.changes;
+      snapshot = await this.reread(job.ref);
     } catch (error) {
-      const snapshot = await this.reread(job.ref);
-      if (snapshot === undefined || !(snapshot.claimed.known && !snapshot.claimed.value)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
+      snapshot = await this.reread(job.ref);
+      if (!claimGone(snapshot)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
       // The write failed or its answer was lost, and the reread shows the claim gone: the uncertainty
       // is resolved by evidence, not by assumption.
       this.obs.emit(issueChangeEvent(context, {
@@ -397,9 +403,13 @@ export class Admission {
     }
     // The reread decides what each change was: an accepted call alone is only an attempt.
     if (changes !== undefined) {
-      const snapshot = await this.reread(job.ref);
       this.reportChanges(context, changes.map((change) =>
         removalConfirmedByReread(change, snapshot) ? { ...change, result: "confirmed" as const } : change));
+    }
+    // A claim the reread still shows, or a reread that failed, is not a release: the job keeps its
+    // state, so the claim is not left on the issue with the tracking already ended.
+    if (!claimGone(snapshot)) {
+      return `liberação não confirmada pelo tracker: ${snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura"}`;
     }
     await this.apply(job.key, "released", {
       message: "claim removido pelo operador; acompanhamento encerrado; área, sessão e PR preservados",
