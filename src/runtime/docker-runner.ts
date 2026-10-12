@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { CredentialRef, InstanceConfig, ProjectConfig, RuntimeProfileConfig } from "../config/types.js";
 import {
@@ -224,6 +224,9 @@ class DockerRunner implements Runner {
       }
       await this.audit(layout, `interrompido: ${reason}`);
       return interrupted(reason);
+    } finally {
+      // The snapshot holds the operator's credentials (auth.json): it lives only as long as the invocation.
+      await rm(layout.snapshotDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 

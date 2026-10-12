@@ -343,7 +343,14 @@ test("the container receives only the profile snapshot: real files, packages fil
   await rm(join(f.agentDir, "settings.json"));
   await writeFile(join(dotfiles, "settings.json"), JSON.stringify({ packages: ["npm:pi-subagents", "npm:pi-lens"] }));
   await symlink(join(dotfiles, "settings.json"), join(f.agentDir, "settings.json"));
-  const { boundary, runs } = doneBoundary();
+  // The snapshot only lives during the invocation, so what the container would see is read while it runs.
+  const seen: { names: string[]; links: boolean[]; settings: string } = { names: [], links: [], settings: "" };
+  const { boundary, runs } = fakeBoundary(async (input) => {
+    seen.names = (await readdir(input.snapshotDir)).sort();
+    for (const name of seen.names) seen.links.push((await lstat(join(input.snapshotDir, name))).isSymbolicLink());
+    seen.settings = await readFile(join(input.snapshotDir, "settings.json"), "utf8");
+    return { sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) };
+  });
   const runner = createDockerRunner({
     instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir },
     runtimeProfiles: { personal: DECLARATION }, allowedRoots: { personal: [dotfiles] },
@@ -357,25 +364,28 @@ test("the container receives only the profile snapshot: real files, packages fil
   assert.equal(run.snapshotDir, layout.snapshotDir);
   assert.ok(!run.snapshotDir.startsWith(layout.repoDir), "the snapshot is outside the repository the agent works in");
   assert.deepEqual(run.requiredPackages, ["npm:pi-subagents"]);
-  assert.deepEqual((await readdir(run.snapshotDir)).sort(), ["auth.json", "settings.json"]);
-  for (const name of await readdir(run.snapshotDir)) {
-    assert.equal((await lstat(join(run.snapshotDir, name))).isSymbolicLink(), false, `${name} is a real file`);
-  }
-  assert.deepEqual(JSON.parse(await readFile(join(run.snapshotDir, "settings.json"), "utf8")).packages, ["npm:pi-subagents"]);
+  assert.deepEqual(seen.names, ["auth.json", "settings.json"]);
+  assert.deepEqual(seen.links, [false, false], "real files, not links");
+  assert.deepEqual(JSON.parse(seen.settings).packages, ["npm:pi-subagents"]);
+  await assert.rejects(() => access(run.snapshotDir), "the credentials in the snapshot do not outlive the invocation");
 });
 
-test("the snapshot is recreated on every invocation: nothing of an earlier one stays", async () => {
+test("the snapshot is recreated on every invocation, even over a leftover of an earlier one", async () => {
   const f = await fixture();
   const layout = jobLayout(f.stateDir, key);
-  const { boundary, runs } = doneBoundary();
+  const names: string[][] = [];
+  const { boundary } = fakeBoundary(async (input) => {
+    names.push((await readdir(input.snapshotDir)).sort());
+    return { sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) };
+  });
   const runner = runnerFor(f, boundary);
   await runner.run(newContext());
+  await mkdir(layout.snapshotDir, { recursive: true });
   await writeFile(join(layout.snapshotDir, "stale.txt"), "left over\n");
   await runner.run(newContext({
     kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["ok"] },
   }));
-  assert.equal(runs.length, 2);
-  assert.deepEqual((await readdir(layout.snapshotDir)).sort(), ["auth.json", "settings.json"]);
+  assert.deepEqual(names, [["auth.json", "settings.json"], ["auth.json", "settings.json"]]);
 });
 
 test("a required item that does not resolve interrupts with the item, the link and the destination: no Docker, no area", async () => {

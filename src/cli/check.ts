@@ -85,16 +85,17 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
     }));
   }
   // The triage of PR feedback needs its skill (issue #21), resolved the way the snapshot resolves it.
-  lines.push(await attempt(`perfil Pi tem a skill ${TRIAGE_SKILL}`, async () => {
-    const project = projects[0];
-    if (project === undefined) return "nenhum projeto habilitado";
-    const dir = resolveRuntimeProfile(project, local.profiles, resolveModelAuth(instance, config.credentials, local.profiles).agentDir);
-    const { source } = resolveRuntimeProfileDeclaration(project, dir, { runtimeProfiles: config.runtimeProfiles, allowedRoots: local.allowedRoots });
-    if (!(await resolves(source, skillPathOf(TRIAGE_SKILL)))) {
-      throw new Error(`${skillPathOf(TRIAGE_SKILL)} não existe no perfil ${dir} ou o link sai das raízes permitidas; a triagem de comentários do PR não teria a skill (linke-a no perfil)`);
-    }
-    return skillPathOf(TRIAGE_SKILL);
-  }));
+  for (const name of checkedProfiles) {
+    const project = projects.find((candidate) => candidate.runtimeProfile === name)!;
+    lines.push(await attempt(`perfil de runtime ${name} tem a skill ${TRIAGE_SKILL}`, async () => {
+      const dir = resolveRuntimeProfile(project, local.profiles, resolveModelAuth(instance, config.credentials, local.profiles).agentDir);
+      const { source } = resolveRuntimeProfileDeclaration(project, dir, { runtimeProfiles: config.runtimeProfiles, allowedRoots: local.allowedRoots });
+      if (!(await resolves(source, skillPathOf(TRIAGE_SKILL)))) {
+        throw new Error(`${skillPathOf(TRIAGE_SKILL)} não existe no perfil ${dir} ou o link sai das raízes permitidas; a triagem de comentários do PR não teria a skill (linke-a no perfil)`);
+      }
+      return skillPathOf(TRIAGE_SKILL);
+    }));
+  }
   lines.push(await attempt("imagem do runner tem python3", async () => {
     if (!(await sandbox.imageHas(local.image, "python3"))) {
       throw new Error(`python3 não existe na imagem ${local.image}; a skill ${TRIAGE_SKILL} o exige (reconstrua a imagem)`);

@@ -10,7 +10,6 @@ export class FakeRunner implements Runner {
   triageBlocker: string | undefined;
   // Set to say a required item of the runtime profile is missing, as a runner whose profile lacks it would.
   runtimeBlockerReason: string | undefined;
-  readonly blockerChecks: Array<{ repository: string }> = [];
 
   constructor(private readonly script: FakeScript) {}
 
@@ -21,8 +20,7 @@ export class FakeRunner implements Runner {
     return step;
   }
 
-  async runtimeBlocker(job: { repository: string }): Promise<string | undefined> {
-    this.blockerChecks.push({ repository: job.repository });
+  async runtimeBlocker(): Promise<string | undefined> {
     return this.runtimeBlockerReason;
   }
 
