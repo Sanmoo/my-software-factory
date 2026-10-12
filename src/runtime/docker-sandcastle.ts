@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { pi, run, type AgentStreamEvent } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { parseEvent, type PiEvent } from "./pi-events.js";
 import type { SandboxBoundary, SandboxRun } from "./docker-runner.js";
+import { installConsoleFilter, SandcastleLineFilter } from "./sandcastle-console.js";
 
 // The only place that starts Docker, Pi and Sandcastle (R06). Thin on purpose: the decisions
 // live in docker-runner.ts and the pure modules. There is no noSandbox option anywhere.
@@ -16,6 +17,7 @@ const execFileAsync = promisify(execFile);
 const IMAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), "docker-image");
 const SANDBOX_SESSIONS_DIR = "/home/agent/.pi/agent/sessions";
 const SANDBOX_PROFILE_SCRIPT = "/msf-runtime/prepare-profile.sh";
+const sandcastleLines = new SandcastleLineFilter();
 const exists = (path: string) => access(path).then(() => true, () => false);
 
 async function preflight(input: { image: string; profileDir: string; account: string }): Promise<{ token: string }> {
@@ -98,9 +100,12 @@ export function sandcastleBoundary(): SandboxBoundary {
     async run(input) {
       await mkdir(input.sessionsDir, { recursive: true });
       const events: PiEvent[] = [];
-      // The dependency's own log (setup, its warnings) is one file per invocation; the readable
-      // activity is the runner's detailed log, fed by the raw lines below.
+      // The dependency's own log (setup, its warnings) is one file per invocation and is thrown away
+      // at the end; the readable activity is the runner's detailed log, fed by the raw lines below.
+      // Its "tail -f" announcement is kept off the terminal while this invocation runs.
       await mkdir(dirname(input.runtimeLogPath), { recursive: true });
+      installConsoleFilter(sandcastleLines);
+      const unregister = sandcastleLines.register(input.runtimeLogPath);
       const timer = setInterval(() => input.activity.checkIdle(), Math.min(input.idleWarningSeconds, 5) * 1000);
       timer.unref();
       let result;
@@ -137,15 +142,8 @@ export function sandcastleBoundary(): SandboxBoundary {
         });
       } finally {
         clearInterval(timer);
-        // The dependency writes its own log as it likes; once the run is over, known credentials are
-        // taken out of it too. It is not redacted while the run is live (a limit of the dependency).
-        try {
-          const text = await readFile(input.runtimeLogPath, "utf8");
-          const clean = input.redact(text);
-          if (clean !== text) await writeFile(input.runtimeLogPath, clean, { mode: 0o600 });
-        } catch {
-          // No runtime log (the run failed before it): nothing to clean.
-        }
+        unregister();
+        await rm(input.runtimeLogPath, { force: true });
       }
       const sessionId = result.iterations.at(-1)?.sessionId ?? result.iterations[0]?.sessionId;
       return { sessionId, completed: result.completionSignal !== undefined, iterations: result.iterations.length, events };

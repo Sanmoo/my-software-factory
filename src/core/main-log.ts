@@ -87,7 +87,7 @@ const PLAIN_PREFIX: Record<Level, string> = { info: "", progresso: "", "atençã
 
 // What the human presentation leaves to the history and to `./msf <instância> logs`: the area, the session
 // and the logs nobody follows live. The detailed log stays, it is the one to `tail -f`.
-const SECONDARY = new Set(["área", "sessão", "runtime", "artefatos"]);
+const SECONDARY = new Set(["área", "sessão", "artefatos"]);
 const JOB_COLUMN = 6;
 // Detail lines start under the event text: time, marker, job column and their spaces.
 const INDENT = " ".repeat(8 + 1 + 1 + 1 + JOB_COLUMN + 1);

@@ -172,4 +172,4 @@ a solução final sem atender legibilidade, sigilo e falhas.
   texto; caso contrário fica `não confirmada` (ainda assim a resposta foi incluída na retomada).
 - A leitura "antes" de uma escrita do agente é feita no início da chamada, sem sincronização com o
   processo: é melhor esforço.
-- O log de setup do Sandcastle continua em `<ts>.runtime.log`; o log legível é o `<ts>.log`.
+- O log de setup do Sandcastle é gravado em `<ts>.runtime.log` só durante a invocação e apagado no fim (#28); o log legível é o `<ts>.log`. A linha `tail -f` que o Sandcastle imprime para esse arquivo é filtrada do terminal.

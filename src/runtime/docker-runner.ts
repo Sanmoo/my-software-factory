@@ -51,7 +51,7 @@ export interface SandboxRun {
   // Seconds of silence after which the runtime stops the agent.
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
-  // The runtime's own log (setup, warnings of the dependency); the detailed log is the activity's.
+  // The dependency's own log (setup, warnings): written during the run, deleted after it. The detailed log is the activity's.
   runtimeLogPath: string;
   // Hides the known credentials of this run in any text the boundary writes itself.
   redact: (text: string) => string;
@@ -175,7 +175,7 @@ class DockerRunner implements Runner {
         kind: "logs-da-invocação", text: "logs da invocação", job: context.jobId,
         ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
         lines: [`tail -f ${shellQuote(detailPath)}`],
-        fields: { detalhado: detailPath, runtime: runtimeLogPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
+        fields: { detalhado: detailPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
       });
       const outcome = await this.options.boundary.run({
         image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir, profileDir,

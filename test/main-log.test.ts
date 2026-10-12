@@ -46,7 +46,7 @@ test("human mode: secondary paths and ids stay out of the terminal; the detailed
     at: h.at("2026-10-11T23:08:20.000Z"), level: "info", text: "invocação retomada", job: "github:a/b#1",
     fields: {
       motivo: "retomada-manual", comando: "001-abc", ref: "comando 001-abc", sessão: "01a12cbf", área: "/s/areas/x/repo",
-      detalhado: "/s/areas/x/logs/a.log", runtime: "/s/areas/x/logs/a.runtime.log", artefatos: "/s/areas/x/logs/a.artifacts",
+      detalhado: "/s/areas/x/logs/a.log", artefatos: "/s/areas/x/logs/a.artifacts",
     },
   });
   h.log.event({ at: h.at("2026-10-11T23:08:21.000Z"), level: "info", text: "feedback recebido", job: "github:a/b#1", fields: { ref: "revisão PRR_1" } });

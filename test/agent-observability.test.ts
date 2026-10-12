@@ -140,6 +140,20 @@ test("the start of an invocation prints the tail -f of the detailed log, not of 
   assert.doesNotMatch(tails[0]!, /runtime\.log/);
 });
 
+test("the logs-da-invocação event does not carry a runtime log field", async () => {
+  const events: Record<string, unknown>[] = [];
+  const h = await harness(async () => ({}));
+  const original = h.observer.emit.bind(h.observer);
+  h.observer.emit = ((event: { kind: string; fields?: Record<string, unknown> }) => {
+    if (event.kind === "logs-da-invocação") events.push(event.fields ?? {});
+    return original(event as never);
+  }) as typeof h.observer.emit;
+  await h.runner.run(context());
+  assert.equal(events.length, 1);
+  assert.ok("detalhado" in events[0]!);
+  assert.ok(!("runtime" in events[0]!));
+});
+
 test("silence is a technical warning with duration, last activity and effective timeout; output resuming is announced; nothing is retried", async () => {
   let clock = 1_000_000;
   const h = await harness(async (run) => {
