@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { FieldValue, Level, Observer } from "../core/observability.js";
@@ -346,13 +347,16 @@ export class AgentActivity {
   }
 
   // Text that fits is shown whole. Text that does not is kept whole in an artifact, and the log
-  // shows a summary with its size and where the complete content is.
+  // shows a summary with its size and where the complete content is. The file name carries a short
+  // hash of the call id, not the id itself (tool call ids can exceed the file name limit); the full
+  // id is the first line of the artifact, so the file still traces back to its call.
   private bounded(text: string, id: string, label: string, suffix: string, summaryLength = SUMMARY_LENGTH): string[] {
     if (text === "") return [];
     if (text.length <= this.inlineLimit) return text.split("\n");
     this.artifactSeq += 1;
-    const path = join(this.options.artifactsDir, "tool-output", `${this.artifactSeq}-${encodeURIComponent(id)}-${suffix}.txt`);
-    this.enqueue(path, this.redact(text), "artefato", true);
+    const hash = createHash("sha256").update(id).digest("hex").slice(0, 12);
+    const path = join(this.options.artifactsDir, "tool-output", `${this.artifactSeq}-${hash}-${suffix}.txt`);
+    this.enqueue(path, `${this.redact(id)}\n${this.redact(text)}`, "artefato", true);
     return [`${label}: ${this.summary(this.redact(text), summaryLength)}`, `[${label} extenso: ${text.length} caracteres; conteúdo completo em ${path}]`];
   }
 

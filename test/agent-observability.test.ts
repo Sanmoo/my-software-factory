@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import type { CredentialRef, InstanceConfig, ProjectConfig } from "../src/config/types.js";
 import { createObserver, type Observer } from "../src/core/observability.js";
@@ -194,8 +194,27 @@ test("a long tool result is kept whole in an artifact and summarized with its re
   assert.ok(reference, "the log says where the whole content is");
   assert.match(text, /resultado extenso: 5011 caracteres/);
   assert.match(text, /resultado: INICIO x+…/, "a bounded summary is shown");
-  assert.equal(await readFile(reference, "utf8"), long, "the artifact has the whole output");
+  assert.equal(await readFile(reference, "utf8"), `big\n${long}`, "the artifact has the whole output, under its full call id");
   assert.ok(!text.includes(long), "the log itself stays readable");
+});
+
+test("a tool call id longer than a file name allows still yields a valid artifact, with the full id on its first line", async () => {
+  const id = `call_${"a".repeat(200)}|${"B".repeat(300)}`;
+  const long = `INICIO ${"z".repeat(5000)} FIM`;
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: id, toolName: "bash", args: { command: "cat big" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: id, toolName: "bash", result: long, isError: false }));
+    return {};
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  const text = await h.detail();
+  const reference = /conteúdo completo em (\S+)\]/.exec(text)?.[1];
+  assert.ok(reference, "the log says where the whole content is");
+  assert.ok(Buffer.byteLength(basename(reference)) <= 255, `file name too long: ${basename(reference).length}`);
+  assert.equal(await readFile(reference, "utf8"), `${id}\n${long}`, "the artifact is kept whole, with the full id first");
+  assert.equal(matching(h.lines, /falha de observabilidade/).length, 0, "the artifact write does not fail");
 });
 
 test("known credentials are hidden in the detailed log, artifacts, main log, history and error messages", async () => {
