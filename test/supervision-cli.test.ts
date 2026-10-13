@@ -164,7 +164,12 @@ test("the instance applies a queued reply: the job resumes its session with the 
   assert.deepEqual(report.admitted, [JOB]);
   assert.deepEqual(report.commands.map((outcome) => outcome.status), ["applied"]);
   await admission.settle();
-  assert.deepEqual(runner.calls[0]?.continuation, { workspace: WORKSPACE, replies: ["Use the v2 seam"] });
+  const resumed = runner.calls[0]?.continuation;
+  assert.equal(resumed?.plan.step, "continue");
+  assert.deepEqual(
+    resumed?.plan.step === "continue" ? resumed.plan.items.map((item) => (item.kind === "directed-reply" ? item.message : item.kind)) : undefined,
+    ["Use the v2 seam"],
+  );
   assert.equal(runner.calls[0]?.kind, "resume");
   assert.equal(runner.calls.length, 1, "one reply starts one continuation");
   await admission.poll();
@@ -186,7 +191,7 @@ test("resume queues a continuation of the same session for the instance to apply
   assert.deepEqual((await admission.poll()).admitted, [JOB]);
   await admission.settle();
   assert.equal(runner.calls[0]?.kind, "resume");
-  assert.deepEqual(runner.calls[0]?.continuation, { workspace: WORKSPACE, replies: [] });
+  assert.deepEqual(runner.calls[0]?.continuation, { workspace: WORKSPACE, plan: { step: "continue", items: [] } });
 });
 
 test("release removes the claim through the instance and shows the job as released", async () => {

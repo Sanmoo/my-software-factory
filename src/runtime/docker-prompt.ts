@@ -3,7 +3,8 @@ import { refKey } from "../tracker/port.js";
 import { COMPLETION_SIGNAL } from "./docker-invocation.js";
 import type { RunModels } from "./docker-config.js";
 import { TRIAGE_SKILL } from "./docker-config.js";
-import type { IssueContext, TriageStep } from "./runner.js";
+import type { IssueContext } from "./runner.js";
+import { planConflict, type ContinuationPlan, type FeedbackItem } from "../core/feedback.js";
 
 // Prompts for the Pi invocation inside the container. The result protocol is the
 // contract the runner checks in docker-output.ts; keep the two in step.
@@ -155,19 +156,56 @@ function chosenRules(): string {
   ].join("\n");
 }
 
+// How each feedback item is rendered for the agent. The runtime owns this format: the core keeps
+// only the short description for the logs and the operator. An inline comment keeps its file and
+// thread id, which the agent needs to answer in the thread (addPullRequestReviewThreadReply).
+function itemText(item: FeedbackItem): string {
+  switch (item.kind) {
+    case "pr-comment": {
+      if (item.comment === "inline" && item.thread !== undefined) {
+        const { id, path, resolved } = item.thread;
+        return `comentário inline de ${item.author} em ${path} (thread ${id}${resolved ? ", resolvido" : ""}): ${item.body}`;
+      }
+      return `${item.comment === "review" ? "revisão" : "comentário"} de ${item.author}: ${item.body}`;
+    }
+    case "directed-reply":
+      return `resposta dirigida do operador: ${item.message}`;
+    case "check":
+      return item.state === "failing" ? `check com falha: ${item.name}` : `check de estado desconhecido: ${item.name}`;
+    case "conflict":
+      return `PR em conflito com ${item.targetBranch} (head ${item.head}, base ${item.base})`;
+  }
+}
+
+// The items a continuation delivers to the agent, each rendered as one line of the operator input.
+// The prompt embeds exactly these lines, and the runner confirms delivery by counting them in the
+// stream, so both sides agree on the text (issue #21).
+export function continuationItems(plan: ContinuationPlan): string[] {
+  const items = plan.step === "continue"
+    ? plan.items
+    : plan.step === "list"
+      ? [...plan.comments, ...plan.replies]
+      : [...plan.choice, ...plan.retained];
+  return items.map((item) => `- ${itemText(item)}`);
+}
+
 // A resume or correction continues the same Pi session; the skill is not invoked again, except by the
 // triage, which is the one correction that invokes gh-address-comments (issue #21).
 // Corrections carry the PR feedback, so they carry the answer and resolve rules; so does the resume that
-// applies the operator's choice after the triage.
-export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; note?: string; conflict?: boolean; triage?: TriageStep }): string {
+// applies the operator's choice after the triage. The plan is a union by step; the runtime renders each
+// item type of each step here.
+export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "correction"; plan: ContinuationPlan }): string {
+  const { plan } = input;
+  const conflict = planConflict(plan);
   // After a conflict rebase the work sits on the remote target, so that is its base: the old base of the
   // job would make the reviewers see the target's own commits as part of the work.
-  const base = input.conflict ? { ...input, baseSha: `origin/${input.targetBranch}` } : input;
-  const operator = input.note && input.note.trim() !== ""
-    ? `Operator input: ${input.note.trim()}`
-    : "No new operator input was supplied with this continuation.";
+  const base = conflict ? { ...input, baseSha: `origin/${input.targetBranch}` } : input;
+  const items = continuationItems(plan);
+  const operator = items.length === 0
+    ? "No new operator input was supplied with this continuation."
+    : ["Operator input:", ...items].join("\n");
   const header = `Continue the ${input.kind} of work item ${refKey(input.ref)} from this session, on branch ${input.branch} at base ${base.baseSha}.`;
-  if (input.triage === "list") {
+  if (plan.step === "list") {
     return [
       `/skill:${TRIAGE_SKILL}`,
       header,
@@ -180,11 +218,11 @@ export function continuationPrompt(input: JobPromptInput & { kind: "resume" | "c
   return [
     header,
     operator,
-    ...(input.triage === "apply" ? [chosenRules()] : []),
-    ...(input.conflict ? [conflictRules(input)] : []),
-    ...(input.kind === "correction" || input.triage === "apply" ? [threadRules()] : []),
+    ...(plan.step === "apply" ? [chosenRules()] : []),
+    ...(conflict ? [conflictRules(input)] : []),
+    ...(input.kind === "correction" || plan.step === "apply" ? [threadRules()] : []),
     // The conflict was seen before the operator read the triage: it may be gone by now (decision 10).
-    ...(input.conflict && input.triage === "apply"
+    ...(conflict && plan.step === "apply"
       ? [`The conflict was seen before the operator answered: confirm it still exists (\`gh pr view --json mergeable\`) and rebase and force-push only if the pull request still conflicts with ${input.targetBranch}.`]
       : []),
     "Models stay the same:",

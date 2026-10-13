@@ -3,7 +3,7 @@ import test from "node:test";
 import { newJob, type Job } from "../src/core/job.js";
 import {
   continuationCauses, describeItem, feedbackCause, needsTriage, noteManualResume, planCommands, planConflict,
-  planContinuation, planTexts, planTriage, receiveFeedback, recordTriageOutcome, resumeRefusal, triageInProgress,
+  planContinuation, receiveFeedback, recordTriageOutcome, resumeRefusal, triageInProgress,
   type CheckItem, type ConflictItem, type DirectedReplyItem, type FeedbackItem, type PrCommentItem,
 } from "../src/core/feedback.js";
 import type { IssueRef } from "../src/tracker/port.js";
@@ -113,21 +113,20 @@ test("a batch with a human comment is planned as a listing: comments numbered, r
   if (plan.step !== "list") return;
   assert.deepEqual(plan.comments.map(describeItem), ["revisão de ana: troque o nome"]);
   assert.deepEqual(plan.replies.map(describeItem), ["olhe a doc"], "a directed reply is the operator's guidance, not a comment to number");
-  assert.equal(planTriage(plan), "list");
+  assert.equal(plan.step, "list");
   assert.equal(planned.feedback?.phase, "listing");
   assert.deepEqual(planned.feedback?.pending.map((item) => item.kind), ["pr-comment"], "the comment stays pending so a failed listing can be redone");
   assert.deepEqual(planned.feedback?.held.map((item) => item.kind), ["check", "conflict", "directed-reply"]);
   assert.deepEqual(causes.map((cause) => cause.reason), ["feedback-pr", "check-falhou", "conflito-pr", "resposta-humana"]);
   assert.equal(planConflict(plan), false, "the listing does not rebase");
-  assert.deepEqual(planTexts(plan), ["revisão de ana: troque o nome", "olhe a doc"]);
 });
 
 test("a batch without a human comment is planned as a continuation that carries its items", () => {
   const { job: planned, plan, causes } = planContinuation(received([check(), conflict()]), "correction");
 
   assert.equal(plan.step, "continue");
-  assert.equal(planTriage(plan), undefined);
-  assert.deepEqual(planTexts(plan), ["check com falha: test", "PR em conflito com main (head h1, base b1)"]);
+  if (plan.step !== "continue") return;
+  assert.deepEqual(plan.items.map((item) => item.kind), ["check", "conflict"]);
   assert.equal(planConflict(plan), true);
   assert.equal(planned.feedback, undefined);
   assert.deepEqual(causes.map((cause) => cause.reason), ["check-falhou", "conflito-pr"]);
@@ -142,7 +141,9 @@ test("a listing that did not reach the help request stays in `listing` and the r
 
   const again = planContinuation(noteManualResume(interrupted), "resume");
   assert.equal(again.plan.step, "list", "the resume redoes the listing, never applies");
-  assert.deepEqual(planTexts(again.plan), ["revisão de ana: troque o nome"], "the comment is listed again");
+  if (again.plan.step === "list") {
+    assert.deepEqual(again.plan.comments.map(describeItem), ["revisão de ana: troque o nome"], "the comment is listed again");
+  }
   assert.deepEqual(again.job.feedback?.held.map((item) => item.kind), ["check"], "the retained item stays retained");
 });
 
@@ -158,7 +159,6 @@ test("a listing that reached the help request waits for the choice; the answer i
   if (plan.step !== "apply") return;
   assert.deepEqual(plan.choice.map(describeItem), ["1; 2: responda que X"]);
   assert.deepEqual(plan.retained.map((item) => item.kind), ["check", "conflict"]);
-  assert.deepEqual(planTexts(plan), ["1; 2: responda que X", "check com falha: test", "PR em conflito com main (head h1, base b1)"]);
   assert.equal(planConflict(plan), true);
   assert.deepEqual(planCommands(plan), ["cmd-1"]);
   assert.equal(applied.feedback, undefined, "the choice concludes the triage");
@@ -181,7 +181,7 @@ test("a directed reply whose text equals a check's description is not matched wi
   if (plan.step !== "list") return;
   assert.deepEqual(plan.comments.map((item) => item.kind), ["pr-comment"], "the check is not delivered as a comment");
   assert.deepEqual(plan.replies.map((item) => item.kind), ["directed-reply"], "the reply is delivered as guidance");
-  assert.deepEqual(planTexts(plan), ["revisão de ana: troque o nome", "check com falha: test"]);
+  assert.deepEqual([...plan.comments, ...plan.replies].map(describeItem), ["revisão de ana: troque o nome", "check com falha: test"]);
   assert.deepEqual(planned.feedback?.held.map((item) => item.kind), ["check", "directed-reply"], "both are held, told apart by kind");
 });
 

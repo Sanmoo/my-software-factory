@@ -151,7 +151,12 @@ test("a reply to a job waiting for help reactivates it in the same session when 
   assert.deepEqual(await admission.settle(), []);
 
   assert.equal(runner.calls[1]?.kind, "resume");
-  assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, replies: ["Use the v2 seam"] });
+  const resumed = runner.calls[1]?.continuation;
+  assert.equal(resumed?.plan.step, "continue");
+  assert.deepEqual(
+    resumed?.plan.step === "continue" ? resumed.plan.items.map((item) => (item.kind === "directed-reply" ? item.message : item.kind)) : undefined,
+    ["Use the v2 seam"],
+  );
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "waiting-for-pr");
   assert.equal(admission.job(keyOf("acme/app", "1"))?.feedback, undefined, "a delivered reply leaves the pending items");
 });
@@ -178,7 +183,12 @@ test("a reply while the agent is active stays pending and is delivered by the ne
   await operator(stateDir).enqueue({ type: "resume", job: keyOf("acme/app", "1") });
   assert.deepEqual((await admission.poll()).admitted, [keyOf("acme/app", "1")]);
   await admission.settle();
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["Use the v2 seam"], "the earlier reply goes to the next invocation");
+  const resumed = runner.calls[1]?.continuation?.plan;
+  assert.equal(resumed?.step, "continue", "the earlier reply goes to the next invocation");
+  assert.deepEqual(
+    resumed?.step === "continue" ? resumed.items.map((item) => (item.kind === "directed-reply" ? item.message : item.kind)) : undefined,
+    ["Use the v2 seam"],
+  );
 });
 
 test("a reply is refused visibly for a job that is no longer tracked", async () => {
@@ -212,7 +222,7 @@ test("a resume continues the same session and area without new information", asy
   assert.deepEqual((await admission.poll()).admitted, [keyOf("acme/app", "1")]);
   await admission.settle();
   assert.deepEqual(runKinds(runner), ["1:new:1/5", "1:resume:1/1"]);
-  assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, replies: [] });
+  assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, plan: { step: "continue", items: [] } });
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "waiting-for-pr");
 });
 

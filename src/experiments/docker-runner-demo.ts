@@ -142,7 +142,7 @@ const firstSession = recordAfterFirst.sessionId;
 assert.ok(firstSession, "continuation needs the session recorded by the first invocation");
 const second: RunnerOutput = await runnerFor().run(context({
   kind: "resume",
-  continuation: { workspace: { session: firstSession, area: layout.repoDir }, replies: [note] },
+  continuation: { workspace: { session: firstSession, area: layout.repoDir }, plan: { step: "continue", items: [{ kind: "directed-reply", origin: "terminal", message: note, ref: "comando cmd-demo" }] } },
 }));
 process.stdout.write(`Continuation output: ${JSON.stringify(second)}\n`);
 assert.equal(second.kind, "finished");

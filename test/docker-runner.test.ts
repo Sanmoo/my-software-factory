@@ -10,6 +10,8 @@ import { git, headOf, jobLayout } from "../src/runtime/docker-area.js";
 import { jobBranch } from "../src/core/job.js";
 import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
+import { noopObserver, type OpsEvent, type Observer } from "../src/core/observability.js";
+import type { ContinuationPlan, FeedbackItem } from "../src/core/feedback.js";
 import { DECLARATION, populateProfile, runtimeOptions } from "./support/runtime-profile.js";
 
 const GPT = "github-copilot/gpt-6-luna";
@@ -69,10 +71,16 @@ function fakeBoundary(script: (run: SandboxRun, call: number) => Promise<Omit<Sa
   return { boundary, runs };
 }
 
+// A typed continuation plan for a resume/correction, as the admission hands it to the runner (#35).
+const continuePlan = (items: FeedbackItem[]): ContinuationPlan => ({ step: "continue", items });
+const replyItem = (message: string): FeedbackItem => ({ kind: "directed-reply", origin: "terminal", message });
+const commentItem = (body: string): FeedbackItem =>
+  ({ kind: "pr-comment", key: "pr:IC_1@abc", author: "ana", comment: "comment", ref: "comentário IC_1", body });
+
 const newContext = (over: Partial<RunnerContext> = {}): RunnerContext =>
   ({ jobId: key, ref, repository: "acme/app", kind: "new", iteration: 1, maxIterations: 5, ...over });
 
-function runnerFor(f: { source: string; stateDir: string; agentDir: string }, boundary: SandboxBoundary, projects?: ProjectConfig[]) {
+function runnerFor(f: { source: string; stateDir: string; agentDir: string }, boundary: SandboxBoundary, projects?: ProjectConfig[], observer?: Observer) {
   return createDockerRunner({
     instance: instance(projects),
     credentials,
@@ -81,6 +89,7 @@ function runnerFor(f: { source: string; stateDir: string; agentDir: string }, bo
     image: "msf-docker-runner:test",
     repositorySource: () => f.source,
     boundary,
+    ...(observer === undefined ? {} : { observer }),
   });
 }
 
@@ -198,7 +207,7 @@ test("the git area and the Pi session survive the container: a continuation resu
 
   const output = await runner.run(newContext({
     kind: "resume", maxIterations: 5,
-    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["Approved."] },
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: continuePlan([replyItem("Approved.")]) },
   }));
 
   assert.deepEqual(output, {
@@ -210,7 +219,7 @@ test("the git area and the Pi session survive the container: a continuation resu
   assert.equal(second.request.resumeSession, "session-1", "same Pi session");
   assert.equal(second.request.maxIterations, 1, "continuations are one iteration");
   assert.equal(second.cwd, layout.repoDir, "same area");
-  assert.match(second.request.prompt, /Operator input: Approved\./);
+  assert.ok(second.request.prompt.includes("- resposta dirigida do operador: Approved."), "the operator's item is rendered for the agent");
   assert.equal(await git(layout.repoDir, "rev-parse", "HEAD").then((s) => s.trim()), partial, "partial commit kept");
 });
 
@@ -223,11 +232,11 @@ test("a continuation naming another session or area than the runner's record is 
   await runner.run(newContext());
   const layout = jobLayout(f.stateDir, key);
   const otherSession = await runner.run(newContext({
-    kind: "resume", continuation: { workspace: { session: "session-9", area: layout.repoDir }, replies: [] },
+    kind: "resume", continuation: { workspace: { session: "session-9", area: layout.repoDir }, plan: continuePlan([]) },
   }));
   assert.match(interruptedReason(otherSession) ?? "", /sessão registrada no trabalho difere/);
   const otherArea = await runner.run(newContext({
-    kind: "resume", continuation: { workspace: { session: "session-1", area: "/elsewhere" }, replies: [] },
+    kind: "resume", continuation: { workspace: { session: "session-1", area: "/elsewhere" }, plan: continuePlan([]) },
   }));
   assert.match(interruptedReason(otherArea) ?? "", /área registrada no trabalho/);
   assert.equal(runs.length, 1, "neither mismatch reached the agent");
@@ -307,16 +316,48 @@ test("a triage continuation reaches the sandbox as the explicit gh-address-comme
   await runner.run(newContext());
   await runner.run(newContext({
     kind: "correction",
-    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["comentário de ana"], triage: "list" },
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: { step: "list", comments: [commentItem("ajuste o readme")], replies: [] } },
   }));
   assert.ok(runs[1]!.request.prompt.startsWith("/skill:gh-address-comments"));
-  assert.match(runs[1]!.request.prompt, /Operator input: comentário de ana/);
+  assert.ok(runs[1]!.request.prompt.includes("comentário de ana: ajuste o readme"), "the inline comment is rendered for the triage");
 
   await runner.run(newContext({
     kind: "resume",
-    continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["1"], triage: "apply" },
+    continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: { step: "apply", choice: [replyItem("1")], retained: [] } },
   }));
   assert.match(runs[2]!.request.prompt, /Apply only the items the operator chose/);
+});
+
+test("delivery is confirmed by counting the rendered items the stream shows reaching the agent", async () => {
+  for (const evidence of [true, false]) {
+    const f = await fixture();
+    const layout = jobLayout(f.stateDir, key);
+    const events: OpsEvent[] = [];
+    const observer: Observer = { ...noopObserver, emit: (event) => events.push(event) };
+    const { boundary } = fakeBoundary(async (run, call) => {
+      if (call === 2 && evidence) {
+        run.activity.line(JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "- resposta dirigida do operador: Use o seam v2" }] } }));
+      }
+      return { sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) };
+    });
+    const runner = runnerFor(f, boundary, undefined, observer);
+    await runner.run(newContext());
+    events.length = 0;
+    await runner.run(newContext({
+      kind: "resume",
+      continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: continuePlan([replyItem("Use o seam v2")]) },
+    }));
+    if (evidence) {
+      const delivered = events.filter((event) => event.kind === "resposta-entregue");
+      assert.equal(delivered.length, 1, "the item reached the agent");
+      assert.equal(delivered[0]?.fields?.respostas, 1, "one item was delivered");
+      assert.equal(events.filter((event) => event.kind === "entrega-não-confirmada").length, 0);
+    } else {
+      const unconfirmed = events.filter((event) => event.kind === "entrega-não-confirmada");
+      assert.equal(unconfirmed.length, 1, "an item the stream never showed is not confirmed");
+      assert.equal(unconfirmed[0]?.fields?.confirmadas, 0);
+    }
+  }
 });
 
 test("the triage is unavailable when the authorized profile has no gh-address-comments skill, and available when it has", async () => {
@@ -383,7 +424,7 @@ test("the snapshot is recreated on every invocation, even over a leftover of an 
   await mkdir(layout.snapshotDir, { recursive: true });
   await writeFile(join(layout.snapshotDir, "stale.txt"), "left over\n");
   await runner.run(newContext({
-    kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: ["ok"] },
+    kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: continuePlan([replyItem("ok")]) },
   }));
   assert.deepEqual(names, [["auth.json", "settings.json"], ["auth.json", "settings.json"]]);
 });

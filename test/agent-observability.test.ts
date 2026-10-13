@@ -352,15 +352,15 @@ test("a reply is reported delivered only when the stream shows it reaching the a
   for (const evidence of [true, false]) {
     const h = await harness(async (run, call) => {
       if (call === 2 && evidence) {
-        run.activity.line(line({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "Operator input: Use o seam v2" }] } }));
+        run.activity.line(line({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "- resposta dirigida do operador: Use o seam v2" }] } }));
       }
       return { sessionId: "session-1" };
     });
     await h.runner.run(context());
     h.lines.length = 0;
     await h.runner.run(context({
-      kind: "resume", invocation: "inv-test-2", replyCommands: ["cmd-1"],
-      continuation: { workspace: { session: "session-1", area: h.layout.repoDir }, replies: ["Use o seam v2"] },
+      kind: "resume", invocation: "inv-test-2",
+      continuation: { workspace: { session: "session-1", area: h.layout.repoDir }, plan: { step: "continue", items: [{ kind: "directed-reply", origin: "terminal", message: "Use o seam v2", command: "cmd-1" }] } },
     }));
     if (evidence) {
       assert.match(matching(h.lines, /resposta entregue ao agente/)[0]!, /comando=cmd-1 respostas=1 evidência=/);
@@ -484,8 +484,8 @@ test("a failed run does not claim the reply was delivered, and says it is unconf
   await h.runner.run(context());
   h.lines.length = 0;
   await h.runner.run(context({
-    kind: "resume", invocation: "inv-test-2", replyCommands: ["cmd-2"],
-    continuation: { workspace: { session: "session-1", area: h.layout.repoDir }, replies: ["sim"] },
+    kind: "resume", invocation: "inv-test-2",
+    continuation: { workspace: { session: "session-1", area: h.layout.repoDir }, plan: { step: "continue", items: [{ kind: "directed-reply", origin: "terminal", message: "sim", command: "cmd-2" }] } },
   }));
   assert.match(matching(h.lines, /entrega da resposta ao agente não confirmada/)[0]!, /comando=cmd-2/);
 });
@@ -520,7 +520,7 @@ test("a detailed-log failure of one invocation stops standing in status once a l
 
   const { rm } = await import("node:fs/promises");
   await rm(join(layout.areaDir, "logs"));
-  await runner.run(context({ kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, replies: [] } }));
+  await runner.run(context({ kind: "resume", continuation: { workspace: { session: "session-1", area: layout.repoDir }, plan: { step: "continue", items: [] } } }));
   await observer.flush();
   assert.deepEqual(await readFailures(f.stateDir), [], "the recovered sink no longer shows in status");
 });

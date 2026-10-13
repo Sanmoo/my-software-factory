@@ -544,7 +544,7 @@ test("unknown mergeability is not announced as a conflict on the main line", asy
 test("the triage of PR feedback shows in the main log as a help request with the numbered list and the reply command", async () => {
   const list = "1. README.md (thread PRRT_1): troque este título";
   const s = await setup({
-    runner: new FakeRunner((context) => withWorkspace(finished(context.continuation?.triage === "list"
+    runner: new FakeRunner((context) => withWorkspace(finished(context.continuation?.plan.step === "list"
       ? { status: "needs_help", question: list, context: "triagem" }
       : PR_READY), WORKSPACE)),
   });

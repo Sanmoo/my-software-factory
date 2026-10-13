@@ -363,19 +363,6 @@ export function continuationCauses(job: Job): Trigger[] {
   return [...[...feedback.pending, ...feedback.held].map(feedbackCause), ...manualCauses(feedback)];
 }
 
-// The `string[]` the runner port receives in this ticket. The typed plan is the source; the runtime
-// will render the items itself in the next ticket.
-export function planTexts(plan: ContinuationPlan): string[] {
-  switch (plan.step) {
-    case "continue":
-      return plan.items.map(describeItem);
-    case "list":
-      return [...plan.comments, ...plan.replies].map(describeItem);
-    case "apply":
-      return [...plan.choice, ...plan.retained].map(describeItem);
-  }
-}
-
 // Whether the invocation must rebase the branch: a conflict it carries.
 export function planConflict(plan: ContinuationPlan): boolean {
   const items = plan.step === "continue" ? plan.items : plan.step === "apply" ? plan.retained : [];
@@ -388,10 +375,6 @@ export function planConflict(plan: ContinuationPlan): boolean {
 export function planCommands(plan: ContinuationPlan): string[] {
   const items = plan.step === "continue" ? plan.items : plan.step === "list" ? [...plan.comments, ...plan.replies] : plan.choice;
   return items.flatMap((item) => (isDirectedReply(item) && item.command !== undefined ? [item.command] : []));
-}
-
-export function planTriage(plan: ContinuationPlan): "list" | "apply" | undefined {
-  return plan.step === "continue" ? undefined : plan.step;
 }
 
 // How the invocation a listing started ended: with the help request that opens the choice, or

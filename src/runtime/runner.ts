@@ -1,4 +1,5 @@
 import type { IssueRef, Known } from "../tracker/port.js";
+import type { ContinuationPlan } from "../core/feedback.js";
 
 // Runner port. The admission hands the runner a pointer to the job and the
 // effective iteration limit; the runner returns what its iteration produced.
@@ -11,20 +12,15 @@ export interface Workspace {
   area: string;
 }
 
-// What a continuation invocation receives: the session and area to continue, and the
-// operator replies that this invocation delivers.
-// The two invocations of the triage of PR feedback (issue #21).
-export type TriageStep = "list" | "apply";
+// What a continuation invocation receives: the session and area to continue, and the typed plan of
+// what this invocation delivers (issue #21). The plan is a union by step (`continue` | `list` |
+// `apply`) of the core: the runtime renders it and derives the conflict and the operator commands
+// from its items, never from a parallel field. The two invocations of the triage of PR feedback
+// are the `list` and `apply` steps of the plan.
 
 export interface ContinuationContext {
   workspace: Workspace;
-  replies: string[];
-  // The correction answers a conflict of the PR with its target branch (issue #19).
-  conflict?: boolean;
-  // The triage of PR feedback (issue #21): "list" is the correction that numbers the items of new human
-  // comments and asks the operator, changing no code; "apply" is the resume that applies only what the
-  // operator chose, together with the failing checks and the conflict held back by the triage.
-  triage?: TriageStep;
+  plan: ContinuationPlan;
 }
 
 // What an implementation invocation knows about its issue: the title and body as the tracker
@@ -45,11 +41,9 @@ export interface RunnerContext {
   kind: RunKind;
   iteration: number;
   maxIterations: number;
-  // Present only for resume and correction invocations.
+  // Present only for resume and correction invocations. It carries the typed plan; the ids of the
+  // operator commands whose replies it delivers are derived from its items (issue #15).
   continuation?: ContinuationContext;
-  // Ids of the operator commands whose replies this invocation carries, so the runner can report
-  // their delivery by id (issue #15). Replies from the tracker have no command id and are not listed.
-  replyCommands?: string[];
   // Present only for the implementation (new) invocation.
   issue?: IssueContext;
 }

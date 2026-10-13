@@ -20,7 +20,8 @@ import {
 import { jobBranch } from "../core/job.js";
 import { sandcastleRequest, type SandcastleRequest } from "./docker-invocation.js";
 import { interpretOutput } from "./docker-output.js";
-import { continuationPrompt, implementPrompt } from "./docker-prompt.js";
+import { continuationItems, continuationPrompt, implementPrompt } from "./docker-prompt.js";
+import { planCommands, type ContinuationPlan } from "../core/feedback.js";
 import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
 import { messageOf } from "../core/values.js";
@@ -119,8 +120,10 @@ interface JobRecord {
   sessionId?: string;
 }
 
-// Operator replies delivered with a continuation; the admission hands them over in `continuation`.
-const operatorInput = (context: RunnerContext): string => (context.continuation?.replies ?? []).join("\n");
+// Operator replies delivered with a continuation; the admission hands them over as the typed
+// plan in `continuation`. A continuation with no plan is a plain resume with no items to deliver.
+const continuationPlan = (context: RunnerContext): ContinuationPlan =>
+  context.continuation?.plan ?? { step: "continue", items: [] };
 
 const redact = (text: string, secret: string | undefined): string =>
   secret ? text.split(secret).join("[redacted]") : text;
@@ -158,7 +161,7 @@ class DockerRunner implements Runner {
         : await this.resumeJob(context, saved, layout);
       const prompt = context.kind === "new"
         ? implementPrompt({ ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models, ...(context.issue ? { issue: context.issue } : {}) })
-        : continuationPrompt({ kind: context.kind, note: operatorInput(context), conflict: context.continuation?.conflict === true, ...(context.continuation?.triage === undefined ? {} : { triage: context.continuation.triage }), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
+        : continuationPrompt({ kind: context.kind, plan: continuationPlan(context), ref: context.ref, repository: project.repository, targetBranch: repoRef.targetBranch, branch: repoRef.branch, baseSha: repoRef.baseSha, models });
 
       const request = sandcastleRequest({
         kind: context.kind, prompt, configuredLimit: context.maxIterations, sessionId: repoRef.sessionId,
@@ -266,21 +269,21 @@ class DockerRunner implements Runner {
     }
   }
 
-  // A reply is delivered only when the stream shows it reaching the agent: the user message of the
-  // invocation carries its text. Without that evidence the delivery stays unconfirmed (decision 4).
+  // An item is delivered only when the stream shows it reaching the agent: the user message of the
+  // invocation carries the rendered items of the plan. Delivery is confirmed by counting the items
+  // found in the stream against the items the prompt rendered (issue #21).
   private reportReplyDelivery(observer: Observer, context: RunnerContext, activity: AgentActivity): void {
-    const replies = context.continuation?.replies ?? [];
-    if (replies.length === 0) return;
-    // The replies reach the agent inside the continuation prompt, as one block after the operator-input
-    // marker; a short reply alone could match any boilerplate, so the whole block must be there.
-    const block = `Operator input: ${replies.join("\n").trim()}`;
-    const reached = activity.userMessages().some((message) => message.includes(block));
-    const delivered = reached ? replies.length : 0;
+    const plan = continuationPlan(context);
+    const items = continuationItems(plan);
+    if (items.length === 0) return;
+    const messages = activity.userMessages();
+    const delivered = items.filter((item) => messages.some((message) => message.includes(item))).length;
+    const commands = planCommands(plan);
     const base = {
       job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
     };
-    const fields = { comando: context.replyCommands?.join(","), respostas: replies.length };
-    if (delivered === replies.length) {
+    const fields = { comando: commands.length === 0 ? undefined : commands.join(","), respostas: items.length };
+    if (delivered === items.length) {
       observer.emit({ kind: "resposta-entregue", text: "resposta entregue ao agente", level: "progresso", ...base, fields: { ...fields, evidência: "mensagem do usuário no stream do runtime" } });
     } else {
       observer.emit({

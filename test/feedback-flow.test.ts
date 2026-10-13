@@ -13,7 +13,8 @@ import type { InstanceConfig } from "../src/config/types.js";
 import type { Mergeability, PrLookup, PrPort, PrFeedback, PrSnapshot } from "../src/pr/port.js";
 import type { PrRef } from "../src/core/result.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
-import type { Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
+import type { ContinuationContext, Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
+import type { ContinuationPlan, FeedbackItem } from "../src/core/feedback.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { IssueRef, Known } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
@@ -26,6 +27,32 @@ const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 const HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
 const PR_READY = { status: "pr_ready", pr: { repository: "acme/app", number: 9 } };
 const WORKSPACE: Workspace = { session: "session-1", area: "area-1" };
+
+// What a continuation delivered, read from the typed plan and never from the rendered text
+// (issue #35). `items` is every item of the step, whatever its kind.
+const planOf = (continuation?: ContinuationContext): ContinuationPlan | undefined => continuation?.plan;
+const stepOf = (continuation?: ContinuationContext) => planOf(continuation)?.step;
+const itemsOf = (continuation?: ContinuationContext): FeedbackItem[] => {
+  const plan = planOf(continuation);
+  if (plan === undefined) return [];
+  return plan.step === "continue"
+    ? plan.items
+    : plan.step === "list"
+      ? [...plan.comments, ...plan.replies]
+      : [...plan.choice, ...plan.retained];
+};
+const kindsOf = (continuation?: ContinuationContext): string[] => itemsOf(continuation).map((item) => item.kind);
+const commentsOf = (continuation?: ContinuationContext): FeedbackItem[] => {
+  const plan = planOf(continuation);
+  return plan?.step === "list" ? plan.comments : [];
+};
+const commentBodies = (continuation?: ContinuationContext): string[] =>
+  commentsOf(continuation).map((item) => (item.kind === "pr-comment" ? item.body : ""));
+const repliesOf = (continuation?: ContinuationContext): string[] =>
+  itemsOf(continuation).flatMap((item) => (item.kind === "directed-reply" ? [item.message] : []));
+const checksOf = (continuation?: ContinuationContext): Array<{ name: string; state: string }> =>
+  itemsOf(continuation).flatMap((item) => (item.kind === "check" ? [{ name: item.name, state: item.state }] : []));
+const hasConflict = (continuation?: ContinuationContext): boolean => kindsOf(continuation).includes("conflict");
 const REPO = "acme/app";
 const dir = () => mkdtemp(join(tmpdir(), "msf-feedback-flow-"));
 const KEY = (id: string) => `memory:${REPO}#${id}`;
@@ -154,7 +181,9 @@ test("an agent: comment and a terminal reply reactivate a job waiting for help w
     await admission.settle();
 
     assert.deepEqual(report.admitted, [KEY("1")], path);
-    assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, replies: ["Use o seam v2"] }, path);
+    assert.equal(stepOf(runner.calls[1]?.continuation), "continue", path);
+    assert.deepEqual(kindsOf(runner.calls[1]?.continuation), ["directed-reply"], path);
+    assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["Use o seam v2"], path);
     assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr", path);
   }
 });
@@ -194,7 +223,7 @@ test("a directed reply is consumed once: a later poll does not repeat it", async
   await admission.settle();
 
   assert.equal(runner.calls.length, 2);
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["Use o seam v2"]);
+  assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["Use o seam v2"]);
   assert.equal(admission.job(KEY("1"))?.consumed?.length, 1, "the consumed comment id and revision are recorded");
 });
 
@@ -219,7 +248,7 @@ test("a directed reply that arrives while the agent is active waits for the next
   await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["Use o seam v2"], "the pending reply goes to the next invocation");
+  assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["Use o seam v2"], "the pending reply goes to the next invocation");
 });
 
 // ---- a job waiting for PR becomes a correction with a slot and priority -------------
@@ -240,7 +269,8 @@ test("an agent: comment or terminal reply on a job waiting for PR is a correctio
     await admission.settle();
 
     assert.equal(runner.calls[1]?.kind, "correction", path);
-    assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, replies: ["Renomeie a função"] }, path);
+    assert.equal(stepOf(runner.calls[1]?.continuation), "continue", path);
+    assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["Renomeie a função"], path);
   }
 });
 
@@ -298,7 +328,8 @@ test("a human review on the PR is triaged with its text, and it is not offered t
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
   assert.equal(runner.calls[1]?.kind, "correction");
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["revisão de ana: troque o nome"]);
+  assert.equal(stepOf(runner.calls[1]?.continuation), "list");
+  assert.deepEqual(commentBodies(runner.calls[1]?.continuation), ["troque o nome"]);
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
 
   assert.deepEqual((await admission.poll()).admitted, [], "the same review does not call for triage again");
@@ -343,7 +374,7 @@ test("a failing required check calls for correction; a failing optional check do
   prs.feedback = { comments: [], checks: [check("L", "lint", "failing", false), check("T", "test", "failing", true)] };
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["check com falha: test"]);
+  assert.deepEqual(checksOf(runner.calls[1]?.continuation), [{ name: "test", state: "failing" }]);
 });
 
 test("a failing check whose required flag is unknown goes to the human and is not decided by the factory", async () => {
@@ -365,7 +396,7 @@ test("a failing check whose required flag is unknown goes to the human and is no
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "Pode seguir sem o deploy" });
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.deepEqual(runner.calls[1]?.continuation?.replies, ["Pode seguir sem o deploy"]);
+  assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["Pode seguir sem o deploy"]);
   assert.deepEqual((await admission.poll()).admitted, [], "the decided check does not come back");
 });
 
@@ -407,10 +438,14 @@ test("a new human inline comment reactivates the job as a correction carrying it
   await admission.settle();
 
   assert.equal(runner.calls[1]?.kind, "correction");
-  const [reply] = runner.calls[1]?.continuation?.replies ?? [];
-  assert.match(reply ?? "", /troque este título/);
-  assert.match(reply ?? "", /README\.md/);
-  assert.match(reply ?? "", /PRRT_1/);
+  const [listed] = commentsOf(runner.calls[1]?.continuation);
+  assert.equal(listed?.kind, "pr-comment");
+  if (listed?.kind === "pr-comment") {
+    assert.equal(listed.body, "troque este título");
+    assert.equal(listed.comment, "inline");
+    assert.equal(listed.thread?.path, "README.md");
+    assert.equal(listed.thread?.id, "PRRT_1");
+  }
 
   assert.deepEqual((await admission.poll()).admitted, [], "a consumed comment is not repeated");
   await admission.settle();
@@ -450,7 +485,7 @@ test("a review with a body and inline comments is delivered as one item per body
   await admission.poll();
   await admission.settle();
 
-  assert.equal(runner.calls[1]?.continuation?.replies?.length, 3);
+  assert.equal(commentsOf(runner.calls[1]?.continuation).length, 3);
 });
 
 test("an edited inline comment is new feedback, and a new comment in a resolved thread counts", async () => {
@@ -483,8 +518,8 @@ test("an edited inline comment is new feedback, and a new comment in a resolved 
   prs.feedback = { comments: [inline("PRRC_1", "troque o título por outro", true), inline("PRRC_2", "ainda não", true)], checks: [] };
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a new comment in a resolved thread counts");
   await admission.settle();
-  assert.equal(runner.calls.at(-1)?.continuation?.triage, "list");
-  assert.deepEqual(runner.calls.at(-1)?.continuation?.replies.length, 1, "only the new comment is triaged");
+  assert.equal(stepOf(runner.calls.at(-1)?.continuation), "list");
+  assert.equal(commentsOf(runner.calls.at(-1)?.continuation).length, 1, "only the new comment is triaged");
 });
 
 test("a read that did not cover every comment goes to the human as undecidable, and is not taken as no feedback", async () => {
@@ -517,7 +552,7 @@ test("a PR that conflicts with its target branch calls for a correction, and the
   await admission.settle();
 
   assert.equal(runner.calls[1]?.kind, "correction");
-  assert.equal(runner.calls[1]?.continuation?.conflict, true, "the agent is told the PR conflicts");
+  assert.equal(hasConflict(runner.calls[1]?.continuation), true, "the agent is told the PR conflicts");
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
 });
 
@@ -599,7 +634,7 @@ const TRIAGE_LIST = "1. README.md (thread PRRT_1): troque este título — propo
 // A runner that behaves as the real ones are told to: the triage invocation lists the items and asks
 // for help; every other continuation ends with the PR ready.
 const triagingRunner = () => new FakeRunner((context) => {
-  if (context.continuation?.triage === "list") {
+  if (context.continuation?.plan.step === "list") {
     return withWorkspace(finished({ status: "needs_help", question: TRIAGE_LIST, context: "triagem" }), WORKSPACE);
   }
   return withWorkspace(finished(PR_READY), WORKSPACE);
@@ -620,8 +655,8 @@ test("a new human comment, even a single one, is triaged: the invocation lists t
   await admission.settle();
 
   assert.equal(runner.calls[1]?.kind, "correction");
-  assert.equal(runner.calls[1]?.continuation?.triage, "list", "the correction is the triage, not the change");
-  assert.match(runner.calls[1]?.continuation?.replies.join("\n") ?? "", /troque este título/);
+  assert.equal(stepOf(runner.calls[1]?.continuation), "list", "the correction is the triage, not the change");
+  assert.deepEqual(commentBodies(runner.calls[1]?.continuation), ["troque este título"]);
 
   const job = admission.job(KEY("1"));
   assert.equal(job?.state, "waiting-for-help", "the triage is a help request: it frees the slot");
@@ -648,8 +683,8 @@ test("the operator's choice, by reply, resumes in a single invocation that appli
 
   assert.equal(runner.calls.length, 3);
   assert.equal(runner.calls[2]?.kind, "resume");
-  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
-  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1; 2: responda que X"]);
+  assert.equal(stepOf(runner.calls[2]?.continuation), "apply");
+  assert.deepEqual(repliesOf(runner.calls[2]?.continuation), ["1; 2: responda que X"]);
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
   assert.deepEqual((await admission.poll()).admitted, [], "nothing of the triaged batch comes back, chosen or not");
 });
@@ -669,8 +704,8 @@ test("the choice can also be given by an agent: comment on the issue", async () 
   await admission.poll();
   await admission.settle();
 
-  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
-  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1"]);
+  assert.equal(stepOf(runner.calls[2]?.continuation), "apply");
+  assert.deepEqual(repliesOf(runner.calls[2]?.continuation), ["1"]);
 });
 
 test("comments that arrive during the triage are read when the job is back to waiting for the PR, and open a new triage", async () => {
@@ -696,9 +731,8 @@ test("comments that arrive during the triage are read when the job is back to wa
 
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "the new comment opens a new triage");
   await admission.settle();
-  assert.equal(runner.calls[3]?.continuation?.triage, "list");
-  assert.match(runner.calls[3]?.continuation?.replies.join("\n") ?? "", /e a seção 2/);
-  assert.doesNotMatch(runner.calls[3]?.continuation?.replies.join("\n") ?? "", /troque este título/);
+  assert.equal(stepOf(runner.calls[3]?.continuation), "list");
+  assert.deepEqual(commentBodies(runner.calls[3]?.continuation), ["e a seção 2"]);
 });
 
 test("failing checks and a conflict in the same batch wait for the triage and join the single resume", async () => {
@@ -715,9 +749,9 @@ test("failing checks and a conflict in the same batch wait for the triage and jo
   await admission.settle();
 
   // The triage reads and lists; it neither rebases nor fixes the checks.
-  assert.equal(runner.calls[1]?.continuation?.triage, "list");
-  assert.notEqual(runner.calls[1]?.continuation?.conflict, true, "the branch is not rewritten while the operator reads the list");
-  assert.doesNotMatch(runner.calls[1]?.continuation?.replies.join("\n") ?? "", /check com falha/);
+  assert.equal(stepOf(runner.calls[1]?.continuation), "list");
+  assert.notEqual(hasConflict(runner.calls[1]?.continuation), true, "the branch is not rewritten while the operator reads the list");
+  assert.ok(!kindsOf(runner.calls[1]?.continuation).includes("check"), "the retained check is not read while listing");
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
 
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
@@ -725,9 +759,10 @@ test("failing checks and a conflict in the same batch wait for the triage and jo
   await admission.settle();
 
   assert.equal(runner.calls.length, 3, "one resume, not one per kind of feedback");
-  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
-  assert.equal(runner.calls[2]?.continuation?.conflict, true, "the conflict rides along");
-  assert.deepEqual(runner.calls[2]?.continuation?.replies, ["1", "check com falha: test", "PR em conflito com main (head h1, base b1)"]);
+  assert.equal(stepOf(runner.calls[2]?.continuation), "apply");
+  assert.equal(hasConflict(runner.calls[2]?.continuation), true, "the conflict rides along");
+  assert.deepEqual(kindsOf(runner.calls[2]?.continuation), ["directed-reply", "check", "conflict"]);
+  assert.deepEqual(repliesOf(runner.calls[2]?.continuation), ["1"]);
   assert.deepEqual((await admission.poll()).admitted, [], "the held items are not offered again");
 });
 
@@ -740,15 +775,15 @@ test("a batch with only failing checks, or only a conflict, goes straight to cor
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
   assert.equal(runner.calls[1]?.kind, "correction");
-  assert.equal(runner.calls[1]?.continuation?.triage, undefined);
+  assert.equal(stepOf(runner.calls[1]?.continuation), "continue");
 
   prs.feedback = { comments: [], checks: [] };
   prs.mergeable = { known: true, value: "conflicting" };
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
   assert.equal(runner.calls[2]?.kind, "correction");
-  assert.equal(runner.calls[2]?.continuation?.triage, undefined);
-  assert.equal(runner.calls[2]?.continuation?.conflict, true);
+  assert.equal(stepOf(runner.calls[2]?.continuation), "continue");
+  assert.equal(hasConflict(runner.calls[2]?.continuation), true);
 });
 
 test("without the triage skill, a human comment becomes a visible help request and no correction runs", async () => {
@@ -776,7 +811,7 @@ test("without the triage skill, a human comment becomes a visible help request a
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-pr");
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.equal(runner.calls.at(-1)?.continuation?.triage, "list");
+  assert.equal(stepOf(runner.calls.at(-1)?.continuation), "list");
 });
 
 test("a triage that ends with the PR ready, instead of a help request, is not accepted", async () => {
@@ -797,7 +832,7 @@ test("a triage that ends with the PR ready, instead of a help request, is not ac
 const retryingListRunner = (first: unknown) => {
   let lists = 0;
   const runner = new FakeRunner((context) => {
-    if (context.continuation?.triage === "list") {
+    if (context.continuation?.plan.step === "list") {
       lists += 1;
       return withWorkspace(finished(lists === 1 ? first : { status: "needs_help", question: TRIAGE_LIST, context: "triagem" }), WORKSPACE);
     }
@@ -817,22 +852,22 @@ test("a listing that ends interrupted is redone on resume, without applying the 
   prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [failingCheck("T", "test")] };
   await admission.poll();
   await admission.settle();
-  assert.equal(runner.calls[1]?.continuation?.triage, "list");
+  assert.equal(stepOf(runner.calls[1]?.continuation), "list");
   assert.equal(admission.job(KEY("1"))?.state, "interrupted");
 
   await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.equal(runner.calls[2]?.continuation?.triage, "list", "the resume redoes the listing, never applies");
-  assert.match(runner.calls[2]?.continuation?.replies?.[0] ?? "", /troque este título/);
-  assert.doesNotMatch(runner.calls[2]?.continuation?.replies?.join("\n") ?? "", /check com falha/, "the retained check is not read while listing");
+  assert.equal(stepOf(runner.calls[2]?.continuation), "list", "the resume redoes the listing, never applies");
+  assert.deepEqual(commentBodies(runner.calls[2]?.continuation), ["troque este título"]);
+  assert.ok(!kindsOf(runner.calls[2]?.continuation).includes("check"), "the retained check is not read while listing");
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
 
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
   await admission.poll();
   await admission.settle();
-  assert.equal(runner.calls[3]?.continuation?.triage, "apply");
-  assert.deepEqual(runner.calls[3]?.continuation?.replies, ["1", "check com falha: test"], "the retained check rides along");
+  assert.equal(stepOf(runner.calls[3]?.continuation), "apply");
+  assert.deepEqual(kindsOf(runner.calls[3]?.continuation), ["directed-reply", "check"], "the retained check rides along");
 });
 
 test("a listing that ends with the PR ready stays in the listing phase: the resume redoes it and preserves the retained items", async () => {
@@ -852,14 +887,14 @@ test("a listing that ends with the PR ready stays in the listing phase: the resu
   await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a resume of a listing-phase triage is accepted from intervention-required");
   await admission.settle();
-  assert.equal(runner.calls[2]?.continuation?.triage, "list");
-  assert.doesNotMatch(runner.calls[2]?.continuation?.replies?.join("\n") ?? "", /check com falha/, "the retained check is preserved");
+  assert.equal(stepOf(runner.calls[2]?.continuation), "list");
+  assert.ok(!kindsOf(runner.calls[2]?.continuation).includes("check"), "the retained check is preserved");
   assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
 
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
   await admission.poll();
   await admission.settle();
-  assert.deepEqual(runner.calls[3]?.continuation?.replies, ["1", "check com falha: test"], "the retained check survived the redo");
+  assert.deepEqual(kindsOf(runner.calls[3]?.continuation), ["directed-reply", "check"], "the retained check survived the redo");
 });
 
 test("a resume is rejected while the triage waits for the choice, and the reason tells how to answer", async () => {
@@ -885,7 +920,7 @@ test("a resume is rejected while the triage waits for the choice, and the reason
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "nenhum" });
   assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
   await admission.settle();
-  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
+  assert.equal(stepOf(runner.calls[2]?.continuation), "apply");
 });
 
 test("a directed reply that spells out a check's description is not matched with the check", async () => {
@@ -902,16 +937,15 @@ test("a directed reply that spells out a check's description is not matched with
   await admission.poll();
   await admission.settle();
 
-  assert.equal(runner.calls[1]?.continuation?.triage, "list");
-  const listing = runner.calls[1]?.continuation?.replies?.join("\n") ?? "";
-  assert.match(listing, /troque este título/, "the comment is listed");
-  assert.match(listing, /check com falha: test/, "the directed reply reaches the listing as guidance");
-  assert.equal((listing.match(/check com falha: test/g) ?? []).length, 1, "the check itself is not delivered while listing");
+  assert.equal(stepOf(runner.calls[1]?.continuation), "list");
+  assert.deepEqual(commentBodies(runner.calls[1]?.continuation), ["troque este título"], "the comment is listed");
+  assert.deepEqual(repliesOf(runner.calls[1]?.continuation), ["check com falha: test"], "the directed reply reaches the listing as guidance");
+  assert.equal(checksOf(runner.calls[1]?.continuation).length, 0, "the check itself is not delivered while listing");
 
   await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
   await admission.poll();
   await admission.settle();
-  const applied = runner.calls[2]?.continuation?.replies ?? [];
-  assert.equal(applied[0], "1");
-  assert.ok(applied.includes("check com falha: test"), "the held check is applied");
+  assert.deepEqual(kindsOf(runner.calls[2]?.continuation), ["directed-reply", "directed-reply", "check"], "the held check is applied with the retained reply");
+  assert.deepEqual(repliesOf(runner.calls[2]?.continuation), ["1", "check com falha: test"]);
+  assert.deepEqual(checksOf(runner.calls[2]?.continuation), [{ name: "test", state: "failing" }]);
 });

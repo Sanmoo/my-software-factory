@@ -7,7 +7,7 @@ import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
 import {
   continuationCauses, describeItem, directedReply, feedbackCause, judgeConflict, judgePrFeedback, needsTriage, noteManualResume,
-  planCommands, planConflict, planContinuation, planTexts, planTriage, receiveFeedback, recordTriageOutcome,
+  planCommands, planContinuation, receiveFeedback, recordTriageOutcome,
   resumeRefusal, triageInProgress, type DirectedReplyItem, type FeedbackItem, type PlanStep, type TriageOutcome,
 } from "./feedback.js";
 import { unreadableKeys, type JobStore } from "./job-store.js";
@@ -539,9 +539,9 @@ export class Admission {
     // advances or stays according to the outcome of this invocation.
     const { job: planned, plan, causes } = planContinuation(job, kind);
     await this.persist(planned);
-    const texts = planTexts(plan);
-    const delivered = texts.length > 0 ? `; ${texts.length} resposta(s) entregue(s)` : "";
-    const triage = planTriage(plan);
+    const count = plan.step === "continue" ? plan.items.length : plan.step === "list" ? plan.comments.length + plan.replies.length : plan.choice.length + plan.retained.length;
+    const delivered = count > 0 ? `; ${count} item(ns) de feedback entregue(s)` : "";
+    const triage = plan.step === "continue" ? undefined : plan.step;
     const how = triage === "list" ? " (triagem do feedback do PR)" : triage === "apply" ? " (aplica a escolha da triagem)" : "";
     const running = await this.apply(job.key, "running", {
       message: `${kind} admitido${how}; limite de 1 iteração${delivered}`,
@@ -553,12 +553,8 @@ export class Admission {
     for (const command of commands) {
       this.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, { invocation });
     }
-    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation,
-      {
-        workspace, replies: texts,
-        ...(planConflict(plan) ? { conflict: true } : {}),
-        ...(triage === undefined ? {} : { triage }),
-      }, undefined, commands);
+    // The runner receives the typed plan; it derives the conflict and the commands from its items.
+    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, plan });
   }
 
   // The invocation that is about to run, announced with its operational reason (issue #15).
@@ -634,9 +630,8 @@ export class Admission {
     invocation: string,
     continuation?: ContinuationContext,
     issue?: IssueContext,
-    replyCommands?: string[],
   ): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue, replyCommands).catch((error: unknown) => {
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue).catch((error: unknown) => {
       this.runErrors.push(error);
     });
     this.runs.add(run);
@@ -654,9 +649,8 @@ export class Admission {
     invocation: string,
     continuation?: ContinuationContext,
     issue?: IssueContext,
-    replyCommands?: string[],
   ): Promise<void> {
-    const step: PlanStep | undefined = continuation?.triage;
+    const step: PlanStep | undefined = continuation?.plan.step;
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
       const context: RunnerContext = {
@@ -669,7 +663,6 @@ export class Admission {
         invocation,
         ...(continuation ? { continuation } : {}),
         ...(issue ? { issue } : {}),
-        ...(replyCommands !== undefined && replyCommands.length > 0 ? { replyCommands } : {}),
       };
       try {
         output = await this.deps.runner.run(context);
