@@ -14,7 +14,7 @@ import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import type { IssueRef, TrackerPort } from "../src/tracker/port.js";
+import type { IssueRef } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
@@ -101,22 +101,6 @@ const memoryOf = (issues: IssueSpec[]) => loadMemoryTracker({ issues: issues.map
 const keyOf = (repo: string, id: string) => `memory:${repo}#${id}`;
 const refOf = (repo: string, id: string): IssueRef => ({ tracker: "memory", project: repo, id });
 
-// A tracker port that delegates to the memory adapter, with selected operations overridden
-// to model a failing or lost write.
-function trackerWith(base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort {
-  return {
-    claimMarkOf: (ref) => base.claimMarkOf(ref),
-    discoverCandidates: (scope) => base.discoverCandidates(scope),
-    readIssue: (ref) => base.readIssue(ref),
-    claim: (ref) => base.claim(ref),
-    releaseClaim: (ref) => base.releaseClaim(ref),
-    readComments: (ref) => base.readComments(ref),
-    postComment: (ref, body) => base.postComment(ref, body),
-    markDone: (ref) => base.markDone(ref),
-    ...overrides,
-  };
-}
-
 interface OpenOptions {
   memory: MemoryTracker;
   stateDir: string;
@@ -124,14 +108,13 @@ interface OpenOptions {
   repos: string[];
   maxConcurrent?: number;
   maxIterations?: number;
-  tracker?: (base: MemoryTracker) => TrackerPort;
   prs?: PrPort;
 }
 
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
   eligibility: (project) => projectEligibility(instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }), project),
-  tracker: options.tracker ? options.tracker(options.memory) : options.memory,
+  tracker: options.memory,
   runner: options.runner,
   store: createFileJobStore(options.stateDir),
   commands: createFileCommandQueue(options.stateDir),
@@ -474,16 +457,11 @@ test("a release the tracker does not confirm leaves the job as it was", async ()
   const stateDir = await dir();
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
   const runner = new FakeRunner(() => withWorkspace(finished(HELP), WORKSPACE));
-  const admission = await open({
-    memory,
-    stateDir,
-    runner,
-    repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, { releaseClaim: async () => { throw new Error("tracker indisponível"); } }),
-  });
+  const admission = await open({ memory, stateDir, runner, repos: ["acme/app"] });
   await admission.poll();
   await admission.settle();
 
+  memory.failNext("releaseClaim", "falha-antes", "tracker indisponível");
   await operator(stateDir).enqueue({ type: "release", job: keyOf("acme/app", "1") });
   const report = await admission.poll();
   assert.equal(report.commands[0]?.status, "rejected");
@@ -496,21 +474,11 @@ test("a release whose write landed but whose answer was lost is confirmed by rer
   const stateDir = await dir();
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
   const runner = new FakeRunner(() => withWorkspace(finished(HELP), WORKSPACE));
-  const admission = await open({
-    memory,
-    stateDir,
-    runner,
-    repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, {
-      releaseClaim: async (ref) => {
-        await base.releaseClaim(ref);
-        throw new Error("resposta perdida");
-      },
-    }),
-  });
+  const admission = await open({ memory, stateDir, runner, repos: ["acme/app"] });
   await admission.poll();
   await admission.settle();
 
+  memory.failNext("releaseClaim", "resposta-perdida", "resposta perdida");
   await operator(stateDir).enqueue({ type: "release", job: keyOf("acme/app", "1") });
   const report = await admission.poll();
   assert.equal(report.commands[0]?.status, "applied");

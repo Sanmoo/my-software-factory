@@ -18,7 +18,7 @@ import { createFileHistory } from "../src/state/history.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import { PartialWriteError, type ClaimMark, type IssueRef, type IssueSnapshot, type TrackerPort } from "../src/tracker/port.js";
+import type { ClaimMark, IssueRef } from "../src/tracker/port.js";
 
 // The operational events of the orchestrator (issue #15), read where the operator reads them:
 // the main log lines and the local history, through the real queue, store and history files.
@@ -51,9 +51,10 @@ const instance = (maxConcurrent = 1): InstanceConfig => {
   return parsed.config.instances[0]!;
 };
 
-const memoryOf = (ids: string[]) => loadMemoryTracker({
+const memoryOf = (ids: string[], claimMark?: ClaimMark, assignees: string[] = []) => loadMemoryTracker({
+  ...(claimMark === undefined ? {} : { claimMark }),
   issues: ids.map((id) => ({
-    project: REPO, id, title: `Issue ${id}`, labels: ["ready-for-agent"], assignees: [], claimed: false,
+    project: REPO, id, title: `Issue ${id}`, labels: ["ready-for-agent"], assignees, claimed: false,
     statusCategory: "to-do", priority: null, blockers: [], comments: [],
   })),
 });
@@ -92,7 +93,8 @@ async function setup(options: {
   ids?: string[];
   maxConcurrent?: number;
   runner: Runner;
-  tracker?: (base: MemoryTracker) => TrackerPort;
+  claimMark?: ClaimMark;
+  assignees?: string[];
   historyBlocked?: boolean;
   // Jobs of the instance that already exist in the state directory.
   existing?: Job[];
@@ -105,29 +107,17 @@ async function setup(options: {
     instance: "trabalho", console: (line) => lines.push(line), history: createFileHistory(stateDir),
     cli: { instance: "trabalho" },
   });
-  const memory = memoryOf(options.ids ?? ["1"]);
+  const memory = memoryOf(options.ids ?? ["1"], options.claimMark, options.assignees);
   const prs = new FakePrs();
   const config = instance(options.maxConcurrent);
   const admission = await Admission.open({
     instance: config, eligibility: (project) => projectEligibility(config, project),
-    tracker: options.tracker ? options.tracker(memory) : memory, runner: options.runner,
+    tracker: memory, runner: options.runner,
     store: createFileJobStore(stateDir), commands: createFileCommandQueue(stateDir),
     control: createFileInstanceControl(stateDir), prs, observer,
   });
   return { stateDir, lines, observer, admission, memory, runner: options.runner, prs };
 }
-
-const trackerWith = (base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort => ({
-  claimMarkOf: (ref) => base.claimMarkOf(ref),
-  discoverCandidates: (scope) => base.discoverCandidates(scope),
-  readIssue: (ref) => base.readIssue(ref),
-  claim: (ref) => base.claim(ref),
-  releaseClaim: (ref) => base.releaseClaim(ref),
-  readComments: (ref) => base.readComments(ref),
-  postComment: (ref, body) => base.postComment(ref, body),
-  markDone: (ref) => base.markDone(ref),
-  ...overrides,
-});
 
 const matching = (lines: string[], pattern: RegExp) => lines.filter((line) => pattern.test(line));
 const gate = () => {
@@ -318,20 +308,11 @@ test("a manual resume is its own reason", async () => {
 });
 
 test("an external merge is announced once, before and apart from the done update, which stays pending until confirmed", async () => {
-  let attempts = 0;
   const runner = new FakeRunner(() => withWorkspace(finished(PR_READY), WORKSPACE));
-  const s = await setup({
-    runner,
-    tracker: (base) => trackerWith(base, {
-      async markDone(ref) {
-        attempts += 1;
-        if (attempts === 1) throw new Error("jira fora do ar");
-        return base.markDone(ref);
-      },
-    }),
-  });
+  const s = await setup({ runner });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("markDone", "falha-antes", "jira fora do ar");
   s.prs.state = "merged";
 
   const first = await s.admission.poll();
@@ -381,19 +362,10 @@ test("the claim at admission names the concrete changes, attempt before confirma
 });
 
 test("a release with a partial failure keeps the confirmed write visible and the failure explicit", async () => {
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => trackerWith(base, {
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        throw new PartialWriteError("atribuição recusada", [
-          { operation: "remover-label", target: "agent-claimed", before: "presente", after: "ausente", result: "attempted" },
-        ]);
-      },
-    }),
-  });
+  const s = await setup({ runner: helpRunner() });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("releaseClaim", "parcial", "atribuição recusada");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   await s.admission.poll();
   await s.observer.flush();
@@ -435,17 +407,10 @@ test("a pause is an impediment: the continuation waits with its original reason,
 });
 
 test("a release whose write errored but whose reread shows the claim gone is confirmed by evidence", async () => {
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => trackerWith(base, {
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        throw new Error("resposta perdida");
-      },
-    }),
-  });
+  const s = await setup({ runner: helpRunner() });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("releaseClaim", "resposta-perdida", "resposta perdida");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   await s.admission.poll();
 
@@ -454,30 +419,12 @@ test("a release whose write errored but whose reread shows the claim gone is con
 });
 
 test("a release confirms each removal by reread: the label and the account are both confirmed", async () => {
-  // Before the release the reread shows the label and the account present, so a confirmation
-  // can only come from the removal itself.
-  let released = false;
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => trackerWith(base, {
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        released = true;
-        return { changes: [
-          { operation: "remover-label", target: "agent-claimed", before: "presente", after: "ausente", result: "attempted" },
-          { operation: "remover-atribuição", target: "acme", result: "attempted" },
-        ] };
-      },
-      async readIssue(ref) {
-        const snapshot = await base.readIssue(ref);
-        return released
-          ? snapshot
-          : { ...snapshot, labels: { known: true, value: ["ready-for-agent", "agent-claimed"] }, assignees: { known: true, value: ["acme"] } };
-      },
-    }),
-  });
+  // The mark carries a label and an account, and the adapter only reports attempts; the reread
+  // is what confirms each removal.
+  const s = await setup({ runner: helpRunner(), claimMark: { labels: ["agent-claimed"], assignees: ["acme"] } });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("releaseClaim", "sem-confirmacao");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   await s.admission.poll();
   await s.observer.flush();
@@ -488,29 +435,10 @@ test("a release confirms each removal by reread: the label and the account are b
 });
 
 test("a release whose reread still shows the account assigned keeps the account removal as attempted", async () => {
-  let released = false;
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => trackerWith(base, {
-      claimMarkOf: () => ({ labels: ["agent-claimed"], assignees: ["acme"] }),
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        released = true;
-        return { changes: [
-          { operation: "remover-label", target: "agent-claimed", before: "presente", after: "ausente", result: "attempted" },
-          { operation: "remover-atribuição", target: "acme", result: "attempted" },
-        ] };
-      },
-      async readIssue(ref) {
-        const snapshot = await base.readIssue(ref);
-        return released
-          ? { ...snapshot, claimed: { known: true, value: true }, assignees: { known: true, value: ["acme"] } }
-          : snapshot;
-      },
-    }),
-  });
+  const s = await setup({ runner: helpRunner(), claimMark: { labels: ["agent-claimed"], assignees: ["acme"] } });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("releaseClaim", "ultima-invisivel");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   const report = await s.admission.poll();
   await s.observer.flush();
@@ -523,32 +451,12 @@ test("a release whose reread still shows the account assigned keeps the account 
   assert.equal(s.admission.job(KEY("1"))?.state, "waiting-for-help", "the job keeps its state while the claim is visible");
 });
 
-// Models what an adapter shows once the factory has claimed: the issue stays claimed after the
-// factory's mark leaves, for a reason that is not the mark.
-const claimedBeyondMark = (base: MemoryTracker, mark: ClaimMark, otherwise: Partial<IssueSnapshot>, overrides: Partial<TrackerPort> = {}): TrackerPort => {
-  let claimedOnce = false;
-  return trackerWith(base, {
-    claimMarkOf: () => mark,
-    async claim(ref) {
-      claimedOnce = true;
-      return base.claim(ref);
-    },
-    async readIssue(ref) {
-      const snapshot = await base.readIssue(ref);
-      return claimedOnce ? { ...snapshot, claimed: { known: true, value: true }, ...otherwise } : snapshot;
-    },
-    ...overrides,
-  });
-};
-
 test("a Jira-like release is confirmed by the mark: the issue stays In Progress and still counts as claimed", async () => {
   // Jira's claimed is any category other than To Do, so after the label leaves the issue is still claimed.
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: [] }, { statusCategory: { known: true, value: "in-progress" } }),
-  });
+  const s = await setup({ runner: helpRunner() });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.setClaimedElsewhere(REF("1"), true);
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   const report = await s.admission.poll();
   await s.observer.flush();
@@ -557,13 +465,11 @@ test("a Jira-like release is confirmed by the mark: the issue stays In Progress 
   assert.equal(s.admission.job(KEY("1"))?.state, "released");
   assert.match(matching(s.lines, /alteração confirmada.*operação=remover-label/)[0]!, /alvo=claim/);
   assert.deepEqual((await s.memory.readIssue(REF("1"))).statusCategory, { known: true, value: "in-progress" }, "the release leaves the status alone");
+  assert.deepEqual((await s.memory.readIssue(REF("1"))).claimed, { known: true, value: true }, "the issue still counts as claimed beyond the mark");
 });
 
 test("a GitHub-like release is confirmed with a co-assigned person, whose assignment stays", async () => {
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: ["acme"] }, { assignees: { known: true, value: ["maria"] } }),
-  });
+  const s = await setup({ runner: helpRunner(), claimMark: { labels: ["claim"], assignees: ["acme"] }, assignees: ["maria"] });
   await s.admission.poll();
   await s.admission.settle();
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
@@ -574,17 +480,10 @@ test("a GitHub-like release is confirmed with a co-assigned person, whose assign
 });
 
 test("a release whose write errored is confirmed by the mark's absence, each part of the mark as a confirmed change", async () => {
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => claimedBeyondMark(base, { labels: ["claim"], assignees: ["acme"] }, {}, {
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        throw new Error("resposta perdida");
-      },
-    }),
-  });
+  const s = await setup({ runner: helpRunner(), claimMark: { labels: ["claim"], assignees: ["acme"] } });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("releaseClaim", "resposta-perdida", "resposta perdida");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   await s.admission.poll();
   await s.observer.flush();
@@ -595,23 +494,10 @@ test("a release whose write errored is confirmed by the mark's absence, each par
 });
 
 test("a release whose reread fails after the write does not mark the job released", async () => {
-  let released = false;
-  const s = await setup({
-    runner: helpRunner(),
-    tracker: (base) => trackerWith(base, {
-      async releaseClaim(ref) {
-        await base.releaseClaim(ref);
-        released = true;
-        return { changes: [] };
-      },
-      async readIssue(ref) {
-        if (released) throw new Error("releitura indisponível");
-        return base.readIssue(ref);
-      },
-    }),
-  });
+  const s = await setup({ runner: helpRunner() });
   await s.admission.poll();
   await s.admission.settle();
+  s.memory.failNext("readIssue", "releitura-falha", "releitura indisponível");
   await createFileCommandQueue(s.stateDir).enqueue({ type: "release", job: KEY("1") });
   const report = await s.admission.poll();
 

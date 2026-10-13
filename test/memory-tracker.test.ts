@@ -2,11 +2,27 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { loadMemoryTracker } from "../src/tracker/memory.js";
+import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
+import { PartialWriteError, type ClaimMark } from "../src/tracker/port.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/status-tracker.json", import.meta.url));
 const load = async () => loadMemoryTracker(JSON.parse(await readFile(fixturePath, "utf8")));
 const github = { project: "samuel-santos_bjd/dora-metrics", readyLabel: "ready-for-agent" };
+const ref = { tracker: "memory" as const, project: github.project, id: "1" };
+
+// One To Do issue, ready for an agent, with no claim of its own; a test adjusts the mark when it
+// needs a tracker that also assigns an account.
+const single = (claimMark?: ClaimMark): MemoryTracker => loadMemoryTracker({
+  ...(claimMark === undefined ? {} : { claimMark }),
+  issues: [{
+    project: github.project, id: "1", title: "Issue 1", labels: ["ready-for-agent"], assignees: [],
+    claimed: false, statusCategory: "to-do", priority: null, blockers: [], comments: [],
+  }],
+});
+const labelsOf = async (tracker: MemoryTracker): Promise<string[]> => {
+  const labels = (await tracker.readIssue(ref)).labels;
+  return labels.known ? labels.value : [];
+};
 
 test("discovery returns ready issues of the scope, including ones with unreadable labels", async () => {
   const tracker = await load();
@@ -58,4 +74,106 @@ test("claim, release and done are observable through readIssue", async () => {
   const again = await tracker.markDone(ref);
   assert.equal(again.status, "already-done");
   assert.equal(again.changes?.[0]?.result, "unchanged");
+});
+
+// ---- failure plan: one named way per scenario, no hand-rolled wrapper port --------------
+
+test("falha-antes: the write does not land and the next call succeeds", async () => {
+  const tracker = single();
+  tracker.failNext("claim", "falha-antes");
+  await assert.rejects(tracker.claim(ref), /falha de escrita/);
+  assert.ok(!(await labelsOf(tracker)).includes("claim"), "nothing was written");
+
+  assert.equal((await tracker.claim(ref)).status, "accepted");
+  assert.ok((await labelsOf(tracker)).includes("claim"));
+  assert.equal(tracker.calls("claim"), 2, "the plan is consumed once");
+});
+
+test("resposta-perdida: the write lands and the answer is lost", async () => {
+  const tracker = single();
+  tracker.failNext("claim", "resposta-perdida");
+  await assert.rejects(tracker.claim(ref), /resposta da escrita perdida/);
+  assert.ok((await labelsOf(tracker)).includes("claim"));
+  assert.deepEqual((await tracker.readIssue(ref)).claimed, { known: true, value: true });
+});
+
+test("invisível: the call is accepted but the reread does not show the write", async () => {
+  const tracker = single();
+  await tracker.claim(ref);
+  tracker.failNext("releaseClaim", "invisível");
+  const outcome = await tracker.releaseClaim(ref);
+  assert.deepEqual(outcome.changes.map((change) => change.result), ["attempted"]);
+  assert.ok((await labelsOf(tracker)).includes("claim"), "the reread still shows the mark");
+});
+
+test("ultima-invisivel: the earlier steps land and only the last one is not visible", async () => {
+  const tracker = single({ labels: ["claim"], assignees: ["acme"] });
+  await tracker.claim(ref);
+  tracker.failNext("releaseClaim", "ultima-invisivel");
+  const outcome = await tracker.releaseClaim(ref);
+  assert.deepEqual(outcome.changes.map((change) => [change.operation, change.result]),
+    [["remover-label", "attempted"], ["remover-atribuição", "attempted"]]);
+  const snapshot = await tracker.readIssue(ref);
+  assert.ok(snapshot.labels.known && !snapshot.labels.value.includes("claim"), "the label removal is visible");
+  assert.ok(snapshot.assignees.known && snapshot.assignees.value.includes("acme"), "the account removal is not");
+});
+
+test("falha-antes on markDone leaves the issue open and the next call closes it", async () => {
+  const tracker = single();
+  tracker.failNext("markDone", "falha-antes");
+  await assert.rejects(tracker.markDone(ref));
+  assert.deepEqual((await tracker.readIssue(ref)).statusCategory, { known: true, value: "to-do" });
+  assert.equal((await tracker.markDone(ref)).status, "done");
+  assert.deepEqual((await tracker.readIssue(ref)).statusCategory, { known: true, value: "done" });
+});
+
+test("sem-confirmacao: the write lands and is reported as attempted", async () => {
+  const tracker = single();
+  tracker.failNext("claim", "sem-confirmacao");
+  const outcome = await tracker.claim(ref);
+  assert.equal(outcome.status, "accepted");
+  assert.deepEqual(outcome.changes?.map((change) => change.result), ["attempted", "attempted"]);
+  assert.ok((await labelsOf(tracker)).includes("claim"), "the write landed, only the report is an attempt");
+});
+
+test("parcial: the first write lands and PartialWriteError carries what was made", async () => {
+  const tracker = single({ labels: ["claim"], assignees: ["acme"] });
+  await tracker.claim(ref);
+  tracker.failNext("releaseClaim", "parcial", "atribuição recusada");
+  await assert.rejects(tracker.releaseClaim(ref), (error: unknown) => {
+    assert.ok(error instanceof PartialWriteError);
+    assert.equal(error.message, "atribuição recusada");
+    assert.deepEqual(error.changes.map((change) => [change.operation, change.target, change.result]),
+      [["remover-label", "claim", "attempted"]]);
+    return true;
+  });
+  const snapshot = await tracker.readIssue(ref);
+  assert.ok(snapshot.labels.known && !snapshot.labels.value.includes("claim"), "the label removal landed");
+  assert.ok(snapshot.assignees.known && snapshot.assignees.value.includes("acme"), "the account removal did not");
+});
+
+test("recusa: the tracker refuses the claim without writing", async () => {
+  const tracker = single();
+  tracker.failNext("claim", "recusa", "issue já claimed");
+  assert.deepEqual(await tracker.claim(ref), { status: "rejected", reason: "issue já claimed" });
+  assert.ok(!(await labelsOf(tracker)).includes("claim"));
+});
+
+test("releitura-falha: the next read fails once and the following one works", async () => {
+  const tracker = single();
+  tracker.failNext("readIssue", "releitura-falha");
+  await assert.rejects(tracker.readIssue(ref), /releitura indisponível/);
+  assert.equal((await tracker.readIssue(ref)).title, "Issue 1");
+  assert.equal(tracker.calls("readIssue"), 2);
+});
+
+test("a claim mark with an account is added and removed by the mark", async () => {
+  const tracker = single({ labels: ["claim"], assignees: ["acme"] });
+  assert.deepEqual(tracker.claimMarkOf(ref), { labels: ["claim"], assignees: ["acme"] });
+  await tracker.claim(ref);
+  assert.deepEqual((await tracker.readIssue(ref)).assignees, { known: true, value: ["acme"] });
+  const outcome = await tracker.releaseClaim(ref);
+  assert.deepEqual(outcome.changes.map((change) => [change.operation, change.target]),
+    [["remover-label", "claim"], ["remover-atribuição", "acme"]]);
+  assert.deepEqual((await tracker.readIssue(ref)).assignees, { known: true, value: [] });
 });

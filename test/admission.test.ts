@@ -15,7 +15,6 @@ import { createFileInstanceControl } from "../src/state/instance-control.js";
 import type { PrLookup, PrPort } from "../src/pr/port.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import type { ClaimOutcome, TrackerPort } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
 import { createObserver, type Observer } from "../src/core/observability.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
@@ -83,22 +82,6 @@ const memoryOf = (issues: IssueSpec[]) => loadMemoryTracker({ issues: issues.map
 const keyOf = (repo: string, id: string) => `memory:${repo}#${id}`;
 const refOf = (repo: string, id: string) => ({ tracker: "memory" as const, project: repo, id });
 
-// A tracker port that delegates to the memory adapter, with selected operations overridden
-// to model write errors and writes that are accepted but not visible.
-function trackerWith(base: MemoryTracker, overrides: Partial<TrackerPort>): TrackerPort {
-  return {
-    claimMarkOf: (ref) => base.claimMarkOf(ref),
-    discoverCandidates: (scope) => base.discoverCandidates(scope),
-    readIssue: (ref) => base.readIssue(ref),
-    claim: (ref) => base.claim(ref),
-    releaseClaim: (ref) => base.releaseClaim(ref),
-    readComments: (ref) => base.readComments(ref),
-    postComment: (ref, body) => base.postComment(ref, body),
-    markDone: (ref) => base.markDone(ref),
-    ...overrides,
-  };
-}
-
 interface OpenOptions {
   memory: MemoryTracker;
   stateDir: string;
@@ -106,7 +89,6 @@ interface OpenOptions {
   repos: string[];
   maxConcurrent?: number;
   maxIterations?: number;
-  tracker?: (base: MemoryTracker) => TrackerPort;
   prs?: PrPort;
   observer?: Observer;
 }
@@ -117,7 +99,7 @@ const NO_PRS: PrPort = { readPr: async (): Promise<PrLookup> => ({ status: "not-
 const open = (options: OpenOptions) => Admission.open({
   instance: instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }),
   eligibility: (project) => projectEligibility(instanceFor(options.repos, { maxConcurrent: options.maxConcurrent, maxIterations: options.maxIterations }), project),
-  tracker: options.tracker ? options.tracker(options.memory) : options.memory,
+  tracker: options.memory,
   runner: options.runner,
   store: createFileJobStore(options.stateDir),
   commands: createFileCommandQueue(options.stateDir),
@@ -199,11 +181,9 @@ test("a long issue body reaches the runner bounded, with its truncation marker",
 
 test("the runner does not start when the tracker does not confirm the claim and doing state", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  memory.failNext("claim", "invisível");
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
-  const admission = await open({
-    memory, stateDir: await dir(), runner, repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, { claim: async () => ({ status: "accepted" }) }),
-  });
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
 
   await admission.poll();
   await admission.settle();
@@ -215,28 +195,21 @@ test("the runner does not start when the tracker does not confirm the claim and 
 
 test("an issue claimed by someone else is never taken", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1", claimed: true }]);
-  let claimCalls = 0;
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
-  const admission = await open({
-    memory, stateDir: await dir(), runner, repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, { claim: (ref) => { claimCalls += 1; return base.claim(ref); } }),
-  });
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
 
   assert.deepEqual((await admission.poll()).admitted, []);
   assert.deepEqual(runner.calls, []);
-  assert.equal(claimCalls, 0);
+  assert.equal(memory.calls("claim"), 0);
   assert.equal(admission.job(keyOf("acme/app", "1")), undefined);
   assert.equal((await memory.readIssue(refOf("acme/app", "1"))).claimed.known && true, true);
 });
 
 test("a claim the tracker rejects starts nothing and leaves no job behind", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  memory.failNext("claim", "recusa", "already claimed");
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
-  const rejected: ClaimOutcome = { status: "rejected", reason: "already claimed" };
-  const admission = await open({
-    memory, stateDir: await dir(), runner, repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, { claim: async () => rejected }),
-  });
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
 
   assert.deepEqual((await admission.poll()).admitted, []);
   assert.deepEqual(runner.calls, []);
@@ -246,16 +219,8 @@ test("a claim the tracker rejects starts nothing and leaves no job behind", asyn
 test("a write error before the write landed is followed by a reread, and the next poll retries", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
-  let failures = 1;
-  const admission = await open({
-    memory, stateDir: await dir(), runner, repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, {
-      claim: (ref) => {
-        if (failures > 0) { failures -= 1; return Promise.reject(new Error("connection reset")); }
-        return base.claim(ref);
-      },
-    }),
-  });
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  memory.failNext("claim", "falha-antes");
 
   const first = await admission.poll();
   assert.deepEqual(first.admitted, []);
@@ -271,22 +236,13 @@ test("a write error before the write landed is followed by a reread, and the nex
 test("a write error after the claim landed is not retried blindly: it becomes intervention-required", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
-  let claimCalls = 0;
-  const admission = await open({
-    memory, stateDir: await dir(), runner, repos: ["acme/app"],
-    tracker: (base) => trackerWith(base, {
-      claim: async (ref) => {
-        claimCalls += 1;
-        await base.claim(ref);
-        throw new Error("timeout after write");
-      },
-    }),
-  });
+  const admission = await open({ memory, stateDir: await dir(), runner, repos: ["acme/app"] });
+  memory.failNext("claim", "resposta-perdida");
 
   await admission.poll();
   await admission.poll();
   await admission.settle();
-  assert.equal(claimCalls, 1, "no repeated claim after an ambiguous write");
+  assert.equal(memory.calls("claim"), 1, "no repeated claim after an ambiguous write");
   assert.deepEqual(runner.calls, []);
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "intervention-required");
   assert.match(admission.job(keyOf("acme/app", "1"))?.reason ?? "", /origem não comprovada/);
@@ -694,18 +650,16 @@ test("a required runtime item missing leaves the issue unclaimed, with the reaso
   const lines: string[] = [];
   const runner = new FakeRunner(() => finished(NEEDS_HELP));
   runner.runtimeBlockerReason = BLOCKER;
-  let claimCalls = 0;
   const admission = await open({
     memory, stateDir: await dir(), runner, repos: ["acme/app"],
     observer: createObserver({ instance: "trabalho", console: (line) => lines.push(line) }),
-    tracker: (base) => trackerWith(base, { claim: (ref) => { claimCalls += 1; return base.claim(ref); } }),
   });
 
   const report = await admission.poll();
   await admission.settle();
 
   assert.deepEqual(report.admitted, []);
-  assert.equal(claimCalls, 0, "the issue is not claimed");
+  assert.equal(memory.calls("claim"), 0, "the issue is not claimed");
   assert.deepEqual(runner.calls, [], "no invocation");
   assert.deepEqual(admission.allJobs(), [], "no job, no slot held");
   assert.deepEqual((await memory.readIssue(refOf("acme/app", "1"))).claimed, { known: true, value: false });
