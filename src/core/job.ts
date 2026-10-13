@@ -2,6 +2,7 @@ import { refKey, type IssueRef, type Known } from "../tracker/port.js";
 import type { Workspace } from "../runtime/runner.js";
 import type { CheckState, Mergeability, ReviewState } from "../pr/port.js";
 import type { PrRef } from "./result.js";
+import type { Feedback } from "./feedback.js";
 
 // Job states. `running` is the only state that holds a slot:
 // the slot is reserved before the claim, and released by every other state.
@@ -38,13 +39,6 @@ export interface Trigger {
   command?: string;
 }
 
-// Feedback of a batch that waits for the triage of the PR comments (issue #21): a failing check or the
-// conflict, with the text the agent will read when the operator's choice resumes the work.
-export interface HeldFeedback {
-  trigger: Trigger;
-  message: string;
-}
-
 export interface Job {
   key: string; // identity: tracker + project + issue id (see refKey)
   ref: IssueRef;
@@ -56,22 +50,15 @@ export interface Job {
   pr?: PrRef;
   // Session and area reported by the runner; a resume continues them.
   workspace?: Workspace;
-  // Operator replies not yet delivered to an invocation.
-  replies?: string[];
   // Keys of tracker and PR feedback already taken by this job, as `source:id@revision`.
   // An event is consumed once: its id and revision are recorded so it never repeats.
   consumed?: string[];
   // Last PR observation by polling. Kept across states; it never changes the state.
   prStatus?: PrStatus;
   pending?: Continuation;
-  // The causes of the pending continuation, in the order they were taken (issue #15).
-  triggers?: Trigger[];
-  // Failing checks and conflict among those causes, with their text. If the continuation turns out to be
-  // a triage, they are held back and move to `afterTriage` (issue #21).
-  actionable?: HeldFeedback[];
-  // Set while the operator's answer to a triage is awaited: what the resume after it must also deal
-  // with. Its presence says that the next resume is the one that applies the choice.
-  afterTriage?: HeldFeedback[];
+  // The feedback items of the job and the phase of its triage (issue #21). Owned and changed only by
+  // the feedback module; the causes of a continuation are derived from it, never stored in parallel.
+  feedback?: Feedback;
   // When the external merge of the linked PR was first detected; it is announced only once.
   mergeDetected?: string;
   log: string[];
@@ -101,8 +88,6 @@ export interface TransitionDetails {
   question?: string;
   context?: string;
   pr?: PrRef;
-  // Entering `running`: what a triage held back, set by the invocation that starts the triage.
-  afterTriage?: HeldFeedback[];
 }
 
 // `released` is the operator ending the tracking of a job that is not running: the
@@ -141,16 +126,8 @@ export function transitionJob(job: Job, to: JobState, details: TransitionDetails
   delete next.question;
   delete next.context;
   delete next.pending;
-  delete next.actionable;
-  if (to === "running") {
-    delete next.triggers;
-    delete next.afterTriage;
-    if (details.afterTriage !== undefined) next.afterTriage = details.afterTriage;
-    // Resuming keeps the PR reference: the PR stays the one tracked by this job.
-    // Replies are delivered by the invocation that starts now.
-    delete next.replies;
-    return next;
-  }
+  // Resuming keeps the PR reference: the PR stays the one tracked by this job. The feedback items
+  // are not touched here: their lifecycle belongs to the feedback module.
   if (details.reason !== undefined) next.reason = details.reason;
   if (details.question !== undefined) next.question = details.question;
   if (details.context !== undefined) next.context = details.context;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { directedReply, judgePrFeedback } from "../src/core/feedback.js";
+import { describeItem, directedReply, feedbackCause, judgePrFeedback, type FeedbackItem } from "../src/core/feedback.js";
 import type { PrCheck, PrComment, PrFeedback } from "../src/pr/port.js";
 import type { Comment } from "../src/tracker/port.js";
 
@@ -10,6 +10,8 @@ const CREATED = "2026-05-01T10:00:00Z";
 const human = (body: string, id = "c1"): Comment => ({ id, author: "ana", isBot: false, body, createdAt: CREATED });
 const known = <T>(value: T) => ({ known: true as const, value });
 const unknown = (reason: string) => ({ known: false as const, reason });
+
+const textOf = (item: FeedbackItem | undefined): string | undefined => (item === undefined ? undefined : describeItem(item));
 
 const reviewBy = (author: string, body: string, overrides: Partial<PrComment> = {}): PrComment => ({
   id: `review-${author}`,
@@ -33,17 +35,17 @@ const feedback = (parts: Partial<PrFeedback>): PrFeedback => ({ comments: [], ch
 // ---- directed replies in issues ------------------------------------------------------
 
 test("in GitHub only a human comment without marker that starts with agent: is a directed reply", () => {
-  assert.equal(directedReply("github", human("agent: use o seam v2"))?.message, "use o seam v2");
-  assert.equal(directedReply("github", human("  agent:\nuse o seam v2 "))?.message, "use o seam v2");
-  assert.equal(directedReply("github", human("concordo, pode seguir"))?.message, undefined);
-  assert.equal(directedReply("github", human("nota: agent: não é para o agente"))?.message, undefined);
-  assert.equal(directedReply("github", human("agent:   "))?.message, undefined, "an empty directed reply is not feedback");
+  assert.equal(textOf(directedReply("github", human("agent: use o seam v2"))), "use o seam v2");
+  assert.equal(textOf(directedReply("github", human("  agent:\nuse o seam v2 "))), "use o seam v2");
+  assert.equal(directedReply("github", human("concordo, pode seguir")), undefined);
+  assert.equal(directedReply("github", human("nota: agent: não é para o agente")), undefined);
+  assert.equal(directedReply("github", human("agent:   ")), undefined, "an empty directed reply is not feedback");
   assert.equal(directedReply("github", { ...human("agent: use o seam v2"), isBot: true }), undefined, "bots never direct the job");
   assert.equal(directedReply("github", human("<!-- msf:agent -->\nagent: relato próprio")), undefined, "factory comments never direct the job");
 });
 
 test("in Jira the factory marker is the [msf] prefix, and only human directed comments count", () => {
-  assert.equal(directedReply("jira", human("agent: use o seam v2"))?.message, "use o seam v2");
+  assert.equal(textOf(directedReply("jira", human("agent: use o seam v2"))), "use o seam v2");
   assert.equal(directedReply("jira", human("[msf] agent: relato próprio")), undefined);
   assert.equal(directedReply("jira", { ...human("agent: x"), isBot: true }), undefined);
 });
@@ -68,7 +70,7 @@ test("a human review or comment on the PR is feedback; bot and factory-marked on
     ],
   }), new Set());
 
-  assert.deepEqual(judged.inputs.map((input) => input.message), ["revisão de ana: troque o nome da função"]);
+  assert.deepEqual(judged.inputs.map(describeItem), ["revisão de ana: troque o nome da função"]);
   assert.equal(judged.undecidable, undefined);
 });
 
@@ -92,7 +94,7 @@ test("when some check is required, only failing required checks call for correct
     ],
   }), new Set());
 
-  assert.deepEqual(judged.inputs.map((input) => input.message), ["check com falha: check test"]);
+  assert.deepEqual(judged.inputs.map(describeItem), ["check com falha: check test"]);
 });
 
 test("without any required check, any failing check calls for correction", () => {
@@ -100,7 +102,7 @@ test("without any required check, any failing check calls for correction", () =>
     checks: [checkOf("lint", known("failing"), known(false)), checkOf("build", known("passing"), known(false))],
   }), new Set());
 
-  assert.deepEqual(judged.inputs.map((input) => input.message), ["check com falha: check lint"]);
+  assert.deepEqual(judged.inputs.map(describeItem), ["check com falha: check lint"]);
 });
 
 test("a failing check whose required status is unknown is undecidable and goes to the human", () => {
@@ -111,6 +113,7 @@ test("a failing check whose required status is unknown is undecidable and goes t
   assert.ok(judged.undecidable, "the verdict says a human must decide");
   assert.match(judged.undecidable ?? "", /obrigatoriedade|decidir/);
   assert.equal(judged.inputs.length, 1, "the undecided check is still listed for the human");
+  assert.equal(judged.inputs[0]?.kind, "check");
 });
 
 test("green checks and checks that are still running call for nothing", () => {
@@ -139,12 +142,15 @@ test("a human inline comment is feedback that carries its text, file and thread"
 
   assert.equal(judged.inputs.length, 1);
   const [input] = judged.inputs;
-  assert.match(input?.message ?? "", /ana/);
-  assert.match(input?.message ?? "", /troque este título/);
-  assert.match(input?.message ?? "", /README\.md/);
-  assert.match(input?.message ?? "", /PRRT_1/);
-  assert.equal(input?.trigger?.reason, "feedback-pr");
-  assert.equal(input?.trigger?.author, "ana");
+  const text = describeItem(input!);
+  assert.match(text, /ana/);
+  assert.match(text, /troque este título/);
+  assert.match(text, /README\.md/);
+  assert.match(text, /PRRT_1/);
+  const cause = feedbackCause(input!);
+  assert.equal(cause.reason, "feedback-pr");
+  assert.equal(cause.author, "ana");
+  assert.equal(input?.kind, "pr-comment");
 });
 
 test("a review body and each of its inline comments are separate items with their own identity", () => {
@@ -165,8 +171,8 @@ test("a review with an empty body is not feedback; only its comments count", () 
     comments: [reviewBy("ana", "", { id: "PRR_1" }), reviewBy("ana", "  \n ", { id: "PRR_2" }), inlineBy("ana", "um")],
   }), new Set());
 
-  assert.deepEqual(judged.inputs.map((input) => input.trigger?.ref?.startsWith("comentário inline")), [true]);
-  assert.ok(judged.inputs.every((input) => !input.message.includes("(sem texto)")));
+  assert.deepEqual(judged.inputs.map((input) => feedbackCause(input).ref?.startsWith("comentário inline")), [true]);
+  assert.ok(judged.inputs.every((input) => !describeItem(input).includes("(sem texto)")));
 });
 
 test("the agent's marked inline reply inside an unmarked empty review triggers nothing", () => {

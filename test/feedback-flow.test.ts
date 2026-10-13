@@ -790,3 +790,128 @@ test("a triage that ends with the PR ready, instead of a help request, is not ac
 
   assert.equal(admission.job(KEY("1"))?.state, "intervention-required", "the operator never chose; the comment is not silently dropped");
 });
+
+// ---- issue #34: the triage phase is explicit, so an unfinished listing is never applied -----
+
+// A runner whose first listing ends as given and whose redo ends with the numbered list.
+const retryingListRunner = (first: unknown) => {
+  let lists = 0;
+  const runner = new FakeRunner((context) => {
+    if (context.continuation?.triage === "list") {
+      lists += 1;
+      return withWorkspace(finished(lists === 1 ? first : { status: "needs_help", question: TRIAGE_LIST, context: "triagem" }), WORKSPACE);
+    }
+    return withWorkspace(finished(PR_READY), WORKSPACE);
+  });
+  return runner;
+};
+
+test("a listing that ends interrupted is redone on resume, without applying the choice", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = retryingListRunner({ status: "interrupted", reason: "queda do runtime" });
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [failingCheck("T", "test")] };
+  await admission.poll();
+  await admission.settle();
+  assert.equal(runner.calls[1]?.continuation?.triage, "list");
+  assert.equal(admission.job(KEY("1"))?.state, "interrupted");
+
+  await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+  assert.equal(runner.calls[2]?.continuation?.triage, "list", "the resume redoes the listing, never applies");
+  assert.match(runner.calls[2]?.continuation?.replies?.[0] ?? "", /troque este título/);
+  assert.doesNotMatch(runner.calls[2]?.continuation?.replies?.join("\n") ?? "", /check com falha/, "the retained check is not read while listing");
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
+  await admission.poll();
+  await admission.settle();
+  assert.equal(runner.calls[3]?.continuation?.triage, "apply");
+  assert.deepEqual(runner.calls[3]?.continuation?.replies, ["1", "check com falha: test"], "the retained check rides along");
+});
+
+test("a listing that ends with the PR ready stays in the listing phase: the resume redoes it and preserves the retained items", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = retryingListRunner(PR_READY);
+
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [failingCheck("T", "test")] };
+  await admission.poll();
+  await admission.settle();
+  assert.equal(admission.job(KEY("1"))?.state, "intervention-required", "the operator never chose");
+
+  await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")], "a resume of a listing-phase triage is accepted from intervention-required");
+  await admission.settle();
+  assert.equal(runner.calls[2]?.continuation?.triage, "list");
+  assert.doesNotMatch(runner.calls[2]?.continuation?.replies?.join("\n") ?? "", /check com falha/, "the retained check is preserved");
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
+  await admission.poll();
+  await admission.settle();
+  assert.deepEqual(runner.calls[3]?.continuation?.replies, ["1", "check com falha: test"], "the retained check survived the redo");
+});
+
+test("a resume is rejected while the triage waits for the choice, and the reason tells how to answer", async () => {
+  const stateDir = await dir();
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory: memoryOf(["1"]), stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [] };
+  await admission.poll();
+  await admission.settle();
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help");
+
+  await operator(stateDir).enqueue({ type: "resume", job: KEY("1") });
+  const report = await admission.poll();
+  assert.equal(report.commands[0]?.status, "rejected");
+  assert.match(report.commands[0]?.reason ?? "", /reply … nenhum/);
+  assert.equal(admission.job(KEY("1"))?.state, "waiting-for-help", "the refused resume changed nothing");
+  await admission.settle();
+  assert.equal(runner.calls.length, 2, "the refused resume starts no invocation");
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "nenhum" });
+  assert.deepEqual((await admission.poll()).admitted, [KEY("1")]);
+  await admission.settle();
+  assert.equal(runner.calls[2]?.continuation?.triage, "apply");
+});
+
+test("a directed reply that spells out a check's description is not matched with the check", async () => {
+  const stateDir = await dir();
+  const memory = memoryOf(["1"]);
+  const prs = new FakePrs();
+  const runner = triagingRunner();
+  const admission = await open({ memory, stateDir, runner, prs });
+  await admission.poll();
+  await admission.settle();
+
+  await memory.postComment(REF("1"), "agent: check com falha: test");
+  prs.feedback = { comments: [humanInline("PRRC_1", "troque este título")], checks: [failingCheck("T", "test")] };
+  await admission.poll();
+  await admission.settle();
+
+  assert.equal(runner.calls[1]?.continuation?.triage, "list");
+  const listing = runner.calls[1]?.continuation?.replies?.join("\n") ?? "";
+  assert.match(listing, /troque este título/, "the comment is listed");
+  assert.match(listing, /check com falha: test/, "the directed reply reaches the listing as guidance");
+  assert.equal((listing.match(/check com falha: test/g) ?? []).length, 1, "the check itself is not delivered while listing");
+
+  await operator(stateDir).enqueue({ type: "reply", job: KEY("1"), message: "1" });
+  await admission.poll();
+  await admission.settle();
+  const applied = runner.calls[2]?.continuation?.replies ?? [];
+  assert.equal(applied[0], "1");
+  assert.ok(applied.includes("check com falha: test"), "the held check is applied");
+});

@@ -153,7 +153,7 @@ test("a reply to a job waiting for help reactivates it in the same session when 
   assert.equal(runner.calls[1]?.kind, "resume");
   assert.deepEqual(runner.calls[1]?.continuation, { workspace: WORKSPACE, replies: ["Use the v2 seam"] });
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "waiting-for-pr");
-  assert.equal(admission.job(keyOf("acme/app", "1"))?.replies, undefined, "a delivered reply leaves the pending list");
+  assert.equal(admission.job(keyOf("acme/app", "1"))?.feedback, undefined, "a delivered reply leaves the pending items");
 });
 
 test("a reply while the agent is active stays pending and is delivered by the next invocation", async () => {
