@@ -142,6 +142,10 @@ export class IssueWrites {
     if (before === undefined) return { status: "retry", reason: BEFORE_UNREADABLE };
     if (!before.claimed.known) return { status: "refused", reason: `claim não lido: ${before.claimed.reason}` };
     if (before.claimed.value) return { status: "refused", reason: "issue já claimed" };
+    // A closed issue is not claimed again, whatever its assignees and labels show.
+    if (before.statusCategory.known && before.statusCategory.value === "done") {
+      return { status: "refused", reason: "issue já concluída" };
+    }
 
     let made: Intent[];
     try {

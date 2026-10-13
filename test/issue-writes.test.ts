@@ -158,6 +158,14 @@ test("a claim over an issue the snapshot shows claimed is refused without writin
   assert.equal(memory.calls("claim"), 0);
 });
 
+test("a claim over an issue the snapshot shows done is refused without writing", async () => {
+  const memory = memoryOf(["1"], { statusCategory: "done" });
+  const { writes } = moduleOf(memory);
+
+  assert.deepEqual(await writes.start(REF("1"), { reason: "admissão" }), { status: "refused", reason: "issue já concluída" });
+  assert.equal(memory.calls("claim"), 0);
+});
+
 // ---- release: confirmed by the absence of the factory's claim mark ----
 
 const marked = (options: FixtureOptions = {}) =>
