@@ -1,4 +1,4 @@
-# Piloto 009 — instâncias trabalho e pessoal (issue #10)
+# Relatório do piloto — instâncias trabalho e pessoal (issue #10)
 
 Data: AAAA-MM-DD. Preencher a partir do diretório base do piloto (`config.json`, `local.json`) e de `state/*` (jobs, `runs/*.audit.jsonl`).
 Não colar tokens nem transcrições brutas.
@@ -29,7 +29,7 @@ Não colar tokens nem transcrições brutas.
 - Economizadas (o que a factory fez sem mim: claim/doing, clone, implementação, PR, observação de CI/merge, done): …
 - Exigidas (respostas, resume, release, correções, ajustes de config): …
 
-## Review no /implement (CA09)
+## Review no /implement
 
 Pelo log e pela sessão (`runs/*.audit.jsonl`): os dois reviewers rodaram, com quais modelos, receberam base,
 diff exato, issue e padrões, e o veredito de cada um. A factory não verifica isso: é observação do piloto.

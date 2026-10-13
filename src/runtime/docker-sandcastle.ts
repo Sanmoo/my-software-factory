@@ -10,7 +10,7 @@ import { parseEvent, type PiEvent } from "./pi-events.js";
 import type { SandboxBoundary } from "./docker-runner.js";
 import { installConsoleFilter, SandcastleLineFilter } from "./sandcastle-console.js";
 
-// The only place that starts Docker, Pi and Sandcastle (R06). Thin on purpose: the decisions
+// The only place that starts Docker, Pi and Sandcastle. Thin on purpose: the decisions
 // live in docker-runner.ts and the pure modules. There is no noSandbox option anywhere.
 
 const execFileAsync = promisify(execFile);

@@ -20,7 +20,7 @@ import { jobBranch } from "../src/core/job.js";
 import { summaryOf } from "../src/cli/jobs-view.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
-// Feedback reactivates a job through the same effects as a terminal reply (R09, R10, CA11, CA12).
+// Feedback reactivates a job through the same effects as a terminal reply.
 // The memory tracker, a fake PR port and the local reply path keep every scenario deterministic.
 
 const HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
@@ -137,7 +137,7 @@ function gate() {
   return { promise, release };
 }
 
-// ---- CA11: the tracker and the terminal take the same path --------------------------------
+// ---- the tracker and the terminal take the same path --------------------------------
 
 test("an agent: comment and a terminal reply reactivate a job waiting for help with the same effect", async () => {
   for (const path of ["tracker", "terminal"] as const) {
@@ -222,7 +222,7 @@ test("a directed reply that arrives while the agent is active waits for the next
   assert.deepEqual(runner.calls[1]?.continuation?.replies, ["Use o seam v2"], "the pending reply goes to the next invocation");
 });
 
-// ---- CA12: a job waiting for PR becomes a correction with a slot and priority -------------
+// ---- a job waiting for PR becomes a correction with a slot and priority -------------
 
 test("an agent: comment or terminal reply on a job waiting for PR is a correction with the same effect", async () => {
   for (const path of ["tracker", "terminal"] as const) {

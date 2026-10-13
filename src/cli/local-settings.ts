@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { isObject } from "../core/values.js";
 
 // Machine-local settings of one run: where the profiles and checkouts live on this host. They
-// are not part of the versioned configuration (R01): paths and the image are the operator's.
+// are not part of the versioned configuration: paths and the image are the operator's.
 
 export interface LocalSettings {
   // Docker image the jobs run in.

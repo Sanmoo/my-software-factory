@@ -13,9 +13,9 @@ import { checkInstance } from "./check.js";
 import { composeInstance } from "./compose.js";
 import { loadLocalSettings } from "./local-settings.js";
 
-// `run`: the instance's coordinator loop (R04, R05). It polls the trackers at the configured
+// `run`: the instance's coordinator loop. It polls the trackers at the configured
 // interval and keeps the jobs the admission dispatches running in the background. The operator
-// supervises with logs, reply, resume, release, pause and unpause (R09) from other terminals. The
+// supervises with logs, reply, resume, release, pause and unpause from other terminals. The
 // operator reaches it through `./msf <instância> run [--check] [--once]` (see msf.ts).
 //
 // check   read-only readiness check (no claim, no write); exits non-zero if anything fails.

@@ -6,7 +6,7 @@ import { createFileHistory } from "../state/history.js";
 import { messageOf } from "../core/values.js";
 import { loadInstance, type CliRun } from "./instance.js";
 
-// Operator commands of one instance (R09): reply, resume, release, pause and unpause. The
+// Operator commands of one instance: reply, resume, release, pause and unpause. The
 // CLI validates the request and writes it to the instance's local command queue; it never
 // changes job state itself. The instance applies the queue on its next poll, in order.
 

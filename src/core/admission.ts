@@ -17,9 +17,9 @@ import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, triggerSummary,
 import { PartialWriteError, refKey, type ClaimMark, type IssueChange, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
-// The coordinator of one instance: admits eligible issues as jobs (R04), keeps capacity
-// and concurrency limits (R05), runs the runner and records its result (R08, R09), and
-// persists every change (P01). Runners run in the background; `poll` returns once the
+// The coordinator of one instance: admits eligible issues as jobs, keeps capacity
+// and concurrency limits, runs the runner and records its result, and
+// persists every change. Runners run in the background; `poll` returns once the
 // admissions decided in that poll are dispatched.
 
 export interface AdmissionDeps {
@@ -29,7 +29,7 @@ export interface AdmissionDeps {
   store: JobStore;
   commands: CommandQueue;
   control: InstanceControl;
-  // Reads pull requests on github.com. It has no merge operation: the factory never merges (R11).
+  // Reads pull requests on github.com. It has no merge operation: the factory never merges.
   prs: PrPort;
   // The eligibility setup of each configured project, built by the configuration layer.
   eligibility: (project: ProjectConfig) => ProjectEligibility;
@@ -51,7 +51,7 @@ export interface PollReport {
   skipped: Array<{ key: string; reason: string }>;
   errors: Array<{ key: string; message: string }>;
   commands: CommandOutcome[];
-  // Whether the instance was paused when the poll ran (R09). A paused poll admits nothing.
+  // Whether the instance was paused when the poll ran. A paused poll admits nothing.
   paused: boolean;
 }
 
@@ -61,13 +61,13 @@ export type ContinuationOutcome = { status: "queued" } | { status: "rejected"; r
 type JobCommand = Extract<OperatorCommand, { job: string }>;
 
 // Continuations allowed from each state: a resume answers a help request or continues an
-// interrupted job; a correction answers feedback on an open PR (R09, R10).
+// interrupted job; a correction answers feedback on an open PR.
 const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
   resume: ["waiting-for-help", "interrupted"],
   correction: ["waiting-for-pr"],
 };
 
-// Jobs an operator can release: none of them has an invocation running (R09).
+// Jobs an operator can release: none of them has an invocation running.
 const RELEASABLE: readonly JobState[] = ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required"];
 
 // A removal the reread shows as done: the label is no longer on the issue, or the account is no
@@ -88,7 +88,7 @@ const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean
   return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
 };
 
-// Jobs whose issue is read for directed replies (CA11). A job that is done, released or needs
+// Jobs whose issue is read for directed replies. A job that is done, released or needs
 // intervention takes no input from the tracker.
 const TRACKER_FEEDBACK_STATES: readonly JobState[] = ["waiting-for-help", "running", "interrupted", "waiting-for-pr"];
 
@@ -112,7 +112,7 @@ const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, s
 const describeKnown = <T extends string>(label: string, known: Known<T>): string =>
   known.known ? `${label}: ${known.value}` : `${label}: desconhecido (${known.reason})`;
 
-// Unknown mergeability is said as unknown: it is neither a conflict nor the absence of one (R10).
+// Unknown mergeability is said as unknown: it is neither a conflict nor the absence of one.
 const describeMergeable = (mergeable: Known<Mergeability>): string => {
   if (!mergeable.known) return `mergeabilidade desconhecida (${mergeable.reason})`;
   return mergeable.value === "conflicting" ? "PR em conflito" : "sem conflito";
@@ -141,7 +141,7 @@ export class Admission {
   }
 
   // Opening recovers from a crash: any job that held a slot is interrupted and is not
-  // executed again automatically (R12).
+  // executed again automatically.
   static async open(deps: AdmissionDeps): Promise<Admission> {
     const { jobs, unreadable } = await deps.store.load();
     const admission = new Admission(deps, jobs, unreadable);
@@ -171,9 +171,9 @@ export class Admission {
     return [...this.runErrors];
   }
 
-  // One polling cycle: operator commands in queue order (R09), directed replies in the tracker
-  // (R10), then waiting PRs (R11), whose feedback becomes corrections, then, unless paused,
-  // continuations first (CA07) and new work by priority (P05).
+  // One polling cycle: operator commands in queue order, directed replies in the tracker,
+  // then waiting PRs, whose feedback becomes corrections, then, unless paused,
+  // continuations first and new work by priority.
   async poll(): Promise<PollReport> {
     const report: PollReport = { admitted: [], skipped: [], errors: [], commands: [], paused: false };
     await this.processCommands(report);
@@ -185,7 +185,7 @@ export class Admission {
       report.errors.push({ key: "control", message: messageOf(error) });
       return report;
     }
-    // A pause holds new invocations only: tracking of waiting PRs (R11) keeps observing and
+    // A pause holds new invocations only: tracking of waiting PRs keeps observing and
     // confirming merges, as an active job would. Feedback found here is admitted by the
     // continuations below in the same poll, when a slot is free.
     for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
@@ -339,8 +339,8 @@ export class Admission {
     }
   }
 
-  // A terminal reply is directed input with no tracker event behind it (R09). It takes the same
-  // path as an `agent:` comment, so both have the same effect (CA11).
+  // A terminal reply is directed input with no tracker event behind it. It takes the same
+  // path as an `agent:` comment, so both have the same effect.
   private async reply(job: Job, message: string, command: string): Promise<string | undefined> {
     if (message.trim() === "") return "resposta vazia";
     const trigger: Trigger = { reason: "resposta-humana", origin: "terminal", command, ref: `comando ${command}` };
@@ -350,8 +350,8 @@ export class Admission {
     return undefined;
   }
 
-  // Directed replies in the tracker (CA11): a human comment without marker that starts with
-  // `agent:`. Each comment is consumed once, by its id and revision (R10).
+  // Directed replies in the tracker: a human comment without marker that starts with
+  // `agent:`. Each comment is consumed once, by its id and revision.
   private async collectTrackerFeedback(report: PollReport): Promise<void> {
     for (const candidate of this.allJobs().filter((job) => TRACKER_FEEDBACK_STATES.includes(job.state))) {
       await this.guard(candidate.key, report, async () => {
@@ -385,8 +385,8 @@ export class Admission {
   }
 
   // Removes the claim and ends tracking; area, session and PR stay on the job. Never moves
-  // the issue to done and never touches the PR (R09, CA19). A write whose answer was lost is
-  // confirmed by rereading the tracker (P02).
+  // the issue to done and never touches the PR. A write whose answer was lost is
+  // confirmed by rereading the tracker.
   private async release(job: Job, command?: string): Promise<string | undefined> {
     if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
     const context = this.writeContext(job, "release", "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
@@ -485,7 +485,7 @@ export class Admission {
     return verdict.eligible ? "" : verdict.rejections.map((rejection) => rejection.reason).join("; ");
   }
 
-  // Sequence of R04: reread eligibility, reserve the slot, persist the job, claim,
+  // Admission sequence: reread eligibility, reserve the slot, persist the job, claim,
   // confirm claim and doing state, and only then dispatch the runner.
   private async admitNew(candidate: NewCandidate, report: PollReport): Promise<void> {
     const { ref, key } = candidate;
@@ -574,7 +574,7 @@ export class Admission {
       .filter((item): item is string => item !== undefined)
       .join(" e ");
     if (missing !== "" || workspace === undefined) {
-      // No conversation is started silently: the operator decides what happens next (P03).
+      // No conversation is started silently: the operator decides what happens next.
       await this.apply(job.key, "waiting-for-help", {
         message: `${kind} sem ${missing}: pedido de ajuda; nenhuma conversa nova foi iniciada`,
         question: `${kind} solicitado, mas falta ${missing} para continuar a sessão anterior: responda com a orientação ou libere o trabalho`,
@@ -704,7 +704,7 @@ export class Admission {
     }
   }
 
-  // After a write error the external state is reread before anything else (P02).
+  // After a write error the external state is reread before anything else.
   private async afterClaimWriteError(key: string, ref: IssueRef, report: PollReport): Promise<void> {
     let snapshot;
     try {
@@ -834,9 +834,9 @@ export class Admission {
     return this.deps.instance.projects.find((candidate) => candidate.repository === job.repository && candidate.enabled);
   }
 
-  // A "PR pronto" result is accepted only after the PR port confirms it (R08, CA19). An
+  // A "PR pronto" result is accepted only after the PR port confirms it. An
   // invalid PR is a help request. A PR that cannot be read is neither success nor help: the
-  // operator decides (P02), so the job needs intervention.
+  // operator decides, so the job needs intervention.
   private async acceptPr(key: string, pr: PrRef, delivery: Delivery, invocation?: string): Promise<void> {
     const misplaced = misplacedRepository(pr, delivery);
     if (misplaced !== undefined) {
@@ -872,7 +872,7 @@ export class Admission {
     });
   }
 
-  // Polling of a PR the job waits for (R11, R12): CI and review are recorded, a merge into
+  // Polling of a PR the job waits for: CI and review are recorded, a merge into
   // the target branch completes the job, and a PR closed without merge interrupts it.
   private async trackPr(job: Job, report: PollReport): Promise<void> {
     const project = this.enabledProjectOf(job);
@@ -921,7 +921,7 @@ export class Admission {
     }
   }
 
-  // A conflict of the open PR with its target branch (R10, CA12) becomes a correction with a slot and
+  // A conflict of the open PR with its target branch becomes a correction with a slot and
   // a reason of its own. It is judged on the commits read now, so a failing feedback read never hides it.
   private async collectConflict(job: Job, snapshot: PrSnapshot, report: PollReport): Promise<void> {
     const current = this.jobs.get(job.key);
@@ -937,7 +937,7 @@ export class Admission {
     this.announceFeedback(current.key, [input]);
   }
 
-  // Feedback on an open PR (R10, CA12): human comments (conversation, inline, review bodies), and failing checks, become
+  // Feedback on an open PR: human comments (conversation, inline, review bodies), and failing checks, become
   // a correction with a slot and priority. A case the factory cannot decide goes to the human,
   // and its items are consumed so they are not asked again.
   private async collectPrFeedback(job: Job, pr: PrRef, report: PollReport): Promise<void> {
@@ -1003,7 +1003,7 @@ export class Admission {
   }
 
   // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
-  // reread (R11). Until then the job keeps waiting and the next poll tries again.
+  // reread. Until then the job keeps waiting and the next poll tries again.
   private async complete(job: Job, report: PollReport, targetBranch: string): Promise<void> {
     let confirmed = false;
     let why = "";

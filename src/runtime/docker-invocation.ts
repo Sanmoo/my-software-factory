@@ -1,7 +1,7 @@
 import { shellQuote } from "../core/observability.js";
 import type { RunKind } from "./runner.js";
 
-// Invocation rules of the Docker runner (R08). Kept pure so the limits and the Sandcastle
+// Invocation rules of the Docker runner. Kept pure so the limits and the Sandcastle
 // options can be tested without Docker.
 
 // Completion signal emitted after the structured result (see docker-output.ts).

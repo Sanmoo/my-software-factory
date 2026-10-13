@@ -5,7 +5,7 @@ import { JOB_STATES, type Job } from "../core/job.js";
 import type { JobStore, LoadedJobs } from "../core/job-store.js";
 
 // One JSON file per job in the state directory. A save writes a temporary file and
-// renames it over the job file, so a reader never sees a half-written job (P01).
+// renames it over the job file, so a reader never sees a half-written job.
 // No fsync or replay is promised: this is a simple local state, not a database.
 
 const fileNameFor = (key: string): string => `${encodeURIComponent(key)}.json`;

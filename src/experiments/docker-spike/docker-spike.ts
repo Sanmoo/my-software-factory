@@ -18,7 +18,7 @@ import {
   verifyDelegation,
 } from "./spike-logic.js";
 
-// Disposable Docker spike (ticket #1, R06/CA08). Two invocations, like the 004 smoke:
+// Disposable Docker spike (ticket #1). Two invocations, like the 004 smoke:
 //   1. SMOKE_MODEL=<approved> npm run smoke:docker            -> async child + help request
 //   2. SMOKE_MODEL=<approved> SMOKE_RUN=<area> SMOKE_REPLY='...' npm run smoke:docker
 //                                                             -> resume the same session

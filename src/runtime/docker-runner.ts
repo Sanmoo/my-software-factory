@@ -28,7 +28,7 @@ import { noopObserver, shellQuote, type Observer } from "../core/observability.j
 import type { IssueRef, TrackerPort } from "../tracker/port.js";
 import { AgentActivity } from "./agent-activity.js";
 
-// Docker runner (R06, R07, R08, CA08, CA09, CA18). Each job gets its own git area and Pi
+// Docker runner. Each job gets its own git area and Pi
 // session on the host; the agent runs only inside the sandbox boundary. Any failure before or
 // during the run is an interruption with its reason. Nothing here runs on the host instead.
 
@@ -119,7 +119,7 @@ interface JobRecord {
   sessionId?: string;
 }
 
-// Operator replies delivered with a continuation (R09); the admission hands them over in `continuation`.
+// Operator replies delivered with a continuation; the admission hands them over in `continuation`.
 const operatorInput = (context: RunnerContext): string => (context.continuation?.replies ?? []).join("\n");
 
 const redact = (text: string, secret: string | undefined): string =>
@@ -202,7 +202,7 @@ class DockerRunner implements Runner {
       const sessionId = outcome.sessionId ?? repoRef.sessionId;
       await this.writeRecord(layout, { ...repoRef, sessionId });
       await this.audit(layout, `iterações do Sandcastle=${outcome.iterations} de ${request.maxIterations}; completou=${outcome.completed}`);
-      // The session and area of this invocation are reported so the admission can resume them (P03).
+      // The session and area of this invocation are reported so the admission can resume them.
       const reportWorkspace = (output: RunnerOutput): RunnerOutput =>
         sessionId === undefined ? output : { ...output, workspace: { session: sessionId, area: layout.repoDir } };
       const interpretation = interpretOutput({

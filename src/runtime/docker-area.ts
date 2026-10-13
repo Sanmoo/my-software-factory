@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-// Git area of one job (R06, CA08): a clone of the target branch on the host, outside the
+// Git area of one job: a clone of the target branch on the host, outside the
 // container, on its own job branch. Recreating the container never touches it.
 export interface JobLayout {
   areaDir: string;
@@ -48,7 +48,7 @@ export async function createJobRepo(input: {
   targetBranch: string;
   branch: string;
   // Where the area pushes to. The clone comes from the operator's checkout, but the work must
-  // reach github.com for the PR; the container's GH_TOKEN is the credential (R06, R07).
+  // reach github.com for the PR; the container's GH_TOKEN is the credential.
   remoteUrl?: string;
 }): Promise<string> {
   if (await exists(input.repoDir)) {

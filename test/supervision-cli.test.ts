@@ -22,7 +22,7 @@ import { createObserver, type Observer } from "../src/core/observability.js";
 import { createFileFailureStore, createFileHistory } from "../src/state/history.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
-// The operator's CLI for one instance (R09). The CLI writes commands to the instance's local
+// The operator's CLI for one instance. The CLI writes commands to the instance's local
 // queue; the instance applies them on its next poll. The memory tracker and the fake runner
 // keep the scenario deterministic.
 

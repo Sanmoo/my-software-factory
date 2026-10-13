@@ -1,4 +1,4 @@
-# Image of the MSF Docker runner (ticket #6, R06/CA08). Same base and Pi version as the
+# Image of the MSF Docker runner (ticket #6). Same base and Pi version as the
 # spike image, reviewed for the runner. Build with the host UID/GID so bind-mounted
 # artifacts keep the operator's ownership:
 #   docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) \

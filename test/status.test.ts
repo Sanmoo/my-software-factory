@@ -61,7 +61,7 @@ test("status does not list an issue that is not ready for agent", async () => {
   assert.deepEqual(linesFor((await status("trabalho")).stdout, `${DORA}#11`), []);
 });
 
-test("a Jira issue without a routing label, or with two, is rejected with the routing reason (CA17)", async () => {
+test("a Jira issue without a routing label, or with two, is rejected with the routing reason", async () => {
   const { stdout } = await status("trabalho");
   for (const line of linesFor(stdout, "VAN-2")) assert.match(line, /sem roteamento/);
   for (const line of linesFor(stdout, "VAN-3")) assert.match(line, /roteamento ambíguo/);

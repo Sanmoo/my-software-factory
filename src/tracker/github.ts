@@ -17,7 +17,7 @@ import type {
 import { PartialWriteError } from "./port.js";
 import { isObject } from "../core/values.js";
 
-// GitHub Issues adapter (R02, R03, R10). The adapter talks to the REST API through a
+// GitHub Issues adapter. The adapter talks to the REST API through a
 // small injected boundary: it asks for the project account's token and then performs
 // one REST call with that token. The default boundary runs the gh CLI, injecting the
 // token only into the env of those child calls; it never switches the active account.
@@ -269,7 +269,7 @@ export class GitHubTracker implements TrackerPort {
   }
 
   // Native dependency edges. Not part of TrackerPort: used by the conformance check to
-  // exercise the blocked_by representation (R02) against a disposable issue.
+  // exercise the blocked_by representation against a disposable issue.
   async addBlockedBy(ref: IssueRef, blocker: IssueRef): Promise<void> {
     const blockerIssue = await this.fetchIssue(blocker);
     expectStatus(
@@ -307,7 +307,7 @@ export class GitHubTracker implements TrackerPort {
     return issue.assignees.length > 0 || issue.labels.includes(this.options.claimedLabel);
   }
 
-  // R02: done is an issue closed as completed. Closed for another reason is not done, and GitHub
+  // done is an issue closed as completed. Closed for another reason is not done, and GitHub
   // has no category for it, so its status stays unknown and eligibility rejects it. Open and
   // claimed means started.
   private statusOf(issue: RestIssue, claimed: boolean): Known<StatusCategory> {
@@ -326,7 +326,7 @@ export class GitHubTracker implements TrackerPort {
   }
 
   // A failed read is Unknown, never absent: an issue whose blockers cannot be read is
-  // not eligible (R03, CA04).
+  // not eligible.
   private async readBlockers(ref: IssueRef): Promise<Known<BlockerRef[]>> {
     try {
       const blockers: BlockerRef[] = [];

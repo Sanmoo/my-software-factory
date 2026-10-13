@@ -4,7 +4,7 @@ import { directedReply, judgePrFeedback } from "../src/core/feedback.js";
 import type { PrCheck, PrComment, PrFeedback } from "../src/pr/port.js";
 import type { Comment } from "../src/tracker/port.js";
 
-// Feedback rules (R10, CA11, CA12): what counts as directed input in an issue and on a PR.
+// Feedback rules: what counts as directed input in an issue and on a PR.
 
 const CREATED = "2026-05-01T10:00:00Z";
 const human = (body: string, id = "c1"): Comment => ({ id, author: "ana", isBot: false, body, createdAt: CREATED });
@@ -30,7 +30,7 @@ const checkOf = (id: string, state: PrCheck["state"], required: PrCheck["require
 
 const feedback = (parts: Partial<PrFeedback>): PrFeedback => ({ comments: [], checks: [], ...parts });
 
-// ---- CA11: directed replies in issues ------------------------------------------------------
+// ---- directed replies in issues ------------------------------------------------------
 
 test("in GitHub only a human comment without marker that starts with agent: is a directed reply", () => {
   assert.equal(directedReply("github", human("agent: use o seam v2"))?.message, "use o seam v2");
@@ -57,7 +57,7 @@ test("a directed reply is keyed by comment id and revision, so an edited comment
   assert.notEqual(first?.key, edited?.key, "a new revision of the same comment is a new event");
 });
 
-// ---- CA12: PR feedback and checks --------------------------------------------------------
+// ---- PR feedback and checks --------------------------------------------------------
 
 test("a human review or comment on the PR is feedback; bot and factory-marked ones are not", () => {
   const judged = judgePrFeedback(feedback({
@@ -169,7 +169,7 @@ test("a review with an empty body is not feedback; only its comments count", () 
   assert.ok(judged.inputs.every((input) => !input.message.includes("(sem texto)")));
 });
 
-test("the agent's marked inline reply inside an unmarked empty review triggers nothing (CA12)", () => {
+test("the agent's marked inline reply inside an unmarked empty review triggers nothing", () => {
   const judged = judgePrFeedback(feedback({
     comments: [
       reviewBy("acme-bot", "", { id: "PRR_own" }),

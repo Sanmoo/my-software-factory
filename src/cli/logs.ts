@@ -6,7 +6,7 @@ import { createFileHistory } from "../state/history.js";
 import { loadInstance, type CliRun } from "./instance.js";
 import { stateLabel, summaryOf } from "./jobs-view.js";
 
-// `logs <trabalho>`: the state and log lines of one job of an instance (R09). The job is
+// `logs <trabalho>`: the state and log lines of one job of an instance. The job is
 // identified by its key (tracker:project#id), as shown by `status`.
 
 const USAGE = "uso: npm run logs -- --config FILE --instance NAME --state-dir DIR TRABALHO";

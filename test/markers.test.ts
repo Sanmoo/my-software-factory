@@ -4,7 +4,7 @@ import { postFactoryComment, withFactoryMarker } from "../src/core/markers.js";
 import { createObserver } from "../src/core/observability.js";
 import type { IssueRef, TrackerPort } from "../src/tracker/port.js";
 
-// The factory marker is part of the tracker port contract (R10): the core adds it to every
+// The factory marker is part of the tracker port contract: the core adds it to every
 // comment the factory publishes, once. Adapters never add or strip it.
 
 test("a GitHub factory comment starts with the invisible agent marker, added once", () => {

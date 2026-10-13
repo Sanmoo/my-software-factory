@@ -4,7 +4,7 @@ import type { Known } from "../tracker/port.js";
 import type { CheckState, Mergeability, PrCheck, PrComment, PrFeedback, PrLookup, PrPort, PrSnapshot, PrState, PrThread, ReviewState } from "./port.js";
 import { isObject, type Obj } from "../core/values.js";
 
-// github.com adapter for the PR port, through the `gh` CLI (R01, R11). Each call gets the
+// github.com adapter for the PR port, through the `gh` CLI. Each call gets the
 // project account's token in its environment (GH_TOKEN), read with
 // `gh auth token --user <account>`. The active gh account is never switched and the token
 // never appears on the command line.
@@ -30,7 +30,7 @@ const PULL_REQUEST_QUERY =
   + "pullRequest(number: $number) { state baseRefName headRefName headRefOid baseRefOid mergeable reviewDecision "
   + "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } }";
 
-// Feedback of the PR (R10): conversation comments and reviews (the last 100 of each), review threads
+// Feedback of the PR: conversation comments and reviews (the last 100 of each), review threads
 // with their comments (the first 100 of each) and the checks of the head commit. `pageInfo` tells when a
 // connection was cut short, which makes the read incomplete rather than empty (issue #18). `isRequired`
 // answers for the branch protection of the PR's base branch.
@@ -192,7 +192,7 @@ function parseFeedback(body: unknown): PrFeedback {
   };
 }
 
-// UNKNOWN is GitHub still computing the answer: it is not a verdict either way (R10).
+// UNKNOWN is GitHub still computing the answer: it is not a verdict either way.
 function mergeabilityOf(value: unknown): Known<Mergeability> {
   if (value === "MERGEABLE") return { known: true, value: "mergeable" };
   if (value === "CONFLICTING") return { known: true, value: "conflicting" };

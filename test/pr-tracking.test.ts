@@ -135,7 +135,7 @@ async function admittedWithPr(pr: PrSnapshot = prOf()) {
   return { ...s, admission };
 }
 
-// ---- CA19 / R08: a "PR pronto" result is accepted only after the PR is confirmed ---------
+// ---- a "PR pronto" result is accepted only after the PR is confirmed ---------
 
 test("a ready PR that is open, based on the target branch and headed by the job branch is accepted", async () => {
   const s = await setup();
@@ -204,7 +204,7 @@ test("a ready PR that cannot be read is not accepted and needs the operator, not
   assert.match(job?.reason ?? "", /não pôde ser confirmado/);
 });
 
-// ---- CA13 / R11: polling tracks CI, review and merge; merge leads to done ------------
+// ---- polling tracks CI, review and merge; merge leads to done ------------
 
 test("an open PR keeps the job waiting, records CI and review, and writes nothing to the tracker", async () => {
   const { prs, memory, admission } = await admittedWithPr();

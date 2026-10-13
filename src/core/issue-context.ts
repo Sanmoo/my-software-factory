@@ -1,7 +1,7 @@
 import type { IssueSnapshot, Known } from "../tracker/port.js";
 import type { IssueContext } from "../runtime/runner.js";
 
-// Size bounds for tracker text that reaches the agent (R07). Titles and bodies are untrusted and
+// Size bounds for tracker text that reaches the agent. Titles and bodies are untrusted and
 // their size must not depend on the tracker; a cut text says how much was left out.
 export const ISSUE_TITLE_LIMIT = 300;
 export const ISSUE_BODY_LIMIT = 6000;

@@ -3,7 +3,7 @@ import test from "node:test";
 import { ISSUE_BODY_LIMIT, ISSUE_TITLE_LIMIT, issueContextOf } from "../src/core/issue-context.js";
 import type { IssueSnapshot } from "../src/tracker/port.js";
 
-// The context an implementation invocation receives about its issue (R07, CA09). Tracker text is
+// The context an implementation invocation receives about its issue. Tracker text is
 // bounded: a long body is cut and says how much was left out, so a prompt has a known size.
 
 const snapshot = (overrides: Partial<IssueSnapshot> = {}): IssueSnapshot => ({

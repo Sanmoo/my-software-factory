@@ -68,7 +68,7 @@ test("an open PR is read with the project account's token injected per call, nev
   }
 });
 
-// ---- R10 / issue #19: mergeability of the PR, read from github.com ----------------------------
+// ---- issue #19: mergeability of the PR, read from github.com ----------------------------
 
 const mergeableOf = async (mergeable: unknown) => {
   const { run } = ghWith(pullRequest({ mergeable }));
@@ -148,7 +148,7 @@ test("the PR port exposes reads only: there is no merge operation to call", asyn
   assert.ok(calls.every((call) => !call.args.some((arg) => /mergePullRequest|enablePullRequestAutoMerge|pr merge/i.test(arg))), "no gh call built by the adapter merges");
 });
 
-// ---- CA12: feedback read from the PR (reviews, conversation comments, checks) ---------------
+// ---- feedback read from the PR (reviews, conversation comments, checks) ---------------
 
 // `more` marks a connection GitHub did not read to its end (pageInfo), by name.
 const pullRequestFeedback = (parts: {

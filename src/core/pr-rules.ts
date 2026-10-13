@@ -4,7 +4,7 @@ import type { IssueRef, Known } from "../tracker/port.js";
 import { jobBranch } from "./job.js";
 import type { PrRef } from "./result.js";
 
-// Pure judgement of pull requests against what the factory expects (R08, R11, CA19).
+// Pure judgement of pull requests against what the factory expects.
 // No I/O here: the admission reads the PR port and applies the verdicts.
 
 // What a job's PR must look like: the repository of the job, the target branch of the
@@ -19,7 +19,7 @@ export function deliveryOf(project: ProjectConfig, ref: IssueRef): Delivery {
   return { repository: project.repository, targetBranch: project.targetBranch, headBranch: jobBranch(ref) };
 }
 
-// A known conflict of the PR with its base branch (R10). Unknown mergeability is neither a conflict
+// A known conflict of the PR with its base branch. Unknown mergeability is neither a conflict
 // nor the absence of one, so it is not reported as either.
 export const isConflicting = (mergeable: Known<Mergeability> | undefined): boolean =>
   mergeable?.known === true && mergeable.value === "conflicting";
@@ -43,7 +43,7 @@ export function misplacedRepository(ref: PrRef, delivery: Delivery): string | un
     : `PR de outro repositório (${ref.repository}); o trabalho é de ${delivery.repository}`;
 }
 
-// What polling observes about a PR the factory already tracks (R11, R12).
+// What polling observes about a PR the factory already tracks.
 export type TrackedVerdict =
   | { kind: "open"; pr: PrSnapshot }
   | { kind: "merged"; pr: PrSnapshot }

@@ -5,7 +5,7 @@ import type { RunModels } from "./docker-config.js";
 import { TRIAGE_SKILL } from "./docker-config.js";
 import type { IssueContext, TriageStep } from "./runner.js";
 
-// Prompts for the Pi invocation inside the container (R07). The result protocol is the
+// Prompts for the Pi invocation inside the container. The result protocol is the
 // contract the runner checks in docker-output.ts; keep the two in step.
 
 // The exact diff the reviewers get: explicit prefixes and --no-ext-diff keep the output
@@ -60,7 +60,7 @@ function reviewRules(input: JobPromptInput): string {
   ].join("\n");
 }
 
-// Comments the agent writes carry the factory marker of their tracker (R10): the agent publishes
+// Comments the agent writes carry the factory marker of their tracker: the agent publishes
 // with the operator's credentials, and only marked comments are told apart from human ones.
 function commentRules(ref: IssueRef): string {
   const issue = ref.tracker === "jira"
@@ -113,7 +113,7 @@ function conflictRules(input: JobPromptInput): string {
   ].join("\n");
 }
 
-// How the agent answers PR feedback and which threads it resolves (issue #20, R10). Resolving is an act of
+// How the agent answers PR feedback and which threads it resolves (issue #20). Resolving is an act of
 // the agent after it delivered the change; the factory never resolves a thread, and having read a comment
 // is not resolution. The feedback items name the thread (and the file) of each inline comment.
 function threadRules(): string {

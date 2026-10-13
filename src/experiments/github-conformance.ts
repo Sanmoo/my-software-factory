@@ -1,4 +1,4 @@
-// Conformance check of the GitHub Issues adapter (R02, R03, R10; CA03; spec §6.2).
+// Conformance check of the GitHub Issues adapter.
 //
 // Creates ONE disposable "[msf-test] conformance <date>" issue and ONE disposable
 // "[msf-test] blocker <date>" issue in Sanmoo/my-software-factory, exercises the

@@ -3,7 +3,7 @@ import { refKey, type IssueRef } from "../tracker/port.js";
 import type { ProfileSource } from "./profile-snapshot.js";
 
 // Configuration the Docker runner needs before any container starts. Every problem is a
-// visible RunnerConfigError: nothing falls back to another model, auth or profile (CA18).
+// visible RunnerConfigError: nothing falls back to another model, auth or profile.
 export class RunnerConfigError extends Error {
   constructor(message: string) {
     super(message);

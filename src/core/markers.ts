@@ -1,7 +1,7 @@
 import type { IssueRef, TrackerKind, TrackerPort } from "../tracker/port.js";
 import type { Observer } from "./observability.js";
 
-// Factory markers (R10). The core adds the marker to every comment the factory publishes,
+// Factory markers. The core adds the marker to every comment the factory publishes,
 // once; adapters never add or strip it. A comment that carries the marker is never feedback.
 export const GITHUB_MARKER = "<!-- msf:agent -->";
 export const JIRA_MARKER = "[msf]";

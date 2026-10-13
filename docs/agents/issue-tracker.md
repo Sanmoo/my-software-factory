@@ -2,7 +2,7 @@
 
 Issues and specs for this repo (`Sanmoo/my-software-factory`) live as GitHub issues. Use the `gh` CLI for all operations.
 
-> The Jira and GitHub Issues adapters described in `docs/spec.md` are features of the product being built. They are not this repo's own tracker; this repo's work is tracked in GitHub Issues.
+> The Jira and GitHub Issues adapters of the factory are features of the product being built. They are not this repo's own tracker; this repo's work is tracked in GitHub Issues.
 
 ## Conventions
 

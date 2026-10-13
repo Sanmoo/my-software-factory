@@ -27,7 +27,7 @@ const CLAIMED = "agent-claimed";
 const TEST_PREFIX = "[msf-test]";
 const TEST_LABEL = "playbooks";
 
-// VAN routing labels and the repository each one maps to (spec §7).
+// VAN routing labels and the repository each one maps to.
 const ROUTING: Record<string, string> = {
   monolith: "bancojohndeere/revolving-credit-monolith-backend",
   "dealer-services": "bancojohndeere/revolving-credit-dealer-services",

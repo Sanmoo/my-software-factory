@@ -1,4 +1,4 @@
-# Disposable spike image for the Sandcastle Docker provider (ticket #1, R06/CA08).
+# Disposable spike image for the Sandcastle Docker provider (ticket #1).
 # Build with the host UID/GID so bind-mounted artifacts keep the operator's ownership:
 #   docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) \
 #     -t msf-docker-spike:local src/experiments/docker-spike

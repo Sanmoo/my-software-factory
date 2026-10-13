@@ -1,6 +1,6 @@
 import { isObject } from "./values.js";
 
-// Result contract of a runner invocation (R08). Only a structurally valid result is a
+// Result contract of a runner invocation. Only a structurally valid result is a
 // success. Absent (no result), ambiguous (more than one) and invalid outputs become
 // ParseFailure, which the admission turns into intervention-required.
 

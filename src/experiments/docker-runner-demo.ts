@@ -13,7 +13,7 @@ import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import type { RunnerContext, RunnerOutput } from "../runtime/runner.js";
 import { assertNoSecret } from "./secret-scan.js";
 
-// Fixture demonstration of the Docker runner (ticket #6, R06/R07/R08, CA08/CA09/CA18).
+// Fixture demonstration of the Docker runner (ticket #6).
 // Recorded evidence run, not part of `npm test`. It calls the model: one new invocation that
 // must stop at a help request, then one continuation on the same Pi session and area.
 // The only model is github-copilot/gpt-6-luna, for every role. There is no override.

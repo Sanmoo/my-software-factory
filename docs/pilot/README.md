@@ -1,4 +1,4 @@
-# Piloto (issue #10, CA16)
+# Piloto (issue #10)
 
 Roda a factory de verdade: instâncias `pessoal` e `trabalho`, trackers GitHub Issues e Jira,
 Docker, primeiro N=1 e depois N=2. A parte que só uma pessoa pode fazer (credenciais, tarefas
@@ -9,7 +9,7 @@ Tudo passa pela CLI `./msf [--home DIR] <instância> <comando> [trabalho] [opç�
 desta máquina:
 
 - `config.json`: copie [`config.template.json`](config.template.json) e habilite só os alvos do piloto
-  (os demais ficam `enabled: false` até terem `docs/spec.md`);
+  (os demais ficam `enabled: false` até terem sua própria spec);
 - `local.json`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), checkouts, imagem
   e insumos de review desta máquina;
 - `state/<instância>/`: o estado de cada instância.
@@ -21,11 +21,11 @@ antes de iniciar a instância `trabalho` (exemplo com o Keychain no README).
 
 | Peça | Onde |
 | --- | --- |
-| Config dos alvos do §7 (**16** alvos, não 13: 5 pessoais + 11 do trabalho) | `config.template.json` |
+| Config dos alvos (**16** alvos, não 13: 5 pessoais + 11 do trabalho) | `config.template.json` |
 | Loop da instância (polling, admissão, runner Docker, PR, feedback) | `./msf <instância> run` (`src/cli/run.ts`) |
 | Check de prontidão, só leitura | `./msf <instância> run --check` |
 | Composição dos adapters reais | `src/cli/compose.ts`, `src/tracker/routing.ts` |
-| Modelo do relatório | [`report-template.md`](report-template.md) → `docs/results/009-pilot.md` |
+| Modelo do relatório | [`report-template.md`](report-template.md), preenchido com as medições do piloto |
 
 Supervisão enquanto roda: `./msf <instância> logs|reply|resume|release|pause|unpause` (`--help` de
 cada um). O log principal imprime os comandos prontos para copiar, na mesma forma; um trabalho
@@ -52,8 +52,8 @@ uma vez, com lembrete a cada 5 min e aviso de recuperação.
 O review dos dois eixos roda dentro da invocação do `/implement`; a factory não o verifica e não há
 estado nem evidência de review no resultado. O prompt entrega ao agente a base, o comando do diff
 exato, a issue como spec e o `AGENTS.md` como padrões, e manda reportar `pr_ready` só com os dois
-reviews aprovados. A factory confirma o PR no adapter (R08) e continua exigindo modelo explícito por
-subagente e filhos reconciliados. O piloto demonstra a CA09 pelo log e pela sessão.
+reviews aprovados. A factory confirma o PR no adapter de PR e continua exigindo modelo explícito por
+subagente e filhos reconciliados. O piloto demonstra esse review pelo log e pela sessão.
 
 ## Perfil de runtime (ADR 0002)
 
@@ -105,16 +105,16 @@ Pré-requisitos, verificados por `./msf <instância> run --check`:
    Modo unattended (comentar e bloquear o card) seria um ticket à parte.
 2. **Transição done de CON** ainda não confirmada (`npm run conformance:jira` cobre só VAN); o piloto valida.
 3. **Credencial Jira por nome.** O adapter lê `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` do
-   ambiente; o nome em `credentials.JIRA_TRABALHO.ref` é validado mas não escolhe a variável (R01
-   pede referência). Suficiente para uma conta Jira; decidir se vale generalizar.
+   ambiente; o nome em `credentials.JIRA_TRABALHO.ref` é validado mas não escolhe a variável
+   (o nome é uma referência, não o valor). Suficiente para uma conta Jira; decidir se vale generalizar.
 4. **Modelo e perfil do trabalho.** O piloto usa `github-copilot/gpt-6-luna` nos dois perfis
-   (envelope barato da spec §6). O perfil de trabalho precisa dele autenticado.
+   (um modelo barato autorizado). O perfil de trabalho precisa dele autenticado.
 
 ## Critérios da #10 e como são cobertos
 
 | Critério | Como |
 | --- | --- |
-| 16 alvos configurados nas duas instâncias | template + `config.test.ts`/`pilot-config.test.ts`; você habilita só os do piloto (os demais ficam `enabled: false` até terem `docs/spec.md`) |
+| 16 alvos configurados nas duas instâncias | template + `config.test.ts`/`pilot-config.test.ts`; você habilita só os do piloto (os demais ficam `enabled: false` até terem sua própria spec) |
 | Tarefa real ponta a ponta em GitHub e em Jira | `./msf <instância> run` com uma issue autorizada (`ready-for-agent`) em cada tracker; **merge feito por você** |
 | N=1 e depois N=2 | `maxConcurrent` da instância no `config.json` |
 | Relatório | medições do `state/` do piloto; `report-template.md` |

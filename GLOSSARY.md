@@ -1,7 +1,8 @@
 # My Software Factory
 
 Desenvolvimento local supervisionado de trabalhos vindos de issue trackers.
-As decisões e os contratos estão na [spec](docs/spec.md); este arquivo define linguagem.
+Este arquivo define a linguagem do projeto. As decisões duradouras ficam nos
+[ADRs](docs/adr/) e as regras atuais na [documentação operacional](docs/operacao/).
 
 ## Language
 

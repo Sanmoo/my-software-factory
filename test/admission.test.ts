@@ -116,7 +116,7 @@ function gate() {
 
 const runKinds = (runner: FakeRunner) => runner.calls.map((call) => `${call.ref.id}:${call.kind}:${call.iteration}/${call.maxIterations}`);
 
-// ---- CA05: admission, claim and confirmation -------------------------------------
+// ---- admission, claim and confirmation -------------------------------------
 
 test("an eligible issue is claimed and confirmed before the runner starts, then waits for help", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
@@ -261,7 +261,7 @@ test("repeated and concurrent polls never duplicate a job", async () => {
   assert.deepEqual(runKinds(runner), ["1:new:1/5"]);
 });
 
-// ---- CA06: capacity, one implementation per repository, waiting releases the slot -----
+// ---- capacity, one implementation per repository, waiting releases the slot -----
 
 test("with N=1 a second candidate waits until the running job frees the slot", async () => {
   const memory = memoryOf([{ repo: "acme/a", id: "1" }, { repo: "acme/b", id: "2" }]);
@@ -332,7 +332,7 @@ test("waiting for help releases the slot without readmitting the issue", async (
   assert.deepEqual(runKinds(runner).filter((kind) => kind.startsWith("1:")), ["1:new:1/5"]);
 });
 
-// ---- CA07: resumes and corrections first, same limits -----------------------------------
+// ---- resumes and corrections first, same limits -----------------------------------
 
 test("a requested resume runs before new work, even when the new work has higher priority", async () => {
   const memory = memoryOf([
@@ -437,7 +437,7 @@ test("a continuation is refused for a job that needs an operator decision", asyn
   assert.equal(outcome.status, "rejected");
 });
 
-// ---- P05: priority and stable tie-break ------------------------------------------------
+// ---- priority and stable tie-break ------------------------------------------------
 
 test("new work follows normalized priority, then a stable identity tie-break, not discovery order", async () => {
   const memory = memoryOf([
@@ -477,7 +477,7 @@ test("unknown priority does not remove the candidate and ranks after the known p
   await admission.settle();
 });
 
-// ---- CA10 and R08: result contract, interruption and iteration limit -------------------
+// ---- result contract, interruption and iteration limit -------------------
 
 test("a PR-ready result moves the job to waiting-for-pr with its reference and releases the slot", async () => {
   const memory = memoryOf([{ repo: "acme/app", id: "1" }, { repo: "acme/app", id: "2" }]);
@@ -574,7 +574,7 @@ test("a result found before the limit ends the invocation early", async () => {
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "waiting-for-help");
 });
 
-// ---- R12 / P01: persistence across restarts and crashes --------------------------------
+// ---- persistence across restarts and crashes --------------------------------
 
 test("the state of a waiting job survives a restart and is not re-admitted", async () => {
   const stateDir = await dir();

@@ -1,4 +1,4 @@
-// Operator commands of one instance (R09). The CLI only writes them to the instance's
+// Operator commands of one instance. The CLI only writes them to the instance's
 // local queue; the instance applies them, in queue order, on its next poll.
 export type CommandBody =
   | { type: "reply"; job: string; message: string }

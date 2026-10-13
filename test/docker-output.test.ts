@@ -145,7 +145,7 @@ test("a run that ended without the completion signal has no valid result, and th
 });
 
 // The review belongs to /implement inside the same invocation: the runner does not gate on it.
-// The PR itself is confirmed later by the admission, on the PR port (R08, CA19).
+// The PR itself is confirmed later by the admission, on the PR port.
 test("a pr_ready result is passed on as it is; the review is the agent's, the PR is confirmed by the admission", () => {
   const out = interpretOutput(input([finalText(result(prReady)), settled]));
   assert.deepEqual(out.output, { kind: "finished", results: [prReady] });

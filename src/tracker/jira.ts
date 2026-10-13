@@ -34,7 +34,7 @@ export interface JiraTrackerSettings {
   doneTransition: string;
   // Link type names whose "is blocked by" direction blocks the issue.
   blockingLinkTypes: readonly string[];
-  // Rank of each priority name (P05, lower = more urgent). Absent, DEFAULT_JIRA_PRIORITY_RANKS applies;
+  // Rank of each priority name (lower = more urgent). Absent, DEFAULT_JIRA_PRIORITY_RANKS applies;
   // a name the map does not list is unknown.
   priorityRanks?: Readonly<Record<string, number>>;
 }
@@ -192,7 +192,7 @@ function assigneesOf(assignee: Known<string | null>): Known<string[]> {
   return { known: true, value: assignee.value === null ? [] : [assignee.value] };
 }
 
-// Jira default priority names, most urgent first (P05: lower number = more urgent).
+// Jira default priority names, most urgent first (lower number = more urgent).
 export const DEFAULT_JIRA_PRIORITY_RANKS: Readonly<Record<string, number>> = {
   Highest: 1, High: 2, Medium: 3, Low: 4, Lowest: 5,
 };

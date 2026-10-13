@@ -3,7 +3,7 @@ import type { RunModels } from "./docker-config.js";
 import type { RunnerOutput } from "./runner.js";
 import { isObject } from "../core/values.js";
 
-// Turns the Pi event stream of one invocation into the runner's output (R07, R08, R09).
+// Turns the Pi event stream of one invocation into the runner's output.
 // Fail-closed: anything that cannot be reconciled is an interruption, never a success.
 
 export const RESULT_PATTERN = /<msf-result>([\s\S]*?)<\/msf-result>/g;

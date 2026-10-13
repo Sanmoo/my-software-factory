@@ -1,6 +1,6 @@
 import type { Job } from "./job.js";
 
-// Persistence port for job state (P01). Each job is saved as a whole; a save replaces
+// Persistence port for job state. Each job is saved as a whole; a save replaces
 // the previous state of that job.
 export interface LoadedJobs {
   jobs: Job[];

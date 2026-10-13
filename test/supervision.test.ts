@@ -18,7 +18,7 @@ import type { IssueRef } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
-// Operator commands of one instance (R09, R12, P02, P03). Commands go through the local
+// Operator commands of one instance. Commands go through the local
 // queue and are applied by the instance's poll; the memory tracker and the fake runner
 // keep every scenario deterministic.
 
@@ -133,7 +133,7 @@ function gate() {
 
 const runKinds = (runner: FakeRunner) => runner.calls.map((call) => `${call.ref.id}:${call.kind}:${call.iteration}/${call.maxIterations}`);
 
-// ---- R09: reply -------------------------------------------------------------------------
+// ---- reply -------------------------------------------------------------------------
 
 test("a reply to a job waiting for help reactivates it in the same session when a slot is free", async () => {
   const stateDir = await dir();
@@ -198,7 +198,7 @@ test("a reply is refused visibly for a job that is no longer tracked", async () 
   assert.match(admission.job(keyOf("acme/app", "1"))?.log.at(-1) ?? "", /reply rejeitado/);
 });
 
-// ---- P03 / CA14: resume ---------------------------------------------------------------------
+// ---- resume ---------------------------------------------------------------------
 
 test("a resume continues the same session and area without new information", async () => {
   const stateDir = await dir();
@@ -286,7 +286,7 @@ test("a resume is refused visibly while the job is running, so no second main in
   assert.deepEqual(runKinds(runner), ["1:new:1/5"]);
 });
 
-// ---- R09: pause and unpause -----------------------------------------------------------------
+// ---- pause and unpause -----------------------------------------------------------------
 
 test("pause blocks new admissions without stopping the active job; unpause admits again", async () => {
   const stateDir = await dir();
@@ -408,7 +408,7 @@ test("pause does not stop the tracking of a waiting PR: a merge is still confirm
   assert.deepEqual((await memory.readIssue(refOf("acme/app", "1"))).statusCategory, { known: true, value: "done" });
 });
 
-// ---- R09 / R12 / CA19: release ----------------------------------------------------------------
+// ---- release ----------------------------------------------------------------
 
 test("release removes the claim, ends tracking and keeps area, session and PR", async () => {
   const stateDir = await dir();

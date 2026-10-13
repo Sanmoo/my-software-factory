@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parseConfig } from "../src/config/validate.js";
 
-// The pilot template (issue #10, CA01, CA16): every target of spec §7 across the two instances.
+// The pilot template (issue #10): every configured target across the two instances.
 async function template() {
   const text = (await readFile("docs/pilot/config.template.json", "utf8"))
     .replaceAll("__JIRA_OPERATOR_ACCOUNT_ID__", "operator-account-id")
@@ -13,7 +13,7 @@ async function template() {
   return parsed.config;
 }
 
-test("the template loads and holds every target of spec §7 in the right instance", async () => {
+test("the template loads and holds every configured target in the right instance", async () => {
   const config = await template();
   const byName = new Map(config.instances.map((instance) => [instance.name, instance]));
   const personal = byName.get("pessoal")!;

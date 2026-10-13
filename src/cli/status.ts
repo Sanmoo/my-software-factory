@@ -75,7 +75,7 @@ function displayRef(ref: IssueRef, project: ProjectConfig): string {
 interface LocalState {
   jobs: Job[];
   unreadable: string[];
-  // Admission state as the instance will have it after its queued commands (R09).
+  // Admission state as the instance will have it after its queued commands.
   paused: boolean;
   pausePending: boolean;
   pendingCommands: number;

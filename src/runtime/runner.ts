@@ -1,10 +1,10 @@
 import type { IssueRef, Known } from "../tracker/port.js";
 
-// Runner port (R07, R08). The admission hands the runner a pointer to the job and the
+// Runner port. The admission hands the runner a pointer to the job and the
 // effective iteration limit; the runner returns what its iteration produced.
 export type RunKind = "new" | "resume" | "correction";
 
-// The Pi session and the Git area a job keeps between invocations (R06, P03). The runner
+// The Pi session and the Git area a job keeps between invocations. The runner
 // reports it; the admission records it on the job so a later resume can continue it.
 export interface Workspace {
   session: string;
@@ -12,7 +12,7 @@ export interface Workspace {
 }
 
 // What a continuation invocation receives: the session and area to continue, and the
-// operator replies (R09) that this invocation delivers.
+// operator replies that this invocation delivers.
 // The two invocations of the triage of PR feedback (issue #21).
 export type TriageStep = "list" | "apply";
 
