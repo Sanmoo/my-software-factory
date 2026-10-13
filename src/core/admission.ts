@@ -13,8 +13,9 @@ import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
 import { noopObserver, type FieldValue, type Level, type Observer } from "./observability.js";
-import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, triggerSummary, type IssueWriteContext } from "./ops-events.js";
-import { PartialWriteError, refKey, type ClaimMark, type IssueChange, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
+import { triggerSummary } from "./ops-events.js";
+import { IssueWrites, type IssueWritesContext } from "./issue-writes.js";
+import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
 // The coordinator of one instance: admits eligible issues as jobs, keeps capacity
@@ -70,29 +71,9 @@ const CONTINUATIONS: Record<Continuation, readonly JobState[]> = {
 // Jobs an operator can release: none of them has an invocation running.
 const RELEASABLE: readonly JobState[] = ["waiting-for-help", "waiting-for-pr", "interrupted", "intervention-required"];
 
-// A removal the reread shows as done: the label is no longer on the issue, or the account is no
-// longer among its assignees. Each change is judged by its own field, so a removal the reread
-// cannot see, or a change without a target, stays attempted.
-const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot | undefined): boolean => {
-  if (snapshot === undefined || change.result !== "attempted" || change.target === undefined) return false;
-  if (change.operation === "remover-label") return snapshot.labels.known && !snapshot.labels.value.includes(change.target);
-  if (change.operation === "remover-atribuição") return snapshot.assignees.known && !snapshot.assignees.value.includes(change.target);
-  return false;
-};
-
-// The reread shows the factory's claim mark gone: none of its labels or accounts is left on the
-// issue. Status and other people's assignments do not matter; an unreadable field proves nothing.
-const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean => {
-  const absent = (present: Known<string[]>, marked: string[]): boolean =>
-    marked.length === 0 || (present.known && !marked.some((item) => present.value.includes(item)));
-  return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
-};
-
 // Jobs whose issue is read for directed replies. A job that is done, released or needs
 // intervention takes no input from the tracker.
 const TRACKER_FEEDBACK_STATES: readonly JobState[] = ["waiting-for-help", "running", "interrupted", "waiting-for-pr"];
-
-const UNRESOLVED_START = "início não confirmado pelo tracker: claim e doing não estão visíveis";
 
 interface NewCandidate {
   ref: IssueRef;
@@ -129,12 +110,14 @@ export class Admission {
   private readonly runs = new Set<Promise<void>>();
   private readonly runErrors: unknown[] = [];
   private readonly obs: Observer;
+  private readonly writes: IssueWrites;
   private invocationSeq = 0;
   // Waits already announced, so a poll that finds the same wait again does not repeat the event.
   private readonly announcedWaits = new Set<string>();
 
   private constructor(private readonly deps: AdmissionDeps, loaded: Job[], unreadable: string[]) {
     this.obs = deps.observer ?? noopObserver;
+    this.writes = new IssueWrites(deps.tracker, this.obs);
     for (const job of loaded) this.jobs.set(job.key, job);
     this.unreadable = unreadable;
     this.unreadableKeys = new Set(unreadableKeys(unreadable));
@@ -249,29 +232,10 @@ export class Admission {
     });
   }
 
-  // A tracker write made by the orchestrator: the attempt is announced before, the concrete
-  // changes the adapter reports after, and a failure keeps whatever was written before it.
-  // The write itself is never repeated because of what is observed.
-  private async writeIssue<T extends { changes?: IssueChange[] } | void>(
-    context: IssueWriteContext,
-    write: () => Promise<T>,
-  ): Promise<T> {
-    this.obs.emit(issueWriteAttempt(context));
-    try {
-      return await write();
-    } catch (error) {
-      if (error instanceof PartialWriteError) this.reportChanges(context, error.changes);
-      this.obs.emit(issueWriteFailure(context, messageOf(error), true));
-      throw error;
-    }
-  }
-
-  private reportChanges(context: IssueWriteContext, changes: readonly IssueChange[] | undefined): void {
-    for (const change of changes ?? []) this.obs.emit(issueChangeEvent(context, change));
-  }
-
-  private writeContext(job: { key: string; ref: IssueRef }, operation: string, reason: string, invocation?: string, refs?: Record<string, FieldValue>): IssueWriteContext {
-    return { ref: job.ref, job: job.key, origin: "orquestrador", operation, reason, ...(invocation === undefined ? {} : { invocation }), ...(refs === undefined ? {} : { refs }) };
+  // What the IssueWrites module needs to know about a write it will make: the job, why, and the
+  // evidence. The ref and the abstract operation belong to the module (ADR 0001).
+  private writeContext(job: Job, reason: string, invocation?: string, refs?: Record<string, FieldValue>): IssueWritesContext {
+    return { job: job.key, reason, ...(invocation === undefined ? {} : { invocation }), ...(refs === undefined ? {} : { refs }) };
   }
 
   private newInvocation(): string {
@@ -385,55 +349,18 @@ export class Admission {
   }
 
   // Removes the claim and ends tracking; area, session and PR stay on the job. Never moves
-  // the issue to done and never touches the PR. A write whose answer was lost is
-  // confirmed by rereading the tracker.
+  // the issue to done and never touches the PR. The write sequence and its
+  // reconciliation after an error belong to IssueWrites (ADR 0001).
   private async release(job: Job, command?: string): Promise<string | undefined> {
     if (!RELEASABLE.includes(job.state)) return `release não se aplica ao estado ${job.state}`;
-    const context = this.writeContext(job, "release", "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
-    const mark = this.deps.tracker.claimMarkOf(job.ref);
-    let changes: IssueChange[] | undefined;
-    let snapshot: IssueSnapshot | undefined;
-    try {
-      const outcome = await this.writeIssue(context, async () => this.deps.tracker.releaseClaim(job.ref));
-      changes = outcome?.changes;
-      snapshot = await this.reread(job.ref);
-    } catch (error) {
-      snapshot = await this.reread(job.ref);
-      if (!markGone(snapshot, mark)) return `liberação não confirmada pelo tracker: ${messageOf(error)}`;
-      // The write failed or its answer was lost, and the reread shows the mark gone: the uncertainty
-      // is resolved by evidence, not by assumption. Each part of the mark is a confirmed change.
-      const detail = "confirmada por releitura após erro de escrita";
-      for (const target of mark.labels) {
-        this.obs.emit(issueChangeEvent(context, { operation: "remover-label", target, result: "confirmed", after: "ausente", detail }));
-      }
-      for (const target of mark.assignees) {
-        this.obs.emit(issueChangeEvent(context, { operation: "remover-atribuição", target, result: "confirmed", after: "ausente", detail }));
-      }
-    }
-    // The reread decides what each change was: an accepted call alone is only an attempt.
-    if (changes !== undefined) {
-      this.reportChanges(context, changes.map((change) =>
-        removalConfirmedByReread(change, snapshot) ? { ...change, result: "confirmed" as const } : change));
-    }
-    // A claim the reread still shows, or a reread that failed, is not a release: the job keeps its
-    // state, so the claim is not left on the issue with the tracking already ended.
-    if (!markGone(snapshot, mark)) {
-      return `liberação não confirmada pelo tracker: ${snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura"}`;
-    }
+    const context = this.writeContext(job, "liberado-pelo-operador", undefined, command === undefined ? undefined : { comando: command });
+    const decision = await this.writes.release(job.ref, context);
+    if (decision.status === "not-confirmed") return decision.reason;
     await this.apply(job.key, "released", {
       message: "claim removido pelo operador; acompanhamento encerrado; área, sessão e PR preservados",
       reason: "liberado pelo operador",
     });
     return undefined;
-  }
-
-  // Rereads the issue: undefined when the reread itself fails, so nothing is confirmed by it.
-  private async reread(ref: IssueRef): Promise<IssueSnapshot | undefined> {
-    try {
-      return await this.deps.tracker.readIssue(ref);
-    } catch {
-      return undefined;
-    }
   }
 
   private async guard(key: string, report: PollReport, action: () => Promise<void>): Promise<void> {
@@ -516,23 +443,23 @@ export class Admission {
     await this.persist(job);
     await this.note(key, "vaga reservada; claim solicitado");
 
-    const context = this.writeContext(job, "claim", "admissão");
-    let claimed;
-    try {
-      claimed = await this.writeIssue(context, () => this.deps.tracker.claim(ref));
-    } catch {
-      await this.afterClaimWriteError(key, ref, report);
-      return;
-    }
-    this.reportChanges(context, claimed.changes);
-    if (claimed.status === "rejected") {
+    const context = this.writeContext(job, "admissão");
+    const decision = await this.writes.start(ref, context);
+    if (decision.status === "refused") {
       await this.forget(key);
-      report.skipped.push({ key, reason: `claim recusado pelo tracker: ${claimed.reason}` });
+      report.skipped.push({ key, reason: `claim recusado pelo tracker: ${decision.reason}` });
       return;
     }
-    if (!(await this.startConfirmed(ref))) {
-      await this.apply(key, "intervention-required", { message: UNRESOLVED_START, reason: UNRESOLVED_START });
-      report.errors.push({ key, message: UNRESOLVED_START });
+    if (decision.status === "retry") {
+      // Nothing was written: the job is forgotten and the next poll tries again.
+      await this.forget(key);
+      report.errors.push({ key, message: decision.reason });
+      return;
+    }
+    if (decision.status === "intervention") {
+      // The issue may hold a claim the factory did not prove it made: an operator decides.
+      await this.apply(key, "intervention-required", { message: decision.reason, reason: decision.reason });
+      if (decision.kind === "unconfirmed-start") report.errors.push({ key, message: decision.reason });
       return;
     }
     await this.note(key, `início confirmado; runner disparado (${this.deps.instance.maxIterations} iterações)`);
@@ -692,42 +619,6 @@ export class Admission {
     }
     this.jobs.set(job.key, job);
     return undefined;
-  }
-
-  private async startConfirmed(ref: IssueRef): Promise<boolean> {
-    try {
-      const snapshot = await this.deps.tracker.readIssue(ref);
-      return snapshot.claimed.known && snapshot.claimed.value
-        && snapshot.statusCategory.known && snapshot.statusCategory.value === "in-progress";
-    } catch {
-      return false;
-    }
-  }
-
-  // After a write error the external state is reread before anything else.
-  private async afterClaimWriteError(key: string, ref: IssueRef, report: PollReport): Promise<void> {
-    let snapshot;
-    try {
-      snapshot = await this.deps.tracker.readIssue(ref);
-    } catch {
-      await this.apply(key, "intervention-required", {
-        message: "erro de escrita no claim e estado externo ilegível",
-        reason: "erro de escrita no claim e estado externo ilegível",
-      });
-      return;
-    }
-    if (snapshot.claimed.known && snapshot.claimed.value) {
-      const reason = "erro de escrita no claim; tracker mostra claim com origem não comprovada: não iniciar";
-      await this.apply(key, "intervention-required", { message: reason, reason });
-      return;
-    }
-    if (snapshot.claimed.known) {
-      await this.forget(key);
-      report.errors.push({ key, message: "erro de escrita no claim; nada registrado no tracker, nova tentativa no próximo polling" });
-      return;
-    }
-    const reason = "erro de escrita no claim e estado externo desconhecido";
-    await this.apply(key, "intervention-required", { message: reason, reason });
   }
 
   private dispatch(
@@ -1005,32 +896,14 @@ export class Admission {
   // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
   // reread. Until then the job keeps waiting and the next poll tries again.
   private async complete(job: Job, report: PollReport, targetBranch: string): Promise<void> {
-    let confirmed = false;
-    let why = "";
-    const context = this.writeContext(job, "done", "conclusão-após-merge");
-    try {
-      const outcome = await this.writeIssue(context, () => this.deps.tracker.markDone(job.ref));
-      if (outcome.status === "not-confirmed") {
-        why = outcome.reason;
-        this.reportChanges(context, outcome.changes);
-      } else {
-        const snapshot = await this.deps.tracker.readIssue(job.ref);
-        confirmed = snapshot.statusCategory.known && snapshot.statusCategory.value === "done";
-        if (!confirmed) why = "releitura não mostra done";
-        // The reread is the evidence: an adapter that only attempted the write is confirmed by it.
-        this.reportChanges(context, outcome.changes?.map((change) =>
-          confirmed && change.result === "attempted" ? { ...change, result: "confirmed" as const } : change));
-      }
-    } catch (error) {
-      why = messageOf(error);
-    }
-    if (!confirmed) {
+    const decision = await this.writes.complete(job.ref, this.writeContext(job, "conclusão-após-merge"));
+    if (decision.status === "pending") {
       this.emitFor(job.key, "conclusão-pendente", "merge confirmado; done ainda não confirmado", {
-        motivo: why, próximo: "nova tentativa no próximo polling",
+        motivo: decision.reason, próximo: "nova tentativa no próximo polling",
       }, { level: "atenção" });
       report.errors.push({
         key: job.key,
-        message: `PR mesclado; done ainda não confirmado pelo tracker (${why}): nova tentativa no próximo polling`,
+        message: `PR mesclado; done ainda não confirmado pelo tracker (${decision.reason}): nova tentativa no próximo polling`,
       });
       return;
     }
