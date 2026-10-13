@@ -16,14 +16,10 @@ antes, pede a escrita, **relê** e compara os snapshots. A decisão está no
 
 ## Roteamento
 
-Cada issue pertence a exatamente um repositório de um projeto habilitado:
-
-- **GitHub Issues:** o escopo é o próprio repositório.
-- **Jira:** a chave do projeto mais uma label de roteamento. Sem label, ou com duas, a
-  issue não é admitida e aparece no status como `sem roteamento`/`roteamento ambíguo`.
-
-Uma instância pode misturar trackers. O roteador envia cada chamada ao adapter do escopo
-da issue e **nunca** cai para outro tracker quando o escopo não está configurado.
+Cada issue pertence a exatamente um repositório de um projeto habilitado; a regra e o
+efeito na admissão estão em [admissão e prioridade](admissao-e-prioridade.md). Uma
+instância pode misturar trackers: o roteador envia cada chamada ao adapter do escopo da
+issue e **nunca** cai para outro tracker quando o escopo não está configurado.
 
 ## Representações concretas
 

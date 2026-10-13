@@ -307,7 +307,7 @@ export class GitHubTracker implements TrackerPort {
     return issue.assignees.length > 0 || issue.labels.includes(this.options.claimedLabel);
   }
 
-  // done is an issue closed as completed. Closed for another reason is not done, and GitHub
+  // Done is an issue closed as completed. Closed for another reason is not done, and GitHub
   // has no category for it, so its status stays unknown and eligibility rejects it. Open and
   // claimed means started.
   private statusOf(issue: RestIssue, claimed: boolean): Known<StatusCategory> {

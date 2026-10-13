@@ -7,6 +7,7 @@ engenharia supervisionado. Repositório privado.
 
 - Docker, Jira e GitHub Issues implementados; a CLI `./msf` descobre, admite,
   implementa, acompanha o PR e conduz a issue até done com confirmação externa.
+  O fluxo ponta a ponta ainda não foi comprovado: o piloto (#10) está pendente.
 - Linguagem: [GLOSSARY](GLOSSARY.md).
 - Regras atuais: [admissão e prioridade](docs/operacao/admissao-e-prioridade.md),
   [trackers](docs/operacao/trackers.md) e

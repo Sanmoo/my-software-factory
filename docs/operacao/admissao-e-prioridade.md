@@ -73,8 +73,8 @@ não inicia o trabalho, e nada registrado volta a ser tentado no próximo pollin
 
 Polling repetido não pode duplicar um trabalho. A identidade inclui tracker, projeto ou
 repositório e ID da issue, o que evita colisão entre fornecedores. Espera não transforma
-uma issue acompanhada em candidato novo; um claim não ocupa vaga. `release` é o único
-caminho que devolve a issue à elegibilidade, e a factory não o faz sozinha.
+uma issue acompanhada em candidato novo; um claim não ocupa vaga. O trabalho só termina
+por conclusão ou por liberação explícita do operador; a factory nunca libera sozinha.
 
 ## Capacidade e prioridade
 
@@ -117,5 +117,6 @@ releitura mostra a marca ausente; enquanto isso, o trabalho mantém o estado.
 A regra histórica de que **retirar autorização ou introduzir impedimento bloqueia a
 próxima invocação** de um trabalho já admitido tem aderência integral não comprovada: a
 releitura antes de uma retomada confere claim e estado terminal, mas não reconfere label
-de prontidão nem bloqueios. A intenção e a incerteza estão registradas numa issue separada
-vinculada à limpeza documental; não trate a rechecagem como comportamento comprovado.
+de prontidão nem bloqueios. A intenção e a incerteza estão registradas na
+[issue #51](https://github.com/Sanmoo/my-software-factory/issues/51), vinculada à #41;
+não trate a rechecagem como comportamento comprovado.

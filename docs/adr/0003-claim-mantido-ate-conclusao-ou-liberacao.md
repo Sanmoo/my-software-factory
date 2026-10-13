@@ -36,7 +36,7 @@ ficam como estão.
 
 ## Consequences
 
-- `release` é o único caminho que devolve a issue à elegibilidade, e ele é confirmado por
+- `release` é o único caminho que remove a marca de claim da factory, e ele é confirmado por
   releitura; enquanto a marca estiver visível, o trabalho mantém o estado.
 - Um trabalho esperando vaga ou aguardando o operador conserva o motivo original e o claim
   durante toda a espera.

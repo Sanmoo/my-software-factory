@@ -26,8 +26,8 @@ test("loads two instances (work and personal) with their projects", async () => 
   assert.equal(personal.pollIntervalSeconds, 600);
 });
 
-// The configured targets of spec section 7, written out from the spec (not derived from the fixture).
-const SECTION_7: Array<[string, string, string]> = [
+// The configured targets, written out by hand (not derived from the fixture).
+const EXPECTED_TARGETS: Array<[string, string, string]> = [
   ["pessoal", "github", "Sanmoo/my-tasks"],
   ["pessoal", "github", "Sanmoo/my-software-factory"],
   ["pessoal", "github", "Sanmoo/my-finances"],
@@ -46,7 +46,7 @@ const SECTION_7: Array<[string, string, string]> = [
   ["trabalho", "CON/playbooks", "bancojohndeere/consorcio-playbooks"],
 ];
 
-test("the fixture carries all 16 targets of spec section 7: 5 personal and 11 work, Jira and GitHub", async () => {
+test("the fixture carries all 16 configured targets: 5 personal and 11 work, Jira and GitHub", async () => {
   const result = await loadConfigFile(fixture("instances.json"));
   assert.equal(result.ok, true, JSON.stringify(result.ok ? [] : result.issues));
   if (!result.ok) return;
@@ -58,7 +58,7 @@ test("the fixture carries all 16 targets of spec section 7: 5 personal and 11 wo
   assert.deepEqual(targets.filter(([instance]) => instance === "pessoal").length, 5);
   assert.deepEqual(targets.filter(([instance]) => instance === "trabalho").length, 11);
   const sorted = (rows: string[][]) => rows.map((row) => row.join(" ")).sort();
-  assert.deepEqual(sorted(targets), sorted(SECTION_7));
+  assert.deepEqual(sorted(targets), sorted(EXPECTED_TARGETS));
 });
 
 // oxlint-disable-next-line typescript/no-explicit-any -- error-case tests deliberately mutate arbitrary JSON fixture shapes
