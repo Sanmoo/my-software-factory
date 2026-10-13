@@ -153,15 +153,9 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     remoteUrl: (project) => `https://github.com/${project.repository}.git`,
     boundary: options.sandbox ?? sandcastleBoundary(),
     observer,
-    // What the tracker shows about an issue, to confirm (or not) the writes the agent makes itself.
-    issueEvidence: (ref) => async () => {
-      const [snapshot, comments] = await Promise.all([tracker.readIssue(ref), tracker.readComments(ref)]);
-      return {
-        ...(snapshot.labels.known ? { labels: snapshot.labels.value } : {}),
-        ...(snapshot.statusCategory.known ? { done: snapshot.statusCategory.value === "done" } : {}),
-        commentIds: comments.map((comment) => comment.id),
-      };
-    },
+    // The tracker reader the runner hands to the agent write watch: the evidence by which a write
+    // the agent makes on its own issue can be confirmed.
+    tracker,
   });
 
   const accountOf = new Map(projects.map((project) => [project.repository, project.githubAccount]));

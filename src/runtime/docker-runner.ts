@@ -25,9 +25,8 @@ import type { PiEvent } from "./pi-events.js";
 import type { Runner, RunnerContext, RunnerOutput } from "./runner.js";
 import { messageOf } from "../core/values.js";
 import { noopObserver, shellQuote, type Observer } from "../core/observability.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { IssueRef, TrackerPort } from "../tracker/port.js";
 import { AgentActivity } from "./agent-activity.js";
-import type { IssueState } from "./agent-issue-writes.js";
 
 // Docker runner (R06, R07, R08, CA08, CA09, CA18). Each job gets its own git area and Pi
 // session on the host; the agent runs only inside the sandbox boundary. Any failure before or
@@ -96,9 +95,9 @@ export interface DockerRunnerOptions {
   observer?: Observer;
   // The clock of the activity, injectable so silence can be controlled in tests.
   now?: () => number;
-  // Rereads the issue of a job in the tracker: the evidence by which a write the agent made on its
+  // Reads the issue of a job in the tracker: the evidence by which a write the agent made on its
   // own issue can be confirmed. Absent: such writes are reported as not confirmable.
-  issueEvidence?: (ref: IssueRef) => () => Promise<IssueState>;
+  tracker?: Pick<TrackerPort, "readIssue" | "readComments">;
 }
 
 // Configuration problems are visible when the runner is built, before any job starts.
@@ -175,12 +174,12 @@ class DockerRunner implements Runner {
       const detailPath = join(logs, `${stamp}.log`);
       const runtimeLogPath = join(logs, `${stamp}.runtime.log`);
       const artifactsDir = join(logs, `${stamp}.artifacts`);
-      const issueEvidence = this.options.issueEvidence?.(context.ref);
+      const tracker = this.options.tracker;
       activity = new AgentActivity({
         observer, job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
         detailPath, artifactsDir, ...(this.options.now === undefined ? {} : { now: this.options.now }),
         idle: { timeoutSeconds: IDLE_TIMEOUT_SECONDS, warnEverySeconds: IDLE_WARNING_SECONDS },
-        issueWrites: { ref: context.ref, repository: project.repository, ...(issueEvidence === undefined ? {} : { evidence: issueEvidence }) },
+        issueWrites: { ref: context.ref, repository: project.repository, ...(tracker === undefined ? {} : { tracker }) },
       });
       activity.note("perfil de runtime", describePlan(plan));
       observer.setDetailLog(context.jobId, detailPath);

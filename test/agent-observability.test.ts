@@ -8,8 +8,8 @@ import { createObserver, type Observer } from "../src/core/observability.js";
 import { createRedactor } from "../src/core/redaction.js";
 import { git, jobLayout } from "../src/runtime/docker-area.js";
 import { createDockerRunner, type SandboxBoundary, type SandboxOutcome, type SandboxRun } from "../src/runtime/docker-runner.js";
-import type { IssueState } from "../src/runtime/agent-issue-writes.js";
 import type { PiEvent } from "../src/runtime/pi-events.js";
+import type { Comment, IssueSnapshot, TrackerPort } from "../src/tracker/port.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
 import { createFileHistory } from "../src/state/history.js";
 import { populateProfile, runtimeOptions } from "./support/runtime-profile.js";
@@ -58,9 +58,19 @@ async function fixture() {
 
 type Script = (run: SandboxRun, call: number) => Promise<Partial<SandboxOutcome>>;
 
+// What `readIssue` answers when a test does not care about the snapshot.
+const snapshot = (over: Partial<IssueSnapshot> = {}): IssueSnapshot => ({
+  ref, title: "issue do trabalho", labels: { known: true, value: [] }, assignees: { known: true, value: [] },
+  claimed: { known: true, value: false }, blockers: { known: true, value: [] },
+  statusCategory: { known: true, value: "to-do" }, priority: { known: true, value: null }, ...over,
+});
+const comment = (id: string): Comment => ({ id, author: "acme-bot", isBot: true, body: "…", createdAt: "2026-01-01T00:00:00Z" });
+
 async function harness(script: Script, options: {
   now?: () => number;
-  evidence?: (ref: unknown) => () => Promise<IssueState>;
+  // Fake tracker reader. Each function is called once per rereading, in order.
+  readIssue?: (call: number) => Promise<IssueSnapshot>;
+  readComments?: (call: number) => Promise<Comment[]>;
   preBlockLogs?: boolean;
 } = {}) {
   const f = await fixture();
@@ -85,11 +95,17 @@ async function harness(script: Script, options: {
     await mkdir(layout.areaDir, { recursive: true });
     await writeFile(join(layout.areaDir, "logs"), "a file where the directory should be");
   }
+  let issueReads = 0;
+  let commentReads = 0;
+  const tracker: Pick<TrackerPort, "readIssue" | "readComments"> = {
+    async readIssue() { issueReads += 1; return options.readIssue ? options.readIssue(issueReads) : snapshot(); },
+    async readComments() { commentReads += 1; return options.readComments ? options.readComments(commentReads) : []; },
+  };
   const runner = createDockerRunner({
     instance, credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, ...runtimeOptions("personal"), stateDir: f.stateDir,
     image: "msf-docker-runner:test", repositorySource: () => f.source, boundary, observer,
     ...(options.now ? { now: options.now } : {}),
-    ...(options.evidence ? { issueEvidence: options.evidence as never } : {}),
+    ...(options.readIssue || options.readComments ? { tracker } : {}),
   });
   const detail = async () => {
     const logs = join(layout.areaDir, "logs");
@@ -357,11 +373,10 @@ test("a reply is reported delivered only when the stream shows it reaching the a
 });
 
 test("a write the agent makes on its issue is confirmed only by the tracker's evidence", async () => {
-  const states: IssueState[] = [
-    { labels: ["ready-for-agent"], done: false, commentIds: ["c1"] },
-    { labels: ["ready-for-agent", "needs-review"], done: false, commentIds: ["c1"] },
+  const states: IssueSnapshot[] = [
+    snapshot({ labels: { known: true, value: ["ready-for-agent"] }, statusCategory: { known: true, value: "to-do" } }),
+    snapshot({ labels: { known: true, value: ["ready-for-agent", "needs-review"] }, statusCategory: { known: true, value: "to-do" } }),
   ];
-  let reads = 0;
   const h = await harness(async (run) => {
     run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "cd repo && gh issue edit 6 --add-label needs-review" } }));
     run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "https://github.com/acme/app/issues/6", isError: false }));
@@ -372,12 +387,10 @@ test("a write the agent makes on its issue is confirmed only by the tracker's ev
     run.activity.line(line({ type: "tool_execution_start", toolCallId: "r1", toolName: "bash", args: { command: "gh issue view 6" } }));
     return {};
   }, {
-    evidence: () => async () => {
-      reads += 1;
-      // Reads 1-2: before/after of the label call. Reads 3-4: before/after of the close call; the
-      // tracker never shows the issue closed, so the agent's call is not a confirmed change.
-      return reads <= 1 ? states[0]! : reads === 2 ? states[1]! : { ...states[1]!, done: false };
-    },
+    // Reads 1-2: before/after of the label call. Reads 3-4: before/after of the close call; the
+    // tracker never shows the issue closed, so the agent's call is not a confirmed change.
+    readIssue: async (call) => call <= 1 ? states[0]! : states[1]!,
+    readComments: async () => [comment("c1")],
   });
   await h.runner.run(context());
   await h.observer.flush();
@@ -406,18 +419,55 @@ test("without tracker evidence an agent write is reported as unconfirmable, neve
   assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /operação=comentar.*confirmação indisponível/);
 });
 
+test("a label write is confirmed from the snapshot even when reading the comments fails", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 6 --add-label needs-review" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w2", toolName: "bash", args: { command: "gh issue comment 6 --body 'pronto'" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w2", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    readIssue: async (call) => call <= 1
+      ? snapshot({ labels: { known: true, value: ["ready-for-agent"] } })
+      : snapshot({ labels: { known: true, value: ["ready-for-agent", "needs-review"] } }),
+    readComments: async () => { throw new Error("comentários indisponíveis"); },
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  assert.match(matching(h.lines, /alteração confirmada/)[0]!, /operação=adicionar-label alvo=needs-review/, "the label is still judged from the snapshot");
+  assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /operação=comentar.*comentários não comparáveis/, "only the comment stays attempted");
+});
+
+test("a write on another issue is reported per intent, with its real operation, never as a transition", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 999 --add-label x --remove-label y" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w2", toolName: "bash", args: { command: "gh issue edit 999 --repo acme/other --add-label z" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w2", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  const attempted = matching(h.lines, /alteração tentada, não confirmada/);
+  assert.equal(attempted.length, 3, "one attempted change per intent");
+  assert.match(attempted[0]!, /operação=adicionar-label alvo=x .*sem evidência/);
+  assert.match(attempted[1]!, /operação=remover-label alvo=y .*sem evidência/);
+  assert.match(attempted[2]!, /outro repositório \(acme\/other\): sem evidência/);
+  assert.equal(matching(h.lines, /operação=transição/).length, 0, "another issue is not a transition");
+});
+
 test("a change is not attributed to the agent when the state before the call is unknown", async () => {
-  let reads = 0;
   const h = await harness(async (run) => {
     run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue close 6" } }));
     run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
     return {};
   }, {
     // The read before the call fails; the one after shows the issue closed.
-    evidence: () => async () => {
-      reads += 1;
-      if (reads === 1) throw new Error("tracker indisponível");
-      return { done: true };
+    readIssue: async (call) => {
+      if (call === 1) throw new Error("tracker indisponível");
+      return snapshot({ statusCategory: { known: true, value: "done" } });
     },
   });
   await h.runner.run(context());
