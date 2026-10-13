@@ -27,9 +27,20 @@ Roteamento ausente ou ambíguo impede a admissão e fica visível ao operador.
 _Avoid_: inferir o repositório pelo título ou pelo tracker
 
 **Trabalho**:
-Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento,
-intervenções humanas e acompanhamento do PR até seu desfecho.
+Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento ou
+assistência ao humano, intervenções humanas e acompanhamento do PR quando houver.
 _Avoid_: ticket como execução, invocação do agente como trabalho inteiro
+
+**Trabalho humano assistido**:
+Atendimento conduzido pelo humano com apoio interativo do agente, voltado à
+triagem, ao esclarecimento ou ao apoio ao trabalho humano, e não à implementação
+autônoma. Seu fim não implica o encerramento da issue.
+_Avoid_: implementação autônoma com pedido de ajuda, sessão encerrada como issue concluída
+
+**Atendimento concluído**:
+Resultado alcançado por um trabalho humano assistido, como uma triagem resolvida
+ou uma issue esclarecida. Não implica que a issue esteja concluída.
+_Avoid_: issue concluída, processo encerrado como atendimento concluído
 
 **Invocação**:
 Uma execução do agente principal para desenvolver ou dar continuidade a um trabalho.
@@ -45,9 +56,10 @@ _Avoid_: assignee como claim, claim como vaga, todo claim como marca da factory
 
 **Liberação**:
 Encerramento, pelo operador, do acompanhamento de um trabalho que não está em
-invocação: remove a marca de claim da factory, sem levar a issue a done nem
-fechar o PR. Só vale quando a releitura do tracker não mostra mais essa marca;
-status da issue e atribuições de outras pessoas ficam como estão.
+invocação: remove a marca de claim da factory, sem levar a issue a done nem fechar
+o PR; no trabalho humano assistido, encerra também a autorização de atendimento.
+Só vale quando a releitura confirma essas remoções; status da issue e atribuições
+de outras pessoas ficam como estão.
 _Avoid_: liberação como fim de todo claim, liberação como volta à elegibilidade, liberação de vaga
 
 **Confirmação por releitura**:
@@ -63,15 +75,21 @@ repositório, é relatada sem confirmação.
 _Avoid_: chamada de ferramenta como alteração feita, relato do agente como confirmação
 
 **Issue elegível**:
-Issue roteada a um projeto habilitado, pronta para agente, sem claim e sem
-bloqueios ou dependências pendentes, que também satisfaz as regras específicas
-do seu tracker.
+Issue roteada a um projeto habilitado, autorizada para seu fluxo de atendimento,
+sem claim e sem bloqueios ou dependências pendentes, que também satisfaz as
+regras específicas do seu tracker.
 _Avoid_: label como garantia de contexto completo, campos Jira como regra universal
 
 **Vaga**:
-Capacidade para um agente principal trabalhar ativamente; espera externa por
-CI, review do PR ou resposta humana não a ocupa.
+Capacidade para um agente principal trabalhar ativamente em implementação
+autônoma; espera externa por CI, review do PR ou resposta humana não a ocupa.
 _Avoid_: reserva até o merge, limite de subagentes ou de iterações
+
+**Sessão assistida**:
+Interação aberta entre o humano e o agente para conduzir um trabalho humano
+assistido. Permanece aberta enquanto aguarda o humano; seu encerramento não
+significa atendimento concluído.
+_Avoid_: vaga de execução autônoma, atendimento concluído como sessão encerrada
 
 **Pedido de ajuda**:
 Solicitação do agente que precisa de informação ou decisão humana, ou chegou ao
@@ -126,7 +144,8 @@ _Avoid_: log detalhado, log do subagente como atividade completa
 **Trabalho interrompido**:
 Trabalho cuja invocação parou sem desfecho válido, seja por queda do
 orquestrador, falha na execução ou parada declarada pelo agente. Fica parado
-até uma retomada manual ou uma liberação; nunca é reexecutado automaticamente.
+até uma retomada manual, uma retomada autorizada de trabalho humano assistido
+ou uma liberação; não é reexecutado sem autorização.
 _Avoid_: pedido de ajuda, intervenção necessária, falha como conclusão
 
 **Retomada manual**:
@@ -134,7 +153,13 @@ Continuidade de um trabalho solicitada explicitamente pelo operador a partir
 da sessão anterior e da área preservada.
 _Avoid_: recuperação automática, nova implementação para contornar uma falha
 
+**Retomada autorizada**:
+Uma próxima continuidade de um trabalho humano assistido interrompido que o
+operador autorizou explicitamente. Preservar a sessão não autoriza, por si só,
+sua retomada.
+_Avoid_: replay automático, sessão preservada como autorização
+
 **Conclusão**:
-Reconhecimento do merge externo do PR vinculado e confirmação do trabalho como
-done no tracker.
+Reconhecimento do merge externo do PR vinculado a um trabalho de implementação
+autônoma e confirmação desse trabalho como done no tracker.
 _Avoid_: PR aberto como conclusão, sucesso declarado pelo agente como merge
