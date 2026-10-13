@@ -1,12 +1,12 @@
 import type { ClaimMark, ClaimOutcome, IssueChange, IssueRef, IssueSnapshot, Known, TrackerPort } from "../tracker/port.js";
 import { PartialWriteError } from "../tracker/port.js";
 import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, type IssueWriteContext } from "./ops-events.js";
-import { noopObserver, type Observer } from "./observability.js";
+import { noopObserver, type FieldValue, type Observer } from "./observability.js";
 import { messageOf } from "./values.js";
 
-// The one owner of the "write, reread, grade" sequence for the orchestrator's writes on an
-// issue (ADR 0001). Reading a single implementation here covers both the normal path and the
-// reconciliation after a write error; the port only writes and never confirms.
+// The one owner of the "write, reread, confirm" sequence for the orchestrator's writes on an
+// issue (ADR 0001). A single implementation covers both the normal path and the reconciliation
+// after a write error: the reread is what confirms an alteration, never the adapter's report.
 
 export type StartDecision =
   | { status: "accepted" }
@@ -29,7 +29,15 @@ export type CompletionDecision =
 
 // What the caller knows about the write: the job it belongs to, why it is made and the evidence.
 // The ref, the origin and the abstract operation are the module's own.
-export type IssueWritesContext = Omit<IssueWriteContext, "ref" | "origin" | "operation">;
+export interface IssueWritesContext {
+  job?: string;
+  invocation?: string;
+  reason: string;
+  refs?: Record<string, FieldValue>;
+}
+
+// The orchestrator's writes on an issue, as named in the log.
+type IssueWriteOperation = "claim" | "release" | "done";
 
 // The claim and the doing state the reread does not show: the issue was written to but the start
 // is not confirmed, so an operator decides what happens next.
@@ -57,6 +65,12 @@ const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean
     marked.length === 0 || (present.known && !marked.some((item) => present.value.includes(item)));
   return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
 };
+
+// A release the reread does not confirm, with the cause the operator reads.
+const notConfirmedRelease = (reason: string): ReleaseDecision => ({
+  status: "not-confirmed",
+  reason: `liberação não confirmada pelo tracker: ${reason}`,
+});
 
 export class IssueWrites {
   private readonly obs: Observer;
@@ -95,9 +109,7 @@ export class IssueWrites {
       snapshot = await this.reread(ref);
     } catch (error) {
       snapshot = await this.reread(ref);
-      if (!markGone(snapshot, mark)) {
-        return { status: "not-confirmed", reason: `liberação não confirmada pelo tracker: ${messageOf(error)}` };
-      }
+      if (!markGone(snapshot, mark)) return notConfirmedRelease(messageOf(error));
       // The write failed or its answer was lost, and the reread shows the mark gone: the uncertainty
       // is resolved by evidence, not by assumption. Each part of the mark is a confirmed change.
       const detail = "confirmada por releitura após erro de escrita";
@@ -112,10 +124,7 @@ export class IssueWrites {
     this.reportChanges(write, changes?.map((change) =>
       removalConfirmedByReread(change, snapshot) ? { ...change, result: "confirmed" as const } : change));
     if (!markGone(snapshot, mark)) {
-      return {
-        status: "not-confirmed",
-        reason: `liberação não confirmada pelo tracker: ${snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura"}`,
-      };
+      return notConfirmedRelease(snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura");
     }
     return { status: "released" };
   }
@@ -152,16 +161,8 @@ export class IssueWrites {
     return { status: "intervention", reason: CLAIM_WRITE_ERROR_UNKNOWN, kind: "uncertain-write" };
   }
 
-  private writeContext(ref: IssueRef, operation: string, context: IssueWritesContext): IssueWriteContext {
-    return {
-      ref,
-      origin: "orquestrador",
-      operation,
-      reason: context.reason,
-      ...(context.job === undefined ? {} : { job: context.job }),
-      ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
-      ...(context.refs === undefined ? {} : { refs: context.refs }),
-    };
+  private writeContext(ref: IssueRef, operation: IssueWriteOperation, context: IssueWritesContext): IssueWriteContext {
+    return { ...context, ref, origin: "orquestrador", operation };
   }
 
   // A tracker write: the attempt is announced before, the concrete changes a partial failure

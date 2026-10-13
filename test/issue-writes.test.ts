@@ -111,6 +111,23 @@ test("a claim that landed but lost its answer is intervention, never a blind ret
   assert.equal(memory.calls("claim"), 1, "the ambiguous write is not repeated");
 });
 
+test("a partial claim failure reports the write that landed before the failure", async () => {
+  const memory = memoryOf(["1"]);
+  memory.failNext("claim", "parcial", "segunda escrita falhou");
+  const { writes, events } = moduleOf(memory);
+
+  const decision = await writes.start(REF("1"), { reason: "admissão" });
+  assert.equal(decision.status, "intervention");
+  assert.match(decision.status === "intervention" ? decision.reason : "", /origem não comprovada/);
+  assert.deepEqual(kinds(events), [
+    "issue-escrita-tentativa",
+    "issue-alteração-attempted",
+    "issue-escrita-incerta",
+  ]);
+  assert.equal(events[1]?.fields?.["operação"], "adicionar-label");
+  assert.equal(events[2]?.fields?.["erro"], "segunda escrita falhou");
+});
+
 test("a claim whose write failed and whose reread failed is intervention", async () => {
   const memory = memoryOf(["1"]);
   memory.failNext("claim", "falha-antes");

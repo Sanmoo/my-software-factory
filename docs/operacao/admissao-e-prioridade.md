@@ -5,8 +5,9 @@ Linguagem: [GLOSSARY](../../GLOSSARY.md). Representações concretas dos tracker
 [trackers](trackers.md). Execução e supervisão: [execução e supervisão](execucao-e-supervisao.md).
 
 O comportamento vive no código (`src/core/eligibility.ts`, `src/core/admission.ts`,
-`src/core/priority.ts`) e nos testes. Esta página descreve o que está implementado; uma
-mudança de regra exige mudança de código, testes e esta página, nesta ordem.
+`src/core/issue-writes.ts`, `src/core/priority.ts`) e nos testes. Esta página descreve o que
+está implementado; uma mudança de regra exige mudança de código, testes e esta página, nesta
+ordem.
 
 ## Descoberta e elegibilidade
 
