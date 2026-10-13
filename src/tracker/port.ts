@@ -53,10 +53,9 @@ export interface Comment {
   createdAt: string;
 }
 
-// One concrete write an adapter made (or found unnecessary) on an issue (observability,
-// decisions 23 and 24). The adapter says what it did, never what it wished: `confirmed` only
-// when it reread the tracker and saw the change; `attempted` when the call was accepted but not
-// confirmed; `unchanged` when the tracker already had the expected state (nothing was written).
+// The adapter only writes: it reports the operations it asked the vendor for, never their
+// result (ADR 0001). A graded change is core output, produced by comparing the snapshot before
+// the write with the reread; an adapter never says "confirmed".
 export type ChangeOperation =
   | "adicionar-label"
   | "remover-label"
@@ -78,24 +77,37 @@ export interface IssueChange {
   detail?: string;
 }
 
+// One write an adapter asked the vendor for, without any result: what it did, not what it
+// wished. A transition names the categories that count as reached (claim: in-progress; done:
+// done). The core grades every intent against the snapshots it read itself.
+export interface Intent {
+  operation: ChangeOperation;
+  // The label, account or transition concerned.
+  target?: string;
+  // For "transição"/"fechar": the status categories that count as the change having happened.
+  // Defaults to ["done"].
+  reaches?: StatusCategory[];
+}
+
+// What a write returned: the concrete operations it made, or a refusal for what is impossible in
+// the vendor (for example a transition the Jira workflow does not offer). Preconditions the core
+// can decide from a snapshot are not here.
+export interface WriteMade {
+  made: Intent[];
+}
+
+export interface WriteRefused {
+  refused: string;
+}
+
+export type WriteOutcome = WriteMade | WriteRefused;
+
 // A composite write that failed midway: the writes already made are reported with the error, so
 // a partial success is never hidden behind the failure of the next step.
 export class PartialWriteError extends Error {
-  constructor(message: string, readonly changes: IssueChange[]) {
+  constructor(message: string, readonly made: Intent[]) {
     super(message);
   }
-}
-
-export type ClaimOutcome =
-  | { status: "accepted"; changes?: IssueChange[] }
-  | { status: "rejected"; reason: string; changes?: IssueChange[] };
-
-export type DoneOutcome =
-  | { status: "done" | "already-done"; changes?: IssueChange[] }
-  | { status: "not-confirmed"; reason: string; changes?: IssueChange[] };
-
-export interface ReleaseOutcome {
-  changes: IssueChange[];
 }
 
 // What the factory's claim leaves on an issue, already normalized: the labels and the accounts
@@ -113,14 +125,14 @@ export interface TrackerPort {
   discoverCandidates(scope: TrackerScope): Promise<IssueRef[]>;
   readIssue(ref: IssueRef): Promise<IssueSnapshot>;
   // Registers claim + start; the caller must confirm via readIssue before running any agent.
-  claim(ref: IssueRef): Promise<ClaimOutcome>;
-  // Removes the claim mark only; never marks done. May report the concrete changes it made.
-  releaseClaim(ref: IssueRef): Promise<void | ReleaseOutcome>;
+  claim(ref: IssueRef): Promise<WriteOutcome>;
+  // Removes the claim mark only; never marks done. Reports the intents it made.
+  releaseClaim(ref: IssueRef): Promise<WriteOutcome>;
   readComments(ref: IssueRef): Promise<Comment[]>;
   // The core prefixes the marker; adapters never strip it. Returns the comment id.
   postComment(ref: IssueRef, body: string): Promise<string>;
-  // The adapter re-reads and confirms done; already-done counts as expected.
-  markDone(ref: IssueRef): Promise<DoneOutcome>;
+  // Marks the issue done; the core confirms via readIssue, and already-done is core knowledge.
+  markDone(ref: IssueRef): Promise<WriteOutcome>;
 }
 
 export function refKey(ref: IssueRef): string {

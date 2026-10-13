@@ -2,17 +2,15 @@ import { spawn } from "node:child_process";
 import type {
   ClaimMark,
   BlockerRef,
-  ClaimOutcome,
   Comment,
-  DoneOutcome,
-  IssueChange,
+  Intent,
   IssueRef,
   IssueSnapshot,
   Known,
   StatusCategory,
-  ReleaseOutcome,
   TrackerPort,
   TrackerScope,
+  WriteOutcome,
 } from "./port.js";
 import { PartialWriteError } from "./port.js";
 import { isObject } from "../core/values.js";
@@ -158,71 +156,53 @@ export class GitHubTracker implements TrackerPort {
     };
   }
 
-  async claim(ref: IssueRef): Promise<ClaimOutcome> {
-    const before = await this.fetchIssue(ref);
-    if (before.state === "closed") return { status: "rejected", reason: "issue fechada" };
-    if (this.isClaimed(before)) return { status: "rejected", reason: "issue já claimed" };
-
+  async claim(ref: IssueRef): Promise<WriteOutcome> {
     const path = this.issuePath(ref);
     const { claimedLabel, account } = this.options;
-    const label: IssueChange = { operation: "adicionar-label", target: claimedLabel, before: "ausente", result: "failed" };
-    const assignee: IssueChange = { operation: "atribuir", target: account, before: "sem a conta", result: "failed" };
-    const made: IssueChange[] = [];
+    const made: Intent[] = [];
     try {
       expectStatus(
         await this.call({ method: "POST", path: `${path}/labels`, body: { labels: [claimedLabel] } }),
         [200],
         "adicionar label de claim",
       );
-      made.push({ ...label, after: "presente", result: "attempted" });
+      made.push({ operation: "adicionar-label", target: claimedLabel });
       expectStatus(
         await this.call({ method: "POST", path: `${path}/assignees`, body: { assignees: [account] } }),
         [201],
         "atribuir conta do projeto",
       );
-      made.push({ ...assignee, after: "atribuída", result: "attempted" });
+      made.push({ operation: "atribuir", target: account });
     } catch (error) {
       if (made.length === 0) throw error;
       throw new PartialWriteError((error as Error).message, made);
     }
-
-    const after = await this.fetchIssue(ref);
-    const labelled = after.labels.includes(claimedLabel);
-    const assigned = after.assignees.includes(account);
-    const changes: IssueChange[] = [
-      { ...made[0]!, result: labelled ? "confirmed" : "attempted" },
-      { ...made[1]!, result: assigned ? "confirmed" : "attempted" },
-    ];
-    return labelled && assigned
-      ? { status: "accepted", changes }
-      : { status: "rejected", reason: "claim não confirmado na releitura", changes };
+    return { made };
   }
 
   claimMarkOf(_ref: IssueRef): ClaimMark {
     return { labels: [this.options.claimedLabel], assignees: [this.options.account] };
   }
 
-  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
+  async releaseClaim(ref: IssueRef): Promise<WriteOutcome> {
     const path = this.issuePath(ref);
     const { claimedLabel, account } = this.options;
-    const changes: IssueChange[] = [];
+    const made: Intent[] = [];
     try {
       const label = await this.call({ method: "DELETE", path: `${path}/labels/${encodeURIComponent(claimedLabel)}` });
       if (label.status !== 404) expectStatus(label, [200], "remover label de claim");
-      changes.push(label.status === 404
-        ? { operation: "remover-label", target: claimedLabel, before: "ausente", after: "ausente", result: "unchanged" }
-        : { operation: "remover-label", target: claimedLabel, before: "presente", after: "ausente", result: "attempted" });
+      made.push({ operation: "remover-label", target: claimedLabel });
       expectStatus(
         await this.call({ method: "DELETE", path: `${path}/assignees`, body: { assignees: [account] } }),
         [200],
         "remover atribuição da conta do projeto",
       );
-      changes.push({ operation: "remover-atribuição", target: account, result: "attempted" });
+      made.push({ operation: "remover-atribuição", target: account });
     } catch (error) {
-      if (changes.length === 0) throw error;
-      throw new PartialWriteError((error as Error).message, changes);
+      if (made.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, made);
     }
-    return { changes };
+    return { made };
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -240,14 +220,7 @@ export class GitHubTracker implements TrackerPort {
     return parseComment(response.body).id;
   }
 
-  async markDone(ref: IssueRef): Promise<DoneOutcome> {
-    const before = await this.fetchIssue(ref);
-    if (before.state === "closed") {
-      const changes: IssueChange[] = [{ operation: "fechar", before: "closed", after: "closed", result: "unchanged" }];
-      return before.stateReason === "completed"
-        ? { status: "already-done", changes }
-        : { status: "not-confirmed", reason: `fechada como ${before.stateReason ?? "sem motivo"}, não como completed`, changes };
-    }
+  async markDone(ref: IssueRef): Promise<WriteOutcome> {
     expectStatus(
       await this.call({
         method: "PATCH",
@@ -257,15 +230,7 @@ export class GitHubTracker implements TrackerPort {
       [200],
       "fechar issue",
     );
-    const after = await this.fetchIssue(ref);
-    const confirmed = after.state === "closed" && after.stateReason === "completed";
-    const changes: IssueChange[] = [{
-      operation: "fechar", before: "open", after: after.state === "closed" ? `closed (${after.stateReason ?? "sem motivo"})` : "open",
-      result: confirmed ? "confirmed" : "attempted",
-    }];
-    return confirmed
-      ? { status: "done", changes }
-      : { status: "not-confirmed", reason: "fechamento não confirmado na releitura", changes };
+    return { made: [{ operation: "fechar" }] };
   }
 
   // Native dependency edges. Not part of TrackerPort: used by the conformance check to

@@ -10,11 +10,11 @@ const stub = (name: string): TrackerPort => {
     claimMarkOf: (ref) => ({ labels: [`${name}:${ref.id}`], assignees: [] }),
     discoverCandidates: async (scope) => [{ tracker: "memory", project: scope.project, id: name }],
     readIssue: async (ref) => ({ title: await answer(ref) }) as never,
-    claim: async (ref) => ({ status: "rejected", reason: await answer(ref) }),
-    releaseClaim: async () => undefined,
+    claim: async (ref) => ({ made: [{ operation: "adicionar-label", target: await answer(ref) }] }),
+    releaseClaim: async () => ({ made: [] }),
     readComments: async () => [],
     postComment: async (ref) => answer(ref),
-    markDone: async (ref) => ({ status: "not-confirmed", reason: await answer(ref) }),
+    markDone: async (ref) => ({ made: [{ operation: "fechar", target: await answer(ref) }] }),
   };
 };
 
@@ -30,8 +30,8 @@ test("each call goes to the tracker configured for the issue's scope", async () 
   assert.equal((await router.readIssue(gh)).title, "gh-app:1");
   assert.equal((await router.readIssue(jira)).title, "jira-van:9");
   assert.equal(await router.postComment(jira, "x"), "jira-van:9");
-  assert.deepEqual(await router.claim(gh), { status: "rejected", reason: "gh-app:1" });
-  assert.deepEqual(await router.markDone(jira), { status: "not-confirmed", reason: "jira-van:9" });
+  assert.deepEqual(await router.claim(gh), { made: [{ operation: "adicionar-label", target: "gh-app:1" }] });
+  assert.deepEqual(await router.markDone(jira), { made: [{ operation: "fechar", target: "jira-van:9" }] });
   assert.deepEqual(await router.discoverCandidates({ project: "acme/other", readyLabel: "r" }), [
     { tracker: "memory", project: "acme/other", id: "gh-other" },
   ]);

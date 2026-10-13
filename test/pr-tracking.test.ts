@@ -15,7 +15,7 @@ import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
-import type { DoneOutcome, TrackerPort } from "../src/tracker/port.js";
+import type { TrackerPort } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
 
 // Job branch of issue 1 (see jobBranch) and target branch of the project.
@@ -248,10 +248,11 @@ test("a merge the tracker does not confirm stays waiting, and the next poll conf
     releaseClaim: (ref) => memory.releaseClaim(ref),
     readComments: (ref) => memory.readComments(ref),
     postComment: (ref, body) => memory.postComment(ref, body),
-    markDone: async (ref): Promise<DoneOutcome> => {
+    markDone: async (ref) => {
       if (refusals > 0) {
         refusals -= 1;
-        return { status: "not-confirmed", reason: "tracker ainda mostra in-progress" };
+        // The intent is reported but the write does not land: the core's reread shows it.
+        return { made: [{ operation: "fechar" }] };
       }
       return memory.markDone(ref);
     },

@@ -2,17 +2,15 @@ import {
   PartialWriteError,
   type BlockerRef,
   type ClaimMark,
-  type ClaimOutcome,
   type Comment,
-  type DoneOutcome,
-  type IssueChange,
+  type Intent,
   type IssueRef,
   type IssueSnapshot,
   type Known,
-  type ReleaseOutcome,
   type StatusCategory,
   type TrackerPort,
   type TrackerScope,
+  type WriteOutcome,
 } from "./port.js";
 
 // Jira Cloud adapter for the normalized TrackerPort. Credentials come only from the
@@ -297,47 +295,31 @@ export class JiraTracker implements TrackerPort {
     }
   }
 
-  // Adds the claimed label and runs the doing transition, then rereads: the start counts
-  // only when the tracker confirms both the claim and the In Progress category.
-  async claim(ref: IssueRef): Promise<ClaimOutcome> {
-    const before = await this.readIssue(ref);
-    if (!before.claimed.known) return { status: "rejected", reason: `claim não lido: ${before.claimed.reason}` };
-    if (before.claimed.value) return { status: "rejected", reason: "issue já claimed" };
+  // Adds the claimed label and runs the doing transition. A workflow that does not offer the
+  // configured transition is refused; everything else is reported as an intent and confirmed by
+  // the core's reread.
+  async claim(ref: IssueRef): Promise<WriteOutcome> {
     const doing = await this.transitionTo(ref.id, this.settings.doingTransition);
     if (doing === undefined) {
-      return { status: "rejected", reason: `transição '${this.settings.doingTransition}' indisponível para ${ref.id}` };
+      return { refused: `transição '${this.settings.doingTransition}' indisponível para ${ref.id}` };
     }
-    const made: IssueChange[] = [];
-    const categoryBefore = before.statusCategory.known ? before.statusCategory.value : undefined;
+    const made: Intent[] = [];
     try {
       await this.updateLabels(ref.id, [{ add: this.settings.claimedLabel }]);
-      made.push({ operation: "adicionar-label", target: this.settings.claimedLabel, before: "ausente", after: "presente", result: "attempted" });
+      made.push({ operation: "adicionar-label", target: this.settings.claimedLabel });
       await this.runTransition(ref.id, doing);
-      made.push({ operation: "transição", target: this.settings.doingTransition, ...(categoryBefore ? { before: categoryBefore } : {}), result: "attempted" });
+      made.push({ operation: "transição", target: this.settings.doingTransition, reaches: ["in-progress"] });
     } catch (error) {
       if (made.length === 0) throw error;
       throw new PartialWriteError((error as Error).message, made);
     }
-    const after = await this.readIssue(ref);
-    const labelled = after.claimed.known && after.claimed.value;
-    const inProgress = after.statusCategory.known && after.statusCategory.value === "in-progress";
-    const changes: IssueChange[] = [
-      { ...made[0]!, result: labelled ? "confirmed" : "attempted" },
-      {
-        ...made[1]!,
-        ...(after.statusCategory.known ? { after: after.statusCategory.value } : {}),
-        result: inProgress ? "confirmed" : "attempted",
-      },
-    ];
-    return labelled && inProgress
-      ? { status: "accepted", changes }
-      : { status: "rejected", reason: "início não confirmado pelo Jira", changes };
+    return { made };
   }
 
   // Removes the claimed label only; the status is left as it is.
-  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
+  async releaseClaim(ref: IssueRef): Promise<WriteOutcome> {
     await this.updateLabels(ref.id, [{ remove: this.settings.claimedLabel }]);
-    return { changes: [{ operation: "remover-label", target: this.settings.claimedLabel, after: "ausente", result: "attempted" }] };
+    return { made: [{ operation: "remover-label", target: this.settings.claimedLabel }] };
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
@@ -377,28 +359,13 @@ export class JiraTracker implements TrackerPort {
     return created.id;
   }
 
-  async markDone(ref: IssueRef): Promise<DoneOutcome> {
-    const before = await this.readIssue(ref);
-    if (before.statusCategory.known && before.statusCategory.value === "done") {
-      return { status: "already-done", changes: [{ operation: "transição", target: this.settings.doneTransition, before: "done", after: "done", result: "unchanged" }] };
-    }
-    const categoryBefore = before.statusCategory.known ? before.statusCategory.value : undefined;
+  async markDone(ref: IssueRef): Promise<WriteOutcome> {
     const done = await this.transitionTo(ref.id, this.settings.doneTransition);
     if (done === undefined) {
-      return { status: "not-confirmed", reason: `transição '${this.settings.doneTransition}' indisponível para ${ref.id}` };
+      return { refused: `transição '${this.settings.doneTransition}' indisponível para ${ref.id}` };
     }
     await this.runTransition(ref.id, done);
-    const after = await this.readIssue(ref);
-    const confirmed = after.statusCategory.known && after.statusCategory.value === "done";
-    const changes: IssueChange[] = [{
-      operation: "transição", target: this.settings.doneTransition,
-      ...(categoryBefore ? { before: categoryBefore } : {}),
-      ...(after.statusCategory.known ? { after: after.statusCategory.value } : {}),
-      result: confirmed ? "confirmed" : "attempted",
-    }];
-    return confirmed
-      ? { status: "done", changes }
-      : { status: "not-confirmed", reason: "categoria Done não confirmada pelo Jira", changes };
+    return { made: [{ operation: "transição", target: this.settings.doneTransition, reaches: ["done"] }] };
   }
 
   private async transitionTo(key: string, name: string): Promise<string | undefined> {

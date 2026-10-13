@@ -1,17 +1,15 @@
 import type {
   BlockerRef,
   ClaimMark,
-  ClaimOutcome,
   Comment,
-  DoneOutcome,
-  IssueChange,
+  Intent,
   IssueRef,
   IssueSnapshot,
   Known,
-  ReleaseOutcome,
   StatusCategory,
   TrackerPort,
   TrackerScope,
+  WriteOutcome,
 } from "./port.js";
 import { PartialWriteError, refKey } from "./port.js";
 import { isObject, type Obj } from "../core/values.js";
@@ -48,7 +46,7 @@ export type TrackerOperation = "claim" | "releaseClaim" | "markDone" | "readIssu
 // `parcial` stops after the first step of a composite write with a PartialWriteError,
 // `invisível` accepts the write but none of it is visible on the reread, `ultima-invisivel`
 // accepts the write but only its last step is not visible, `sem-confirmacao` writes and reports
-// attempts without an error, `recusa` refuses the write, and `releitura-falha` makes the next
+// the intents without an error, `recusa` refuses the write, and `releitura-falha` makes the next
 // read fail.
 export type FailureScenario =
   | "falha-antes"
@@ -65,9 +63,9 @@ interface PlannedFailure {
   message?: string;
 }
 
-// One concrete write of a composite operation: the change it reports and the mutation it makes.
+// One concrete write of a composite operation: the intent it reports and the mutation it makes.
 interface WriteStep {
-  change: IssueChange;
+  intent: Intent;
   apply: () => void;
 }
 
@@ -206,23 +204,20 @@ export class MemoryTracker implements TrackerPort {
     return snapshot;
   }
 
-  async claim(ref: IssueRef): Promise<ClaimOutcome> {
+  async claim(ref: IssueRef): Promise<WriteOutcome> {
     this.count("claim");
     const issue = this.require(ref);
     const failure = this.takeFailure("claim");
     if (failure?.scenario === "recusa") {
-      return { status: "rejected", reason: failure.message ?? "claim recusado pelo fornecedor" };
+      return { refused: failure.message ?? "claim recusado pelo fornecedor" };
     }
-    const claimed = this.claimedOf(issue);
-    if (claimed.known && claimed.value) return { status: "rejected", reason: "issue já claimed" };
-    if (!issue.labels.known) return { status: "rejected", reason: `labels não lidas: ${issue.labels.reason}` };
-    return { status: "accepted", changes: this.executeWrite(this.claimPlan(issue), failure) };
+    return { made: this.executeWrite(this.claimPlan(issue), failure) };
   }
 
-  async releaseClaim(ref: IssueRef): Promise<ReleaseOutcome> {
+  async releaseClaim(ref: IssueRef): Promise<WriteOutcome> {
     this.count("releaseClaim");
     const issue = this.require(ref);
-    return { changes: this.executeWrite(this.releasePlan(issue), this.takeFailure("releaseClaim")) };
+    return { made: this.executeWrite(this.releasePlan(issue), this.takeFailure("releaseClaim")) };
   }
 
   // Fixture control: someone else's claim (not the factory's mark) appears or goes away.
@@ -257,19 +252,15 @@ export class MemoryTracker implements TrackerPort {
     return id;
   }
 
-  async markDone(ref: IssueRef): Promise<DoneOutcome> {
+  async markDone(ref: IssueRef): Promise<WriteOutcome> {
     this.count("markDone");
     const issue = this.require(ref);
     const failure = this.takeFailure("markDone");
-    if (issue.statusCategory.known && issue.statusCategory.value === "done") {
-      return { status: "already-done", changes: [{ operation: "fechar", before: "done", after: "done", result: "unchanged" }] };
-    }
-    const before = issue.statusCategory.known ? issue.statusCategory.value : undefined;
     const steps: WriteStep[] = [{
-      change: { operation: "fechar", ...(before === undefined ? {} : { before }), after: "done", result: "confirmed" },
+      intent: { operation: "fechar", reaches: ["done"] },
       apply: () => { issue.statusCategory = { known: true, value: "done" }; },
     }];
-    return { status: "done", changes: this.executeWrite(steps, failure) };
+    return { made: this.executeWrite(steps, failure) };
   }
 
   // The mark the factory leaves on the issue: add every label and account of the mark and move
@@ -278,7 +269,7 @@ export class MemoryTracker implements TrackerPort {
     const steps: WriteStep[] = [];
     for (const label of this.mark.labels) {
       steps.push({
-        change: { operation: "adicionar-label", target: label, before: "ausente", after: "presente", result: "confirmed" },
+        intent: { operation: "adicionar-label", target: label },
         apply: () => {
           const labels = issue.labels;
           if (!labels.known || labels.value.includes(label)) return;
@@ -288,7 +279,7 @@ export class MemoryTracker implements TrackerPort {
     }
     for (const account of this.mark.assignees) {
       steps.push({
-        change: { operation: "atribuir", target: account, before: "ausente", after: "presente", result: "confirmed" },
+        intent: { operation: "atribuir", target: account },
         apply: () => {
           const assignees = issue.assignees;
           if (!assignees.known || assignees.value.includes(account)) return;
@@ -298,22 +289,20 @@ export class MemoryTracker implements TrackerPort {
     }
     if (issue.statusCategory.known && issue.statusCategory.value === "to-do") {
       steps.push({
-        change: { operation: "transição", target: "doing", before: "to-do", after: "in-progress", result: "confirmed" },
+        intent: { operation: "transição", target: "doing", reaches: ["in-progress"] },
         apply: () => { issue.statusCategory = { known: true, value: "in-progress" }; },
       });
     }
     return steps;
   }
 
-  // Remove every label and account of the mark. A part already absent is an `unchanged` change.
+  // Remove every label and account of the mark. A part already absent is still attempted; the
+  // core's comparison of the snapshots says it was `unchanged`.
   private releasePlan(issue: StoredIssue): WriteStep[] {
     const steps: WriteStep[] = [];
     for (const label of this.mark.labels) {
-      const had = issue.labels.known && issue.labels.value.includes(label);
       steps.push({
-        change: had
-          ? { operation: "remover-label", target: label, before: "presente", after: "ausente", result: "confirmed" }
-          : { operation: "remover-label", target: label, before: "ausente", after: "ausente", result: "unchanged" },
+        intent: { operation: "remover-label", target: label },
         apply: () => {
           const labels = issue.labels;
           if (!labels.known) return;
@@ -322,11 +311,8 @@ export class MemoryTracker implements TrackerPort {
       });
     }
     for (const account of this.mark.assignees) {
-      const had = issue.assignees.known && issue.assignees.value.includes(account);
       steps.push({
-        change: had
-          ? { operation: "remover-atribuição", target: account, before: "presente", after: "ausente", result: "confirmed" }
-          : { operation: "remover-atribuição", target: account, before: "ausente", after: "ausente", result: "unchanged" },
+        intent: { operation: "remover-atribuição", target: account },
         apply: () => {
           const assignees = issue.assignees;
           if (!assignees.known) return;
@@ -337,9 +323,9 @@ export class MemoryTracker implements TrackerPort {
     return steps;
   }
 
-  // Runs the steps under the queued plan, if any, and reports the changes the call produced.
-  // A failure plan is consumed by the next call, never repeated by itself.
-  private executeWrite(steps: WriteStep[], failure: PlannedFailure | undefined): IssueChange[] {
+  // Runs the steps under the queued plan, if any, and reports the intents the call made. A
+  // failure plan is consumed by the next call, never repeated by itself.
+  private executeWrite(steps: WriteStep[], failure: PlannedFailure | undefined): Intent[] {
     const scenario = failure?.scenario;
     if (scenario === "falha-antes") throw new Error(failure?.message ?? "falha de escrita antes de tocar o fornecedor");
     const applied = scenario === "invisível" ? 0
@@ -348,14 +334,10 @@ export class MemoryTracker implements TrackerPort {
       : steps.length;
     for (let index = 0; index < applied; index += 1) steps[index]!.apply();
     if (scenario === "parcial") {
-      const made = steps.slice(0, applied).map((step) => ({ ...step.change, result: "attempted" as const }));
-      throw new PartialWriteError(failure?.message ?? "escrita parcial", made);
+      throw new PartialWriteError(failure?.message ?? "escrita parcial", steps.slice(0, applied).map((step) => step.intent));
     }
     if (scenario === "resposta-perdida") throw new Error(failure?.message ?? "resposta da escrita perdida");
-    if (scenario === "invisível" || scenario === "ultima-invisivel" || scenario === "sem-confirmacao") {
-      return steps.map((step) => ({ ...step.change, result: "attempted" as const }));
-    }
-    return steps.map((step) => ({ ...step.change }));
+    return steps.map((step) => step.intent);
   }
 
   private takeFailure(operation: TrackerOperation): PlannedFailure | undefined {

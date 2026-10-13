@@ -252,7 +252,7 @@ async function writeChecks(
   log("elegibilidade bloqueada antes", verdictOf(afterLink, operator).map((r) => `${r.rule}: ${r.reason}`));
 
   // The blocker goes first: claim, a second claim that must be refused, [msf] comment, done.
-  check((await probe.claim(reference(blocker))).status === "accepted", "claim da bloqueadora não aceito");
+  check("made" in await probe.claim(reference(blocker)), "claim da bloqueadora não aceito");
   log("claim bloqueadora", "accepted; label agent-claimed e transição doing confirmadas por reread");
   const again = await probe.claim(reference(blocker));
   log("segundo claim bloqueadora", again);
@@ -280,7 +280,7 @@ async function writeChecks(
   check(unblocked.blockers.known && unblocked.blockers.value.every((b) => b.terminal.known && b.terminal.value), "bloqueio não ficou terminal");
   log("elegibilidade bloqueada depois", verdictOf(unblocked, operator).map((r) => `${r.rule}: ${r.reason}`));
 
-  check((await tracker.claim(reference(blocked))).status === "accepted", "claim da bloqueada não aceito");
+  check("made" in await tracker.claim(reference(blocked)), "claim da bloqueada não aceito");
   log("claim bloqueada", "accepted");
   await postFactoryComment(tracker, reference(blocked), "teste de conformidade do adapter Jira");
   log("done bloqueada", await tracker.markDone(reference(blocked)));

@@ -1,4 +1,4 @@
-import type { ClaimMark, ClaimOutcome, IssueChange, IssueRef, IssueSnapshot, Known, TrackerPort } from "../tracker/port.js";
+import type { ClaimMark, Intent, IssueChange, IssueRef, IssueSnapshot, Known, TrackerPort } from "../tracker/port.js";
 import { PartialWriteError } from "../tracker/port.js";
 import { issueChangeEvent, issueWriteAttempt, issueWriteFailure, type IssueWriteContext } from "./ops-events.js";
 import { noopObserver, type FieldValue, type Observer } from "./observability.js";
@@ -7,6 +7,10 @@ import { messageOf } from "./values.js";
 // The one owner of the "write, reread, confirm" sequence for the orchestrator's writes on an
 // issue (ADR 0001). A single implementation covers both the normal path and the reconciliation
 // after a write error: the reread is what confirms an alteration, never the adapter's report.
+//
+// The adapter only writes and reports the intents it made. Everything the core can decide from a
+// normalized snapshot -- an issue already claimed, a claim that cannot be read, an issue already
+// done, an unreadable status -- is decided here, before the write.
 
 export type StartDecision =
   | { status: "accepted" }
@@ -48,23 +52,72 @@ const CLAIM_WRITE_ERROR_CLAIMED = "erro de escrita no claim; tracker mostra clai
 const CLAIM_WRITE_ERROR_EMPTY = "erro de escrita no claim; nada registrado no tracker, nova tentativa no próximo polling";
 const CLAIM_WRITE_ERROR_UNKNOWN = "erro de escrita no claim e estado externo desconhecido";
 
-// A removal the reread shows as done: the label is no longer on the issue, or the account is no
-// longer among its assignees. Each change is judged by its own field, so a removal the reread
-// cannot see, or a change without a target, stays attempted.
-const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot | undefined): boolean => {
-  if (snapshot === undefined || change.result !== "attempted" || change.target === undefined) return false;
-  if (change.operation === "remover-label") return snapshot.labels.known && !snapshot.labels.value.includes(change.target);
-  if (change.operation === "remover-atribuição") return snapshot.assignees.known && !snapshot.assignees.value.includes(change.target);
-  return false;
+// No snapshot means nothing could be read: no precondition can be decided and nothing is
+// confirmed by it. The caller decides whether to retry (write) or wait (release, done).
+const BEFORE_UNREADABLE = "estado externo ilegível antes da escrita";
+const REREAD_UNAVAILABLE = "releitura indisponível";
+const DONE_NOT_SHOWN = "releitura não mostra done";
+const CONFIRMED_AFTER_WRITE_ERROR = "confirmada por releitura após erro de escrita";
+
+// Which snapshot field each intent concerns, and the state the write intends to leave it in.
+const FIELD_OF: Partial<Record<Intent["operation"], { field: "labels" | "assignees"; expected: boolean }>> = {
+  "adicionar-label": { field: "labels", expected: true },
+  "remover-label": { field: "labels", expected: false },
+  "atribuir": { field: "assignees", expected: true },
+  "remover-atribuição": { field: "assignees", expected: false },
 };
 
-// The reread shows the factory's claim mark gone: none of its labels or accounts is left on the
-// issue. Status and other people's assignments do not matter; an unreadable field proves nothing.
-const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean => {
-  const absent = (present: Known<string[]>, marked: string[]): boolean =>
-    marked.length === 0 || (present.known && !marked.some((item) => present.value.includes(item)));
-  return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
+const presentIn = (known: Known<string[]> | undefined, target: string): boolean | undefined => {
+  if (known === undefined || !known.known) return undefined;
+  return known.value.includes(target);
 };
+
+const stateOf = (present: boolean): string => (present ? "presente" : "ausente");
+
+const withoutTarget = (intent: Intent): IssueChange => ({
+  operation: intent.operation,
+  ...(intent.target === undefined ? {} : { target: intent.target }),
+  // Replaced by the grading below; an intent alone is never more than an attempt.
+  result: "attempted",
+});
+
+// Grades one intent against the snapshot read before the write and the reread, with no I/O and no
+// events: the adapter reports the attempt, this function says what the tracker shows. A missing
+// before or after leaves the change unconfirmed -- an attempt is all that can be said without it.
+export function gradeChange(intent: Intent, before?: IssueSnapshot, after?: IssueSnapshot): IssueChange {
+  const field = FIELD_OF[intent.operation];
+  if (field !== undefined) {
+    const target = intent.target ?? "";
+    const beforeState = before === undefined ? undefined : presentIn(before[field.field], target);
+    const afterState = after === undefined ? undefined : presentIn(after[field.field], target);
+    const change = withoutTarget(intent);
+    if (beforeState !== undefined) change.before = stateOf(beforeState);
+    if (afterState !== undefined) change.after = stateOf(afterState);
+    change.result = beforeState === undefined || afterState === undefined
+      ? "attempted"
+      : afterState !== field.expected
+        ? "attempted"
+        : beforeState === field.expected ? "unchanged" : "confirmed";
+    return change;
+  }
+  if (intent.operation === "transição" || intent.operation === "fechar") {
+    // A transition is confirmed when the reread shows one of the categories it reaches.
+    const reaches = intent.reaches ?? ["done"];
+    const beforeState = before?.statusCategory.known ? before.statusCategory.value : undefined;
+    const afterState = after?.statusCategory.known ? after.statusCategory.value : undefined;
+    const change = withoutTarget(intent);
+    if (beforeState !== undefined) change.before = beforeState;
+    if (afterState !== undefined) change.after = afterState;
+    const reached = afterState !== undefined && reaches.includes(afterState);
+    const already = beforeState !== undefined && reaches.includes(beforeState);
+    change.result = beforeState === undefined || afterState === undefined
+      ? "attempted"
+      : reached ? (already ? "unchanged" : "confirmed") : "attempted";
+    return change;
+  }
+  // A comment leaves no snapshot evidence: one attempt, never a confirmation.
+  return withoutTarget(intent);
+}
 
 // A release the reread does not confirm, with the cause the operator reads.
 const notConfirmedRelease = (reason: string): ReleaseDecision => ({
@@ -83,70 +136,82 @@ export class IssueWrites {
 
   async start(ref: IssueRef, context: IssueWritesContext): Promise<StartDecision> {
     const write = this.writeContext(ref, "claim", context);
-    let claimed: ClaimOutcome;
+    const before = await this.reread(ref);
+    // Preconditions decided from the previous read: a claim is never taken twice, and an
+    // unreadable claim is never presumed absent.
+    if (before === undefined) return { status: "retry", reason: BEFORE_UNREADABLE };
+    if (!before.claimed.known) return { status: "refused", reason: `claim não lido: ${before.claimed.reason}` };
+    if (before.claimed.value) return { status: "refused", reason: "issue já claimed" };
+
+    let made: Intent[];
     try {
-      claimed = await this.writeIssue(write, () => this.tracker.claim(ref));
+      const outcome = await this.writeIssue(write, () => this.tracker.claim(ref), before);
+      if ("refused" in outcome) return { status: "refused", reason: outcome.refused };
+      made = outcome.made;
     } catch {
       return this.reconcileClaimError(ref);
     }
-    this.reportChanges(write, claimed.changes);
-    if (claimed.status === "rejected") return { status: "refused", reason: claimed.reason };
-    const snapshot = await this.reread(ref);
-    const started = snapshot !== undefined
-      && snapshot.claimed.known && snapshot.claimed.value
-      && snapshot.statusCategory.known && snapshot.statusCategory.value === "in-progress";
+    const after = await this.reread(ref);
+    this.reportIntents(write, made, before, after);
+    const started = after !== undefined
+      && after.claimed.known && after.claimed.value
+      && after.statusCategory.known && after.statusCategory.value === "in-progress";
     return started ? { status: "accepted" } : { status: "intervention", reason: UNRESOLVED_START, kind: "unconfirmed-start" };
   }
 
   async release(ref: IssueRef, context: IssueWritesContext): Promise<ReleaseDecision> {
     const write = this.writeContext(ref, "release", context);
     const mark = this.tracker.claimMarkOf(ref);
-    let changes: IssueChange[] | undefined;
-    let snapshot: IssueSnapshot | undefined;
+    const before = await this.reread(ref);
+    if (before === undefined) return notConfirmedRelease(REREAD_UNAVAILABLE);
+    let made: Intent[];
+    let after: IssueSnapshot | undefined;
     try {
-      const outcome = await this.writeIssue(write, async () => this.tracker.releaseClaim(ref));
-      changes = outcome?.changes;
-      snapshot = await this.reread(ref);
+      const outcome = await this.writeIssue(write, () => this.tracker.releaseClaim(ref), before);
+      if ("refused" in outcome) return notConfirmedRelease(outcome.refused);
+      made = outcome.made;
+      after = await this.reread(ref);
     } catch (error) {
-      snapshot = await this.reread(ref);
-      if (!markGone(snapshot, mark)) return notConfirmedRelease(messageOf(error));
+      after = await this.reread(ref);
+      if (!markGone(after, mark)) return notConfirmedRelease(messageOf(error));
       // The write failed or its answer was lost, and the reread shows the mark gone: the uncertainty
       // is resolved by evidence, not by assumption. Each part of the mark is a confirmed change.
-      const detail = "confirmada por releitura após erro de escrita";
-      for (const target of mark.labels) {
-        this.obs.emit(issueChangeEvent(write, { operation: "remover-label", target, result: "confirmed", after: "ausente", detail }));
-      }
-      for (const target of mark.assignees) {
-        this.obs.emit(issueChangeEvent(write, { operation: "remover-atribuição", target, result: "confirmed", after: "ausente", detail }));
-      }
+      this.reportIntents(write, intentsOfMark(mark), before, after, CONFIRMED_AFTER_WRITE_ERROR);
+      return { status: "released" };
     }
-    // The reread decides what each change was: an accepted call alone is only an attempt.
-    this.reportChanges(write, changes?.map((change) =>
-      removalConfirmedByReread(change, snapshot) ? { ...change, result: "confirmed" as const } : change));
-    if (!markGone(snapshot, mark)) {
-      return notConfirmedRelease(snapshot === undefined ? "releitura indisponível" : "claim ainda visível na releitura");
+    // The reread decides what each intent was: an accepted call alone is only an attempt.
+    this.reportIntents(write, made, before, after);
+    if (!markGone(after, mark)) {
+      return notConfirmedRelease(after === undefined ? REREAD_UNAVAILABLE : "claim ainda visível na releitura");
     }
     return { status: "released" };
   }
 
   async complete(ref: IssueRef, context: IssueWritesContext): Promise<CompletionDecision> {
     const write = this.writeContext(ref, "done", context);
+    const before = await this.reread(ref);
+    if (before === undefined) return { status: "pending", reason: REREAD_UNAVAILABLE };
+    // An unreadable category proves nothing: the reason the tracker gave is the decision's reason.
+    if (!before.statusCategory.known) return { status: "pending", reason: before.statusCategory.reason };
+    if (before.statusCategory.value === "done") {
+      // Already done: nothing is written and the change says so.
+      this.obs.emit(issueChangeEvent(write, gradeChange({ operation: "fechar" }, before, before)));
+      return { status: "done" };
+    }
+    let made: Intent[];
     try {
-      const outcome = await this.writeIssue(write, () => this.tracker.markDone(ref));
-      if (outcome.status === "not-confirmed") {
-        this.reportChanges(write, outcome.changes);
-        return { status: "pending", reason: outcome.reason };
-      }
-      // The reread is the evidence: an adapter that only attempted the write is confirmed by it.
-      // A reread that fails keeps the job pending with the failure as its reason.
-      const snapshot = await this.tracker.readIssue(ref);
-      const confirmed = snapshot.statusCategory.known && snapshot.statusCategory.value === "done";
-      this.reportChanges(write, outcome.changes?.map((change) =>
-        confirmed && change.result === "attempted" ? { ...change, result: "confirmed" as const } : change));
-      return confirmed ? { status: "done" } : { status: "pending", reason: "releitura não mostra done" };
+      const outcome = await this.writeIssue(write, () => this.tracker.markDone(ref), before);
+      if ("refused" in outcome) return { status: "pending", reason: outcome.refused };
+      made = outcome.made;
     } catch (error) {
       return { status: "pending", reason: messageOf(error) };
     }
+    // The reread is the evidence: an adapter that only attempted the write is confirmed by it.
+    // A reread that fails keeps the job pending with the failure as its reason.
+    const after = await this.reread(ref);
+    this.reportIntents(write, made, before, after);
+    const confirmed = after !== undefined && after.statusCategory.known && after.statusCategory.value === "done";
+    return confirmed ? { status: "done" } : { status: "pending", reason: DONE_NOT_SHOWN };
   }
 
   // After a claim write error the external state is reread before anything else (P02): a claim
@@ -165,25 +230,31 @@ export class IssueWrites {
     return { ...context, ref, origin: "orquestrador", operation };
   }
 
-  // A tracker write: the attempt is announced before, the concrete changes a partial failure
-  // reported after, and the failure itself last. The error travels to the caller, which knows
-  // whether the sequence can continue.
-  private async writeIssue<T extends { changes?: IssueChange[] } | void>(
-    context: IssueWriteContext,
-    write: () => Promise<T>,
-  ): Promise<T> {
+  // A tracker write: the attempt is announced before, the intents a partial failure reported
+  // after, and the failure itself last. The error travels to the caller, which knows whether the
+  // sequence can continue. The intents are graded without a reread, so they stay at most attempted.
+  private async writeIssue<T>(context: IssueWriteContext, write: () => Promise<T>, before: IssueSnapshot): Promise<T> {
     this.obs.emit(issueWriteAttempt(context));
     try {
       return await write();
     } catch (error) {
-      if (error instanceof PartialWriteError) this.reportChanges(context, error.changes);
+      if (error instanceof PartialWriteError) this.reportIntents(context, error.made, before, undefined);
       this.obs.emit(issueWriteFailure(context, messageOf(error), true));
       throw error;
     }
   }
 
-  private reportChanges(context: IssueWriteContext, changes: readonly IssueChange[] | undefined): void {
-    for (const change of changes ?? []) this.obs.emit(issueChangeEvent(context, change));
+  private reportIntents(
+    context: IssueWriteContext,
+    intents: readonly Intent[],
+    before: IssueSnapshot | undefined,
+    after: IssueSnapshot | undefined,
+    detail?: string,
+  ): void {
+    for (const intent of intents) {
+      const change = gradeChange(intent, before, after);
+      this.obs.emit(issueChangeEvent(context, detail === undefined ? change : { ...change, detail }));
+    }
   }
 
   // Rereads the issue: undefined when the reread itself fails, so nothing is confirmed by it.
@@ -195,3 +266,18 @@ export class IssueWrites {
     }
   }
 }
+
+// The intents a release of this mark makes, in the order the adapter would report them. Used when
+// the write errored but the reread shows the mark gone: evidence replaces the lost report.
+const intentsOfMark = (mark: ClaimMark): Intent[] => [
+  ...mark.labels.map((target): Intent => ({ operation: "remover-label", target })),
+  ...mark.assignees.map((target): Intent => ({ operation: "remover-atribuição", target })),
+];
+
+// The reread shows the factory's claim mark gone: none of its labels or accounts is left on the
+// issue. Status and other people's assignments do not matter; an unreadable field proves nothing.
+const markGone = (snapshot: IssueSnapshot | undefined, mark: ClaimMark): boolean => {
+  const absent = (present: Known<string[]>, marked: string[]): boolean =>
+    marked.length === 0 || (present.known && !marked.some((item) => present.value.includes(item)));
+  return snapshot !== undefined && absent(snapshot.labels, mark.labels) && absent(snapshot.assignees, mark.assignees);
+};
