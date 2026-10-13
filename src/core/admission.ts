@@ -7,7 +7,7 @@ import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, transitionJob, type Continuation, type Job, type JobState, type PrStatus, type Trigger } from "./job.js";
 import {
   continuationCauses, describeItem, directedReply, feedbackCause, judgeConflict, judgePrFeedback, needsTriage, noteManualResume,
-  planCommands, planContinuation, receiveFeedback, recordTriageOutcome,
+  planCommands, planContinuation, planItems, receiveFeedback, recordTriageOutcome,
   resumeRefusal, triageInProgress, type DirectedReplyItem, type FeedbackItem, type PlanStep, type TriageOutcome,
 } from "./feedback.js";
 import { unreadableKeys, type JobStore } from "./job-store.js";
@@ -539,7 +539,7 @@ export class Admission {
     // advances or stays according to the outcome of this invocation.
     const { job: planned, plan, causes } = planContinuation(job, kind);
     await this.persist(planned);
-    const count = plan.step === "continue" ? plan.items.length : plan.step === "list" ? plan.comments.length + plan.replies.length : plan.choice.length + plan.retained.length;
+    const count = planItems(plan).length;
     const delivered = count > 0 ? `; ${count} item(ns) de feedback entregue(s)` : "";
     const triage = plan.step === "continue" ? undefined : plan.step;
     const how = triage === "list" ? " (triagem do feedback do PR)" : triage === "apply" ? " (aplica a escolha da triagem)" : "";

@@ -3,7 +3,7 @@ import test from "node:test";
 import { COMPLETION_SIGNAL } from "../src/runtime/docker-invocation.js";
 import { continuationItems, continuationPrompt, implementPrompt } from "../src/runtime/docker-prompt.js";
 import type { RunModels } from "../src/runtime/docker-config.js";
-import type { ContinuationPlan, FeedbackItem } from "../src/core/feedback.js";
+import { describeItem, type ContinuationPlan, type FeedbackItem } from "../src/core/feedback.js";
 
 const models: RunModels = {
   implementer: "github-copilot/gpt-6-luna",
@@ -151,6 +151,19 @@ test("the apply step renders the operator's choice and the retained items", () =
   assert.ok(prompt.includes("PR em conflito com main (head h1, base b1)"), "a retained conflict");
   assert.match(prompt, /Apply only the items the operator chose/);
   assert.ok(prompt.includes("git rebase origin/main"), "a retained conflict still rebases");
+});
+
+test("the runtime reuses the core short description for every item but the directed reply", () => {
+  const items = [reviewItem("troque o nome"), inlineItem("troque o título"), checkItem("test"), checkItem("deploy", "unknown"), conflictItem];
+  assert.deepEqual(
+    continuationItems({ step: "continue", items }),
+    items.map((item) => `- ${describeItem(item)}`),
+    "one description per item kind, shared with the core; only the directed reply gets the runtime's framing",
+  );
+  assert.deepEqual(
+    continuationItems({ step: "continue", items: [replyItem("olhe a doc")] }),
+    ["- resposta dirigida do operador: olhe a doc"],
+  );
 });
 
 test("the rendered items are the lines the runner counts for delivery", () => {

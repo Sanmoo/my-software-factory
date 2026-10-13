@@ -105,10 +105,17 @@ Regras de leitura de feedback estão em [trackers](trackers.md). O efeito:
   para a próxima invocação.
 - Comentário humano novo no PR **não vira correção direta**: a correção invoca a triagem
   (`/skill:gh-address-comments`), que numera threads e comentários com resumo e proposta e
-  termina como pedido de ajuda, **sem mudar código nem fazer push**. Só o que o operador
-  escolher é aplicado, na retomada, junto com os checks com falha e o conflito do mesmo
-  lote (itens retidos). Item não citado fica sem ação e com a thread aberta.
-- Lote só com check com falha e/ou conflito vai direto para correção.
+  termina como pedido de ajuda, **sem mudar código nem fazer push**. Enquanto a triagem não
+  termina, a fase fica explícita: **listando** enquanto a listagem não chega ao pedido de ajuda
+  (uma invocação interrompida ou sem desfecho válido não conclui a triagem, e a retomada refaz a
+  listagem) e **aguardando escolha** depois dela. Só o que o operador escolher é aplicado, na
+  retomada, junto com os demais itens do mesmo lote (**itens retidos**: checks com falha, conflito
+  e respostas dirigidas), que não passam pela escolha. Item não citado fica sem ação e com a
+  thread aberta.
+- Resposta dirigida no lote de uma triagem chega à listagem como orientação do operador e fica
+  retida para a retomada que aplica a escolha.
+- Lote sem comentário humano do PR — só checks com falha, conflito e/ou respostas dirigidas —
+  vai direto para a retomada ou correção, sem triagem.
 - Se a skill de triagem não estiver no perfil autorizado, a issue não é admitida e
   comentário humano vira pedido de ajuda visível, nunca correção sem triagem.
 - A triagem exige `python3` na imagem do runner.
@@ -132,9 +139,11 @@ Os comandos são sempre dirigidos a uma instância, na forma
 - `pause` impede novas admissões e não encerra trabalhos ativos nem o acompanhamento de
   PRs em espera. `unpause` volta a admitir.
 - `resume` pede continuidade sem informação nova; `reply` transmite resposta dirigida;
-  ambos têm o mesmo efeito de uma resposta `agent:`. Sem sessão/área/perfil necessário, a
-  retomada **não** inicia conversa nova: vira pedido de ajuda visível e preserva os
-  artefatos.
+  ambos têm o mesmo efeito de uma resposta `agent:`, **exceto** enquanto a triagem do
+  feedback do PR aguarda a escolha do operador: aí `resume` é **recusado** com uma mensagem
+  copiável que orienta responder com `reply … nenhum` (ou com a escolha), pois a triagem
+  termina só com essa resposta. Sem sessão/área/perfil necessário, a retomada **não** inicia
+  conversa nova: vira pedido de ajuda visível e preserva os artefatos.
 - `release` remove a marca de claim e encerra o acompanhamento, preservando área, sessão e
   PR; não move a issue para done nem fecha o PR.
 

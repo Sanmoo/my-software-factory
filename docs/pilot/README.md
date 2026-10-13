@@ -84,9 +84,11 @@ não lista ferramentas sem chamar o modelo, então a ferramenta `subagent` não 
 Comentário humano novo no PR (conversa, inline ou corpo de review) não vira correção direta: a
 correção invoca `/skill:gh-address-comments`, que numera threads e comentários com resumo e proposta
 e termina como pedido de ajuda (sem mudar código nem fazer push). Responda por `./msf <instância> reply` ou `agent:` na
-issue; a retomada aplica só o que você escolheu (`1 e 3`, `2: responda que X`), junto com os checks com
-falha e o conflito do mesmo lote. Item não citado fica sem ação e com o thread aberto. Lote só com
-check com falha e/ou conflito vai direto para correção.
+issue; a retomada aplica só o que você escolheu (`1 e 3`, `2: responda que X`), junto com os demais itens
+retidos do mesmo lote (checks com falha, conflito e respostas dirigidas). Item não citado fica sem ação e com
+o thread aberto. Lote sem comentário humano do PR — só checks com falha, conflito e/ou respostas dirigidas —
+vai direto para a retomada ou correção. Enquanto a triagem aguarda a escolha, `resume` é recusado com uma
+mensagem copiável: responda com `reply … nenhum` (ou com a escolha).
 
 Pré-requisitos, verificados por `./msf <instância> run --check`:
 

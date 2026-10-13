@@ -363,18 +363,32 @@ export function continuationCauses(job: Job): Trigger[] {
   return [...[...feedback.pending, ...feedback.held].map(feedbackCause), ...manualCauses(feedback)];
 }
 
+// The items one step of the plan actually carries to the invocation, whatever their kind. `continue`
+// carries its items; `list` the comments to number and the directed replies delivered as guidance;
+// `apply` the operator's choice and the items the triage held back. Every judgement about what a
+// step delivers (its conflict, its commands, its count, its rendering) derives from here.
+export function planItems(plan: ContinuationPlan): FeedbackItem[] {
+  switch (plan.step) {
+    case "continue":
+      return plan.items;
+    case "list":
+      return [...plan.comments, ...plan.replies];
+    case "apply":
+      return [...plan.choice, ...plan.retained];
+  }
+}
+
 // Whether the invocation must rebase the branch: a conflict it carries.
 export function planConflict(plan: ContinuationPlan): boolean {
-  const items = plan.step === "continue" ? plan.items : plan.step === "apply" ? plan.retained : [];
-  return items.some((item) => item.kind === "conflict");
+  return planItems(plan).some((item) => item.kind === "conflict");
 }
 
 // The operator commands whose replies this invocation carries, so the runner can report their
-// delivery by id (issue #15). Directed replies from the tracker have no command id. Only the
-// operator's choice is new in `apply`: a retained reply was already delivered by the listing.
+// delivery by id (issue #15). Derived from the items the step carries: the apply re-delivers the
+// retained items, so a retained reply's command is reported there too. Directed replies from the
+// tracker have no command id.
 export function planCommands(plan: ContinuationPlan): string[] {
-  const items = plan.step === "continue" ? plan.items : plan.step === "list" ? [...plan.comments, ...plan.replies] : plan.choice;
-  return items.flatMap((item) => (isDirectedReply(item) && item.command !== undefined ? [item.command] : []));
+  return planItems(plan).flatMap((item) => (isDirectedReply(item) && item.command !== undefined ? [item.command] : []));
 }
 
 // How the invocation a listing started ended: with the help request that opens the choice, or

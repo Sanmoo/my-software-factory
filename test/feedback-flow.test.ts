@@ -14,7 +14,7 @@ import type { Mergeability, PrLookup, PrPort, PrFeedback, PrSnapshot } from "../
 import type { PrRef } from "../src/core/result.js";
 import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.js";
 import type { ContinuationContext, Runner, RunnerOutput, Workspace } from "../src/runtime/runner.js";
-import type { ContinuationPlan, FeedbackItem } from "../src/core/feedback.js";
+import { planItems, type ContinuationPlan, type FeedbackItem } from "../src/core/feedback.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import type { IssueRef, Known } from "../src/tracker/port.js";
 import { jobBranch } from "../src/core/job.js";
@@ -34,12 +34,7 @@ const planOf = (continuation?: ContinuationContext): ContinuationPlan | undefine
 const stepOf = (continuation?: ContinuationContext) => planOf(continuation)?.step;
 const itemsOf = (continuation?: ContinuationContext): FeedbackItem[] => {
   const plan = planOf(continuation);
-  if (plan === undefined) return [];
-  return plan.step === "continue"
-    ? plan.items
-    : plan.step === "list"
-      ? [...plan.comments, ...plan.replies]
-      : [...plan.choice, ...plan.retained];
+  return plan === undefined ? [] : planItems(plan);
 };
 const kindsOf = (continuation?: ContinuationContext): string[] => itemsOf(continuation).map((item) => item.kind);
 const commentsOf = (continuation?: ContinuationContext): FeedbackItem[] => {

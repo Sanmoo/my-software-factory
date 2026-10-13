@@ -4,7 +4,7 @@ import { COMPLETION_SIGNAL } from "./docker-invocation.js";
 import type { RunModels } from "./docker-config.js";
 import { TRIAGE_SKILL } from "./docker-config.js";
 import type { IssueContext } from "./runner.js";
-import { planConflict, type ContinuationPlan, type FeedbackItem } from "../core/feedback.js";
+import { describeItem, planConflict, planItems, type ContinuationPlan, type FeedbackItem } from "../core/feedback.js";
 
 // Prompts for the Pi invocation inside the container. The result protocol is the
 // contract the runner checks in docker-output.ts; keep the two in step.
@@ -156,37 +156,20 @@ function chosenRules(): string {
   ].join("\n");
 }
 
-// How each feedback item is rendered for the agent. The runtime owns this format: the core keeps
-// only the short description for the logs and the operator. An inline comment keeps its file and
-// thread id, which the agent needs to answer in the thread (addPullRequestReviewThreadReply).
+// How each feedback item is rendered for the agent. The runtime owns this format and adds its own
+// framing only where it genuinely differs from the core description: a directed reply becomes the
+// operator's guidance, while every other kind keeps the core's short description (issue #35). An
+// inline comment keeps its file and thread id, which the agent needs to answer in the thread
+// (addPullRequestReviewThreadReply).
 function itemText(item: FeedbackItem): string {
-  switch (item.kind) {
-    case "pr-comment": {
-      if (item.comment === "inline" && item.thread !== undefined) {
-        const { id, path, resolved } = item.thread;
-        return `comentário inline de ${item.author} em ${path} (thread ${id}${resolved ? ", resolvido" : ""}): ${item.body}`;
-      }
-      return `${item.comment === "review" ? "revisão" : "comentário"} de ${item.author}: ${item.body}`;
-    }
-    case "directed-reply":
-      return `resposta dirigida do operador: ${item.message}`;
-    case "check":
-      return item.state === "failing" ? `check com falha: ${item.name}` : `check de estado desconhecido: ${item.name}`;
-    case "conflict":
-      return `PR em conflito com ${item.targetBranch} (head ${item.head}, base ${item.base})`;
-  }
+  return item.kind === "directed-reply" ? `resposta dirigida do operador: ${item.message}` : describeItem(item);
 }
 
 // The items a continuation delivers to the agent, each rendered as one line of the operator input.
 // The prompt embeds exactly these lines, and the runner confirms delivery by counting them in the
 // stream, so both sides agree on the text (issue #21).
 export function continuationItems(plan: ContinuationPlan): string[] {
-  const items = plan.step === "continue"
-    ? plan.items
-    : plan.step === "list"
-      ? [...plan.comments, ...plan.replies]
-      : [...plan.choice, ...plan.retained];
-  return items.map((item) => `- ${itemText(item)}`);
+  return planItems(plan).map((item) => `- ${itemText(item)}`);
 }
 
 // A resume or correction continues the same Pi session; the skill is not invoked again, except by the

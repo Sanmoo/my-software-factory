@@ -372,6 +372,32 @@ test("a reply is reported delivered only when the stream shows it reaching the a
   }
 });
 
+test("the apply of a triage reports every command it re-delivers, the retained replies included", async () => {
+  const h = await harness(async (run, call) => {
+    if (call === 2) {
+      for (const text of ["- resposta dirigida do operador: 1 e 3", "- resposta dirigida do operador: Use o seam v2"]) {
+        run.activity.line(line({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } }));
+      }
+    }
+    return { sessionId: "session-1" };
+  });
+  await h.runner.run(context());
+  h.lines.length = 0;
+  await h.runner.run(context({
+    kind: "resume", invocation: "inv-test-3",
+    continuation: {
+      workspace: { session: "session-1", area: h.layout.repoDir },
+      plan: {
+        step: "apply",
+        choice: [{ kind: "directed-reply", origin: "terminal", message: "1 e 3", command: "cmd-1" }],
+        retained: [{ kind: "directed-reply", origin: "terminal", message: "Use o seam v2", command: "cmd-9" }],
+      },
+    },
+  }));
+  // The step re-delivers both replies, so its two commands are reported, not only the operator's choice.
+  assert.match(matching(h.lines, /resposta entregue ao agente/)[0]!, /comando=cmd-1,cmd-9 respostas=2 evidência=/);
+});
+
 test("a write the agent makes on its issue is confirmed only by the tracker's evidence", async () => {
   const states: IssueSnapshot[] = [
     snapshot({ labels: { known: true, value: ["ready-for-agent"] }, statusCategory: { known: true, value: "to-do" } }),

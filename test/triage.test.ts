@@ -3,7 +3,7 @@ import test from "node:test";
 import { newJob, type Job } from "../src/core/job.js";
 import {
   continuationCauses, describeItem, feedbackCause, needsTriage, noteManualResume, planCommands, planConflict,
-  planContinuation, receiveFeedback, recordTriageOutcome, resumeRefusal, triageInProgress,
+  planContinuation, planItems, receiveFeedback, recordTriageOutcome, resumeRefusal, triageInProgress,
   type CheckItem, type ConflictItem, type DirectedReplyItem, type FeedbackItem, type PrCommentItem,
 } from "../src/core/feedback.js";
 import type { IssueRef } from "../src/tracker/port.js";
@@ -113,7 +113,6 @@ test("a batch with a human comment is planned as a listing: comments numbered, r
   if (plan.step !== "list") return;
   assert.deepEqual(plan.comments.map(describeItem), ["revisão de ana: troque o nome"]);
   assert.deepEqual(plan.replies.map(describeItem), ["olhe a doc"], "a directed reply is the operator's guidance, not a comment to number");
-  assert.equal(plan.step, "list");
   assert.equal(planned.feedback?.phase, "listing");
   assert.deepEqual(planned.feedback?.pending.map((item) => item.kind), ["pr-comment"], "the comment stays pending so a failed listing can be redone");
   assert.deepEqual(planned.feedback?.held.map((item) => item.kind), ["check", "conflict", "directed-reply"]);
@@ -163,6 +162,33 @@ test("a listing that reached the help request waits for the choice; the answer i
   assert.deepEqual(planCommands(plan), ["cmd-1"]);
   assert.equal(applied.feedback, undefined, "the choice concludes the triage");
   assert.deepEqual(causes.map((cause) => cause.reason), ["resposta-humana", "check-falhou", "conflito-pr"]);
+});
+
+test("the items a step carries are read from a single place, whatever their kind", () => {
+  assert.deepEqual(planItems({ step: "continue", items: [check()] }).map((item) => item.kind), ["check"]);
+  assert.deepEqual(
+    planItems({ step: "list", comments: [comment()], replies: [reply()] }).map((item) => item.kind),
+    ["pr-comment", "directed-reply"],
+  );
+  assert.deepEqual(
+    planItems({ step: "apply", choice: [reply()], retained: [check(), conflict()] }).map((item) => item.kind),
+    ["directed-reply", "check", "conflict"],
+  );
+});
+
+test("the apply re-delivers the retained items, so it reports the command of every reply it carries", () => {
+  const first = planContinuation(received([comment(), reply({ message: "olhe a doc", command: "cmd-9" })]), "correction");
+  assert.equal(first.plan.step, "list");
+  assert.deepEqual(planCommands(first.plan), ["cmd-9"], "the listing delivers the reply as guidance and reports its command");
+
+  const waiting = recordTriageOutcome(first.job, "list", "help");
+  const answered = outcomeOf(waiting, [reply({ message: "1", command: "cmd-1" })]);
+  const { plan } = planContinuation(answered, "resume");
+
+  assert.equal(plan.step, "apply");
+  if (plan.step !== "apply") return;
+  assert.deepEqual(plan.retained.map((item) => item.kind), ["directed-reply"], "the retained reply rides along in the apply");
+  assert.deepEqual(planCommands(plan), ["cmd-1", "cmd-9"], "the applied command and the retained one; both are re-delivered");
 });
 
 test("a resume is refused while the triage waits for the choice, with a copyable message", () => {
