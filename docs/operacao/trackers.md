@@ -49,6 +49,10 @@ nenhuma parte dela; status da issue e atribuições de outras pessoas ficam como
 
 ## Feedback
 
+`src/core/operator-input.ts` coleta as respostas dirigidas da issue e aplica os comandos
+locais: a resposta no terminal e `agent:` na issue passam pelo mesmo `receiveFeedback`.
+O acompanhamento de feedback do PR pertence a `src/core/pr-tracking.ts`.
+
 Tudo o que a factory/agente publica leva um **marcador invisível** (GitHub:
 `<!-- msf:agent -->`; Jira: prefixo fixo `[msf]`). Comentário com marcador **nunca** é
 feedback. Isso importa porque o agente publica com as credenciais do operador.

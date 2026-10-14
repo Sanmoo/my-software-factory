@@ -103,7 +103,13 @@ a pausa segura o início de invocações, não esse acompanhamento.
 
 ## Feedback e triagem
 
-Regras de leitura de feedback estão em [trackers](trackers.md). O efeito:
+Regras de leitura de feedback estão em [trackers](trackers.md). A entrada dirigida ao
+trabalho pertence a `src/core/operator-input.ts`: fila de comandos, resposta no terminal,
+resposta `agent:` na issue e liberação. O módulo usa o registro e o anunciador, confirma a
+liberação por `IssueWrites` e pede retomada pela função pública `Admission.requestContinuation`
+já ligada. `pause`/`unpause` continuam endereçando a instância via `InstanceControl`.
+O `Admission` mantém a ordem: comandos → respostas dirigidas da issue → PRs em espera →
+continuações → trabalho novo por prioridade. O efeito:
 
 - Resposta dirigida (`agent:` na issue ou `reply` no terminal) reativa o trabalho que
   espera ajuda ou continua o interrompido; em trabalho ativo ou interrompido, fica pendente
