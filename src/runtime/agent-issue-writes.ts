@@ -1,7 +1,7 @@
 import type { Observer } from "../core/observability.js";
 import { issueChangeEvent, issueWriteAttempt, type IssueWriteContext } from "../core/ops-events.js";
 import { gradeChange } from "../core/issue-writes.js";
-import type { ChangeOperation, ChangeResult, IssueChange, IssueRef, IssueSnapshot, Known, StatusCategory, TrackerPort } from "../tracker/port.js";
+import type { ChangeOperation, ChangeResult, Intent, IssueChange, IssueRef, IssueSnapshot, Known, TrackerPort } from "../tracker/port.js";
 
 // Writes the agent makes on its issue by itself (issue #15, decisions 23-25). The orchestrator
 // cannot see them as calls of its own, so they are recognized in the tool calls of the Pi
@@ -24,18 +24,11 @@ export interface AgentWriteOptions {
   // `owner/repo` of the job's issue, to tell it from another repository's `gh issue` number.
   repository: string;
   // The account of the project's token inside the container: `@me` in a `gh` command means this
-  // account. Resolved before grading; without it `@me` is never confirmed.
-  githubAccount?: string;
+  // account. Resolved before grading, so the attempt and the change name the same target.
+  githubAccount: string;
   // Reads the issue of the job in the tracker: the evidence by which a write the agent makes on
   // its own issue can be confirmed. Absent: confirmation is not available in this runtime.
   tracker?: Pick<TrackerPort, "readIssue" | "readComments">;
-}
-
-interface Intent {
-  operation: ChangeOperation;
-  target?: string;
-  // For "transição": the status categories that count as the change having happened.
-  reaches?: StatusCategory[];
 }
 
 export type Classified =
@@ -168,6 +161,15 @@ const textOfInput = (args: unknown): string | undefined => {
   return typeof command === "string" ? command : undefined;
 };
 
+// Why a graded change stayed unconfirmed, for the message when the comparison itself cannot
+// confirm it: the reread does not show the change, or the command errored before it did.
+const whyUnconfirmed = (isError: boolean): string => (isError
+  ? "comando terminou com erro e o tracker não mostra a alteração"
+  : "o tracker não mostra a alteração");
+
+// A change the tracker already showed before the call: the write changed nothing.
+const ALREADY_THERE = "o tracker já mostrava esse estado antes da chamada";
+
 // Why a graded change could not be confirmed, for the message when the comparison itself stays
 // attempted: the field the intent reads, named only for the wording.
 const UNREAD_FIELD: Partial<Record<ChangeOperation, string>> = {
@@ -285,7 +287,7 @@ export class AgentIssueWatch {
   // account. Resolved before grading, never after: the attempt and the change name the same target.
   private resolveAccount(intent: Intent): Intent {
     if (intent.target !== "@me" || (intent.operation !== "atribuir" && intent.operation !== "remover-atribuição")) return intent;
-    return this.options.githubAccount === undefined ? intent : { ...intent, target: this.options.githubAccount };
+    return { ...intent, target: this.options.githubAccount };
   }
 
   private changeOf(intent: Intent, result: ChangeResult, detail?: string): IssueChange {
@@ -303,6 +305,7 @@ export class AgentIssueWatch {
     }
     if (intent.operation === "comentar") return this.judgeComment(intent, before, after, isError);
     const change = gradeChange(intent, before.snapshot, after.snapshot);
+    if (change.result === "unchanged") return { ...change, detail: ALREADY_THERE };
     return change.result === "attempted"
       ? { ...change, detail: this.unconfirmedReason(intent, before, after, isError, change) }
       : change;
@@ -311,7 +314,7 @@ export class AgentIssueWatch {
   // Why the comparison stayed attempted: which read is missing, or that the reread simply does not
   // show the change. The comparison itself is gradeChange's, never this watch's.
   private unconfirmedReason(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean, change: IssueChange): string {
-    const unconfirmed = isError ? "comando terminou com erro e o tracker não mostra a alteração" : "o tracker não mostra a alteração";
+    const unconfirmed = whyUnconfirmed(isError);
     if (after.snapshot === undefined) return "tracker não pôde ser relido: resultado não confirmado";
     if (change.after === undefined) return UNREAD_FIELD[intent.operation] ?? unconfirmed;
     if (before.snapshot === undefined || change.before === undefined) return NO_BEFORE;
@@ -321,7 +324,7 @@ export class AgentIssueWatch {
   // A comment leaves no snapshot evidence: it is judged by the difference of the comment ids
   // between the two readings, the only evidence a comment leaves.
   private judgeComment(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean): IssueChange {
-    const unconfirmed = isError ? "comando terminou com erro e o tracker não mostra a alteração" : "o tracker não mostra a alteração";
+    const unconfirmed = whyUnconfirmed(isError);
     const comments = after.comments;
     const beforeComments = before.comments;
     if (comments?.known !== true || beforeComments?.known !== true) {
