@@ -1,26 +1,27 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
 import type { Mergeability, PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
-import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
+import type { Runner } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
 import {
   continuationCauses, describeItem, directedReply, judgeConflict, judgePrFeedback, needsTriage, noteManualResume,
-  planCommands, planContinuation, planItems, receiveFeedback, recordTriageOutcome,
-  resumeRefusal, triageInProgress, type DirectedReplyItem, type PlanStep, type TriageOutcome,
+  planCommands, planContinuation, planItems, receiveFeedback,
+  resumeRefusal, triageInProgress, type DirectedReplyItem,
 } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
 import { normalizePriority } from "./priority.js";
 import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
-import { parseRunOutput, type PrRef } from "./result.js";
+import type { PrRef } from "./result.js";
 import { noopObserver, type FieldValue, type Observer } from "./observability.js";
 import { triggerSummary } from "./ops-events.js";
 import type { AttentionKeeper } from "./attention.js";
 import { Announcements } from "./announcements.js";
 import { JobRegistry } from "./job-registry.js";
+import { ExecutionLoop } from "./execution-loop.js";
 import { IssueWrites, type IssueWritesContext } from "./issue-writes.js";
 import type { AssistOperator, AssistOperatorResult } from "./assist-flow.js";
 import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
@@ -121,8 +122,7 @@ const describeStatus = (status: PrStatus): string =>
 export class Admission {
   readonly unreadable: readonly string[];
   private readonly registry: JobRegistry;
-  private readonly runs = new Set<Promise<void>>();
-  private readonly runErrors: unknown[] = [];
+  private readonly loop: ExecutionLoop;
   private readonly obs: Observer;
   private readonly writes: IssueWrites;
   private readonly announcements: Announcements;
@@ -132,6 +132,8 @@ export class Admission {
     this.announcements = new Announcements(this.obs, deps.attention);
     this.writes = new IssueWrites(deps.tracker, this.obs);
     this.registry = new JobRegistry(deps.store, deps.instance.maxConcurrent, this.announcements, loaded, unreadable);
+    this.loop = new ExecutionLoop(deps.runner, this.registry, this.announcements,
+      (key, pr, delivery, invocation) => this.acceptPr(key, pr, delivery, invocation));
     this.unreadable = this.registry.unreadable;
   }
 
@@ -159,11 +161,9 @@ export class Admission {
     return this.registry.allJobs();
   }
 
-  // Waits for every dispatched runner to finish; returns the errors of runs that failed
-  // at the persistence level (runner failures are job results, not errors).
+  // Waits for every dispatched run, including persistence of its result.
   async settle(): Promise<unknown[]> {
-    while (this.runs.size > 0) await Promise.all(this.runs);
-    return [...this.runErrors];
+    return this.loop.settle();
   }
 
   // One polling cycle: operator commands in queue order, directed replies in the tracker,
@@ -474,7 +474,7 @@ export class Admission {
     this.announcements.emitFor(key, "trabalho-admitido", "trabalho admitido", { motivo: "issue-elegível" });
     this.announcements.clearWaits(key);
     const invocation = this.announcements.startInvocation(key, "new", [], {});
-    this.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref), invocation, undefined, issueContextOf(snapshot));
+    this.loop.dispatch(key, ref, "new", this.deps.instance.maxIterations, deliveryOf(candidate.project, ref), invocation, undefined, issueContextOf(snapshot));
   }
 
   private async admitContinuation(job: Job, report: PollReport): Promise<void> {
@@ -551,7 +551,7 @@ export class Admission {
       this.announcements.emitFor(job.key, "resposta-incluída", "resposta incluída na retomada", { comando: command }, { invocation });
     }
     // The runner receives the typed plan; it derives the conflict and the commands from its items.
-    this.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, plan });
+    this.loop.dispatch(running.key, running.ref, kind, 1, deliveryOf(project, running.ref), invocation, { workspace, plan });
   }
 
   // Why the runtime profile of a job cannot be reproduced, or undefined. A check that fails is a block: an
@@ -562,121 +562,6 @@ export class Admission {
     } catch (error) {
       return `o perfil não pôde ser verificado: ${messageOf(error)}`;
     }
-  }
-
-  private dispatch(
-    key: string,
-    ref: IssueRef,
-    kind: RunKind,
-    maxIterations: number,
-    delivery: Delivery,
-    invocation: string,
-    continuation?: ContinuationContext,
-    issue?: IssueContext,
-  ): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue).catch((error: unknown) => {
-      this.runErrors.push(error);
-    });
-    this.runs.add(run);
-    void run.then(() => this.runs.delete(run));
-  }
-
-  // Up to maxIterations invocations of the runner. A final output that is absent,
-  // ambiguous or invalid is never success and stops the job at once.
-  private async execute(
-    key: string,
-    ref: IssueRef,
-    kind: RunKind,
-    maxIterations: number,
-    delivery: Delivery,
-    invocation: string,
-    continuation?: ContinuationContext,
-    issue?: IssueContext,
-  ): Promise<void> {
-    const step: PlanStep | undefined = continuation?.plan.step;
-    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-      let output: RunnerOutput;
-      const context: RunnerContext = {
-        jobId: key,
-        ref,
-        repository: delivery.repository,
-        kind,
-        iteration,
-        maxIterations,
-        invocation,
-        ...(continuation ? { continuation } : {}),
-        ...(issue ? { issue } : {}),
-      };
-      try {
-        output = await this.deps.runner.run(context);
-      } catch {
-        this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "falha-do-runner" }, { invocation, level: "erro" });
-        await this.registry.apply(key, "intervention-required", {
-          message: "runner falhou sem resultado estruturado",
-          reason: "runner falhou sem resultado estruturado",
-          invocation,
-        });
-        await this.settleTriage(key, step, "incomplete");
-        return;
-      }
-      if (output.workspace) await this.registry.update(key, { workspace: output.workspace });
-      if (output.kind === "continue") {
-        this.announcements.emitFor(key, "invocação-encerrada", "iteração encerrada sem resultado final", { iteração: `${iteration}/${maxIterations}`, resultado: "sem-resultado" }, { invocation, level: "atenção" });
-        if (iteration < maxIterations) {
-          await this.registry.note(key, `iteração ${iteration}/${maxIterations} (${kind}) sem resultado final; nova iteração`);
-        }
-        continue;
-      }
-      const parsed = parseRunOutput(output.results);
-      if (!parsed.ok) {
-        const reason = `resultado inválido: ${parsed.reason}`;
-        this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "inválido" }, { invocation, level: "atenção" });
-        await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-        await this.settleTriage(key, step, "incomplete");
-        return;
-      }
-      const result = parsed.result;
-      this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: result.status }, { invocation });
-      switch (result.status) {
-        case "needs_help":
-          await this.registry.apply(key, "waiting-for-help", {
-            message: `pedido de ajuda: ${result.question}`,
-            question: result.question,
-            context: result.context,
-            invocation,
-          });
-          await this.settleTriage(key, step, "help");
-          return;
-        case "pr_ready":
-          if (step === "list") {
-            // The operator has not chosen yet: a PR taken as ready now would drop the triaged comments.
-            const reason = "triagem terminou com PR pronto em vez de pedido de ajuda; os comentários não foram escolhidos pelo operador";
-            await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-            await this.settleTriage(key, step, "incomplete");
-            return;
-          }
-          await this.acceptPr(key, result.pr, delivery, invocation);
-          await this.settleTriage(key, step, "complete");
-          return;
-        case "interrupted":
-          await this.registry.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason, invocation });
-          await this.settleTriage(key, step, "incomplete");
-          return;
-      }
-    }
-    const reason = `limite de iterações (${maxIterations}) atingido sem resultado válido`;
-    await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-    await this.settleTriage(key, step, "incomplete");
-  }
-
-  // Records how the invocation that carries a triage step ended: the phase advances, stays or is
-  // cleared by the module that owns it (issue #21).
-  private async settleTriage(key: string, step: PlanStep | undefined, outcome: TriageOutcome): Promise<void> {
-    if (step === undefined) return;
-    const current = this.registry.job(key);
-    if (!current) return;
-    const next = recordTriageOutcome(current, step, outcome);
-    if (next !== current) await this.registry.persist(next);
   }
 
   private enabledProjectOf(job: Job): ProjectConfig | undefined {
