@@ -127,7 +127,7 @@ export class PrTracking {
 
   // A conflict of the open PR with its target branch becomes a correction with a slot and
   // a reason of its own. It is judged on the commits read now, so a failing feedback read never hides it.
-  private async collectConflict(job: Job, snapshot: PrSnapshot, report: Pick<Parameters<PrTracking["trackPr"]>[2], "pular">): Promise<void> {
+  private async collectConflict(job: Job, snapshot: PrSnapshot, report: { pular(key: string, motivo: string): void }): Promise<void> {
     const current = this.registry.job(job.key);
     if (!current || current.state !== "waiting-for-pr") return;
     const input = judgeConflict(snapshot, new Set(current.consumed ?? []));
@@ -144,7 +144,7 @@ export class PrTracking {
   // Feedback on an open PR: human comments (conversation, inline, review bodies), and failing checks, become
   // a correction with a slot and priority. A case the factory cannot decide goes to the human,
   // and its items are consumed so they are not asked again.
-  private async collectPrFeedback(job: Job, pr: PrRef, report: Parameters<PrTracking["trackPr"]>[2]): Promise<void> {
+  private async collectPrFeedback(job: Job, pr: PrRef, report: { pular(key: string, motivo: string): void; falhar(key: string, mensagem: string): void }): Promise<void> {
     let feedback: PrFeedback;
     try {
       feedback = await this.prs.readFeedback(pr);
@@ -205,7 +205,7 @@ export class PrTracking {
 
   // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
   // reread. Until then the job keeps waiting and the next poll tries again.
-  private async complete(job: Job, report: Pick<Parameters<PrTracking["trackPr"]>[2], "falhar">, targetBranch: string): Promise<void> {
+  private async complete(job: Job, report: { falhar(key: string, mensagem: string): void }, targetBranch: string): Promise<void> {
     const decision = await this.writes.complete(job.ref, { job: job.key, reason: "conclusão-após-merge" });
     if (decision.status === "pending") {
       this.announcements.emitFor(job.key, "conclusão-pendente", "merge confirmado; done ainda não confirmado", {

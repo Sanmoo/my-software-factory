@@ -157,10 +157,10 @@ export class Admission {
   // continuations first and new work by priority.
   async poll(): Promise<PollReport> {
     const report: PollReport = { admitted: [], skipped: [], errors: [], commands: [], paused: false };
-    const inputReport: Parameters<OperatorInput["processCommands"]>[0] = {
-      comando: (outcome) => { report.commands.push(outcome); },
-      pular: (key, reason) => { report.skipped.push({ key, reason }); },
-      falhar: (key, message) => { report.errors.push({ key, message }); },
+    const inputReport = {
+      comando: (outcome: CommandOutcome) => { report.commands.push(outcome); },
+      pular: (key: string, motivo: string) => { report.skipped.push({ key, reason: motivo }); },
+      falhar: (key: string, mensagem: string) => { report.errors.push({ key, message: mensagem }); },
     };
     await this.input.processCommands(inputReport);
     await this.input.collectTrackerFeedback(inputReport);
@@ -175,10 +175,7 @@ export class Admission {
     // confirming merges, as an active job would. Feedback found here is admitted by the
     // continuations below in the same poll, when a slot is free.
     for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
-      await this.guard(job.key, report, () => this.prTracking.trackPr(job, this.enabledProjectOf(job), {
-        pular: (key, reason) => { report.skipped.push({ key, reason }); },
-        falhar: (key, message) => { report.errors.push({ key, message }); },
-      }));
+      await this.guard(job.key, report, () => this.prTracking.trackPr(job, this.enabledProjectOf(job), inputReport));
     }
     const continuations = this.allJobs().filter((job) => job.pending !== undefined);
     if (!report.paused) {

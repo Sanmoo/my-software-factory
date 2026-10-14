@@ -138,7 +138,7 @@ export class OperatorInput {
 
   // Directed replies in the tracker: a human comment without marker that starts with
   // `agent:`. Each comment is consumed once, by its id and revision.
-  async collectTrackerFeedback(report: Pick<Parameters<OperatorInput["processCommands"]>[0], "pular" | "falhar">): Promise<void> {
+  async collectTrackerFeedback(report: { pular(key: string, motivo: string): void; falhar(key: string, mensagem: string): void }): Promise<void> {
     for (const candidate of this.deps.registry.allJobs().filter((job) => TRACKER_FEEDBACK_STATES.includes(job.state))) {
       try {
         const comments = await this.deps.tracker.readComments(candidate.ref);
