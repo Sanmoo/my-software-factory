@@ -27,6 +27,11 @@ Associação de uma issue a exatamente um repositório de um projeto habilitado.
 Roteamento ausente ou ambíguo impede a admissão e fica visível ao operador.
 _Avoid_: inferir o repositório pelo título ou pelo tracker
 
+**Admissão**:
+Decisão de tomar uma issue elegível como trabalho acompanhado. Ser elegível não
+significa ter sido admitida; o trabalho é o atendimento que passa a ser acompanhado.
+_Avoid_: elegibilidade como admissão, invocação como admissão
+
 **Trabalho**:
 Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento ou
 assistência ao humano, intervenções humanas e acompanhamento do PR quando houver.

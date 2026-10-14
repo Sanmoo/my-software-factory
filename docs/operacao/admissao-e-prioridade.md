@@ -5,7 +5,7 @@ Linguagem: [GLOSSARY](../../GLOSSARY.md). Representações concretas dos tracker
 [trackers](trackers.md). Execução e supervisão: [execução e supervisão](execucao-e-supervisao.md).
 
 O comportamento vive no código (`src/core/eligibility.ts`, `src/core/admission.ts`,
-`src/core/issue-writes.ts`, `src/core/priority.ts`) e nos testes. Esta página descreve o que
+`src/core/job-registry.ts`, `src/core/issue-writes.ts`, `src/core/priority.ts`) e nos testes. Esta página descreve o que
 está implementado; uma mudança de regra exige mudança de código, testes e esta página, nesta
 ordem.
 
@@ -59,6 +59,9 @@ tomar um claim alheio.
 
 ## Admissão e confirmação
 
+`src/core/admission.ts` coordena a sequência; `src/core/job-registry.ts` mantém os
+trabalhos acompanhados e persiste suas mudanças de estado antes dos anúncios.
+
 Sequência de uma admissão:
 
 1. reler a elegibilidade imediatamente antes de iniciar;
@@ -78,6 +81,10 @@ uma issue acompanhada em candidato novo; um claim não ocupa vaga. O trabalho s�
 por conclusão ou por liberação explícita do operador; a factory nunca libera sozinha.
 
 ## Capacidade e prioridade
+
+`src/core/job-registry.ts` é o dono da capacidade local: confere vaga e repositório e
+reserva em memória numa única operação síncrona. A ordem de prioridade continua em
+`src/core/admission.ts`.
 
 - `maxConcurrent` (N) limita **agentes principais ativos**, não subagentes nem chamadas de
   ferramenta. A capacidade é reservada antes do disparo, de forma síncrona com a reserva,
