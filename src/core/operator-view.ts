@@ -61,6 +61,26 @@ export interface IssueStatusView {
   status: string;
 }
 
+// A pending as the store holds it, plus the derived age the reading model computes (spec #62):
+// the label is presentation arithmetic over `at` versus the reading's clock; the record itself
+// stays untouched (the model never persists or alters the stored pending).
+export type PendingWithAge = AttentionPending & { idade: string };
+
+// The age label of one pending occurrence, from its creation instant versus now. Pure and
+// coercing: a clock behind the record (clock skew, a test injecting a past now) is still a
+// fresh pending, never a negative age.
+export function idadeDe(at: string, now: Date): string {
+  const opened = new Date(at).getTime();
+  const elapsedMs = Math.max(0, now.getTime() - (Number.isNaN(opened) ? now.getTime() : opened));
+  if (elapsedMs < 60_000) return "há segundos";
+  const minutes = Math.floor(elapsedMs / 60_000);
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `há ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `há ${days} ${days === 1 ? "dia" : "dias"}`;
+}
+
 export interface OperatorWork {
   // The full key (same key space as the flows); the TUI shortens autonomous refs like `status` does.
   key: string;
@@ -85,8 +105,13 @@ export interface CapacityMeter {
 export interface OperatorView {
   works: OperatorWork[];
   meters: { implementation: CapacityMeter; assisted: CapacityMeter };
-  // The persistent pendings (spec #62 displays them with age; this slice only carries them).
-  pendings: AttentionPending[];
+  // The persistent pendings, each carrying the derived age (spec #62): everything the store
+  // returned is exposed unchanged — the queue is never filtered, hidden or reordered by
+  // notification state, because resolution is REMOVAL by the store, so anything present is
+  // unresolved by construction — plus `idade`, a human label derived from `at` versus the
+  // injected now. `notification` is exposed as-is so the TUI can annotate a failed delivery;
+  // a failed or absent notification never removes or hides an item.
+  pendings: PendingWithAge[];
   footer: {
     jobsDone: number;
     jobsReleased: number;
@@ -183,6 +208,8 @@ export interface OperatorViewDeps {
   // Optional read-only tracker port for the issue status column; absent ⇒ "indisponível".
   // Never written through: the model has no path to a tracker write.
   tracker?: TrackerPort;
+  // The clock of the reading, injectable so the tests are deterministic; defaults to `new Date()`.
+  now?: () => Date;
 }
 
 // Loads the recorded state of ONE instance and derives the reading model. Pure read: no store
@@ -190,6 +217,7 @@ export interface OperatorViewDeps {
 // re-read every raw store after a build).
 export async function buildOperatorView(deps: OperatorViewDeps): Promise<OperatorView> {
   const { stateDir, instance } = deps;
+  const now = deps.now ?? (() => new Date());
   // One parallel read of every local store — the SAME loads the CLIs used to compose by hand.
   // Job store, queue and control still throw (the reading cannot stand without the recorded
   // jobs and the queue head); the assisted/attention stores degrade like `status` always
@@ -274,7 +302,8 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
       implementation: { used: jobs.jobs.filter((job) => holdsSlot(job.state)).length, limit: instance.maxConcurrent },
       assisted: { used: sessions.sessions.filter(holdsCapacity).length, limit: instance.maxAssisted ?? null },
     },
-    pendings: attention.pendings,
+    pendings: attention.pendings.map((pending) => ({ ...pending, idade: idadeDe(pending.at, now()) })),
+
     footer: {
       jobsDone: jobs.jobs.filter((job) => job.state === "done").length,
       jobsReleased: jobs.jobs.filter((job) => job.state === "released").length,
@@ -296,4 +325,63 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
     },
     loadJob: (key: string) => loaded.get(key),
   };
+}
+
+// ── #62 — a dica do próximo passo (adaptada do protótipo `dicaPorEstado`, com os comandos reais) ─
+
+// The command texts the hint may embed, built by the TUI layer with the observability hints
+// builder (`jobCommands`, like `status` prints them) and passed in so the model stays store-free
+// and rendering-free. An embedded value means "this exact text belongs on screen", never
+// "executed by the TUI": the screen is read-only, and copying/queueing is #63/#64.
+export interface HintColor {
+  // The reply command form, when the work is an agent help request.
+  reply?: string;
+  // The resume command form, when the work is stopped and the operator can authorize retaking.
+  resume?: string;
+  // The approve command form (`base approve ref`), when approval is the operator's next step.
+  approve?: string;
+}
+
+// The next step for one focused work, derived ONLY by estado vivo + fluxo (spec #62: the hint
+// names the next step; it is not a repeated warning). Portuguese, adapted from the prototype's
+// per-state hint (`dicaPorEstado`) but naming the REAL operator commands of the local CLI
+// (`reply`/`resume`/`release`/`approve`), with the paste-ready command text embedded when the
+// TUI passed one. Command insertion is optional per field: the sentence names the step either way.
+export function nextStepHint(work: OperatorWork, how: HintColor): string {
+  switch (work.estadoVivo) {
+    case "fila":
+      return "aguardando capacidade para continuação — nada exige você agora";
+    case "em-invocacao":
+      return "executando agora — nada exige você neste momento";
+    case "pedido-de-ajuda":
+      // The answer leaves through the orchestrator's reply command (stated), and the pending
+      // itself only ends when the agent resumes the work.
+      return how.reply === undefined
+        ? "a resposta vai pelo comando de reply do orquestrador — o ponto de atenção só termina quando o agente retomar o trabalho"
+        : `a resposta vai pelo reply do orquestrador — para copiar: ${how.reply} — o ponto de atenção só termina quando o agente retomar o trabalho`;
+    case "interrompido":
+      // The paste-ready release is deliberately NOT offered at an interruption (a paste must
+      // not end the follow-up by accident), so the sentence names it and embeds only the resume.
+      return how.resume === undefined
+        ? "parou sem desfecho válido — autorize retomada (resume) ou libere (release)"
+        : `parou sem desfecho válido — autorize a retomada: ${how.resume} — ou libere o trabalho (release)`;
+    case "retomada-autorizada":
+      // A single continuity with queue priority, consumed once: autonomous reservation is
+      // consumed by the next invocation, assisted by reopening the session.
+      return work.fluxo === "implementacao-autonoma"
+        ? "continuidade única já autorizada — primeiro da fila: a retomada se consome na próxima invocação"
+        : "continuidade única autorizada — sessão e contexto preservados primeiro da fila: a retomada se consome ao reabrir a sessão";
+    case "aguardando-aprovacao":
+      return how.approve === undefined
+        ? "resultado proposto aguardando sua decisão — aprove com approve quando ele for aceitável"
+        : `resultado proposto aguardando sua decisão — aprove quando ele for aceitável: ${how.approve}`;
+    case "atendimento-concluido":
+      return "fim do acompanhamento — o atendimento se encerrou e a issue permanece aberta";
+    case "sessao-aberta":
+      return how.approve === undefined
+        ? "você conduz o atendimento pelo Herdr — para concluir, aprove o resultado (a issue não fecha)"
+        : `você conduz o atendimento pelo Herdr — para concluir, aprove o resultado (a issue não fecha): ${how.approve}`;
+    case "espera-externa":
+      return "aguardando CI/revisão — espera externa não ocupa vaga";
+  }
 }

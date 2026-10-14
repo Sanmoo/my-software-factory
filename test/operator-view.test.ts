@@ -3,11 +3,11 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildOperatorView, type OperatorView } from "../src/core/operator-view.js";
+import { buildOperatorView, nextStepHint, type EstadoVivo, type Fluxo, type OperatorView, type OperatorWork } from "../src/core/operator-view.js";
 import type { InstanceConfig } from "../src/config/types.js";
 import { newJob, transitionJob } from "../src/core/job.js";
 import type { AssistSession } from "../src/core/assist-session.js";
-import { digestOf, helpPending, pendingId, sessionOpenPending } from "../src/core/attention.js";
+import { AttentionKeeper, digestOf, helpPending, pendingId, sessionOpenPending } from "../src/core/attention.js";
 import { refKey, type IssueRef, type TrackerPort } from "../src/tracker/port.js";
 import { loadMemoryTracker } from "../src/tracker/memory.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
@@ -348,7 +348,7 @@ test("pausa sem comando na fila é pausada sem pendência; instância ativa não
 
 // ── pontos de atenção: tipos presentes, sem exibição nesta etapa ──────────────────────────────
 
-test("as pendências carregadas acompanham o modelo sem serem exibidas nesta etapa", async () => {
+test("as pendências carregadas acompanham o modelo de leitura", async () => {
   const fx = await fixture();
   await fx.saveJob(jobOf("3"));
   await fx.savePending(helpPending({ key: refKey(refOf("3")), ref: refOf("3"), repository: "acme/app", question: "q?" }, "2026-10-14T12:00:00.000Z"));
@@ -383,4 +383,183 @@ test("o builder é puro leitor: reler todos os stores depois do build dá exatam
   const after = await fx.readRaw();
   assert.deepEqual(after, before);
   await rm(fx.root, { recursive: true, force: true });
+});
+
+// ── #62 — idade do ponto de atenção (derivada de `at` versus agora injetado) ─────────────────
+
+const FIX_AT = "2026-01-20T12:00:00.000Z"; // instante fixo das sementes de idade
+const nowPlus = (minutes: number): Date => new Date(new Date(FIX_AT).getTime() + minutes * 60_000);
+
+async function viewWithAgedPending(fx: Fixture, waitingMinutes: number): Promise<OperatorView> {
+  await fx.savePending(helpPending(
+    { key: refKey(refOf("3")), ref: refOf("3"), repository: "acme/app", question: "q?" },
+    FIX_AT,
+  ));
+  return buildOperatorView({ stateDir: fx.stateDir, instance, now: () => nowPlus(waitingMinutes) });
+}
+
+const idadeOf = (view: OperatorView): string | undefined => view.pendings[0]?.idade;
+
+test("pendência aberta há menos de um minuto é 'há segundos'", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, 0.4);
+  assert.equal(idadeOf(view), "há segundos");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("pendência aberta há 3 minutos é 'há 3 min'", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, 3);
+  assert.equal(idadeOf(view), "há 3 min");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("pendência aberta há 1 hora é 'há 1h'", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, 60);
+  assert.equal(idadeOf(view), "há 1h");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+
+test("pendência aberta há 2 horas e meia é 'há 2h'", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, 150);
+  assert.equal(idadeOf(view), "há 2h");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("pendência aberta há 3 dias é 'há 3 dias'", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, 3 * 24 * 60);
+  assert.equal(idadeOf(view), "há 3 dias");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("agora anterior a `at` não produz idade negativa", async () => {
+  const fx = await fixture();
+  const view = await viewWithAgedPending(fx, -5);
+  assert.equal(idadeOf(view), "há segundos");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+// ── #62 — a fila de pendências nunca é alterada pela notificação ─────────────────────────────
+
+test("falha de entrega de notificação não remove nem esconde a pendência", async () => {
+  const fx = await fixture();
+  await fx.saveJob(jobOf("3"));
+  const failed = { ...helpPending({ key: refKey(refOf("3")), ref: refOf("3"), repository: "acme/app", question: "q?" }, FIX_AT),
+    notification: { at: FIX_AT, channel: "tentado", ok: false, error: "comando de notificação falhou" } };
+  const noChannel = { ...helpPending({ key: refKey(refOf("4")), ref: refOf("4"), repository: "acme/app", question: "q2?" }, FIX_AT),
+    notification: { at: FIX_AT, channel: "nenhum", ok: false, error: "canal de notificação ausente ou desabilitado" } };
+  await fx.savePending(failed);
+  await fx.savePending(noChannel);
+  const view = await viewFor(fx);
+  assert.equal(view.pendings.length, 2);
+  assert.deepEqual(view.pendings.map((pending) => pending.notification?.ok), [false, false]);
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+// ── #62 — o ponto se encerra quando o agente retoma (caminho real: AttentionKeeper.resolve) ──
+
+test("agente retoma e o ponto se encerra: resolve(key) remove a pendência e a leitura reflete a ausência", async () => {
+  const fx = await fixture();
+  await fx.saveJob(jobOf("3"));
+  const store = createFileAttentionStore(join(fx.stateDir, "pendencias"));
+  const keeper = new AttentionKeeper({ store });
+  await keeper.raise(helpPending(
+    { key: refKey(refOf("3")), ref: refOf("3"), repository: "acme/app", question: "q?" }, FIX_AT));
+  const before = await buildOperatorView({ stateDir: fx.stateDir, instance });
+  assert.equal(before.pendings.length, 1);
+  await keeper.resolve(refKey(refOf("3")));
+  const after = await buildOperatorView({ stateDir: fx.stateDir, instance });
+  assert.equal(after.pendings.length, 0);
+  assert.equal(after.footer.pendings, 0);
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+// ── #62 — dica do próximo passo por estado vivo × fluxo (pura, sem store nem renderização) ───
+
+const trabalho = (estadoVivo: EstadoVivo, fluxo: Fluxo = "implementacao-autonoma"): OperatorWork => ({
+  key: refKey(refOf("3")), repository: "acme/app", fluxo, estadoVivo,
+  issueRef: "acme/app#3", ocupaVaga: false, issue: { status: "in-progress" },
+});
+
+const COMANDO_REPLY = "./msf minha reply '#3' --message '<resposta>'";
+const COMANDO_RESUME = "./msf minha resume '#3'";
+const COMANDO_APPROVE = "./msf minha approve 'memory:acme/app#3'";
+
+test("pedido-de-ajuda: a resposta vai pelo reply do orquestrador e o ponto só termina na retomada do agente", () => {
+  const hint = nextStepHint(trabalho("pedido-de-ajuda"), { reply: COMANDO_REPLY });
+  assert.match(hint, /reply do orquestrador/);
+  assert.ok(hint.includes(COMANDO_REPLY));
+  assert.match(hint, /o ponto de atenção só termina quando o agente retomar o trabalho/);
+});
+
+test("pedido-de-ajuda sem comando passado ainda nomeia o reply como caminho da resposta", () => {
+  const hint = nextStepHint(trabalho("pedido-de-ajuda"), {});
+  assert.match(hint, /comando de reply do orquestrador/);
+  assert.match(hint, /quando o agente retomar/);
+});
+
+test("interrompido: autorize retomada (resume) ou libere (release), com o comando de resume quando passado", () => {
+  const hint = nextStepHint(trabalho("interrompido"), { resume: COMANDO_RESUME });
+  assert.match(hint, /autorize a retomada/);
+  assert.ok(hint.includes(COMANDO_RESUME));
+  assert.match(hint, /libere o trabalho \(release\)/);
+});
+
+test("interrompido sem comando passado nomeia resume e release por palavra", () => {
+  const hint = nextStepHint(trabalho("interrompido"), {});
+  assert.match(hint, /resume/);
+  assert.match(hint, /release/);
+});
+
+test("retomada-autorizada autônoma: continuidade única, primeiro da fila, consumida na próxima invocação", () => {
+  const hint = nextStepHint(trabalho("retomada-autorizada", "implementacao-autonoma"), {});
+  assert.match(hint, /continuidade única/);
+  assert.match(hint, /primeiro da fila/);
+  assert.match(hint, /se consome na próxima invocação/);
+});
+
+test("retomada-autorizada assistida: continuidade única consumida ao reabrir a sessão", () => {
+  const hint = nextStepHint(trabalho("retomada-autorizada", "humano-assistido"), {});
+  assert.match(hint, /continuidade única/);
+  assert.match(hint, /se consome ao reabrir a sessão/);
+});
+
+test("aguardando-aprovacao: aprove quando o resultado for aceitável, com o comando de approve quando passado", () => {
+  const hint = nextStepHint(trabalho("aguardando-aprovacao", "humano-assistido"), { approve: COMANDO_APPROVE });
+  assert.match(hint, /aprove quando ele for aceitável/);
+  assert.ok(hint.includes(COMANDO_APPROVE));
+});
+
+test("atendimento-concluido: fim do acompanhamento e a issue permanece aberta", () => {
+  const hint = nextStepHint(trabalho("atendimento-concluido", "humano-assistido"), {});
+  assert.match(hint, /fim do acompanhamento/);
+  assert.match(hint, /a issue permanece aberta/);
+});
+
+test("sessao-aberta: você conduz pelo Herdr, aprove para concluir e a issue não fecha", () => {
+  const hint = nextStepHint(trabalho("sessao-aberta", "humano-assistido"), { approve: COMANDO_APPROVE });
+  assert.match(hint, /pelo Herdr/);
+  assert.match(hint, /a issue não fecha/);
+  assert.ok(hint.includes(COMANDO_APPROVE));
+});
+
+test("em-invocacao: executando agora, nada exige você", () => {
+  const hint = nextStepHint(trabalho("em-invocacao"), {});
+  assert.match(hint, /executando agora/);
+  assert.match(hint, /nada exige você/);
+});
+
+test("espera-externa: aguardando CI/revisão e sem vaga ocupada", () => {
+  const hint = nextStepHint(trabalho("espera-externa"), {});
+  assert.match(hint, /CI\/revisão/);
+  assert.match(hint, /não ocupa vaga/);
+});
+
+test("fila: aguardando capacidade para continuação", () => {
+  const hint = nextStepHint(trabalho("fila"), {});
+  assert.match(hint, /aguardando capacidade para continuação/);
 });
