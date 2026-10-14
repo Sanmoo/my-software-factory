@@ -5,6 +5,7 @@ import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
 import { readFailures, type RecordedFailure } from "../state/history.js";
 import { holdsSlot, type Job } from "./job.js";
+import type { JobCommands } from "./observability.js";
 import { holdsCapacity, unconsumedResume, type AssistSession } from "./assist-session.js";
 import type { AttentionPending } from "./attention.js";
 import { refKey, type IssueRef, type TrackerPort } from "../tracker/port.js";
@@ -384,4 +385,52 @@ export function nextStepHint(work: OperatorWork, how: HintColor): string {
     case "espera-externa":
       return "aguardando CI/revisão — espera externa não ocupa vaga";
   }
+}
+
+// ── #64 — o comando copiável do "atender" (leitura pura; NADA é executado pela TUI) ───────────
+
+// O contexto seguido do trabalho em foco, já produzido pelo núcleo: a TUI monta este objeto com
+// os mesmos insumos de sempre (`jobCommands(cli, …)` com as CliHints do `status` para o
+// autônomo; a sessão gravada da visão para o assistido) e a derivação aqui só escolhe o texto.
+export interface AtenderContext {
+  // Os comandos prontos para colar de UM trabalho autônomo — `commands.logs` e, quando o
+  // núcleo registrou um, `commands.detail` (a forma do `Observer.commands`). Ausente ⇒ null.
+  commands?: JobCommands;
+  // A sessão assistida gravada cuja área o operador abre no Herdr. Ausente ⇒ null.
+  session?: AssistSession;
+}
+
+// A linha de identidade da área no Herdr, no que o núcleo já imprime hoje: a assist-CLI lista
+// `aba <tabId>` e `container <name>` (sessionLines), e os eventos de abertura/parada imprimem
+// os campos `aba` (id, ou rótulo quando o id ainda não existe) e `container`. A mesma ordem e
+// palavras valem aqui, mais o clone gravado na sessão. Sem identidade de área (nenhuma aba e
+// nenhum container gravados — ex.: sessão em abertura ou um pendente que nunca abriu) NÃO há
+// o que abrir: null, e a TUI mostra nada em vez de inventar. Não é um comando a executar: é a
+// identidade que a exibição mostra para o operador navegar no Herdr (a navegação direta fica
+// na prova do pré-requisito da #48; ADR 0002: nada é prometido executado pela TUI).
+const areaHerdr = (session: AssistSession | undefined): string | null => {
+  if (session === undefined) return null;
+  const aba = session.tabId ?? session.label;
+  const container = session.containerName ?? session.containerId;
+  if (aba === undefined && container === undefined) return null;
+  return [
+    ...(aba === undefined ? [] : [`aba ${aba}`]),
+    ...(container === undefined ? [] : [`container ${container}`]),
+    `clone ${session.cloneDir}`,
+  ].join(" · ");
+};
+
+// O texto que o "atender" mostra para o trabalho em foco (issue #64, spec #60): o comando
+// copiável para abrir o contexto do trabalho, REUTILIZANDO os hints que o núcleo já produz —
+// nada é re-formatado nem inventado aqui. Para o assistido é a linha de identidade do Herdr
+// (exibição de contexto; a resolução do ponto vem do desfecho, nunca de copiar isto). Para o
+// autônomo é o log principal (`commands.logs`) e, quando o núcleo registrou um, a linha
+// `tail -f` do log detalhado (`commands.detail`), espelhando o que o log principal imprime
+// num pedido de ajuda/interrupção. Devolve null quando nada é derivável (identidade de
+// sessão ausente, comandos ausentes) — a TUI mostra nada em vez de inventar.
+export function comandoAtender(work: OperatorWork, followedContext: AtenderContext): string | null {
+  if (work.fluxo === "humano-assistido") return areaHerdr(followedContext.session);
+  const commands = followedContext.commands;
+  if (commands === undefined) return null;
+  return commands.detail === undefined ? commands.logs : `${commands.logs}\n${commands.detail}`;
 }

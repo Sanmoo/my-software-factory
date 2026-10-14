@@ -1,6 +1,6 @@
 import { Box, Text, render, useApp, useInput } from "ink";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
-import { buildOperatorView, nextStepHint, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
+import { buildOperatorView, comandoAtender, nextStepHint, type AtenderContext, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
 import { operatorCommand, type OperatorAction } from "../core/operator-actions.js";
 import { jobCommands } from "../core/observability.js";
 import type { CommandQueue } from "../core/commands.js";
@@ -8,13 +8,16 @@ import type { InstanceConfig } from "../config/types.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 
 // The operator's TUI (issue #61, spec #60; pontos de atenção + dica are #62; operator actions
-// are #63): one screen, one instance. It renders the reading model (buildOperatorView) and
-// ACTS only through the instance's local command queue — the same surface the supervision CLI
-// writes, which the instance applies in order on its next poll (ADR 0001: the core grades the
-// effect; the TUI never touches tracker, processes, sessions or any store). Keys: ↑/↓ move the
-// focus over the works list, r responds to a help request (inline text input), a approves the
-// proposed result, e authorizes the resume, l releases — each pre-validated by the pure action
-// map, so a refusal shows its reason on screen and enqueues NOTHING — and q / Ctrl+C quits.
+// are #63; atender is #64): one screen, one instance. It renders the reading model
+// (buildOperatorView) and ACTS only through the instance's local command queue — the same
+// surface the supervision CLI writes, which the instance applies in order on its next poll
+// (ADR 0001: the core grades the effect; the TUI never touches tracker, processes, sessions or
+// any store). Keys: ↑/↓ move the focus over the works list, r responds to a help request
+// (inline text input), a approves the proposed result, e authorizes the resume, l releases —
+// each pre-validated by the pure action map, so a refusal shows its reason on screen and
+// enqueues NOTHING — t opens the atender block (the copyable context of the focused work, a
+// DISPLAY ONLY block: copying is the terminal's own selection, nothing is executed, nothing
+// enters the queue, no pending is resolved; Esc closes) — and q / Ctrl+C quits.
 
 export interface TuiOptions {
   instance: InstanceConfig;
@@ -66,6 +69,16 @@ const hintsFor = (work: OperatorWork, view: OperatorView, cli: { instance: strin
     approve: `${commands.base} approve ${commands.ref}`,
   };
 };
+
+// The atender context of one work (issue #64), composed with the real CliHints exactly like
+// `status` composes its paste-ready lines: `jobCommands` over ALL work keys (so a short ref
+// resolves against the same space the commands will). An assisted work hands its RECORDED
+// session, so the derivation shows the Herdr area identity — there is no host Herdr command
+// to run, and none is invented here.
+const atenderContextFor = (work: OperatorWork, view: OperatorView, cli: { instance: string; home?: string }): AtenderContext =>
+  work.fluxo === "humano-assistido"
+    ? { session: view.sessions.find((session) => session.key === work.key) }
+    : { commands: jobCommands(cli, work.key, view.works.map((row) => row.key)) };
 
 // The per-pending annotation of a delivery that is not confirmed: `status` prints a provenance
 // line for every pending (it never claims the desktop notification appeared); the TUI marks the
@@ -133,6 +146,10 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
   // The inline reply input opened by `r`: Enter submits, Esc cancels.
   const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState("");
+  // The atender block opened by `t` (issue #64): a DISPLAY ONLY block over the focused work —
+  // the derivation happens fresh on every render, so the block follows the focus; Esc closes.
+  // Opening or reading it never writes anywhere (the side-effect proof lives in the tests).
+  const [attending, setAttending] = useState(false);
 
   const rebuild = useCallback((): void => {
     buildOperatorView({ stateDir, instance })
@@ -173,6 +190,10 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
     if (input === "a") { act("aprovar-resultado"); return; }
     if (input === "e") { act("autorizar-retomada"); return; }
     if (input === "l") { act("liberar"); return; }
+    // atender (issue #64): opens the display-only context block; Esc closes it. Nothing here
+    // writes, executes or enqueues — the block is text on screen; copying is the terminal's own.
+    if (input === "t") { setAttending(true); return; }
+    if (key.escape === true) { setAttending(false); return; }
   });
 
   // One action of the operator on the focused work: pre-validated by the pure map, enqueued
@@ -197,6 +218,10 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
   const focused = focusedIndex >= 0 ? view.works[focusedIndex] : undefined;
   // The paste-ready text comes from the real CliHints, exactly like `status` composes it.
   const cli = { instance: instance.name, ...(home === undefined ? {} : { home }) };
+  // atender (#64): the copyable context of the focused work, derived pure per fluxo. It is
+  // recomputed on every render, so the open block follows the focus; null shows nothing.
+  const atendido = focused !== undefined ? comandoAtender(focused, atenderContextFor(focused, view, cli)) : null;
+  const atenderLinhas = atendido === null ? [] : atendido.split("\n");
   return (
     <Box flexDirection="column">
       <Box flexDirection="column" marginBottom={1}>
@@ -232,6 +257,22 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
           <Text wrap="truncate">Próximo passo [{focused.issueRef}]: {nextStepHint(focused, hintsFor(focused, view, cli))}</Text>
         </Box>
       )}
+      {attending && focused !== undefined && atendido !== null && (
+        <Box marginTop={0} marginBottom={1} flexDirection="column">
+          {/* atender (#64): o comando copiável do trabalho em foco — SÓ exibição: copiar é a
+              seleção nativa do terminal; nada é executado, nada entra na fila, nenhuma
+              pendência é resolvida. Em fluxo assistido o bloco mostra a identidade da área no
+              Herdr (não existe comando de Herdr a executar); sem contexto derivável, o bloco
+              nem aparece (nada é inventado). Esc fecha. */}
+          <Text bold wrap="truncate">atender [{focused.issueRef}]:</Text>
+          {atenderLinhas.map((linha) => <Text key={linha} color="cyan" wrap="truncate">  {linha}</Text>)}
+          <Text dimColor wrap="truncate">
+            {focused.fluxo === "humano-assistido"
+              ? "abra esta área no Herdr — copie o que precisar; nada é aberto, executado ou enfileirado aqui"
+              : "copie o comando para ver o contexto; nada é executado ou enfileirado aqui — Esc fecha"}
+          </Text>
+        </Box>
+      )}
 
       {/* Pontos de atenção persistentes: a fila como o store a devolve, com a idade derivada. */}
       <Box flexDirection="column" marginBottom={1}>
@@ -251,7 +292,7 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
           Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} · Pendências: {footer.pendings} ·
           {" "}Comandos pendentes: {footer.pendingCommands}
         </Text>
-        <Text dimColor>↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · q / Ctrl+C sai — escritas só na fila de comandos</Text>
+        <Text dimColor>↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t atende (comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
       </Box>
     </Box>
   );
