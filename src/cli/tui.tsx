@@ -1,16 +1,20 @@
 import { Box, Text, render, useApp, useInput } from "ink";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { buildOperatorView, nextStepHint, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
+import { operatorCommand, type OperatorAction } from "../core/operator-actions.js";
 import { jobCommands } from "../core/observability.js";
+import type { CommandQueue } from "../core/commands.js";
 import type { InstanceConfig } from "../config/types.js";
+import { createFileCommandQueue } from "../state/command-queue.js";
 
-// The operator's read-only TUI (issue #61, spec #60; pontos de atenção + dica de próximo passo
-// are #62): one screen, one instance, no writes. It renders the reading model (buildOperatorView)
-// and nothing else: fluxo badge + estado vivo always separate from the issue status, the two
-// independent capacity meters, the persistent pendings with their derived age, and a keyboard
-// focus over the works list whose line shows the next-step hint. The keys are ONLY ↑/↓ (move
-// focus) and q / Ctrl+C (quit): nothing executes, writes or copies — a hint may quote a command,
-// but it stays text on screen; queueing actions is #63/#64.
+// The operator's TUI (issue #61, spec #60; pontos de atenção + dica are #62; operator actions
+// are #63): one screen, one instance. It renders the reading model (buildOperatorView) and
+// ACTS only through the instance's local command queue — the same surface the supervision CLI
+// writes, which the instance applies in order on its next poll (ADR 0001: the core grades the
+// effect; the TUI never touches tracker, processes, sessions or any store). Keys: ↑/↓ move the
+// focus over the works list, r responds to a help request (inline text input), a approves the
+// proposed result, e authorizes the resume, l releases — each pre-validated by the pure action
+// map, so a refusal shows its reason on screen and enqueues NOTHING — and q / Ctrl+C quits.
 
 export interface TuiOptions {
   instance: InstanceConfig;
@@ -21,6 +25,10 @@ export interface TuiOptions {
   home?: string;
   // Test seam: interval between rebuilds in milliseconds (default 5s).
   refreshMs?: number;
+  // Test seam: the command queue the actions write through (default: the instance's real file
+  // queue under `stateDir`). Injected so the write-path tests record every enqueue without a
+  // terminal — and so they can prove nothing else is written.
+  queue?: CommandQueue;
 }
 
 // PT-BR labels for the estados vivos, including the two derived states registered as deviations
@@ -71,16 +79,60 @@ const notaDeEntrega = (pending: OperatorView["pendings"][number]): string | unde
     : `entrega de notificação não comprovada — canal tentado: ${notification.channel} falhou: ${notification.error ?? ""}`;
 };
 
+// The label each action gets in the confirmation line (supervision's CONFIRMATION wording,
+// adapted to the TUI banner).
+const ACTION_LABELS: Record<OperatorAction, string> = {
+  responder: "resposta",
+  "aprovar-resultado": "aprovação",
+  "autorizar-retomada": "autorização de retomada",
+  liberar: "liberação",
+};
+
+// What one key press left on screen: either the enqueue confirmation or the refusal reason
+// (rendered in the banner above the hint line; a refusal never enqueues anything).
+export type TuiNotice = { kind: "ok" | "recusa"; text: string };
+
+// The write path of one operator action (issue #63): the pure action map decides, an ok
+// enqueues through the INJECTED queue and reports the confirmation adapted from the
+// supervision CLI's wording (queued is not applied: the instance applies the queue on its
+// next poll); a refusal enqueues NOTHING and reports the reason.
+export async function applyOperatorAction(
+  action: OperatorAction,
+  work: OperatorWork,
+  view: OperatorView,
+  queue: CommandQueue,
+  instanceName: string,
+  message?: string,
+): Promise<TuiNotice> {
+  const outcome = operatorCommand(action, work, view, message);
+  if (outcome.ok === false) return { kind: "recusa", text: outcome.reason };
+  const id = await queue.enqueue(outcome.command);
+  return {
+    kind: "ok",
+    text: `${ACTION_LABELS[action]} para ${work.issueRef}: enfileirado na fila da instância ${instanceName}; `
+      + `comando=${id}; será aplicado no próximo ciclo — aguarde o scanner da instância`,
+  };
+}
+
 // The screen itself, exported for the scenario rounds the acceptance asks for (spec #60:
 // "a aceitação é uma rodada de cenários com dados semeados") and for the later tickets that
 // grow it. `runTui` is the only place that renders it in production.
-export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000 }: TuiOptions): ReactElement {
+export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, queue: queueOption }: TuiOptions): ReactElement {
   const { exit } = useApp();
   const [view, setView] = useState<OperatorView | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Keyboard focus over the works list (a position, not an id: a rebuild keeps #61's order and
   // the selection follows positions; the list may also shrink between rebuilds).
   const [focus, setFocus] = useState(0);
+  // The queue the actions write through, created once (the injected fake in tests, the real
+  // file queue of the instance in production).
+  const [queue] = useState(() => queueOption ?? createFileCommandQueue(stateDir));
+  // The banner above the hint line: the confirmation of an enqueued command or the reason of a
+  // refusal (a refusal enqueues nothing).
+  const [notice, setNotice] = useState<TuiNotice | null>(null);
+  // The inline reply input opened by `r`: Enter submits, Esc cancels.
+  const [replying, setReplying] = useState(false);
+  const [draft, setDraft] = useState("");
 
   const rebuild = useCallback((): void => {
     buildOperatorView({ stateDir, instance })
@@ -95,11 +147,46 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000 }: 
   }, [rebuild, refreshMs]);
 
   useInput((input, key) => {
+    if (replying) {
+      // While the reply input is open, the keys type the message: Enter submits it, Esc
+      // cancels, backspace erases — `q` types a `q`, it does not quit.
+      if (key.ctrl === true && input === "c") { exit(); return; }
+      if (key.return === true) {
+        const message = draft;
+        setReplying(false);
+        setDraft("");
+        act("responder", message);
+        return;
+      }
+      if (key.escape === true) { setReplying(false); setDraft(""); return; }
+      if (key.backspace === true || key.delete === true) { setDraft((current) => current.slice(0, -1)); return; }
+      // Ink delivers '' for functional keys and the whole chunk for a paste: append whatever
+      // printable text arrived (a paste lands as one chunk, not one character at a time).
+      if (input.length > 0) setDraft((current) => current + input);
+      return;
+    }
     if (input === "q" || (key.ctrl === true && input === "c")) { exit(); return; }
-    // Only ↑/↓ move focus; every other key does nothing (no actions on this screen, still).
-    if (key.upArrow === true) setFocus((current) => Math.max(0, current - 1));
-    if (key.downArrow === true) setFocus((current) => current + 1);
+    if (key.upArrow === true) { setFocus((current) => Math.max(0, current - 1)); return; }
+    if (key.downArrow === true) { setFocus((current) => current + 1); return; }
+    // The four operator actions act on the focused work; with no work focused they do nothing.
+    if (input === "r") { setReplying(true); setDraft(""); setNotice(null); return; }
+    if (input === "a") { act("aprovar-resultado"); return; }
+    if (input === "e") { act("autorizar-retomada"); return; }
+    if (input === "l") { act("liberar"); return; }
   });
+
+  // One action of the operator on the focused work: pre-validated by the pure map, enqueued
+  // through the queue (an ok also rebuilds so the pending-commands count stays honest), or
+  // refused with the reason shown in the banner and NOTHING enqueued.
+  function act(action: OperatorAction, message?: string): void {
+    if (view === null) return;
+    const focused = view.works.length === 0 ? undefined : view.works[Math.min(focus, view.works.length - 1)];
+    if (focused === undefined) return;
+    applyOperatorAction(action, focused, view, queue, instance.name, message).then((result) => {
+      setNotice(result);
+      if (result.kind === "ok") rebuild();
+    });
+  }
 
   if (error !== null) return <Text color="red">leitura falhou: {error}</Text>;
   if (view === null) return <Text>lendo o estado da instância…</Text>;
@@ -130,6 +217,15 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000 }: 
           [{FLUXO_LABELS[work.fluxo]}] {work.issueRef} — {ESTADO_LABELS[work.estadoVivo]} · issue: {work.issue.status}
         </Text>
       ))}
+      {/* Banner de confirmação/recusa: acima da dica; uma recusa nunca enfileirou nada. */}
+      {notice !== null && (
+        <Text color={notice.kind === "ok" ? "green" : "red"} wrap="truncate">
+          {notice.kind === "ok" ? notice.text : `recusa: ${notice.text}`}
+        </Text>
+      )}
+      {replying && focused !== undefined && (
+        <Text wrap="truncate">resposta para [{focused.issueRef}] — Enter envia, Esc cancela: {draft}_</Text>
+      )}
       {focused && (
         <Box marginTop={0} marginBottom={1}>
           {/* Dica derivada no modelo (estado vivo × fluxo); um comando quotado é só texto na tela. */}
@@ -155,7 +251,7 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000 }: 
           Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} · Pendências: {footer.pendings} ·
           {" "}Comandos pendentes: {footer.pendingCommands}
         </Text>
-        <Text dimColor>↑/↓ movem o foco · q / Ctrl+C sai — leitura apenas; nada é escrito pela TUI</Text>
+        <Text dimColor>↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · q / Ctrl+C sai — escritas só na fila de comandos</Text>
       </Box>
     </Box>
   );
@@ -166,13 +262,14 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000 }: 
 export type TuiRunner = (options: TuiOptions) => void;
 
 export const runTui: TuiRunner = (options: TuiOptions): void => {
-  const { instance, stateDir, home, refreshMs } = options;
+  const { instance, stateDir, home, refreshMs, queue } = options;
   render(
     <OperatorScreen
       instance={instance}
       stateDir={stateDir}
       {...(home === undefined ? {} : { home })}
       {...(refreshMs === undefined ? {} : { refreshMs })}
+      {...(queue === undefined ? {} : { queue })}
     />,
   );
   // Ink owns the terminal from here; the renderer keeps the process alive like any interactive app.
