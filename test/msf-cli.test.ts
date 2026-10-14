@@ -293,3 +293,52 @@ test("a GitHub failure in one project does not hide the others and does not writ
   assert.match(run.stdout, /\[acme\/app\] github acme\/app\n {2}tracker indisponível: API 503/);
   assert.match(run.stdout, /\[acme\/other\] github acme\/other\n {2}elegíveis \(0\):/);
 });
+
+// ── tui (issue #61): a TUI de leitura ─────────────────────────────────────────────────────────
+
+test("tui exige um terminal interativo: sem TTY, erro 2 e nada na fila", async () => {
+  const ctx = await setup();
+  const run = await runMsf(["pessoal", "tui"], { ...ctx.deps, isTTY: false });
+  assert.equal(run.exitCode, 2);
+  assert.match(run.stderr, /a TUI requer um terminal interativo/);
+  assert.match(run.stderr, /uso: \.\/msf \[--home DIR\] <instância> tui/);
+  assert.deepEqual(await queued(ctx.stateDir(".msf")), []);
+});
+
+test("tui de instância desconhecida lista as disponíveis e não abre tela", async () => {
+  const ctx = await setup();
+  const opened: unknown[] = [];
+  const run = await runMsf(["inexistente", "tui"], { ...ctx.deps, isTTY: true, tui: () => { opened.push(1); } });
+  assert.equal(run.exitCode, 2);
+  assert.match(run.stderr, /instância 'inexistente' não encontrada; disponíveis: pessoal, trabalho/);
+  assert.deepEqual(opened, []);
+});
+
+test("tui resolve a instância como o status, abre a tela pela costura injetada e não escreve nada", async () => {
+  const ctx = await setup({ jobs: [["acme/app", "13"]] });
+  let call: { instance: unknown; stateDir: string } | undefined;
+  const tui = (options: { instance: unknown; stateDir: string }): void => { call = options; };
+  const run = await runMsf(["pessoal", "tui"], { ...ctx.deps, isTTY: true, tui });
+  const loaded = call?.instance as { name: string; maxConcurrent: number; projects: Array<{ repository: string }> };
+  assert.equal(loaded.name, "pessoal");
+  assert.equal(loaded.maxConcurrent, 1);
+  assert.deepEqual(loaded.projects.map((project) => project.repository), ["acme/app", "acme/other"]);
+  assert.equal(call?.stateDir, join(ctx.root, ".msf", "state", "pessoal"));
+  assert.equal(run.exitCode, 0);
+  assert.equal(run.stdout + run.stderr, "");
+  // A TUI desta etapa é só leitura: nenhuma escrita na fila nem em qualquer store.
+  assert.deepEqual(await queued(ctx.stateDir(".msf")), []);
+});
+
+test("tui não recebe trabalho, --message nem switches de run", async () => {
+  const ctx = await setup();
+  for (const argv of [["pessoal", "tui", "#13"], ["pessoal", "tui", "--message", "x"], ["pessoal", "tui", "--check"]]) {
+    const run = await runMsf(argv, { ...ctx.deps, isTTY: true, tui: () => {} });
+    assert.equal(run.exitCode, 2, argv.join(" "));
+  }
+});
+
+test("o --help global lista a tui", async () => {
+  const ctx = await setup();
+  assert.match((await runMsf(["--help"], ctx.deps)).stdout, /\btui\b/);
+});

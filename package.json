@@ -29,10 +29,13 @@
     "conformance:jira": "tsx src/experiments/jira-conformance.ts"
   },
   "dependencies": {
-    "@ai-hero/sandcastle": "0.12.0"
+    "@ai-hero/sandcastle": "0.12.0",
+    "ink": "^8.0.0",
+    "react": "^19.3.0"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
+    "@types/react": "^19.3.0",
     "oxc-parser": "0.117.0",
     "oxlint": "1.87.0",
     "tsx": "4.23.15",

@@ -14,6 +14,7 @@ import { showLogs } from "./logs.js";
 import { runInstance } from "./run.js";
 import { runStatus } from "./status.js";
 import { applySupervision } from "./supervision.js";
+import { runTui, type TuiRunner } from "./tui.js";
 
 // The operator's single entry point (issue #22):
 //
@@ -23,7 +24,7 @@ import { applySupervision } from "./supervision.js";
 // reference and the help, and hands over to the commands that already exist. The main log prints
 // exactly this form, so what the operator copies from it works as printed.
 
-export const COMMANDS = ["run", "status", "assist", "logs", "reply", "resume", "release", "approve", "pause", "unpause"] as const;
+export const COMMANDS = ["run", "status", "assist", "logs", "reply", "resume", "release", "approve", "pause", "unpause", "tui"] as const;
 type Command = (typeof COMMANDS)[number];
 
 // The default base directory, relative to the repository root.
@@ -105,6 +106,15 @@ const SPECS: Record<Command, CommandSpec> = {
     summary: "pausa a admissão de novos trabalhos da instância",
     needsJob: false,
   },
+  tui: {
+    usage: "./msf [--home DIR] <instância> tui",
+    summary: "abre a TUI de leitura da instância numa tela única (fluxo, estado vivo, medidores); não escreve nada",
+    needsJob: false,
+    notes: [
+      "Leitora do estado gravado: as ações do operador continuam nos comandos existentes da CLI.",
+      "Exige um terminal interativo (TTY).",
+    ],
+  },
   unpause: {
     usage: "./msf [--home DIR] <instância> unpause",
     summary: "retoma a admissão de novos trabalhos da instância",
@@ -136,6 +146,11 @@ function commandUsage(command: Command): string {
     HOME_NOTE,
   ].join("\n");
 }
+
+// Sentinel for the TUI handover: the terminal is Ink's from `runTui` on, so the CLI must never
+// write to stdout/stderr again. The process entry writes only the empty strings of this run and
+// the exit code stays 0 while Ink keeps the terminal alive until the operator quits.
+const PENDING_TUI: CliRun = { exitCode: 0, stdout: "", stderr: "" };
 
 const isCommand = (word: string | undefined): word is Command => word !== undefined && (COMMANDS as readonly string[]).includes(word);
 
@@ -218,6 +233,8 @@ export interface MsfDeps {
   // Replaces the Herdr check `assist` runs (tests inject one);
   // the default reports the integration as unknown (prova técnica na issue #52).
   herdr?: AssistEnvironmentPort["herdr"];
+  // Replaces the TUI renderer `tui` opens (tests inject one; the real one requires a TTY).
+  tui?: TuiRunner;
 }
 
 const exists = (path: string): Promise<boolean> => access(path).then(() => true, () => false);
@@ -267,6 +284,22 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
       ...(deps.github === undefined ? {} : { github: deps.github }),
       ...(deps.tracker === undefined ? {} : { tracker: deps.tracker }),
     });
+  }
+
+  // The TUI is a pure reading view of this one instance: same resolution as `status`, no
+  // local.json requirement. Without a TTY there is nothing to render; it refuses before
+  // touching any state (spec #60: one TUI per instance, reading first).
+  if (request.command === "tui") {
+    if (deps.isTTY === false) {
+      return usageError("a TUI requer um terminal interativo", "tui");
+    }
+    (deps.tui ?? runTui)({
+      instance: loaded.instance,
+      stateDir,
+      ...(homeDir === defaultHome ? {} : { home: homeDir }),
+    });
+    // The terminal is Ink's from here on; the CLI hands it over and writes nothing more.
+    return PENDING_TUI;
   }
 
   // The approval targets an assisted attendance key, never an implementation job: it goes
