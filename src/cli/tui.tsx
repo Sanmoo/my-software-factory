@@ -2,9 +2,10 @@ import { Box, Text, render, useApp, useInput } from "ink";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { buildOperatorView, comandoAtender, nextStepHint, type AtenderContext, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
 import { operatorCommand, type OperatorAction } from "../core/operator-actions.js";
-import { jobCommands } from "../core/observability.js";
+import { jobCommands, type CliHints, type JobCommands } from "../core/observability.js";
 import type { CommandQueue } from "../core/commands.js";
 import type { InstanceConfig } from "../config/types.js";
+import type { TrackerPort } from "../tracker/port.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 
 // The operator's TUI (issue #61, spec #60; pontos de atenção + dica are #62; operator actions
@@ -26,6 +27,10 @@ export interface TuiOptions {
   // commands the hints embed (same trick `status` uses, so a printed command is usable as
   // printed).
   home?: string;
+  // The read-only tracker port for the issue status column: msf composes it exactly like the
+  // one `status` reads through (spec #60 story 4). Absent ⇒ every issue shows "indisponível";
+  // a failing read degrades per work. The TUI never writes through it (no write path exists).
+  tracker?: TrackerPort;
   // Test seam: interval between rebuilds in milliseconds (default 5s).
   refreshMs?: number;
   // Test seam: the command queue the actions write through (default: the instance's real file
@@ -56,13 +61,19 @@ const FLUXO_LABELS = {
 const meterText = (used: number, limit: number | null): string =>
   limit === null ? `${used}/—` : `${used}/${limit}`;
 
+// The shared composition of the paste-ready command set of one work: `jobCommands` over ALL
+// work keys (so a short ref resolves against the same space the commands will), the real
+// CliHints exactly like `status` composes them.
+const commandsFor = (work: OperatorWork, view: OperatorView, cli: CliHints): JobCommands =>
+  jobCommands(cli, work.key, view.works.map((row) => row.key));
+
 // The paste-ready forms for one work, built here in the TUI layer with the real CliHints exactly
 // like `status` composes them: `jobCommands` over ALL work keys (so a short ref resolves against
 // the same space the commands will). No release command is built here: an interruption hint
 // names release but deliberately does not offer it ready-to-paste (a paste must not end the
 // follow-up by accident); the per-pending action lines are #64's slice.
-const hintsFor = (work: OperatorWork, view: OperatorView, cli: { instance: string; home?: string }): HintColor => {
-  const commands = jobCommands(cli, work.key, view.works.map((row) => row.key));
+const hintsFor = (work: OperatorWork, view: OperatorView, cli: CliHints): HintColor => {
+  const commands = commandsFor(work, view, cli);
   return {
     reply: commands.reply,
     resume: commands.resume,
@@ -75,10 +86,10 @@ const hintsFor = (work: OperatorWork, view: OperatorView, cli: { instance: strin
 // resolves against the same space the commands will). An assisted work hands its RECORDED
 // session, so the derivation shows the Herdr area identity — there is no host Herdr command
 // to run, and none is invented here.
-const atenderContextFor = (work: OperatorWork, view: OperatorView, cli: { instance: string; home?: string }): AtenderContext =>
+const atenderContextFor = (work: OperatorWork, view: OperatorView, cli: CliHints): AtenderContext =>
   work.fluxo === "humano-assistido"
     ? { session: view.sessions.find((session) => session.key === work.key) }
-    : { commands: jobCommands(cli, work.key, view.works.map((row) => row.key)) };
+    : { commands: commandsFor(work, view, cli) };
 
 // The per-pending annotation of a delivery that is not confirmed: `status` prints a provenance
 // line for every pending (it never claims the desktop notification appeared); the TUI marks the
@@ -130,7 +141,7 @@ export async function applyOperatorAction(
 // The screen itself, exported for the scenario rounds the acceptance asks for (spec #60:
 // "a aceitação é uma rodada de cenários com dados semeados") and for the later tickets that
 // grow it. `runTui` is the only place that renders it in production.
-export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, queue: queueOption }: TuiOptions): ReactElement {
+export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 5_000, queue: queueOption }: TuiOptions): ReactElement {
   const { exit } = useApp();
   const [view, setView] = useState<OperatorView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -152,10 +163,10 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
   const [attending, setAttending] = useState(false);
 
   const rebuild = useCallback((): void => {
-    buildOperatorView({ stateDir, instance })
+    buildOperatorView({ stateDir, instance, ...(tracker === undefined ? {} : { tracker }) })
       .then((next) => { setView(next); setError(null); })
       .catch((caught: unknown) => { setError(caught instanceof Error ? caught.message : String(caught)); });
-  }, [stateDir, instance]);
+  }, [stateDir, instance, tracker]);
 
   useEffect(() => {
     rebuild();
@@ -217,7 +228,7 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
   const focusedIndex = Math.min(focus, view.works.length - 1);
   const focused = focusedIndex >= 0 ? view.works[focusedIndex] : undefined;
   // The paste-ready text comes from the real CliHints, exactly like `status` composes it.
-  const cli = { instance: instance.name, ...(home === undefined ? {} : { home }) };
+  const cli: CliHints = { instance: instance.name, ...(home === undefined ? {} : { home }) };
   // atender (#64): the copyable context of the focused work, derived pure per fluxo. It is
   // recomputed on every render, so the open block follows the focus; null shows nothing.
   const atendido = focused !== undefined ? comandoAtender(focused, atenderContextFor(focused, view, cli)) : null;
@@ -289,7 +300,7 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
 
       <Box flexDirection="column" marginTop={1}>
         <Text>
-          Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} · Pendências: {footer.pendings} ·
+          Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} ·
           {" "}Comandos pendentes: {footer.pendingCommands}
         </Text>
         <Text dimColor>↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t atende (comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
@@ -303,12 +314,13 @@ export function OperatorScreen({ instance, stateDir, home, refreshMs = 5_000, qu
 export type TuiRunner = (options: TuiOptions) => void;
 
 export const runTui: TuiRunner = (options: TuiOptions): void => {
-  const { instance, stateDir, home, refreshMs, queue } = options;
+  const { instance, stateDir, home, tracker, refreshMs, queue } = options;
   render(
     <OperatorScreen
       instance={instance}
       stateDir={stateDir}
       {...(home === undefined ? {} : { home })}
+      {...(tracker === undefined ? {} : { tracker })}
       {...(refreshMs === undefined ? {} : { refreshMs })}
       {...(queue === undefined ? {} : { queue })}
     />,

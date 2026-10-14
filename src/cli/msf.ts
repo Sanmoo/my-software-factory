@@ -8,6 +8,7 @@ import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import type { GitHubBoundary } from "../tracker/github.js";
 import type { TrackerPort } from "../tracker/port.js";
 import { runAssist, type AssistEnvironmentPort } from "./assist.js";
+import { composeTrackers } from "./compose.js";
 import { loadInstance, type CliRun } from "./instance.js";
 import { loadLocalSettings } from "./local-settings.js";
 import { showLogs } from "./logs.js";
@@ -228,7 +229,7 @@ export interface MsfDeps {
   // Boundaries are injectable for tests; the defaults are the real ones.
   sandbox?: SandboxBoundary;
   github?: GitHubBoundary;
-  // Replaces the trackers `status` and `assist` read (tests inject one).
+  // Replaces the trackers `status`, `assist` and `tui` read (tests inject one).
   tracker?: TrackerPort;
   // Replaces the Herdr check `assist` runs (tests inject one);
   // the default reports the integration as unknown (prova técnica na issue #52).
@@ -293,10 +294,21 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
     if (deps.isTTY === false) {
       return usageError("a TUI requer um terminal interativo", "tui");
     }
+    // The issue status column reads through the SAME read-only tracker arrangement `status`
+    // reads (spec #60 story 4): the injected port wins, otherwise composeTrackers builds the
+    // routed read port for the enabled projects. Read-only by construction: buildOperatorView
+    // holds only readIssue, and a failing read degrades per work to `indisponível`.
+    const tracker = deps.tracker
+      ?? composeTrackers({
+        instance: loaded.instance,
+        env: deps.env,
+        ...(deps.github === undefined ? {} : { github: deps.github }),
+      }).tracker;
     (deps.tui ?? runTui)({
       instance: loaded.instance,
       stateDir,
       ...(homeDir === defaultHome ? {} : { home: homeDir }),
+      tracker,
     });
     // The terminal is Ink's from here on; the CLI hands it over and writes nothing more.
     return PENDING_TUI;

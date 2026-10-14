@@ -482,7 +482,7 @@ test("agente retoma e o ponto se encerra: resolve(key) remove a pendência e a l
 
 const trabalho = (estadoVivo: EstadoVivo, fluxo: Fluxo = "implementacao-autonoma"): OperatorWork => ({
   key: refKey(refOf("3")), repository: "acme/app", fluxo, estadoVivo,
-  issueRef: "acme/app#3", ocupaVaga: false, issue: { status: "in-progress" },
+  issueRef: "acme/app#3", ref: refOf("3"), ocupaVaga: false, issue: { status: "in-progress" },
 });
 
 const COMANDO_REPLY = "./msf minha reply '#3' --message '<resposta>'";

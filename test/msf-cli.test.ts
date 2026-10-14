@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { runMsf, type MsfDeps } from "../src/cli/msf.js";
 import { newJob, transitionJob } from "../src/core/job.js";
+import type { GitHubBoundary } from "../src/tracker/github.js";
 import type { TrackerPort } from "../src/tracker/port.js";
+import { loadMemoryTracker } from "../src/tracker/memory.js";
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
@@ -328,6 +330,34 @@ test("tui resolve a instância como o status, abre a tela pela costura injetada 
   assert.equal(run.stdout + run.stderr, "");
   // A TUI desta etapa é só leitura: nenhuma escrita na fila nem em qualquer store.
   assert.deepEqual(await queued(ctx.stateDir(".msf")), []);
+});
+
+test("tui recebe o tracker composto de leitura: as opções carregam o port e a issue é lida por ele", async () => {
+  const ctx = await setup({ jobs: [["acme/app", "13"]] });
+  const github: GitHubBoundary = {
+    accountToken: async () => "t",
+    api: async (request) => request.path === "repos/acme/app/issues/13"
+      ? { status: 200, body: { id: 1, number: 13, title: "t", body: "", state: "open", state_reason: null, labels: [], assignees: [] } }
+      : { status: 200, body: [] },
+  };
+  let call: { tracker?: TrackerPort } | undefined;
+  const tui = (options: { instance: unknown; stateDir: string; tracker?: TrackerPort }): void => { call = options; };
+  const run = await runMsf(["pessoal", "tui"], { ...ctx.deps, isTTY: true, tui, github });
+  assert.equal(run.exitCode, 0);
+  assert.ok(call?.tracker, "as opções da tui carregam o tracker composto");
+  const issue = await call.tracker!.readIssue({ tracker: "github", project: "acme/app", id: "13" });
+  assert.equal(issue.title, "t");
+  assert.equal(issue.statusCategory.known, true);
+  assert.equal(issue.statusCategory.value, "to-do");
+});
+
+test("tui honra o tracker injetado nos deps, como status e assist", async () => {
+  const ctx = await setup();
+  let call: { tracker?: TrackerPort } | undefined;
+  const tui = (options: { tracker?: TrackerPort }): void => { call = options; };
+  const tracker: TrackerPort = loadMemoryTracker({ issues: [] } as never);
+  await runMsf(["pessoal", "tui"], { ...ctx.deps, isTTY: true, tui, tracker });
+  assert.equal(call?.tracker, tracker);
 });
 
 test("tui não recebe trabalho, --message nem switches de run", async () => {

@@ -1,14 +1,15 @@
 import { createFileJobStore } from "../state/file-job-store.js";
+import { join } from "node:path";
 import { createFileAssistSessionStore } from "../state/file-assist-session-store.js";
 import { createFileAttentionStore } from "../state/file-attention-store.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
 import { readFailures, type RecordedFailure } from "../state/history.js";
-import { holdsSlot, type Job } from "./job.js";
+import { holdsSlot, type Job, type JobState } from "./job.js";
 import type { JobCommands } from "./observability.js";
 import { holdsCapacity, unconsumedResume, type AssistSession } from "./assist-session.js";
 import type { AttentionPending } from "./attention.js";
-import { refKey, type IssueRef, type TrackerPort } from "../tracker/port.js";
+import type { IssueRef, TrackerPort } from "../tracker/port.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { OperatorCommand } from "./commands.js";
 
@@ -40,6 +41,16 @@ import type { OperatorCommand } from "./commands.js";
 // └──────┴───────────────────────────────────────────────┴───────────────────────────────────────┘
 // done/released do trabalho autônomo saem da lista de trabalhos acompanhados, como `status` já
 // trata; a sessão assistida concluída some do store no momento da conclusão confirmada.
+//
+// ── Decisões de glossário registradas (revisão de padrões da spec #60) ──────────────────────
+// retomada-autorizada: o GLOSSARY.md define "Retomada autorizada" apenas para o trabalho humano
+// assistido ("Retomada manual" é o análogo autônomo), mas as histórias 16–17 da spec #60 aplicam
+// o termo aos DOIS fluxos (autorizar a retomada do trabalho interrompido, com continuidade única
+// consumida na primeira oportunidade); aqui o termo do glossário é lido no sentido amplo da spec.
+// interrompido: o glossário trata "intervenção" como termo separado; o merge apaga essa
+// separação DE PROPÓSITO — para o operador, intervention-required e interrompido são o mesmo
+// balde ("execução parou sem desfecho válido — decisão pendente": mesmos conjuntos
+// RELEASABLE/RESUMABLE no núcleo). Mapeamento documentado, não uma perda de vocabulário.
 
 export type Fluxo = "implementacao-autonoma" | "humano-assistido";
 
@@ -91,6 +102,9 @@ export interface OperatorWork {
   // Display reference: `project#id` for autonomous jobs (status's short form), full key for
   // assisted sessions (their keys never shorten, mirroring the approve command).
   issueRef: string;
+  // The work's real tracker reference: `job.ref` for autonomous, `session.ref` for assisted —
+  // the port the issue status is read through. `issueRef` above is the display form only.
+  ref: IssueRef;
   // Whether the work occupies its flow's capacity right now (core semantics, presentation only).
   ocupaVaga: boolean;
   issue: IssueStatusView;
@@ -162,7 +176,12 @@ const ORDER: Record<EstadoVivo, number> = {
   fila: 4,
 };
 
-const estadoVivoOfJob = (job: Job): EstadoVivo => {
+// The tracked job states this derivation sees: done/released leave the tracked list before the
+// mapping runs (the builder filters them exactly like `status` does), so the parameter type says
+// only reachable states exist here — a future unmapped state fails the build, not the operator.
+type TrackedJob = Job & { state: Exclude<JobState, "done" | "released"> };
+
+const estadoVivoOfJob = (job: TrackedJob): EstadoVivo => {
   // The authorized continuation wins over the base state: the decision was already given and
   // only a slot is missing (spec #60 user story 17: first place in the queue).
   if (job.pending === "resume") return "retomada-autorizada";
@@ -170,15 +189,13 @@ const estadoVivoOfJob = (job: Job): EstadoVivo => {
   switch (job.state) {
     case "running": return "em-invocacao";
     case "waiting-for-help": return "pedido-de-ajuda";
-    // Both are the "stopped without valid outcome, operator decides" bucket.
+    // Both are the "stopped without valid outcome, operator decides" bucket (registered mapping
+    // decision above: intervention-required folds into interrompido).
     case "interrupted":
     case "intervention-required": return "interrompido";
     // Registered deviation: an external wait is real tracked work the operator must see;
     // it holds no slot, so the meter stays honest.
     case "waiting-for-pr": return "espera-externa";
-    // done/released leave the tracked list before this function is called.
-    case "done":
-    case "released": return "fila";
   }
 };
 
@@ -226,11 +243,11 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
   // reading keeps standing. The observability failures file degrades the same way.
   const [jobsResult, sessionsResult, attentionResult, queuedResult, appliedPause, failuresOnce] = await Promise.all([
     createFileJobStore(stateDir).load(),
-    createFileAssistSessionStore(`${stateDir}/assist-sessions`.replace("//", "/")).load().then(
+    createFileAssistSessionStore(join(stateDir, "assist-sessions")).load().then(
       (value) => ({ value, degraded: undefined as string | undefined }),
       (error: unknown) => ({ value: { sessions: [], unreadable: [] as string[] }, degraded: error instanceof Error ? error.message : String(error) }),
     ),
-    createFileAttentionStore(`${stateDir}/pendencias`.replace("//", "/")).load().then(
+    createFileAttentionStore(join(stateDir, "pendencias")).load().then(
       (value) => ({ value, degraded: undefined as string | undefined }),
       (error: unknown) => ({ value: { pendings: [], unreadable: [] as string[] }, degraded: error instanceof Error ? error.message : String(error) }),
     ),
@@ -255,13 +272,14 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
   const loaded = new Map(jobs.jobs.map((job) => [job.key, job]));
 
   const autonomous = jobs.jobs
-    .filter((job) => job.state !== "done" && job.state !== "released")
+    .filter((job): job is TrackedJob => job.state !== "done" && job.state !== "released")
     .map((job): OperatorWork => ({
       key: job.key,
       repository: job.repository,
       fluxo: "implementacao-autonoma",
       estadoVivo: estadoVivoOfJob(job),
       issueRef: `${job.ref.project}#${job.ref.id}`,
+      ref: job.ref,
       ocupaVaga: holdsSlot(job.state),
       issue: { status: "" },
     }));
@@ -272,6 +290,7 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
     estadoVivo: estadoVivoOfSession(session),
     // A session key never shortens (mirrors approve/assist, which print the full key).
     issueRef: session.key,
+    ref: session.ref,
     ocupaVaga: holdsCapacity(session),
     issue: { status: "" },
   }));
@@ -281,18 +300,15 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
   // common local run, or an unavailable tracker) the column reads "indisponível" and nothing else
   // changes. Failures degrade per work; they never lose the work.
   await Promise.all(works.map(async (work) => {
-    const ref = autonomous.some((candidate) => candidate.key === work.key)
-      ? jobs.jobs.find((job) => job.key === work.key)!.ref
-      : sessions.sessions.find((session) => session.key === work.key)!.ref;
-    work.issue = await trackerStatus(deps.tracker, ref);
+    work.issue = await trackerStatus(deps.tracker, work.ref);
   }));
 
   works.sort((a, b) => {
     const byState = ORDER[a.estadoVivo] - ORDER[b.estadoVivo];
     if (byState !== 0) return byState;
-    // Tie: ascending ref id (the prototype's issue-number order).
-    const idOf = (work: OperatorWork): string => refKey({ tracker: "memory", project: work.repository, id: work.issueRef.split("#").at(-1) ?? "" });
-    return idOf(a).localeCompare(idOf(b), "en", { numeric: true });
+    // Tie: ascending ref id (the prototype's issue-number order), compared directly on the
+    // work's real ref — no synthetic reference is built for the comparison.
+    return a.ref.id.localeCompare(b.ref.id, "en", { numeric: true });
   });
 
   const lastPause = [...queued.commands].reverse().find((command) => command.type === "pause" || command.type === "unpause");
