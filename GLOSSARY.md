@@ -97,6 +97,14 @@ Solicitação do agente que precisa de informação ou decisão humana, ou chego
 limite de iterações, sem declarar o trabalho concluído.
 _Avoid_: falha silenciosa, processo indefinidamente esperando uma pessoa
 
+**Ponto de atenção**:
+Item persistente, consultável localmente, que registra uma ação humana necessária
+a um trabalho específico; não depende da entrega de notificação nem de log
+passageiro, sobrevive a reinício da instância e encerra-se quando resolvido pelo
+operador ou por liberação do trabalho.
+_Avoid_: notificação (que é a entrega), pedido de ajuda (que é do agente),
+log passageiro
+
 **Feedback acionável**:
 Informação nova dirigida ao trabalho por uma pessoa, falha de check relevante
 do PR ou conflito do PR com a branch de destino, capaz de motivar resposta ou
