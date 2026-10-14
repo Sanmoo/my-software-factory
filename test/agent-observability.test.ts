@@ -445,6 +445,75 @@ test("without tracker evidence an agent write is reported as unconfirmable, neve
   assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /operação=comentar.*confirmação indisponível/);
 });
 
+test("an assignment with @me is confirmed when the reread shows the project's account", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 6 --add-assignee @me" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    readIssue: async (call) => call <= 1
+      ? snapshot({ assignees: { known: true, value: [] } })
+      : snapshot({ assignees: { known: true, value: ["acme-bot"] } }),
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  assert.match(matching(h.lines, /alteração confirmada/)[0]!, /operação=atribuir alvo=acme-bot estado=ausente→presente/);
+  assert.equal(matching(h.lines, /alteração tentada, não confirmada/).length, 0);
+});
+
+test("a reopen of a claimed issue is confirmed when the reread shows the claim's category", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue reopen 6" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    // The issue comes from done and, claimed, the reread shows it in-progress: a category the
+    // reopen reaches, not the done category a close reaches.
+    readIssue: async (call) => call <= 1
+      ? snapshot({ claimed: { known: true, value: true }, statusCategory: { known: true, value: "done" } })
+      : snapshot({ claimed: { known: true, value: true }, statusCategory: { known: true, value: "in-progress" } }),
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  assert.match(matching(h.lines, /alteração confirmada/)[0]!, /operação=transição alvo=reabrir estado=done→in-progress/);
+});
+
+test("an assignment to @me stays attempted when the reread differs only in case", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 6 --add-assignee @me" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    readIssue: async (call) => call <= 1
+      ? snapshot({ assignees: { known: true, value: [] } })
+      : snapshot({ assignees: { known: true, value: ["Acme-Bot"] } }),
+  });
+  await h.runner.run(context());
+  await h.observer.flush();
+
+  assert.equal(matching(h.lines, /alteração confirmada/).length, 0, "a case difference never confirms");
+  assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /operação=atribuir alvo=acme-bot/);
+});
+
+test("an assignment with no reading before the call is never confirmed", async () => {
+  const h = await harness(async (run) => {
+    run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 6 --add-assignee @me" } }));
+    run.activity.line(line({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash", result: "ok", isError: false }));
+    return {};
+  }, {
+    readIssue: async (call) => {
+      if (call === 1) throw new Error("tracker indisponível");
+      return snapshot({ assignees: { known: true, value: ["acme-bot"] } });
+    },
+  });
+  await h.runner.run(context());
+
+  assert.equal(matching(h.lines, /alteração confirmada/).length, 0);
+  assert.match(matching(h.lines, /alteração tentada, não confirmada/)[0]!, /estado anterior desconhecido/);
+});
+
 test("a label write is confirmed from the snapshot even when reading the comments fails", async () => {
   const h = await harness(async (run) => {
     run.activity.line(line({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "gh issue edit 6 --add-label needs-review" } }));

@@ -1,6 +1,7 @@
 import type { Observer } from "../core/observability.js";
 import { issueChangeEvent, issueWriteAttempt, type IssueWriteContext } from "../core/ops-events.js";
-import type { ChangeOperation, ChangeResult, IssueChange, IssueRef, IssueSnapshot, Known, TrackerPort } from "../tracker/port.js";
+import { gradeChange } from "../core/issue-writes.js";
+import type { ChangeOperation, ChangeResult, IssueChange, IssueRef, IssueSnapshot, Known, StatusCategory, TrackerPort } from "../tracker/port.js";
 
 // Writes the agent makes on its issue by itself (issue #15, decisions 23-25). The orchestrator
 // cannot see them as calls of its own, so they are recognized in the tool calls of the Pi
@@ -22,6 +23,9 @@ export interface AgentWriteOptions {
   ref: IssueRef;
   // `owner/repo` of the job's issue, to tell it from another repository's `gh issue` number.
   repository: string;
+  // The account of the project's token inside the container: `@me` in a `gh` command means this
+  // account. Resolved before grading; without it `@me` is never confirmed.
+  githubAccount?: string;
   // Reads the issue of the job in the tracker: the evidence by which a write the agent makes on
   // its own issue can be confirmed. Absent: confirmation is not available in this runtime.
   tracker?: Pick<TrackerPort, "readIssue" | "readComments">;
@@ -30,6 +34,8 @@ export interface AgentWriteOptions {
 interface Intent {
   operation: ChangeOperation;
   target?: string;
+  // For "transição": the status categories that count as the change having happened.
+  reaches?: StatusCategory[];
 }
 
 export type Classified =
@@ -113,7 +119,7 @@ function classifyGhIssue(words: string[]): Classified | undefined {
     }
   }
   if (sub === "close") intents.push({ operation: "fechar" });
-  if (sub === "reopen") intents.push({ operation: "transição", target: "reabrir" });
+  if (sub === "reopen") intents.push({ operation: "transição", target: "reabrir", reaches: ["to-do", "in-progress"] });
   if (sub === "comment") intents.push({ operation: "comentar" });
   if (issue === undefined) return { kind: "unidentified" as const, why: "gh issue sem número da issue" };
   return intents.length === 0
@@ -162,6 +168,17 @@ const textOfInput = (args: unknown): string | undefined => {
   return typeof command === "string" ? command : undefined;
 };
 
+// Why a graded change could not be confirmed, for the message when the comparison itself stays
+// attempted: the field the intent reads, named only for the wording.
+const UNREAD_FIELD: Partial<Record<ChangeOperation, string>> = {
+  "adicionar-label": "labels não lidas no tracker: resultado não confirmado",
+  "remover-label": "labels não lidas no tracker: resultado não confirmado",
+  "atribuir": "atribuições não lidas no tracker: resultado não confirmado",
+  "remover-atribuição": "atribuições não lidas no tracker: resultado não confirmado",
+  "fechar": "estado da issue não lido: resultado não confirmado",
+  "transição": "estado da issue não lido: resultado não confirmado",
+};
+
 interface Pending {
   classified: Classified[];
   before: Promise<IssueRead>;
@@ -198,7 +215,9 @@ export class AgentIssueWatch {
     if (toolName !== "bash") return;
     const command = textOfInput(args);
     if (command === undefined) return;
-    const classified = classifyCommand(command);
+    const classified = classifyCommand(command).map((item) => item.kind === "issue"
+      ? { ...item, intents: item.intents.map((intent) => this.resolveAccount(intent)) }
+      : item);
     if (classified.length === 0) return;
     const before = this.read();
     this.pending.set(toolCallId, { classified, before });
@@ -254,12 +273,7 @@ export class AgentIssueWatch {
   // Outside the job's issue there is no before to compare: one attempt per intent, with the real
   // operation and target, never a single unnamed transition.
   private announceOutside(issue: string, intents: Intent[], detail: string): void {
-    for (const intent of intents) {
-      this.announce(issue, {
-        operation: intent.operation, ...(intent.target === undefined ? {} : { target: intent.target }),
-        result: "attempted", detail,
-      });
-    }
+    for (const intent of intents) this.announce(issue, this.changeOf(intent, "attempted", detail));
   }
 
   private announce(issue: string, change: IssueChange): void {
@@ -267,68 +281,55 @@ export class AgentIssueWatch {
     this.options.observer.emit(issueChangeEvent(context, change));
   }
 
-  private judge(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean): IssueChange {
-    const make = (result: ChangeResult, detail?: string, states?: { before?: string; after?: string }): IssueChange => ({
+  // Inside the container `gh` acts as the project's account, so `@me` in an assignment means that
+  // account. Resolved before grading, never after: the attempt and the change name the same target.
+  private resolveAccount(intent: Intent): Intent {
+    if (intent.target !== "@me" || (intent.operation !== "atribuir" && intent.operation !== "remover-atribuição")) return intent;
+    return this.options.githubAccount === undefined ? intent : { ...intent, target: this.options.githubAccount };
+  }
+
+  private changeOf(intent: Intent, result: ChangeResult, detail?: string): IssueChange {
+    return {
       operation: intent.operation, ...(intent.target === undefined ? {} : { target: intent.target }),
-      ...(states?.before === undefined ? {} : { before: states.before }), ...(states?.after === undefined ? {} : { after: states.after }),
       result, ...(detail === undefined ? {} : { detail }),
-    });
+    };
+  }
+
+  // Labels, assignments, closing and reopening go through the same pure comparison the orchestrator's
+  // writes use; this watch only recognizes the intent and says why the comparison did not confirm it.
+  private judge(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean): IssueChange {
     if (this.options.tracker === undefined) {
-      return make("attempted", "sem evidência do tracker neste runtime: confirmação indisponível");
+      return this.changeOf(intent, "attempted", "sem evidência do tracker neste runtime: confirmação indisponível");
     }
+    if (intent.operation === "comentar") return this.judgeComment(intent, before, after, isError);
+    const change = gradeChange(intent, before.snapshot, after.snapshot);
+    return change.result === "attempted"
+      ? { ...change, detail: this.unconfirmedReason(intent, before, after, isError, change) }
+      : change;
+  }
+
+  // Why the comparison stayed attempted: which read is missing, or that the reread simply does not
+  // show the change. The comparison itself is gradeChange's, never this watch's.
+  private unconfirmedReason(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean, change: IssueChange): string {
     const unconfirmed = isError ? "comando terminou com erro e o tracker não mostra a alteração" : "o tracker não mostra a alteração";
-    const afterSnapshot = after.snapshot;
-    const beforeSnapshot = before.snapshot;
-    switch (intent.operation) {
-      case "adicionar-label":
-      case "remover-label": {
-        if (afterSnapshot === undefined) return make("attempted", "tracker não pôde ser relido: resultado não confirmado");
-        const labels = afterSnapshot.labels;
-        if (!labels.known) return make("attempted", "labels não lidas no tracker: resultado não confirmado");
-        const adding = intent.operation === "adicionar-label";
-        const present = labels.value.includes(intent.target ?? "");
-        const beforeLabels = beforeSnapshot?.labels;
-        const hadBefore = beforeLabels?.known === true ? beforeLabels.value.includes(intent.target ?? "") : undefined;
-        if (present !== adding) return make("attempted", unconfirmed);
-        if (hadBefore === undefined) return make("attempted", NO_BEFORE);
-        if (hadBefore === adding) return make("unchanged", "o tracker já tinha esse estado antes da chamada");
-        return make("confirmed", undefined, { before: hadBefore ? "presente" : "ausente", after: present ? "presente" : "ausente" });
-      }
-      case "fechar": {
-        if (afterSnapshot === undefined) return make("attempted", "tracker não pôde ser relido: resultado não confirmado");
-        const status = afterSnapshot.statusCategory;
-        if (!status.known) return make("attempted", "estado da issue não lido: resultado não confirmado");
-        if (status.value !== "done") return make("attempted", unconfirmed);
-        const beforeStatus = beforeSnapshot?.statusCategory;
-        if (beforeStatus?.known !== true) return make("attempted", NO_BEFORE);
-        return beforeStatus.value === "done"
-          ? make("unchanged", "a issue já estava fechada antes da chamada")
-          : make("confirmed", undefined, { before: "open", after: "closed" });
-      }
-      case "transição": {
-        if (afterSnapshot === undefined) return make("attempted", "tracker não pôde ser relido: resultado não confirmado");
-        const status = afterSnapshot.statusCategory;
-        if (!status.known) return make("attempted", "estado da issue não lido: resultado não confirmado");
-        if (status.value === "done") return make("attempted", unconfirmed);
-        const beforeStatus = beforeSnapshot?.statusCategory;
-        if (beforeStatus?.known !== true) return make("attempted", NO_BEFORE);
-        return beforeStatus.value === "done"
-          ? make("confirmed", undefined, { before: "closed", after: "open" })
-          : make("unchanged", "a issue já estava aberta antes da chamada");
-      }
-      case "comentar": {
-        const comments = after.comments;
-        const beforeComments = before.comments;
-        if (comments?.known !== true || beforeComments?.known !== true) {
-          return make("attempted", "comentários não comparáveis no tracker: resultado não confirmado");
-        }
-        const created = comments.value.filter((id) => !beforeComments.value.includes(id));
-        return created.length > 0
-          ? make("confirmed", `comentário ${created.join(",")}`)
-          : make("attempted", unconfirmed);
-      }
-      default:
-        return make("attempted", "operação sem verificação no tracker: resultado não confirmado");
+    if (after.snapshot === undefined) return "tracker não pôde ser relido: resultado não confirmado";
+    if (change.after === undefined) return UNREAD_FIELD[intent.operation] ?? unconfirmed;
+    if (before.snapshot === undefined || change.before === undefined) return NO_BEFORE;
+    return unconfirmed;
+  }
+
+  // A comment leaves no snapshot evidence: it is judged by the difference of the comment ids
+  // between the two readings, the only evidence a comment leaves.
+  private judgeComment(intent: Intent, before: IssueRead, after: IssueRead, isError: boolean): IssueChange {
+    const unconfirmed = isError ? "comando terminou com erro e o tracker não mostra a alteração" : "o tracker não mostra a alteração";
+    const comments = after.comments;
+    const beforeComments = before.comments;
+    if (comments?.known !== true || beforeComments?.known !== true) {
+      return this.changeOf(intent, "attempted", "comentários não comparáveis no tracker: resultado não confirmado");
     }
+    const created = comments.value.filter((id) => !beforeComments.value.includes(id));
+    return created.length > 0
+      ? this.changeOf(intent, "confirmed", `comentário ${created.join(",")}`)
+      : this.changeOf(intent, "attempted", unconfirmed);
   }
 }

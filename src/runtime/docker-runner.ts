@@ -182,7 +182,7 @@ class DockerRunner implements Runner {
         observer, job: context.jobId, ...(context.invocation === undefined ? {} : { invocation: context.invocation }),
         detailPath, artifactsDir, ...(this.options.now === undefined ? {} : { now: this.options.now }),
         idle: { timeoutSeconds: IDLE_TIMEOUT_SECONDS, warnEverySeconds: IDLE_WARNING_SECONDS },
-        issueWrites: { ref: context.ref, repository: project.repository, ...(tracker === undefined ? {} : { tracker }) },
+        issueWrites: { ref: context.ref, repository: project.repository, githubAccount: project.githubAccount, ...(tracker === undefined ? {} : { tracker }) },
       });
       activity.note("perfil de runtime", describePlan(plan));
       observer.setDetailLog(context.jobId, detailPath);
