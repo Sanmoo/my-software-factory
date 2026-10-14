@@ -440,7 +440,7 @@ export class Admission {
       return;
     }
     const job = newJob({ ref, repository: candidate.project.repository });
-    const blocked = this.registry.reserve(job);
+    const blocked = this.registry.tryReserve(job);
     if (blocked) {
       this.announcements.announceWait(key, "issue-elegível", blocked, []);
       report.skipped.push({ key, reason: blocked });
@@ -526,7 +526,7 @@ export class Admission {
       });
       return;
     }
-    const blocked = this.registry.reserve(job);
+    const blocked = this.registry.tryReserve(job);
     if (blocked) {
       this.announcements.announceWait(job.key, kind, blocked, continuationCauses(job));
       report.skipped.push({ key: job.key, reason: blocked });

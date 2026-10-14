@@ -19,6 +19,43 @@ const emptyStore: JobStore = {
   remove: async () => {},
 };
 
+test("tryReserve refuses above maxConcurrent without inserting the refused job", () => {
+  const first = jobOf("1");
+  const refused = jobOf("2", "acme/other");
+  const registry = new JobRegistry(emptyStore, 1, new Announcements(noopObserver), [], []);
+
+  assert.equal(registry.tryReserve(first), undefined);
+  assert.equal(registry.job(first.key), first);
+  assert.equal(registry.tryReserve(refused), "sem vaga livre");
+  assert.equal(registry.job(refused.key), undefined);
+  assert.equal(registry.isTracked(refused.key), false);
+  assert.deepEqual(registry.allJobs(), [first]);
+});
+
+test("tryReserve refuses an active repository without inserting, even with a free slot", () => {
+  const first = jobOf("1");
+  const refused = jobOf("2");
+  const other = jobOf("3", "acme/other");
+  const registry = new JobRegistry(emptyStore, 2, new Announcements(noopObserver), [], []);
+
+  assert.equal(registry.tryReserve(first), undefined);
+  assert.equal(registry.tryReserve(refused), "repositório acme/app já tem implementação ativa");
+  assert.equal(registry.job(refused.key), undefined);
+  assert.equal(registry.isTracked(refused.key), false);
+  assert.deepEqual(registry.allJobs(), [first]);
+  assert.equal(registry.tryReserve(other), undefined);
+  assert.deepEqual(registry.allJobs(), [first, other]);
+});
+
+test("tryReserve does not count external waits as active implementations", () => {
+  const waiting = { ...jobOf("1"), state: "waiting-for-pr" as const };
+  const next = jobOf("2");
+  const registry = new JobRegistry(emptyStore, 1, new Announcements(noopObserver), [waiting], []);
+
+  assert.equal(registry.tryReserve(next), undefined);
+  assert.deepEqual(registry.allJobs(), [waiting, next]);
+});
+
 test("apply persists the transitioned job before announcing and raising attention", async () => {
   const job = jobOf("9");
   const order: string[] = [];

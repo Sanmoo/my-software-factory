@@ -39,9 +39,10 @@ export class JobRegistry {
     return new Set([...this.jobs.keys(), ...this.unreadableKeys]);
   }
 
-  // Capacity and repository check. Synchronous with the reservation it guards, so
-  // parallel polls cannot exceed N or start two implementations in one repository.
-  reserve(job: Job): string | undefined {
+  // Checks capacity and repository and inserts in memory as one synchronous operation.
+  // Returns a refusal without inserting; an accepted reservation still needs persistence.
+  // Parallel polls cannot exceed N or start two implementations in one repository.
+  tryReserve(job: Job): string | undefined {
     const active = [...this.jobs.values()].filter((other) => holdsSlot(other.state));
     if (active.length >= this.maxConcurrent) return "sem vaga livre";
     if (active.some((other) => other.repository === job.repository)) {
