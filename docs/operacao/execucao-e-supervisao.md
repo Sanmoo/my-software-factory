@@ -81,6 +81,11 @@ desfecho.
 
 ## PR e conclusão
 
+O acompanhamento do PR é do módulo `PrTracking` (`src/core/pr-tracking.ts`): valida
+PR pronto, observa o PR, captura feedback e conflitos e pede a conclusão ao
+`IssueWrites`, que a confirma por releitura. O `Admission` só delega esse ciclo;
+a pausa segura o início de invocações, não esse acompanhamento.
+
 - Um resultado `pr_ready` só é aceito depois de a factory **confirmar no adapter de PR
   (github.com)** que o PR existe, está aberto, tem como base a branch de destino e como
   head a branch do trabalho (`msf/<tracker>/<projeto>/<id>`), no repositório do trabalho.

@@ -37,6 +37,12 @@ Atendimento acompanhado de uma issue admitida, incluindo desenvolvimento ou
 assistência ao humano, intervenções humanas e acompanhamento do PR quando houver.
 _Avoid_: ticket como execução, invocação do agente como trabalho inteiro
 
+**Acompanhamento do PR**:
+Seguimento do PR vinculado ao trabalho: observa CI e review, recebe feedback e
+conflitos que podem pedir correção ou ajuda e confirma o merge externo. O trabalho
+só é concluído quando o tracker confirma a issue em done por releitura.
+_Avoid_: PR pronto como trabalho concluído, merge feito pela factory
+
 **Trabalho humano assistido**:
 Atendimento conduzido pelo humano com apoio interativo do agente, voltado à
 triagem, ao esclarecimento ou ao apoio ao trabalho humano, e não à implementação

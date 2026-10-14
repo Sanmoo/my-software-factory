@@ -1,12 +1,12 @@
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
-import type { Mergeability, PrFeedback, PrLookup, PrPort, PrSnapshot } from "../pr/port.js";
+import type { PrPort } from "../pr/port.js";
 import type { Runner } from "../runtime/runner.js";
 import { evaluateEligibility, type Verdict } from "./eligibility.js";
 import type { CommandQueue, OperatorCommand } from "./commands.js";
 import type { InstanceControl } from "./instance-control.js";
-import { appendLog, holdsSlot, newJob, recordPrStatus, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
+import { appendLog, holdsSlot, newJob, type Continuation, type Job, type JobState } from "./job.js";
 import {
-  continuationCauses, describeItem, directedReply, judgeConflict, judgePrFeedback, needsTriage, noteManualResume,
+  continuationCauses, directedReply, noteManualResume,
   planCommands, planContinuation, planItems, receiveFeedback, recordTriageOutcome,
   resumeRefusal, triageInProgress, type DirectedReplyItem, type PlanStep, type TriageOutcome,
 } from "./feedback.js";
@@ -14,8 +14,8 @@ import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
 import { issueContextOf } from "./issue-context.js";
 import { normalizePriority } from "./priority.js";
-import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Delivery } from "./pr-rules.js";
-import type { PrRef } from "./result.js";
+import { deliveryOf, type Delivery } from "./pr-rules.js";
+import { PrTracking } from "./pr-tracking.js";
 import { noopObserver, type FieldValue, type Observer } from "./observability.js";
 import { triggerSummary } from "./ops-events.js";
 import type { AttentionKeeper } from "./attention.js";
@@ -24,7 +24,7 @@ import { JobRegistry } from "./job-registry.js";
 import { ExecutionLoop, type ExecutionOutcome } from "./execution-loop.js";
 import { IssueWrites, type IssueWritesContext } from "./issue-writes.js";
 import type { AssistOperator, AssistOperatorResult } from "./assist-flow.js";
-import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
+import { refKey, type IssueRef, type IssueSnapshot, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
 // The coordinator of one instance: admits eligible issues as jobs, keeps capacity
@@ -105,24 +105,11 @@ const byKey = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byPriorityThenIdentity = (a: NewCandidate, b: NewCandidate) =>
   a.priority - b.priority || byKey(a.key, b.key);
 
-const statusKey = (status: PrStatus): string => JSON.stringify([status.checks, status.review, status.mergeable]);
-
-const describeKnown = <T extends string>(label: string, known: Known<T>): string =>
-  known.known ? `${label}: ${known.value}` : `${label}: desconhecido (${known.reason})`;
-
-// Unknown mergeability is said as unknown: it is neither a conflict nor the absence of one.
-const describeMergeable = (mergeable: Known<Mergeability>): string => {
-  if (!mergeable.known) return `mergeabilidade desconhecida (${mergeable.reason})`;
-  return mergeable.value === "conflicting" ? "PR em conflito" : "sem conflito";
-};
-
-const describeStatus = (status: PrStatus): string =>
-  `${describeKnown("CI", status.checks)}; ${describeKnown("review", status.review)}; ${describeMergeable(status.mergeable)}`;
-
 export class Admission {
   readonly unreadable: readonly string[];
   private readonly registry: JobRegistry;
   private readonly loop: ExecutionLoop;
+  private readonly prTracking: PrTracking;
   private readonly obs: Observer;
   private readonly writes: IssueWrites;
   private readonly announcements: Announcements;
@@ -132,6 +119,7 @@ export class Admission {
     this.announcements = new Announcements(this.obs, deps.attention);
     this.writes = new IssueWrites(deps.tracker, this.obs);
     this.registry = new JobRegistry(deps.store, deps.instance.maxConcurrent, this.announcements, loaded, unreadable);
+    this.prTracking = new PrTracking(deps.prs, this.writes, this.registry, this.announcements, deps.runner);
     this.loop = new ExecutionLoop(deps.runner, this.registry, this.announcements,
       (key, outcome, delivery, invocation) => this.interpretExecution(key, outcome, delivery, invocation));
     this.unreadable = this.registry.unreadable;
@@ -184,7 +172,10 @@ export class Admission {
     // confirming merges, as an active job would. Feedback found here is admitted by the
     // continuations below in the same poll, when a slot is free.
     for (const job of this.allJobs().filter((candidate) => candidate.state === "waiting-for-pr")) {
-      await this.guard(job.key, report, () => this.trackPr(job, report));
+      await this.guard(job.key, report, () => this.prTracking.trackPr(job, this.enabledProjectOf(job), {
+        pular: (key, reason) => { report.skipped.push({ key, reason }); },
+        falhar: (key, message) => { report.errors.push({ key, message }); },
+      }));
     }
     const continuations = this.allJobs().filter((job) => job.pending !== undefined);
     if (!report.paused) {
@@ -564,12 +555,12 @@ export class Admission {
     }
   }
 
-  // The loop reports a result, not a state change. PR validation and job transitions
-  // stay here, followed by recording how the triage step ended.
+  // The loop reports a result, not a state change. PR validation goes to the tracking
+  // module; job transitions are followed by recording how the triage step ended.
   private async interpretExecution(key: string, outcome: ExecutionOutcome, delivery: Delivery, invocation: string): Promise<void> {
     switch (outcome.status) {
       case "pr_ready":
-        await this.acceptPr(key, outcome.pr, delivery, invocation);
+        await this.prTracking.acceptPr(key, outcome.pr, delivery, invocation);
         break;
       case "needs_help":
         await this.registry.apply(key, "waiting-for-help", {
@@ -607,204 +598,5 @@ export class Admission {
 
   private enabledProjectOf(job: Job): ProjectConfig | undefined {
     return this.deps.instance.projects.find((candidate) => candidate.repository === job.repository && candidate.enabled);
-  }
-
-  // A "PR pronto" result is accepted only after the PR port confirms it. An
-  // invalid PR is a help request. A PR that cannot be read is neither success nor help: the
-  // operator decides, so the job needs intervention.
-  private async acceptPr(key: string, pr: PrRef, delivery: Delivery, invocation?: string): Promise<void> {
-    const misplaced = misplacedRepository(pr, delivery);
-    if (misplaced !== undefined) {
-      await this.refusePr(key, pr, misplaced, invocation);
-      return;
-    }
-    let lookup: PrLookup;
-    try {
-      lookup = await this.deps.prs.readPr(pr);
-    } catch (error) {
-      await this.registry.apply(key, "intervention-required", {
-        message: `PR não pôde ser confirmado: ${messageOf(error)}`,
-        reason: `PR não pôde ser confirmado no github.com: ${messageOf(error)}`,
-        invocation,
-      });
-      return;
-    }
-    const verdict = judgeReadyPr(lookup, delivery);
-    if (!verdict.valid) {
-      await this.refusePr(key, pr, verdict.reason, invocation);
-      return;
-    }
-    await this.registry.apply(key, "waiting-for-pr", { message: `PR validado: ${pr.repository}#${pr.number}`, pr, invocation });
-    if (lookup.status === "found") await this.observe(key, lookup.pr);
-  }
-
-  private async refusePr(key: string, pr: PrRef, reason: string, invocation?: string): Promise<void> {
-    await this.registry.apply(key, "waiting-for-help", {
-      message: `PR pronto recusado: ${reason}`,
-      question: `PR pronto não confirmado (${pr.repository}#${pr.number}): ${reason}. Corrija o PR ou informe o próximo passo.`,
-      context: "",
-      invocation,
-    });
-  }
-
-  // Polling of a PR the job waits for: CI and review are recorded, a merge into
-  // the target branch completes the job, and a PR closed without merge interrupts it.
-  private async trackPr(job: Job, report: PollReport): Promise<void> {
-    const project = this.enabledProjectOf(job);
-    if (!project) {
-      report.skipped.push({ key: job.key, reason: "projeto do trabalho não está habilitado na instância" });
-      return;
-    }
-    const pr = job.pr;
-    if (!pr) {
-      await this.registry.apply(job.key, "intervention-required", {
-        message: "trabalho aguardando PR sem referência de PR",
-        reason: "trabalho aguardando PR sem referência de PR",
-      });
-      return;
-    }
-    let lookup: PrLookup;
-    try {
-      lookup = await this.deps.prs.readPr(pr);
-    } catch (error) {
-      report.errors.push({ key: job.key, message: `PR não pôde ser lido: ${messageOf(error)}` });
-      return;
-    }
-    const verdict = judgeTrackedPr(lookup, deliveryOf(project, job.ref));
-    switch (verdict.kind) {
-      case "open":
-        await this.observe(job.key, verdict.pr);
-        // Comments first: a batch with a human comment waits for its triage, and a job that went to the
-        // human because of it takes no conflict (issue #21).
-        await this.collectPrFeedback(job, pr, report);
-        await this.collectConflict(job, verdict.pr, report);
-        return;
-      case "merged":
-        await this.announceMerge(job, pr, project.targetBranch);
-        await this.complete(job, report, project.targetBranch);
-        return;
-      case "closed": {
-        const reason = `PR fechado sem merge: ${pr.repository}#${pr.number}; não reaberto, issue fora de done`;
-        await this.registry.apply(job.key, "interrupted", { message: reason, reason });
-        return;
-      }
-      case "invalid": {
-        const reason = `PR acompanhado não confere: ${verdict.reason}`;
-        await this.registry.apply(job.key, "intervention-required", { message: reason, reason });
-        return;
-      }
-    }
-  }
-
-  // A conflict of the open PR with its target branch becomes a correction with a slot and
-  // a reason of its own. It is judged on the commits read now, so a failing feedback read never hides it.
-  private async collectConflict(job: Job, snapshot: PrSnapshot, report: PollReport): Promise<void> {
-    const current = this.registry.job(job.key);
-    if (!current || current.state !== "waiting-for-pr") return;
-    const input = judgeConflict(snapshot, new Set(current.consumed ?? []));
-    if (input === undefined) return;
-    const outcome = receiveFeedback(current, [input], "conflito do PR recebido");
-    if ("reason" in outcome) {
-      report.skipped.push({ key: current.key, reason: `conflito do PR ${outcome.reason}` });
-      return;
-    }
-    await this.registry.persist(outcome.job);
-    this.announcements.announceFeedback(current.key, [input]);
-  }
-
-  // Feedback on an open PR: human comments (conversation, inline, review bodies), and failing checks, become
-  // a correction with a slot and priority. A case the factory cannot decide goes to the human,
-  // and its items are consumed so they are not asked again.
-  private async collectPrFeedback(job: Job, pr: PrRef, report: PollReport): Promise<void> {
-    let feedback: PrFeedback;
-    try {
-      feedback = await this.deps.prs.readFeedback(pr);
-    } catch (error) {
-      report.errors.push({ key: job.key, message: `feedback do PR não pôde ser lido: ${messageOf(error)}` });
-      return;
-    }
-    const current = this.registry.job(job.key);
-    if (!current || current.state !== "waiting-for-pr") return;
-    const judgement = judgePrFeedback(feedback, new Set(current.consumed ?? []), pr);
-    if (judgement.inputs.length === 0 && judgement.undecidable === undefined) return;
-    const consumed = judgement.inputs.flatMap((input) => (input.key === undefined ? [] : [input.key]));
-    if (judgement.undecidable === undefined) {
-      if (needsTriage(judgement.inputs)) {
-        // A human comment is never corrected without its triage (issue #21): without the skill the
-        // operator is asked, and nothing is consumed, so the comments come back with the PR.
-        const unavailable = await this.deps.runner.triageUnavailable?.({ ref: current.ref, repository: current.repository });
-        if (unavailable !== undefined) {
-          await this.registry.apply(job.key, "waiting-for-help", {
-            message: `triagem do feedback do PR indisponível: ${unavailable}`,
-            question: `Há comentário humano novo no PR (${pr.repository}#${pr.number}) e a triagem com /skill:gh-address-comments não pode rodar: ${unavailable}.`
-              + " Nenhuma correção foi feita e nenhum item foi consumido: eles voltam a ser lidos quando o PR for acompanhado de novo."
-              + " Resolva a causa e responda para retomar, ou libere o trabalho.",
-            context: "",
-          });
-          return;
-        }
-      }
-      const outcome = receiveFeedback(current, judgement.inputs, "feedback do PR recebido");
-      if ("reason" in outcome) {
-        report.skipped.push({ key: job.key, reason: `feedback do PR ${outcome.reason}` });
-        return;
-      }
-      await this.registry.persist(outcome.job);
-      this.announcements.announceFeedback(job.key, judgement.inputs);
-      return;
-    }
-    const items = judgement.inputs.length === 0 ? "" : ` Itens: ${judgement.inputs.map(describeItem).join("; ")}.`;
-    await this.registry.apply(job.key, "waiting-for-help", {
-      message: `feedback do PR exige decisão humana: ${judgement.undecidable}`,
-      question: `Feedback do PR (${pr.repository}#${pr.number}) não pode ser decidido pela factory: ${judgement.undecidable}.`
-        + `${items} Responda com a orientação ou libere o trabalho.`,
-      context: "",
-      consumed,
-    });
-  }
-
-  // The external merge of the linked PR, seen once: recorded on the job before it is announced,
-  // so the next polls (while `done` is still pending) do not repeat it. The factory never merges.
-  private async announceMerge(job: Job, pr: PrRef, targetBranch: string): Promise<void> {
-    const current = this.registry.job(job.key) ?? job;
-    if (current.mergeDetected !== undefined) return;
-    await this.registry.persist({ ...current, mergeDetected: new Date().toISOString() });
-    this.announcements.emitFor(job.key, "merge-detectado", "merge detectado", {
-      pr: `${pr.repository}#${pr.number}`, destino: targetBranch, origem: "externa",
-    }, { level: "progresso" });
-  }
-
-  // Merge confirmed by the PR port: the issue is done only when the tracker confirms it by
-  // reread. Until then the job keeps waiting and the next poll tries again.
-  private async complete(job: Job, report: PollReport, targetBranch: string): Promise<void> {
-    const decision = await this.writes.complete(job.ref, this.writeContext(job, "conclusão-após-merge"));
-    if (decision.status === "pending") {
-      this.announcements.emitFor(job.key, "conclusão-pendente", "merge confirmado; done ainda não confirmado", {
-        motivo: decision.reason, próximo: "nova tentativa no próximo polling",
-      }, { level: "atenção" });
-      report.errors.push({
-        key: job.key,
-        message: `PR mesclado; done ainda não confirmado pelo tracker (${decision.reason}): nova tentativa no próximo polling`,
-      });
-      return;
-    }
-    await this.registry.apply(job.key, "done", {
-      message: `PR mesclado em ${targetBranch}: issue done confirmada por releitura`,
-    });
-  }
-
-  // Stores the latest PR observation; the log gets a line only when CI or review changed.
-  private async observe(key: string, pr: PrSnapshot): Promise<void> {
-    const current = this.registry.job(key);
-    if (!current) throw new Error(`trabalho desconhecido: ${key}`);
-    const status: PrStatus = { checks: pr.checks, review: pr.review, mergeable: pr.mergeable };
-    if (current.prStatus && statusKey(current.prStatus) === statusKey(status)) return;
-    await this.registry.persist(recordPrStatus(current, status, describeStatus(status)));
-    this.announcements.emitFor(key, "acompanhamento-pr", "acompanhamento do PR alterado", {
-      pr: `${pr.ref.repository}#${pr.ref.number}`,
-      ci: status.checks.known ? status.checks.value : `desconhecido (${status.checks.reason})`,
-      review: status.review.known ? status.review.value : `desconhecido (${status.review.reason})`,
-      mergeabilidade: describeMergeable(status.mergeable),
-    });
   }
 }
