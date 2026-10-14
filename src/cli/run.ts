@@ -101,6 +101,15 @@ export async function runInstance(options: RunOptions): Promise<number> {
 
   const admission = await Admission.open(deps);
   if (admission.unreadable.length > 0) mainLog.note("atenção", `arquivos de trabalho ilegíveis (issues continuam rastreadas): ${admission.unreadable.join(", ")}`);
+  // The post-restart reconciliation (ticket #58) comes before the first admissions of either
+  // flow: supervised identities are recovered against the real execution in the containers.
+  // Failures land in the reconciliation's own report; they never block the loop below.
+  const reconciliation = await deps.assist.reconcile();
+  for (const r of reconciliation.recovered) mainLog.note("atenção", `atendimento recuperado ${r.key}: ${r.reason}`);
+  for (const u of reconciliation.unknown) mainLog.note("atenção", `execução desconhecida ${u.key}: ${u.reason}`);
+  for (const p of reconciliation.pending) mainLog.note("atenção", `atendimento pendente pós-reinício ${p.key}: ${p.reason}`);
+  for (const e of reconciliation.ended) mainLog.note("info", `atendimento encerrado na indisponibilidade ${e.key}: ${e.reason}`);
+  mainLog.failures(reconciliation.errors.map((error) => ({ key: error.key, message: error.message })));
   mainLog.note("info", `instância ${instance.name}: N=${instance.maxConcurrent}, polling ${instance.pollIntervalSeconds}s, estado em ${options.stateDir}`);
 
   const stop = new AbortController();
@@ -116,6 +125,14 @@ export async function runInstance(options: RunOptions): Promise<number> {
     } catch (error) {
       mainLog.failures([{ key: "ciclo", message: messageOf(error) }], { cycleFailed: true });
     }
+    const assistReport = await deps.assist.poll();
+    for (const key of assistReport.opened) mainLog.note("atenção", `sessão assistida aberta: ${key}`);
+    for (const resumed of assistReport.resumed) mainLog.note("atenção", `retomada autorizada executada ${resumed.key}: ${resumed.reason}`);
+    for (const concluded of assistReport.concluded) mainLog.note("info", `atendimento concluído ${concluded.key}: ${concluded.reason}`);
+    for (const rejected of assistReport.rejected) mainLog.note("atenção", `aprovação recusada ${rejected.key}: ${rejected.reason}`);
+    for (const pending of assistReport.pending) mainLog.note("atenção", `atendimento pendente ${pending.key}: ${pending.reason}`);
+    for (const skip of assistReport.skipped) mainLog.note("info", `atendimento adiado ${skip.key}: ${skip.reason}`);
+    mainLog.failures(assistReport.errors.map((error) => ({ key: error.key, message: error.message })));
     if (options.once) break;
     await sleep(instance.pollIntervalSeconds * 1000, undefined, { signal: stop.signal }).catch(() => undefined);
   }

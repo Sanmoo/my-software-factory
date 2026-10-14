@@ -42,7 +42,9 @@ export type Route =
 
 const OK: RuleOutcome = { ok: true };
 const fail = (reason: string): RuleOutcome => ({ ok: false, reason });
-const unknownReason = (what: string, value: Known<unknown>): string =>
+// `X desconhecido: motivo`: unknown metadata rejects, it is never absence of X. Exported so the
+// assisted rules say it the same way.
+export const unknownReason = (what: string, value: Known<unknown>): string =>
   value.known ? "" : `${what} desconhecido: ${value.reason}`;
 
 // Routing comes only from labels, never from the title. A label counts as a routing

@@ -18,6 +18,8 @@
     {
       "name": "EXAMPLE_INSTANCE",
       "maxConcurrent": 1,
+      "maxAssisted": 1,
+      "assistModel": "EXAMPLE_PROVIDER/EXAMPLE_ASSIST_MODEL",
       "pollIntervalSeconds": 300,
       "maxIterations": 5,
       "modelAuth": "EXAMPLE_MODEL_AUTH",

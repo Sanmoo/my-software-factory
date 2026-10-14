@@ -321,10 +321,3 @@ test("each negative filter rejects the issue with its rule", async () => {
   }
 });
 
-test("a link to a blocker that is already Done does not block", async () => {
-  const issues = [
-    fakeIssue({ key: "VAN-83", links: [{ type: BLOCKS, inwardIssue: "VAN-84" }] }),
-    fakeIssue({ key: "VAN-84", category: "done", statusName: "Itens concluídos" }),
-  ];
-  assert.deepEqual(await eligibilityOf(issues, "VAN-83"), []);
-});

@@ -128,6 +128,12 @@ export interface TrackerPort {
   claim(ref: IssueRef): Promise<WriteOutcome>;
   // Removes the claim mark only; never marks done. Reports the intents it made.
   releaseClaim(ref: IssueRef): Promise<WriteOutcome>;
+  // Adds and removes labels as one composite write, in the order given. Used by the
+  // attendance conclusion (#55) and the assisted release (#56): forward to the autonomous
+  // flow and de-authorize (`human-assisted`) are label writes, never a status move or a close.
+  // The single label route of the port: the adapter reports each attempted change; the caller
+  // confirms every one by rereading.
+  updateLabels(ref: IssueRef, changes: { add?: readonly string[]; remove?: readonly string[] }): Promise<IssueChange[]>;
   readComments(ref: IssueRef): Promise<Comment[]>;
   // The core prefixes the marker; adapters never strip it. Returns the comment id.
   postComment(ref: IssueRef, body: string): Promise<string>;

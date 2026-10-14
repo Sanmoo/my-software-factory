@@ -37,6 +37,7 @@ export function routeTrackers(routes: readonly TrackerRoute[]): TrackerPort {
     readIssue: async (ref) => forRef(ref).readIssue(ref),
     claim: async (ref) => forRef(ref).claim(ref),
     releaseClaim: async (ref) => forRef(ref).releaseClaim(ref),
+    updateLabels: async (ref, changes) => forRef(ref).updateLabels(ref, changes),
     readComments: async (ref) => forRef(ref).readComments(ref),
     postComment: async (ref, body) => forRef(ref).postComment(ref, body),
     markDone: async (ref) => forRef(ref).markDone(ref),

@@ -246,6 +246,7 @@ test("a merge the tracker does not confirm stays waiting, and the next poll conf
     readIssue: (ref) => memory.readIssue(ref),
     claim: (ref) => memory.claim(ref),
     releaseClaim: (ref) => memory.releaseClaim(ref),
+    updateLabels: (ref, changes) => memory.updateLabels(ref, changes),
     readComments: (ref) => memory.readComments(ref),
     postComment: (ref, body) => memory.postComment(ref, body),
     markDone: async (ref) => {

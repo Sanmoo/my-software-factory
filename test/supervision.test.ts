@@ -494,3 +494,63 @@ test("a release whose write landed but whose answer was lost is confirmed by rer
   assert.equal(report.commands[0]?.status, "applied");
   assert.equal(admission.job(keyOf("acme/app", "1"))?.state, "released");
 });
+
+// ---- Comandos para a sessão assistida (#56): dreno único na fila, delegação ao operador ----
+
+interface AssistStub {
+  has(key: string): Promise<boolean>;
+  resume(key: string, command: string): Promise<{ status: "applied" } | { status: "rejected"; reason: string }>;
+  release(key: string, command: string): Promise<{ status: "applied" } | { status: "rejected"; reason: string }>;
+  reply(key: string, message: string, command: string): Promise<{ status: "applied" } | { status: "rejected"; reason: string }>;
+}
+
+test("comandos sem trabalho conhecido vão ao registro assistido; a fila continua com um único dreno", async () => {
+  const stateDir = await dir();
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(() => finished(HELP));
+  const calls: string[] = [];
+  // O registro conserva estado: a retomada muda o estado da sessão e um comando repetido
+  // chega depois e é recusado, como no fluxo real.
+  const resumed = new Set<string>();
+  const assist: AssistStub = {
+    has: async (key) => { calls.push(`has:${key}`); return key === KEY; },
+    resume: async (key, command) => {
+      calls.push(`resume:${command}`);
+      if (resumed.has(key)) return { status: "rejected", reason: "resume não se aplica à sessão assistida em estado open" };
+      resumed.add(key);
+      return { status: "applied" };
+    },
+    release: async (key, command) => { calls.push(`release:${command}`); return resumed.has(key) ? { status: "rejected", reason: "release não se aplica à sessão assistida em estado open" } : { status: "applied" }; },
+    reply: async (_key, message, command) => { calls.push(`reply:${command}:${message}`); return { status: "applied" }; },
+  };
+  const instance = instanceFor(["acme/app"]);
+  const admission = await Admission.open({
+    instance, tracker: memory, runner,
+    eligibility: (project) => projectEligibility(instance, project),
+    store: createFileJobStore(stateDir),
+    commands: createFileCommandQueue(stateDir),
+    control: createFileInstanceControl(stateDir),
+    prs: openPrs,
+    assistOperator: assist,
+  });
+  await operator(stateDir).enqueue({ type: "resume", job: KEY });
+  await operator(stateDir).enqueue({ type: "resume", job: KEY });
+  await operator(stateDir).enqueue({ type: "release", job: KEY });
+  await operator(stateDir).enqueue({ type: "reply", job: KEY, message: "não autorizo retomada automática" });
+  await operator(stateDir).enqueue({ type: "resume", job: "memory:acme/app#9" });
+
+  const report = await admission.poll();
+  assert.deepEqual(report.commands.map((outcome) => ({ type: outcome.type, status: outcome.status, reason: outcome.reason })), [
+    { type: "resume", status: "applied", reason: undefined },
+    { type: "resume", status: "rejected", reason: "resume não se aplica à sessão assistida em estado open" },
+    { type: "release", status: "rejected", reason: "release não se aplica à sessão assistida em estado open" },
+    { type: "reply", status: "applied", reason: undefined },
+    { type: "resume", status: "rejected", reason: "trabalho desconhecido" },
+  ]);
+  const second = await admission.poll();
+  assert.deepEqual(second.commands, [], "a fila é consumida uma vez; nenhum dreno adicional");
+
+  const unknown = await assist.has("memory:acme/app#9");
+  assert.equal(unknown, false, "a chave desconhecida sai da delegação como trabalho desconhecido");
+});
+const KEY = "memory:acme/app#7";

@@ -4,9 +4,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveJobRef } from "../core/job-ref.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
 import { createFileJobStore } from "../state/file-job-store.js";
+import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import type { GitHubBoundary } from "../tracker/github.js";
 import type { TrackerPort } from "../tracker/port.js";
+import { runAssist, type AssistEnvironmentPort } from "./assist.js";
 import { loadInstance, type CliRun } from "./instance.js";
+import { loadLocalSettings } from "./local-settings.js";
 import { showLogs } from "./logs.js";
 import { runInstance } from "./run.js";
 import { runStatus } from "./status.js";
@@ -20,7 +23,7 @@ import { applySupervision } from "./supervision.js";
 // reference and the help, and hands over to the commands that already exist. The main log prints
 // exactly this form, so what the operator copies from it works as printed.
 
-export const COMMANDS = ["run", "status", "logs", "reply", "resume", "release", "pause", "unpause"] as const;
+export const COMMANDS = ["run", "status", "assist", "logs", "reply", "resume", "release", "approve", "pause", "unpause"] as const;
 type Command = (typeof COMMANDS)[number];
 
 // The default base directory, relative to the repository root.
@@ -57,6 +60,16 @@ const SPECS: Record<Command, CommandSpec> = {
       "Instâncias com projeto Jira exigem JIRA_URL, JIRA_USERNAME e JIRA_API_TOKEN no ambiente.",
     ],
   },
+  assist: {
+    usage: "./msf [--home DIR] <instância> assist",
+    summary: "diagnóstico local do atendimento assistido: issues autorizadas, impedimentos, capacidade e ambiente; não escreve nada e não abre sessão",
+    needsJob: false,
+    notes: [
+      "Descobre candidatos por human-assisted + exatamente um estado humano (needs-triage, needs-info, ready-for-human); estados contraditórios ficam visíveis e não autorizam.",
+      "Verifica Herdr, Docker, clone assistido, provider/modelo e o perfil de runtime sem iniciar execução; o que não se puder comprovar aparece como desconhecido, nunca como ok (prova técnica na issue #52).",
+      "O clone assistido é gerenciado pelo operador: a factory não cria worktree nem impõe proibição de escrita como condição de elegibilidade.",
+    ],
+  },
   logs: {
     usage: "./msf [--home DIR] <instância> logs <trabalho>",
     summary: "mostra o estado, o log e o histórico de um trabalho",
@@ -77,6 +90,15 @@ const SPECS: Record<Command, CommandSpec> = {
     usage: "./msf [--home DIR] <instância> release <trabalho>",
     summary: "libera o trabalho: remove o claim sem concluir e encerra o acompanhamento; entra na fila da instância",
     needsJob: true,
+  },
+  approve: {
+    usage: "./msf [--home DIR] <instância> approve <atendimento assistido>",
+    summary: "aprova o resultado proposto de um atendimento assistido (a chave da lista de `logs` ou `assist`); o atendimento conclui no ciclo seguinte, sem fechar a issue",
+    needsJob: true,
+    notes: [
+      "A aprovação é explícita do operador: aprovar antes de um resultado reconhecido não registra nada.",
+      "O encerramento do pi, a saída zero ou uma declaração do agente nunca valem como aprovação.",
+    ],
   },
   pause: {
     usage: "./msf [--home DIR] <instância> pause",
@@ -191,8 +213,11 @@ export interface MsfDeps {
   // Boundaries are injectable for tests; the defaults are the real ones.
   sandbox?: SandboxBoundary;
   github?: GitHubBoundary;
-  // Replaces the trackers `status` reads (tests inject one).
+  // Replaces the trackers `status` and `assist` read (tests inject one).
   tracker?: TrackerPort;
+  // Replaces the Herdr check `assist` runs (tests inject one);
+  // the default reports the integration as unknown (prova técnica na issue #52).
+  herdr?: AssistEnvironmentPort["herdr"];
 }
 
 const exists = (path: string): Promise<boolean> => access(path).then(() => true, () => false);
@@ -214,6 +239,25 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
 
   if (request.command === "run") return runCommand(request, { deps, homeDir, defaultHome, configPath, stateDir });
 
+  if (request.command === "assist") {
+    const localPath = join(homeDir, "local.json");
+    if (!(await exists(localPath))) {
+      return failure(1, `local.json não encontrado em ${localPath} (diretório base: ${homeDir}; use --home para indicar outro)`);
+    }
+    const local = await loadLocalSettings(localPath);
+    if (typeof local === "string") return failure(1, local);
+    return runAssist({
+      config: loaded.config,
+      instance: loaded.instance,
+      local,
+      stateDir,
+      env: deps.env,
+      sandbox: deps.sandbox ?? sandcastleBoundary(),
+      ...(deps.tracker === undefined ? {} : { tracker: deps.tracker }),
+      ...(deps.herdr === undefined ? {} : { herdr: deps.herdr }),
+    });
+  }
+
   if (request.command === "status") {
     return runStatus({
       instance: loaded.instance,
@@ -222,6 +266,14 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
       env: deps.env,
       ...(deps.github === undefined ? {} : { github: deps.github }),
       ...(deps.tracker === undefined ? {} : { tracker: deps.tracker }),
+    });
+  }
+
+  // The approval targets an assisted attendance key, never an implementation job: it goes
+  // through raw and the supervision validates it against the assist session store.
+  if (request.command === "approve" && request.job !== undefined) {
+    return applySupervision({
+      command: "approve", configPath, instanceName: request.instance, stateDir, job: request.job,
     });
   }
 

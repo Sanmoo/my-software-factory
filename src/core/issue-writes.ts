@@ -31,6 +31,12 @@ export type CompletionDecision =
   | { status: "done" }
   | { status: "pending"; reason: string };
 
+// The label write the reread does not show: the issue was written to but the reread does not
+// confirm it, so the attendance conclusion cannot count the change as confirmed.
+export type LabelUpdateDecision =
+  | { status: "confirmed"; changes: IssueChange[] }
+  | { status: "not-confirmed"; reason: string; changes?: IssueChange[] };
+
 // What the caller knows about the write: the job it belongs to, why it is made and the evidence.
 // The ref, the origin and the abstract operation are the module's own.
 export interface IssueWritesContext {
@@ -41,7 +47,7 @@ export interface IssueWritesContext {
 }
 
 // The orchestrator's writes on an issue, as named in the log.
-type IssueWriteOperation = "claim" | "release" | "done";
+type IssueWriteOperation = "claim" | "release" | "done" | "remover-labels" | "labels";
 
 // The claim and the doing state the reread does not show: the issue was written to but the start
 // is not confirmed, so an operator decides what happens next.
@@ -65,6 +71,35 @@ const FIELD_OF: Partial<Record<Intent["operation"], { field: "labels" | "assigne
   "remover-label": { field: "labels", expected: false },
   "atribuir": { field: "assignees", expected: true },
   "remover-atribuição": { field: "assignees", expected: false },
+};
+
+// A removal the reread shows as done: the label is no longer on the issue, or the account is no
+// longer among its assignees. Each change is judged by its own field, so a removal the reread
+// cannot see, or a change without a target, stays attempted.
+const removalConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot | undefined): boolean => {
+  if (snapshot === undefined || change.result !== "attempted" || change.target === undefined) return false;
+  if (change.operation === "remover-label") return snapshot.labels.known && !snapshot.labels.value.includes(change.target);
+  if (change.operation === "remover-atribuição" && snapshot.assignees.known) return !snapshot.assignees.value.includes(change.target);
+  return false;
+};
+
+// An addition the reread shows as done: the label is among the issue's labels.
+const additionConfirmedByReread = (change: IssueChange, snapshot: IssueSnapshot | undefined): boolean =>
+  snapshot !== undefined && change.result === "attempted" && change.operation === "adicionar-label"
+  && change.target !== undefined && snapshot.labels.known && snapshot.labels.value.includes(change.target);
+
+// The reread decides each label change of one update: attempted means nothing by itself.
+// Judged by index, so the confirmed copies never change what belongs to the unconfirmed part.
+const confirmedLabelIndexes = (changes: readonly IssueChange[], snapshot: IssueSnapshot | undefined): Set<number> => {
+  const confirmed = new Set<number>();
+  changes.forEach((change, index) => {
+    if (change.result === "unchanged" || change.result === "confirmed") {
+      confirmed.add(index);
+    } else if (additionConfirmedByReread(change, snapshot) || removalConfirmedByReread(change, snapshot)) {
+      confirmed.add(index);
+    }
+  });
+  return confirmed;
 };
 
 const presentIn = (known: Known<string[]> | undefined, target: string): boolean | undefined => {
@@ -218,6 +253,65 @@ export class IssueWrites {
     return confirmed ? { status: "done" } : { status: "pending", reason: DONE_NOT_SHOWN };
   }
 
+  // Adds and removes labels with the same confirmation rule as every other write: the adapter
+  // reports what it attempted, and only the reread (each change judged in its own field, the
+  // addition present, the removal absent) turns it into evidence. An error is resolved by the
+  // reread too: what it already shows as done is confirmed, what it cannot show stays not-confirmed.
+  async updateLabels(
+    ref: IssueRef, changes: { add?: readonly string[]; remove?: readonly string[] }, context: IssueWritesContext,
+  ): Promise<LabelUpdateDecision> {
+    const write = this.writeContext(ref, "labels", context);
+    // The same rule as every write: the state is read before the write, so a write over an
+    // unreadable tracker does not happen (the grading needs the before snapshot too).
+    const before = await this.reread(ref);
+    if (before === undefined) return { status: "not-confirmed", reason: REREAD_UNAVAILABLE };
+    let attempted: IssueChange[] | undefined;
+    try {
+      attempted = await this.writeIssue(write, () => this.tracker.updateLabels(ref, changes), before);
+    } catch (error) {
+      // The concrete changes the partial write made travel through the error (as the intents it
+      // made); graded against the before snapshot and confirmed by the reread, the ones the
+      // tracker already shows are evidence, the rest stay not-confirmed.
+      const made = error instanceof PartialWriteError ? error.made : [];
+      const snapshot = await this.reread(ref);
+      const { confirmed, unconfirmed } = this.judgeLabelChanges(
+        made.map((intent) => gradeChange(intent, before)), snapshot,
+      );
+      this.reportChanges(write, confirmed);
+      const reason = snapshot === undefined
+        ? `alteração de label não confirmada: ${messageOf(error)}; releitura indisponível`
+        : `alteração de label não confirmada: ${messageOf(error)}`;
+      return { status: "not-confirmed", reason, changes: unconfirmed };
+    }
+    const snapshot = await this.reread(ref);
+    const { confirmed, unconfirmed } = this.judgeLabelChanges(attempted, snapshot);
+    this.reportChanges(write, confirmed);
+    for (const change of unconfirmed) this.obs.emit(issueChangeEvent(write, change));
+    return unconfirmed.length === 0
+      ? { status: "confirmed", changes: attempted ?? [] }
+      : { status: "not-confirmed", reason: snapshot === undefined ? "releitura indisponível" : "releitura não confirma a alteração de label", changes: attempted ?? [] };
+  }
+
+  // The reread judges each attempted label change in its own field: the confirmed copies come
+  // out named as confirmed, the rest come out as the not-confirmed remainder — one shared
+  // decision for the success path and for the error path, so they can never drift apart.
+  private judgeLabelChanges(
+    attempted: IssueChange[] | undefined, snapshot: IssueSnapshot | undefined,
+  ): { confirmed: IssueChange[]; unconfirmed: IssueChange[] } {
+    const judged = attempted ?? [];
+    const confirmed = confirmedLabelIndexes(judged, snapshot);
+    return {
+      confirmed: judged.filter((_, index) => confirmed.has(index)).map((change) => ({ ...change, result: "confirmed" as const })),
+      unconfirmed: judged.filter((_, index) => !confirmed.has(index)),
+    };
+  }
+
+  // Emits the concrete changes a write made as they are (the label route's reports): the
+  // grading already happened in judgeLabelChanges, so these are the copies the reread confirmed.
+  private reportChanges(context: IssueWriteContext, changes: readonly IssueChange[] | undefined): void {
+    for (const change of changes ?? []) this.obs.emit(issueChangeEvent(context, change));
+  }
+
   // After a claim write error the external state is reread before anything else (P02): a claim
   // the reread shows is never re-claimed, and one the reread shows absent may be retried.
   private async reconcileClaimError(ref: IssueRef): Promise<StartDecision> {
@@ -237,6 +331,8 @@ export class IssueWrites {
   // A tracker write: the attempt is announced before, the intents a partial failure reported
   // after, and the failure itself last. The error travels to the caller, which knows whether the
   // sequence can continue. The intents are graded without a reread, so they stay at most attempted.
+  // The write's return type travels through as-is: the label route returns the concrete changes
+  // the adapter made (a plain array), the intent routes return the write outcome.
   private async writeIssue<T>(context: IssueWriteContext, write: () => Promise<T>, before: IssueSnapshot): Promise<T> {
     this.obs.emit(issueWriteAttempt(context));
     try {

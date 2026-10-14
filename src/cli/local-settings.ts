@@ -16,6 +16,13 @@ export interface LocalSettings {
   allowedRoots: Record<string, string[]>;
   // Local checkout each job area is cloned from, by repository (owner/repo).
   checkouts: Record<string, string>;
+  // The operator attention's desktop notification channel (ticket #59). Best-effort: the
+  // pendings are persistent state and do NOT depend on it; a failed or absent channel only
+  // makes the notification attempt result visible. Absent block: enabled, platform default.
+  // `command`, when given, replaces the platform default and may carry `{title}`/`{body}`
+  // placeholders. There is deliberately no Herdr notification: the technical proof found no
+  // notification command in herdr 0.9.3.
+  notifications?: { enabled: boolean; command?: string };
 }
 
 export const DEFAULT_IMAGE = "msf-docker-runner:local";
@@ -59,7 +66,27 @@ export function parseLocalSettings(raw: unknown): LocalSettings | string {
   if (raw.image !== undefined && (typeof raw.image !== "string" || raw.image.trim() === "")) {
     return "image deve ser texto não vazio";
   }
-  return { image: (raw.image as string | undefined) ?? DEFAULT_IMAGE, profiles, allowedRoots, checkouts };
+  const notificationsBlock = raw.notifications === undefined ? undefined : raw.notifications;
+  if (notificationsBlock !== undefined) {
+    if (!isObject(notificationsBlock)) return "notifications deve ser um objeto";
+    if (notificationsBlock.enabled !== undefined && typeof notificationsBlock.enabled !== "boolean") {
+      return "notifications.enabled deve ser booleano";
+    }
+    if (notificationsBlock.command !== undefined
+      && (typeof notificationsBlock.command !== "string" || notificationsBlock.command.trim() === "")) {
+      return "notifications.command deve ser um comando não vazio";
+    }
+  }
+  return {
+    image: (raw.image as string | undefined) ?? DEFAULT_IMAGE,
+    profiles, allowedRoots, checkouts,
+    ...(notificationsBlock === undefined ? {}
+      : { notifications: {
+        enabled: (notificationsBlock as { enabled?: unknown }).enabled !== false,
+        ...((notificationsBlock as { command?: unknown }).command === undefined ? {}
+          : { command: (notificationsBlock as { command: string }).command }),
+      } }),
+  };
 }
 
 export async function loadLocalSettings(path: string): Promise<LocalSettings | string> {

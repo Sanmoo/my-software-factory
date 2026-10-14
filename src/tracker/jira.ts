@@ -4,6 +4,7 @@ import {
   type ClaimMark,
   type Comment,
   type Intent,
+  type IssueChange,
   type IssueRef,
   type IssueSnapshot,
   type Known,
@@ -305,7 +306,7 @@ export class JiraTracker implements TrackerPort {
     }
     const made: Intent[] = [];
     try {
-      await this.updateLabels(ref.id, [{ add: this.settings.claimedLabel }]);
+      await this.editLabels(ref.id, [{ add: this.settings.claimedLabel }]);
       made.push({ operation: "adicionar-label", target: this.settings.claimedLabel });
       await this.runTransition(ref.id, doing);
       made.push({ operation: "transição", target: this.settings.doingTransition, reaches: ["in-progress"] });
@@ -318,9 +319,34 @@ export class JiraTracker implements TrackerPort {
 
   // Removes the claimed label only; the status is left as it is.
   async releaseClaim(ref: IssueRef): Promise<WriteOutcome> {
-    await this.updateLabels(ref.id, [{ remove: this.settings.claimedLabel }]);
+    await this.editLabels(ref.id, [{ remove: this.settings.claimedLabel }]);
     return { made: [{ operation: "remover-label", target: this.settings.claimedLabel }] };
   }
+
+  // Adds and removes labels as one composite write through the issue update endpoint. Each
+  // part is reported as attempted; the caller confirms by rereading, so an answer the API
+  // returned is never the confirmation (ADR 0001).
+  async updateLabels(ref: IssueRef, changes: { add?: readonly string[]; remove?: readonly string[] }): Promise<IssueChange[]> {
+    const made: IssueChange[] = [];
+    try {
+      const operations: Array<{ add: string } | { remove: string }> = [
+        ...(changes.remove ?? []).map((label): { remove: string } => ({ remove: label })),
+        ...(changes.add ?? []).map((label): { add: string } => ({ add: label })),
+      ];
+      if (operations.length === 0) return made;
+      await this.editLabels(ref.id, operations);
+      for (const operation of operations) {
+        made.push("add" in operation
+          ? { operation: "adicionar-label", target: operation.add, before: "ausente", after: "presente", result: "attempted" }
+          : { operation: "remover-label", target: operation.remove, after: "ausente", result: "attempted" });
+      }
+    } catch (error) {
+      if (made.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, made);
+    }
+    return made;
+  }
+
 
   async readComments(ref: IssueRef): Promise<Comment[]> {
     const found: JiraComment[] = [];
@@ -383,7 +409,7 @@ export class JiraTracker implements TrackerPort {
     });
   }
 
-  private async updateLabels(key: string, operations: Array<{ add: string } | { remove: string }>): Promise<void> {
+  private async editLabels(key: string, operations: Array<{ add: string } | { remove: string }>): Promise<void> {
     await jiraRequest(this.connection, "PUT", `/rest/api/3/issue/${encodeURIComponent(key)}`, {
       update: { labels: operations },
     });

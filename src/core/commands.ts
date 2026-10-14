@@ -4,6 +4,9 @@ export type CommandBody =
   | { type: "reply"; job: string; message: string }
   | { type: "resume"; job: string }
   | { type: "release"; job: string }
+  // The operator's explicit approval of a proposed assisted attendance result (spec #48 item 4,
+  // ticket #55). The implementation admission leaves it in the queue; the assisted flow applies it.
+  | { type: "approve"; job: string }
   | { type: "pause" }
   | { type: "unpause" };
 

@@ -18,7 +18,9 @@ import { deliveryOf, judgeReadyPr, judgeTrackedPr, misplacedRepository, type Del
 import { parseRunOutput, type PrRef } from "./result.js";
 import { noopObserver, type FieldValue, type Level, type Observer } from "./observability.js";
 import { triggerSummary } from "./ops-events.js";
+import { digestOf, helpPending, interventionPending, type AttentionKeeper } from "./attention.js";
 import { IssueWrites, type IssueWritesContext } from "./issue-writes.js";
+import type { AssistOperator, AssistOperatorResult } from "./assist-flow.js";
 import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
 import { messageOf } from "./values.js";
 
@@ -38,9 +40,17 @@ export interface AdmissionDeps {
   prs: PrPort;
   // The eligibility setup of each configured project, built by the configuration layer.
   eligibility: (project: ProjectConfig) => ProjectEligibility;
+  // Commands the job store does not know may name an assisted session (ticket #56): the
+  // assisted registry answers them here, so the queue keeps a single drain and one order.
+  assistOperator?: AssistOperator;
   // Where the operational events go (main log and local history). Absent: nothing is observed.
   // Observing never changes what the admission does (issue #15).
   observer?: Observer;
+  // The operator attention of ticket #59: agent help requests and human interventions of the
+  // implementation flow raise persistent pendings (with a best-effort notification), and the
+  // state changes that end them resolve them. Absent: no pendings are raised; the flow works
+  // unchanged (attention is side plumbing, never core state).
+  attention?: AttentionKeeper;
 }
 
 export interface CommandOutcome {
@@ -266,7 +276,11 @@ export class Admission {
     for (const name of queued.unreadable) {
       report.errors.push({ key: "commands", message: `comando ilegível: ${name}` });
     }
-    for (const command of queued.commands) {
+    // `approve` is the assisted attendance's approval (ticket #55): not a job command. The
+    // assisted flow consumes it on the same cycle, after its supervision; consuming it here
+    // would reject as "trabalho desconhecido" what is not an implementation job.
+    for (const command of queued.commands
+      .filter((candidate) => candidate.type !== "approve" || this.deps.assistOperator === undefined)) {
       try {
         report.commands.push(await this.handleCommand(command));
         await this.deps.commands.done(command.id);
@@ -287,7 +301,16 @@ export class Admission {
       return { ...base, status: "applied" };
     }
     const job = this.jobs.get(command.job);
-    if (!job) return { ...base, job: command.job, status: "rejected", reason: "trabalho desconhecido" };
+    if (!job) {
+      const assisted = await this.operateAssisted(command);
+      if (assisted === undefined) return { ...base, job: command.job, status: "rejected", reason: "trabalho desconhecido" };
+      if (assisted.status === "applied") {
+        this.emitFor(command.job, "comando-aplicado", `${command.type} aplicado no atendimento assistido`, { comando: command.id });
+        return { ...base, job: command.job, status: "applied" };
+      }
+      this.emitFor(command.job, "comando-rejeitado", `${command.type} rejeitado no atendimento assistido`, { comando: command.id, motivo: assisted.reason }, { level: "atenção" });
+      return { ...base, job: command.job, status: "rejected", reason: assisted.reason };
+    }
     const reason = await this.operate(job, command);
     if (reason === undefined) {
       // `reply aplicado` is the orchestrator taking the reply: neither delivery nor start of a run.
@@ -297,6 +320,18 @@ export class Admission {
     await this.note(job.key, `${command.type} rejeitado: ${reason}`);
     this.emitFor(job.key, "comando-rejeitado", `${command.type} rejeitado`, { comando: command.id, motivo: reason }, { level: "atenção" });
     return { ...base, job: job.key, status: "rejected", reason };
+  }
+
+  // A command for the assisted registry, already applied. `undefined` names nothing here:
+  // the job store said no and the assisted registry has no such session either.
+  private async operateAssisted(command: JobCommand): Promise<AssistOperatorResult | undefined> {
+    const operator = this.deps.assistOperator;
+    if (operator === undefined || !(await operator.has(command.job))) return undefined;
+    return command.type === "reply"
+      ? operator.reply(command.job, command.message, command.id)
+      : command.type === "resume"
+        ? operator.resume(command.job, command.id)
+        : operator.release(command.job, command.id);
   }
 
   // Returns the reason a command was refused, or undefined when it was applied.
@@ -953,13 +988,24 @@ export class Admission {
       : current;
     const next = transitionJob(base, to, details);
     await this.persist(next);
-    this.announceState(next, details);
+    await this.announceState(next, details);
     return next;
+  }
+
+  // The local pendings that need the operator (ticket #59): raising is awaited so the state
+  // machine's order stays deterministic, and it never runs before the state is persisted.
+  private async raiseAttention(pendingFn: () => Parameters<AttentionKeeper["raise"]>[0]): Promise<void> {
+    await this.deps.attention?.raise(pendingFn());
+  }
+
+  // A state left the eventual state changes the operator resolves; nothing to raise.
+  private async resolveAttention(key: string): Promise<void> {
+    await this.deps.attention?.resolve(key);
   }
 
   // The operational event of a state the job has just entered. Waiting for help keeps the whole
   // question and context in the history and says how to answer (issue #15, decisions 3, 5, 6).
-  private announceState(job: Job, details: { reason?: string; question?: string; context?: string; invocation?: string }): void {
+  private async announceState(job: Job, details: { reason?: string; question?: string; context?: string; invocation?: string }): Promise<void> {
     const { key } = job;
     const { invocation } = details;
     switch (job.state) {
@@ -971,30 +1017,49 @@ export class Admission {
           ...(commands ? [`responder: ${commands.reply}`, `histórico: ${commands.logs}`, ...(commands.detail ? [`log detalhado: ${commands.detail}`] : [])] : []),
         ];
         this.emitFor(key, "ajuda-solicitada", "ajuda solicitada", {}, { lines, invocation, level: "atenção", highlight: true });
+        await this.raiseAttention(() => helpPending({
+          key, ref: job.ref, repository: job.repository, question: details.question, context: details.context,
+        }, new Date().toISOString()));
         return;
       }
-      case "waiting-for-pr":
-        this.emitFor(key, "pr-aceito", "PR aceito para acompanhamento; o trabalho não está concluído", {
-          pr: job.pr === undefined ? undefined : `${job.pr.repository}#${job.pr.number}`,
-        }, { invocation, level: "progresso" });
-        return;
       case "interrupted":
         // How to resume and how to see what happened; releasing is not offered ready to paste, so a
         // paste does not end the follow-up by mistake.
         this.emitFor(key, "trabalho-interrompido", "trabalho interrompido", { motivo: details.reason }, {
           invocation, level: "atenção", lines: this.interruptedCommands(key),
         });
+        // A stop needs the operator (spec #48, ticket #59): a persisted pending, digest per
+        // interruption reason, in the same signaling the assisted flow uses.
+        await this.raiseAttention(() => interventionPending(
+          { key, ref: job.ref, repository: job.repository },
+          "trabalho interrompido: retomada pedida", new Date().toISOString(),
+          digestOf(["interrompido", details.reason ?? ""]), { reason: details.reason, actions: ["reply", "resume", "logs"] }));
         return;
       case "intervention-required":
         this.emitFor(key, "intervenção-necessária", "intervenção necessária", { motivo: details.reason }, { invocation, level: "atenção" });
+        await this.raiseAttention(() => interventionPending(
+          { key, ref: job.ref, repository: job.repository },
+          "intervenção necessária", new Date().toISOString(),
+          digestOf(["intervenção", details.reason ?? ""]), { reason: details.reason }));
+        return;
+      case "waiting-for-pr":
+        this.emitFor(key, "pr-aceito", "PR aceito para acompanhamento; o trabalho não está concluído", {
+          pr: job.pr === undefined ? undefined : `${job.pr.repository}#${job.pr.number}`,
+        }, { invocation, level: "progresso" });
+        // The PR wait needs no human action; any pending of the work is ended.
+        await this.resolveAttention(key);
         return;
       case "done":
         this.emitFor(key, "trabalho-concluído", "trabalho concluído", { done: "confirmado" }, { level: "progresso" });
+        await this.resolveAttention(key);
         return;
       case "released":
         this.emitFor(key, "trabalho-liberado", "trabalho liberado", { motivo: details.reason });
+        await this.resolveAttention(key);
         return;
       case "running":
+        // Back to running (a resume after help/intervention): the take-up ends the pendings.
+        await this.resolveAttention(key);
         return;
     }
   }

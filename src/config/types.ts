@@ -48,6 +48,14 @@ export type ProjectConfig =
 export interface InstanceConfig {
   name: string;
   maxConcurrent: number;
+  // Human-assisted sessions limit (spec #48): the second independent N, next to maxConcurrent.
+  // Optional until now: absent, the assisted diagnosis reports it as not configured and the
+  // opening of sessions is blocked; no default limit is invented.
+  maxAssisted?: number;
+  // The explicit model of the human-assisted attendance, provider/model. Configured per
+  // instance and never inherited from the implementation models: absent, the diagnosis
+  // reports it as not configured.
+  assistModel?: string;
   pollIntervalSeconds: number;
   maxIterations: number;
   modelAuth: string;

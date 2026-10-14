@@ -16,7 +16,7 @@ const PROJECT_KEYS = ["name", "enabled", "adapter", "repository", "targetBranch"
   "runtimeProfile", "githubAccount", "labels", "models", "jira"];
 const JIRA_KEYS = ["projectKey", "routingLabel", "doingTransition", "doneTransition",
   "blockingLinkTypes", "credential", "operator", "priorityRanks"];
-const INSTANCE_KEYS = ["name", "maxConcurrent", "pollIntervalSeconds", "maxIterations", "modelAuth", "projects"];
+const INSTANCE_KEYS = ["name", "maxConcurrent", "maxAssisted", "assistModel", "pollIntervalSeconds", "maxIterations", "modelAuth", "projects"];
 const RUNTIME_PROFILE_KEYS = ["required", "excludePackages"];
 const REQUIRED_KEYS = ["files", "packages", "skills", "agents"];
 // A required file, skill or agent is a plain name inside the profile: no path, so it cannot point elsewhere.
@@ -301,6 +301,17 @@ function parseProject(raw: unknown, path: string, credentials: Record<string, Cr
   return undefined;
 }
 
+// Optional assist settings of the instance: validated strictly when present, never defaulted.
+function optionalPositiveInteger(obj: Obj, key: string, path: string, issues: Issues): number | undefined {
+  if (obj[key] === undefined) return undefined;
+  return positiveInteger(obj, key, path, issues);
+}
+
+function optionalModel(obj: Obj, key: string, path: string, issues: Issues): string | undefined {
+  if (obj[key] === undefined) return undefined;
+  return text(obj, key, path, issues, MODEL_PATTERN, "modelo deve ser explícito no formato provider/model");
+}
+
 function parseInstance(raw: unknown, path: string, credentials: Record<string, CredentialRef>, issues: Issues): InstanceConfig | undefined {
   if (!isObject(raw)) {
     issues.add(path, "instância deve ser objeto");
@@ -309,6 +320,10 @@ function parseInstance(raw: unknown, path: string, credentials: Record<string, C
   checkKeys(raw, INSTANCE_KEYS, path, issues);
   const name = text(raw, "name", path, issues);
   const maxConcurrent = positiveInteger(raw, "maxConcurrent", path, issues);
+  // Assist settings (spec #48): optional, but wrong when present. Absence is reported by the
+  // assisted diagnosis as not configured; no silent limit or inherited model is invented here.
+  const maxAssisted = optionalPositiveInteger(raw, "maxAssisted", path, issues);
+  const assistModel = optionalModel(raw, "assistModel", path, issues);
   const pollIntervalSeconds = positiveInteger(raw, "pollIntervalSeconds", path, issues);
   const maxIterations = positiveInteger(raw, "maxIterations", path, issues);
   const modelAuth = text(raw, "modelAuth", path, issues);
@@ -327,7 +342,11 @@ function parseInstance(raw: unknown, path: string, credentials: Record<string, C
     || maxIterations === undefined || modelAuth === undefined || validProjects.length !== projects.length) {
     return undefined;
   }
-  return { name, maxConcurrent, pollIntervalSeconds, maxIterations, modelAuth, projects: validProjects };
+  return {
+    name, maxConcurrent, pollIntervalSeconds, maxIterations, modelAuth, projects: validProjects,
+    ...(maxAssisted === undefined ? {} : { maxAssisted }),
+    ...(assistModel === undefined ? {} : { assistModel }),
+  };
 }
 
 // Cross-instance rules: an instance name is unique, a project name is unique,

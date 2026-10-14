@@ -22,3 +22,12 @@ test("core modules branch on no adapter name", async () => {
     assert.doesNotMatch(text, branch, `src/core/${name} branches on the adapter`);
   }
 });
+
+// The assisted flow's fs persistence (spec #48): every host-file operation of the session areas
+// rides the `AssistAreaFs` port (src/state/file-assist-area-fs.ts holds the real one), so the
+// core file imports no node runtime module at all.
+test("src/core/assist-flow.ts imports no node:* runtime module", async () => {
+  const text = await readFile(`${coreDir}assist-flow.ts`, "utf8");
+  const nodeRuntime = /from "node:[^"]+"/;
+  assert.doesNotMatch(text, nodeRuntime, "src/core/assist-flow.ts imports a node runtime module");
+});

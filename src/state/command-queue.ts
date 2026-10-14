@@ -8,7 +8,7 @@ import type { CommandBody, CommandQueue, OperatorCommand } from "../core/command
 const DIRECTORY = "commands";
 let sequence = 0;
 
-const TYPES = ["reply", "resume", "release", "pause", "unpause"];
+const TYPES = ["reply", "resume", "release", "approve", "pause", "unpause"];
 
 function isCommand(value: unknown): value is OperatorCommand {
   if (typeof value !== "object" || value === null) return false;

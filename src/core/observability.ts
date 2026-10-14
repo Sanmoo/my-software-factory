@@ -61,7 +61,11 @@ export interface CliHints {
 }
 
 // The commands the main log prints for one job, ready to paste.
+// `base` and `ref` are the shared prefix and the job reference: whoever derives another
+// paste-ready action composes them instead of re-parsing the sentence strings.
 export interface JobCommands {
+  base: string;
+  ref: string;
   reply: string;
   resume: string;
   logs: string;
@@ -102,10 +106,14 @@ export function shellQuote(argument: string): string {
 }
 
 // The commands for one job, ready to paste: the form the main log and `status` both print.
+// `base` and `ref` are the shared prefix and the job reference: whoever derives another
+// paste-ready action composes them instead of re-parsing the sentence strings.
 export function jobCommands(cli: CliHints, job: string, jobs: readonly string[] = []): JobCommands {
   const base = `./msf${cli.home === undefined ? "" : ` --home ${shellQuote(cli.home)}`} ${shellQuote(cli.instance)}`;
   const ref = shellQuote(refForCommand(job, jobs));
   return {
+    base,
+    ref,
     reply: `${base} reply ${ref} --message '<resposta>'`,
     resume: `${base} resume ${ref}`,
     logs: `${base} logs ${ref}`,

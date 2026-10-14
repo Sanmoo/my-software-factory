@@ -4,6 +4,7 @@ import type {
   BlockerRef,
   Comment,
   Intent,
+  IssueChange,
   IssueRef,
   IssueSnapshot,
   Known,
@@ -203,6 +204,39 @@ export class GitHubTracker implements TrackerPort {
       throw new PartialWriteError((error as Error).message, made);
     }
     return { made };
+  }
+
+
+  // Adds and removes labels as one composite write through the labels endpoints. Each part is
+  // reported as attempted; the caller confirms by rereading, so a lost answer or a partially
+  // made write is still judged by evidence (PartialWriteError carries the changes already made).
+  async updateLabels(ref: IssueRef, changes: { add?: readonly string[]; remove?: readonly string[] }): Promise<IssueChange[]> {
+    const path = this.issuePath(ref);
+    const made: IssueChange[] = [];
+    try {
+      for (const label of changes.remove ?? []) {
+        const response = await this.call({ method: "DELETE", path: `${path}/labels/${encodeURIComponent(label)}` });
+        if (response.status !== 404) expectStatus(response, [200], "remover label");
+        made.push(response.status === 404
+          ? { operation: "remover-label", target: label, before: "ausente", after: "ausente", result: "unchanged" }
+          : { operation: "remover-label", target: label, before: "presente", after: "ausente", result: "attempted" });
+      }
+      const add = changes.add ?? [];
+      if (add.length > 0) {
+        expectStatus(
+          await this.call({ method: "POST", path: `${path}/labels`, body: { labels: [...add] } }),
+          [200],
+          "adicionar labels",
+        );
+        for (const label of add) {
+          made.push({ operation: "adicionar-label", target: label, before: "ausente", after: "presente", result: "attempted" });
+        }
+      }
+    } catch (error) {
+      if (made.length === 0) throw error;
+      throw new PartialWriteError((error as Error).message, made);
+    }
+    return made;
   }
 
   async readComments(ref: IssueRef): Promise<Comment[]> {

@@ -3,6 +3,7 @@ import type {
   ClaimMark,
   Comment,
   Intent,
+  IssueChange,
   IssueRef,
   IssueSnapshot,
   Known,
@@ -21,7 +22,9 @@ import { isObject, type Obj } from "../core/values.js";
 // Besides the happy path it carries a failure plan: a test names the operation and the way it
 // should fail (`memory.failNext(operação, cenário)`) instead of hand-rolling a wrapper port.
 
-interface StoredIssue {
+// The record shape one issue of the fixture carries; exported because fixtures and demos build
+// records programmatically against the same contract the loader validates.
+export interface StoredIssue {
   ref: IssueRef;
   title: string;
   labels: Known<string[]>;
@@ -39,7 +42,7 @@ interface StoredIssue {
 export class MemoryFixtureError extends Error {}
 
 // The port operations a test can make fail.
-export type TrackerOperation = "claim" | "releaseClaim" | "markDone" | "readIssue";
+export type TrackerOperation = "claim" | "releaseClaim" | "markDone" | "readIssue" | "updateLabels";
 
 // Named ways a tracker call can fail. The names say what the tracker did, not how the test
 // forces it: `falha-antes` writes nothing, `resposta-perdida` writes and loses the answer,
@@ -66,6 +69,13 @@ interface PlannedFailure {
 // One concrete write of a composite operation: the intent it reports and the mutation it makes.
 interface WriteStep {
   intent: Intent;
+  apply: () => void;
+}
+
+// One step of the label write: the port's label route returns the concrete changes the adapter
+// made (not the intents it asked for), so the step carries the change it reports.
+interface LabelStep {
+  change: IssueChange;
   apply: () => void;
 }
 
@@ -220,6 +230,40 @@ export class MemoryTracker implements TrackerPort {
     return { made: this.executeWrite(this.releasePlan(issue), this.takeFailure("releaseClaim")) };
   }
 
+  // Adds each label after removing each one; a change the issue already had is `unchanged`.
+  // Status and assignees are never touched: the attendance conclusion only moves labels.
+  async updateLabels(ref: IssueRef, changes: { add?: readonly string[]; remove?: readonly string[] }): Promise<IssueChange[]> {
+    this.count("updateLabels");
+    const issue = this.require(ref);
+    const steps: LabelStep[] = [];
+    for (const label of changes.remove ?? []) {
+      const had = issue.labels.known && issue.labels.value.includes(label);
+      steps.push({
+        change: had
+          ? { operation: "remover-label", target: label, before: "presente", after: "ausente", result: "confirmed" }
+          : { operation: "remover-label", target: label, before: "ausente", after: "ausente", result: "unchanged" },
+        apply: () => {
+          if (!issue.labels.known) return;
+          issue.labels = { known: true, value: issue.labels.value.filter((item) => item !== label) };
+        },
+      });
+    }
+    for (const label of changes.add ?? []) {
+      const had = issue.labels.known && issue.labels.value.includes(label);
+      steps.push({
+        change: had
+          ? { operation: "adicionar-label", target: label, before: "presente", after: "presente", result: "unchanged" }
+          : { operation: "adicionar-label", target: label, before: "ausente", after: "presente", result: "confirmed" },
+        apply: () => {
+          if (!issue.labels.known) return;
+          issue.labels = { known: true, value: [...issue.labels.value, label] };
+        },
+      });
+    }
+    return this.executeLabelWrite(steps, this.takeFailure("updateLabels"));
+  }
+
+
   // Fixture control: someone else's claim (not the factory's mark) appears or goes away.
   setClaimedElsewhere(ref: IssueRef, claimed: boolean): void {
     this.require(ref).claimed = { known: true, value: claimed };
@@ -296,6 +340,7 @@ export class MemoryTracker implements TrackerPort {
     return steps;
   }
 
+
   // Remove every label and account of the mark. A part already absent is still attempted; the
   // core's comparison of the snapshots says it was `unchanged`.
   private releasePlan(issue: StoredIssue): WriteStep[] {
@@ -338,6 +383,27 @@ export class MemoryTracker implements TrackerPort {
     }
     if (scenario === "resposta-perdida") throw new Error(failure?.message ?? "resposta da escrita perdida");
     return steps.map((step) => step.intent);
+  }
+
+  // The label write's executor: unlike the intent routes, the scenarios that hide the write from
+  // the reread must come back as attempts (the change the plan prepared names its result as if
+  // the write had landed, so it is demoted before leaving the adapter).
+  private executeLabelWrite(steps: LabelStep[], failure: PlannedFailure | undefined): IssueChange[] {
+    const scenario = failure?.scenario;
+    if (scenario === "falha-antes") throw new Error(failure?.message ?? "falha de escrita antes de tocar o fornecedor");
+    const applied = scenario === "invisível" ? 0
+      : scenario === "ultima-invisivel" ? Math.max(steps.length - 1, 0)
+      : scenario === "parcial" ? Math.min(1, steps.length)
+      : steps.length;
+    for (let index = 0; index < applied; index += 1) steps[index]!.apply();
+    if (scenario === "parcial") {
+      throw new PartialWriteError(failure?.message ?? "escrita parcial", steps.slice(0, applied).map((step) => step.change));
+    }
+    if (scenario === "resposta-perdida") throw new Error(failure?.message ?? "resposta da escrita perdida");
+    if (scenario === "invisível" || scenario === "ultima-invisivel" || scenario === "sem-confirmacao") {
+      return steps.map((step) => ({ ...step.change, result: "attempted" as const }));
+    }
+    return steps.map((step) => ({ ...step.change }));
   }
 
   private takeFailure(operation: TrackerOperation): PlannedFailure | undefined {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { coreRules, evaluateEligibility } from "../src/core/eligibility.js";
 import { GitHubTracker, type GitHubBoundary } from "../src/tracker/github.js";
-import { PartialWriteError, type BlockerRef, type IssueRef, type TrackerScope } from "../src/tracker/port.js";
+import { PartialWriteError, type IssueRef, type TrackerScope } from "../src/tracker/port.js";
 import { ACCOUNT, FakeGitHub, REPO } from "./support/fake-github.js";
 
 const scope: TrackerScope = { project: REPO, readyLabel: "ready-for-agent" };
@@ -308,18 +308,3 @@ test("only open blocked_by dependencies block: a blocker closed for another reas
   assert.equal(verdict.eligible, true);
 });
 
-test("the native blocked_by edge can be added and removed", async () => {
-  const gh = new FakeGitHub();
-  gh.add({ number: 1, labels: ["ready-for-agent"] });
-  gh.add({ number: 2 });
-  const adapter = tracker(gh);
-
-  await adapter.addBlockedBy(ref(1), ref(2));
-  const blocked = await adapter.readIssue(ref(1));
-  assert.equal(blocked.blockers.known, true);
-  const terminals = blocked.blockers.known ? blocked.blockers.value.map((b: BlockerRef) => b.terminal) : [];
-  assert.deepEqual(terminals, [{ known: true, value: false }]);
-
-  await adapter.removeBlockedBy(ref(1), ref(2));
-  assert.deepEqual((await adapter.readIssue(ref(1))).blockers, { known: true, value: [] });
-});

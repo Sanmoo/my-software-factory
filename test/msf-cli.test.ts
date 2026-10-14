@@ -226,11 +226,12 @@ const emptyTracker = (over: Partial<TrackerPort> = {}): TrackerPort => ({
   readIssue: async () => { throw new Error("unused"); },
   claim: async () => { throw new Error("write"); },
   releaseClaim: async () => { throw new Error("write"); },
+  updateLabels: async () => { throw new Error("write"); },
   readComments: async () => [],
   postComment: async () => { throw new Error("write"); },
   markDone: async () => { throw new Error("write"); },
   ...over,
-});
+}) as TrackerPort;
 const githubEmpty = { accountToken: async () => "t", api: async () => ({ status: 200, body: [] }) };
 
 test("status needs no --config, --state-dir or --fixture, and not even local.json", async () => {

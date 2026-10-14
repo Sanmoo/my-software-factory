@@ -118,6 +118,22 @@ estado local continua na saída e o código de saída é 1.
 - `jira.priorityRanks` (opcional): nome de prioridade para inteiro positivo, menor
   = mais urgente. Sem o campo, vale a tabela padrão (Highest 1 … Lowest 5).
 
+- **Atenção do operador** (sessões assistidas, decisões, falhas e pedidos de ajuda).
+  A seção `Pendências (n)` de `./msf <instância> status` é a consulta persistente: cada
+  pendência nomeia o trabalho e a sessão (referência, modelo, aba/pane, clone), o que é
+  pedido, a proveniência da tentativa de notificação e os comandos locais prontos para colar.
+  A notificação desktop é melhor esforço, configurável em `local.json`:
+
+  ```json
+  { "notifications": { "enabled": true, "command": "herd-notify {title} {body}" } }
+  ```
+
+  Sem `command`, vale o padrão da plataforma (`osascript` no macOS, `notify-send` no Linux);
+  em outra plataforma o canal é registrado como ausente. Uma tentativa apenas comprova que o
+  comando executou — nunca a entrega no desktop. A prova da técnica (herdr 0.9.3) não achou
+  comando de notificação no Herdr; presumir que "notificação do Herdr" entrega no desktop é
+  proibido aqui. Falha de entrega não interrompe o trabalho nem apaga a pendência.
+
 Regras por assunto: [admissão e prioridade](docs/operacao/admissao-e-prioridade.md),
 [trackers](docs/operacao/trackers.md) e
 [execução e supervisão](docs/operacao/execucao-e-supervisao.md). Decisões e motivos:

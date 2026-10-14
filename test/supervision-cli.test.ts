@@ -15,6 +15,7 @@ import { FakeRunner, finished, withWorkspace } from "../src/runtime/fake-runner.
 import type { RunnerContext, RunnerOutput, Workspace } from "../src/runtime/runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileInstanceControl } from "../src/state/instance-control.js";
+import { createFileAssistSessionStore } from "../src/state/file-assist-session-store.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import { jobBranch } from "../src/core/job.js";
@@ -328,4 +329,69 @@ test("status shows a failing observability, and a history that cannot be written
   assert.equal(run.exitCode, 0);
   assert.match(run.stdout, /aviso: o histórico local não pôde ser gravado/);
   assert.equal((await createFileCommandQueue(blocked.stateDir).pending()).commands.length, 1, "the command is still queued");
+});
+
+// ── Comandos que endereçam uma sessão assistida (ticket #56) ─────────────────────────────────
+
+test("um comando de operador serve também a uma sessão assistida registrada; alvo desconhecido segue recusado", async () => {
+  const f = await prepare();
+  // Sem registro nenhum: a recusa diz os dois lugares consultados.
+  const missing = await runSupervision(["resume", ...common(f), "memory:acme/app#9"]);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.stderr, /trabalho memory:acme\/app#9 não encontrado \(nem como atendimento assistido\)/);
+
+  const store = createFileAssistSessionStore(join(f.stateDir, "assist-sessions"));
+  await store.save({
+    key: "memory:acme/app#9", ref: { tracker: "memory", project: "acme/app", id: "9" },
+    repository: "acme/app", state: "pending", promptKind: "needs-triage", model: "p/m",
+    image: "img", cloneDir: "/c", startedAt: "2026-10-14T12:00:00.000Z",
+    reason: "execução encerrada (exit 0) sem resultado de atendimento reconhecido",
+    continuity: { question: "autoriza uma retomada futura desta mesma sessão?", askedAt: "2026-10-14T12:05:00.000Z" },
+    log: [],
+  } as never);
+
+  for (const [command, expected] of [["resume", /resume registrado \(memory:acme\/app#9\)/], ["release", /liberação registrada \(memory:acme\/app#9\)/]] as const) {
+    const run = await runSupervision([command, ...common(f), "memory:acme/app#9"]);
+    assert.equal(run.exitCode, 0, run.stderr);
+    assert.match(run.stdout, expected);
+    assert.match(run.stdout, /enfileirado, ainda não aplicado/);
+  }
+  const reply = await runSupervision(["reply", ...common(f), "--message", "não autorizo retomada automática", "memory:acme/app#9"]);
+  assert.equal(reply.exitCode, 0, reply.stderr);
+  assert.match(reply.stdout, /resposta registrada \(memory:acme\/app#9\)/);
+});
+// The approval of a proposed assisted result (ticket #55): the CLI validates the key against
+// the assist session store (not the implementation jobs'), queues the command and the assisted
+// flow applies it on the next poll.
+const ASSIST_SESSION = {
+  key: "memory:acme/app#1",
+  ref: { tracker: "memory" as const, project: "acme/app", id: "1" },
+  repository: "acme/app",
+  state: "proposed" as const,
+  promptKind: "needs-triage" as const,
+  model: "github-copilot/claude-haiku-5.5",
+  image: "msf-docker-runner:local",
+  cloneDir: "/tmp/clone",
+  startedAt: "2026-10-14T12:00:00.000Z",
+  log: [],
+};
+
+test("approve queues an approval for the assisted attendance found in the session store", async () => {
+  const f = await fixturesIn(await mkdtemp(join(tmpdir(), "msf-supervision-cli-")));
+  const store = createFileAssistSessionStore(join(f.stateDir, "assist-sessions"));
+  await store.save({ ...ASSIST_SESSION });
+  const run = await runSupervision(["approve", ...common(f), "memory:acme/app#1"]);
+  assert.equal(run.exitCode, 0, run.stderr);
+  assert.match(run.stdout, /aprovação registrada \(memory:acme\/app#1\)/);
+  const queued = (await createFileCommandQueue(f.stateDir).pending()).commands;
+  assert.deepEqual(queued.map((c) => c.type), ["approve"]);
+  assert.equal((queued[0] as { job?: string }).job, "memory:acme/app#1");
+});
+
+test("approve refuses a key that is not a tracked assisted attendance", async () => {
+  const f = await fixturesIn(await mkdtemp(join(tmpdir(), "msf-supervision-cli-")));
+  const run = await runSupervision(["approve", ...common(f), "memory:acme/app#9"]);
+  assert.equal(run.exitCode, 1);
+  assert.match(run.stderr, /atendimento assistido memory:acme\/app#9 não encontrado/);
+  assert.equal((await createFileCommandQueue(f.stateDir).pending()).commands.length, 0, "nada fica na fila");
 });

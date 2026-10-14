@@ -16,12 +16,16 @@
     "reply": "tsx src/cli/supervision.ts reply",
     "resume": "tsx src/cli/supervision.ts resume",
     "release": "tsx src/cli/supervision.ts release",
+    "approve": "tsx src/cli/supervision.ts approve",
     "pause": "tsx src/cli/supervision.ts pause",
     "unpause": "tsx src/cli/supervision.ts unpause",
     "smoke:pi": "tsx src/experiments/pi-smoke.ts",
     "smoke:implement": "tsx src/experiments/implement-help-smoke.ts",
     "smoke:docker": "tsx src/experiments/docker-spike/docker-spike.ts",
     "smoke:docker-runner": "tsx src/experiments/docker-runner-demo.ts",
+    "smoke:herdr-pi": "tsx src/experiments/herdr-pi-proof.ts",
+    "smoke:assist-session": "tsx src/experiments/assist-session-demo.ts",
+    "smoke:assist-reconcile": "tsx src/experiments/assist-reconcile-demo.ts",
     "conformance:jira": "tsx src/experiments/jira-conformance.ts"
   },
   "dependencies": {

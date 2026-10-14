@@ -1,4 +1,5 @@
 import { projectEligibility } from "../config/project-eligibility.js";
+import { join } from "node:path";
 import type { InstanceConfig, MsfConfig, ProjectConfig } from "../config/types.js";
 import type { AdmissionDeps } from "../core/admission.js";
 import { createGithubPrPort } from "../pr/github.js";
@@ -8,6 +9,15 @@ import { createDockerRunner, type SandboxBoundary } from "../runtime/docker-runn
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
+import { createFileAssistAreaFs } from "../state/file-assist-area-fs.js";
+import { createFileAssistSessionStore } from "../state/file-assist-session-store.js";
+import { AssistedAttendance } from "../core/assist-flow.js";
+import { AttentionKeeper } from "../core/attention.js";
+import { createFileAttentionStore } from "../state/file-attention-store.js";
+import { runtimeImageDirOf } from "../runtime/assist-exec.js";
+import { createDesktopNotifier } from "../runtime/desktop-notify.js";
+import { dockerExecProbe, dockerExecStop } from "../runtime/assist-exec-probe.js";
+import { herdrBoundary } from "../runtime/herdr.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { createGhCliBoundary, GitHubTracker, type GitHubBoundary } from "../tracker/github.js";
 import { JIRA_ENV_VARS, JiraConfigError, JiraTracker, jiraConnectionFromEnv, type JiraConnection, type JiraTrackerSettings } from "../tracker/jira.js";
@@ -123,7 +133,7 @@ export function composeTrackers(options: { instance: InstanceConfig; env?: NodeJ
   }
 }
 
-export function composeInstance(options: ComposeOptions): AdmissionDeps {
+export function composeInstance(options: ComposeOptions): AdmissionDeps & { assist: AssistedAttendance } {
   const { config, instance, local } = options;
   const observer = options.observer ?? noopObserver;
   registerSecrets((secret) => observer.registerSecret(secret), options.env ?? process.env);
@@ -158,9 +168,57 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps {
     tracker,
   });
 
+  // The operator attention (ticket #59): persistent pendings in `pendencias/` plus the
+  // best-effort desktop channel from the local settings. When the channel is disabled (or its
+  // command is absent for the platform) the keeper records the absent channel on each pending —
+  // it never presumes the Herdr notification reaches the desktop.
+  const notify = local.notifications?.enabled === false
+    ? undefined
+    : createDesktopNotifier({ platform: process.platform, ...(local.notifications?.command === undefined ? {} : { command: local.notifications.command }) });
+  const attention = new AttentionKeeper({
+    store: createFileAttentionStore(join(options.stateDir, "pendencias")),
+    ...(notify === undefined ? {} : { notify }),
+    observer,
+  });
+
+  // A second flow of the same loop: the human-assisted attendance, with its own capacity (spec
+  // #48, #54). It shares the tracker and the observer, and counts its own sessions.
+  const attendances = new AssistedAttendance({
+    instance, config, local, tracker,
+    jobs: createFileJobStore(options.stateDir),
+    sessions: createFileAssistSessionStore(join(options.stateDir, "assist-sessions")),
+    // The fs authority of the assisted session areas (spec #48): exit-record channel, pi session
+    // texts, area directories and attempt identities, all real host files under the state dir.
+    areaFs: createFileAssistAreaFs(),
+    commands: createFileCommandQueue(options.stateDir),
+    control: createFileInstanceControl(options.stateDir),
+    eligibility: (project) => projectEligibility(instance, project),
+    observer,
+    ports: {
+      sandbox: options.sandbox ?? sandcastleBoundary(),
+      herdr: herdrBoundary(),
+      // The real-execution probe of the post-restart reconciliation (ticket #58): docker inspect
+      // by the recorded container name, daemon reachability judged in the same look.
+      exec: dockerExecProbe(),
+      // The identity reclaim of the exec (ticket #56): a gone tab makes the supervision
+      // request the stop itself (docker rm -f by the recorded name) and verify it before
+      // anything is freed (#52: closing the tab does not stop the exec).
+      stopExec: dockerExecStop(),
+    },
+    runtimeImageDir: runtimeImageDirOf(),
+    stateDir: options.stateDir,
+    attention,
+  });
+
   const accountOf = new Map(projects.map((project) => [project.repository, project.githubAccount]));
   return {
+    // The assisted flow rides the same polling cycle; run.ts drains both loops. It also
+    // answers the operator commands that name an assisted session (ticket #56), so the command
+    // queue keeps a single drain in the admission.
+    assist: attendances,
+    assistOperator: attendances,
     instance,
+    attention,
     tracker,
     runner,
     store: createFileJobStore(options.stateDir),

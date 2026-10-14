@@ -17,6 +17,7 @@ import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import { jobBranch } from "../src/core/job.js";
 import { createObserver, type Observer } from "../src/core/observability.js";
+import { AttentionKeeper, type AttentionPending } from "../src/core/attention.js";
 const JOB_HEAD = jobBranch({ tracker: "memory", project: "acme/app", id: "1" });
 
 const NEEDS_HELP = { status: "needs_help", question: "Which seam?", context: "slugify" };
@@ -91,6 +92,8 @@ interface OpenOptions {
   maxIterations?: number;
   prs?: PrPort;
   observer?: Observer;
+  // The operator attention (ticket #59), injected with its double channel.
+  attention?: AttentionKeeper;
 }
 
 // Without PR state of its own a test sees no PR: a ready result is then refused.
@@ -106,6 +109,7 @@ const open = (options: OpenOptions) => Admission.open({
   control: createFileInstanceControl(options.stateDir),
   prs: options.prs ?? NO_PRS,
   ...(options.observer === undefined ? {} : { observer: options.observer }),
+  ...(options.attention === undefined ? {} : { attention: options.attention }),
 });
 
 function gate() {
@@ -706,4 +710,68 @@ test("a continuation whose runtime profile lost a required item asks for help in
   assert.match(job?.question ?? "", /perfil de runtime/);
   assert.match(job?.question ?? "", /gh-address-comments/);
   assert.equal(job?.pending, undefined, "the request is answered, not left pending");
+});
+
+// ---- attention of the operator (ticket #59): the signaling any flow may call ----
+
+const attentionRecorder = (fail?: string): { keeper: AttentionKeeper; notifications: Array<{ title: string; body: string }> } => {
+  const byId = new Map<string, AttentionPending>();
+  const notifications: Array<{ title: string; body: string }> = [];
+  const keeper = new AttentionKeeper({
+    store: {
+      async load(): Promise<{ pendings: AttentionPending[]; unreadable: string[] }> {
+        return { pendings: [...byId.values()], unreadable: [] };
+      },
+      async save(pending: AttentionPending): Promise<void> { byId.set(pending.id, pending); },
+      async remove(id: string): Promise<void> { byId.delete(id); },
+    },
+    notify: {
+      async notify(notification) {
+        notifications.push({ ...notification });
+        if (fail !== undefined) throw new Error(fail);
+        return "notify-send";
+      },
+    },
+    now: () => new Date("2026-10-14T12:00:00.000Z"),
+  });
+  return { keeper, notifications };
+};
+
+test("a help request of the agent becomes a persisted pending; the release ends it", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(async () => finished(NEEDS_HELP));
+  const recorded = attentionRecorder();
+  const stateDir = await dir();
+  const admission = await open({
+    memory, stateDir, runner, repos: ["acme/app"], attention: recorded.keeper,
+  });
+  const report = await admission.poll();
+  assert.deepEqual(report.admitted, [keyOf("acme/app", "1")]);
+  await admission.settle();
+  const pendings = await recorded.keeper.consult();
+  assert.deepEqual(pendings.pendings.map((pending) => pending.kind), ["ajuda"]);
+  assert.equal(pendings.pendings[0]?.question, "Which seam?");
+  assert.equal(pendings.pendings[0]?.notification?.ok, true, "a tentativa de entrega é provada");
+  assert.equal(recorded.notifications.length, 1);
+
+  // The release resolves the work's pending (the announceState of `released`).
+  await createFileCommandQueue(stateDir).enqueue({ type: "release", job: keyOf("acme/app", "1") });
+  await admission.poll();
+  const after = await recorded.keeper.consult();
+  assert.deepEqual(after.pendings, [], "a liberação encerra a pendência do trabalho");
+});
+
+test("delivery failure never erases the pending; the state change is the only repeat trigger", async () => {
+  const memory = memoryOf([{ repo: "acme/app", id: "1" }]);
+  const runner = new FakeRunner(async () => finished(NEEDS_HELP));
+  const recorded = attentionRecorder("canal caiu");
+  const admission = await open({
+    memory, stateDir: await dir(), runner, repos: ["acme/app"], attention: recorded.keeper,
+  });
+  await admission.poll();
+  await admission.settle();
+  const pendings = await recorded.keeper.consult();
+  assert.equal(pendings.pendings.length, 1, "a pendência sobrevive à falha de entrega");
+  assert.equal(pendings.pendings[0]?.notification?.ok, false);
+  assert.match(pendings.pendings[0]?.notification?.error ?? "", /canal caiu/);
 });

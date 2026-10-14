@@ -73,7 +73,10 @@ export interface PrStatus {
 // Letters, digits, "_", "-" and "/" stand for themselves. Any other UTF-16 unit is written as "%"
 // and four hex digits: "%" is a legal character in a Git ref, so a segment never starts with an
 // illegal character, and the fixed width keeps the encoding injective.
-const encodeRefPart = (text: string): string =>
+// Letters, digits, "_", "-" and "/" stand for themselves. Any other UTF-16 unit is written as "%"
+// and four hex digits: an injective, path-safe encoding (used by the branch name and every
+// state file name derived from a job or session key).
+export const encodeRefPart = (text: string): string =>
   text.replace(/[^A-Za-z0-9_/-]/g, (char) => `%${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
 // The branch the implementation of an issue works on and that its PR must have as head.

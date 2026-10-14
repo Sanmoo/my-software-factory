@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CommandBody } from "../core/commands.js";
+import { createFileAssistSessionStore } from "../state/file-assist-session-store.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { createFileHistory } from "../state/history.js";
@@ -10,9 +12,11 @@ import { loadInstance, type CliRun } from "./instance.js";
 // CLI validates the request and writes it to the instance's local command queue; it never
 // changes job state itself. The instance applies the queue on its next poll, in order.
 
-export const COMMANDS = ["reply", "resume", "release", "pause", "unpause"] as const;
+export const COMMANDS = ["reply", "resume", "release", "approve", "pause", "unpause"] as const;
 export type Command = (typeof COMMANDS)[number];
-const NEEDS_JOB: readonly Command[] = ["reply", "resume", "release"];
+// `approve` targets a human-assisted attendance key, not an implementation job; the flow
+// validates it against the assist session store (ticket #55).
+const NEEDS_JOB: readonly Command[] = ["reply", "resume", "release", "approve"];
 const FLAGS = ["--config", "--instance", "--state-dir", "--message"];
 const USAGE = [
   "uso: npm run <reply|resume|release> -- --config FILE --instance NAME --state-dir DIR TRABALHO [--message TEXTO]",
@@ -80,6 +84,7 @@ const CONFIRMATION: Record<Command, string> = {
   reply: "resposta registrada",
   resume: "resume registrado",
   release: "liberação registrada",
+  approve: "aprovação registrada",
   pause: "pausa registrada",
   unpause: "despausa registrada",
 };
@@ -96,10 +101,24 @@ export async function applySupervision(options: SupervisionOptions): Promise<Cli
   if (!loaded.ok) return loaded.run;
 
   let body: CommandBody;
-  if (options.job !== undefined) {
+  if (options.command === "approve") {
+    // The approval is of one assisted attendance, never of an implementation job: the key must
+    // be a session the assist flow records (ticket #55). Queuing is not applying: the flow
+    // applies it on the next poll, where the proposal must exist.
+    const { sessions } = await createFileAssistSessionStore(join(options.stateDir, "assist-sessions")).load();
+    if (!sessions.some((candidate) => candidate.key === options.job)) {
+      return { exitCode: 1, stdout: "", stderr: `atendimento assistido ${options.job} não encontrado\n` };
+    }
+    body = { type: "approve", job: options.job! };
+  } else if (options.job !== undefined) {
     const { jobs } = await createFileJobStore(options.stateDir).load();
     if (!jobs.some((candidate) => candidate.key === options.job)) {
-      return { exitCode: 1, stdout: "", stderr: `trabalho ${options.job} não encontrado\n` };
+      // A command may also name an assisted session (ticket #56): its registry decides, and the
+      // state guards live in the flow that applies the command at the next poll.
+      const assist = await createFileAssistSessionStore(join(options.stateDir, "assist-sessions")).load();
+      if (!assist.sessions.some((candidate) => candidate.key === options.job)) {
+        return { exitCode: 1, stdout: "", stderr: `trabalho ${options.job} não encontrado (nem como atendimento assistido)\n` };
+      }
     }
     body = options.command === "reply"
       ? { type: "reply", job: options.job, message: options.message ?? "" }

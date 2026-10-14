@@ -12,6 +12,7 @@ const stub = (name: string): TrackerPort => {
     readIssue: async (ref) => ({ title: await answer(ref) }) as never,
     claim: async (ref) => ({ made: [{ operation: "adicionar-label", target: await answer(ref) }] }),
     releaseClaim: async () => ({ made: [] }),
+    updateLabels: async () => [],
     readComments: async () => [],
     postComment: async (ref) => answer(ref),
     markDone: async (ref) => ({ made: [{ operation: "fechar", target: await answer(ref) }] }),

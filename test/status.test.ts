@@ -10,6 +10,7 @@ import { newJob, transitionJob, type Job } from "../src/core/job.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { createFileFailureStore } from "../src/state/history.js";
+import { createFileAttentionStore } from "../src/state/file-attention-store.js";
 import { loadMemoryTracker } from "../src/tracker/memory.js";
 import type { TrackerPort } from "../src/tracker/port.js";
 
@@ -200,6 +201,7 @@ const delegating = (inner: TrackerPort): TrackerPort => ({
   readIssue: (ref) => inner.readIssue(ref),
   claim: (ref) => inner.claim(ref),
   releaseClaim: (ref) => inner.releaseClaim(ref),
+  updateLabels: (ref, changes) => inner.updateLabels(ref, changes),
   readComments: (ref) => inner.readComments(ref),
   postComment: (ref, body) => inner.postComment(ref, body),
   markDone: (ref) => inner.markDone(ref),
@@ -244,4 +246,121 @@ test("status never writes to the tracker", async () => {
   const run = await status("trabalho", { tracker: guarded });
   assert.equal(run.exitCode, 0, run.stderr);
   assert.deepEqual(writes, []);
+});
+
+// ── Atendimento assistido consultável no status (ticket #56) ─────────────────────────────────
+
+import { createFileAssistSessionStore } from "../src/state/file-assist-session-store.js";
+
+test("status consults the assisted interruptions with their persisted decisions", async () => {
+  const stateDir = join(await mkdtemp(join(tmpdir(), "msf-status-")), "state");
+  const store = createFileAssistSessionStore(join(stateDir, "assist-sessions"));
+  const base = {
+    ref: { tracker: "memory" as const, project: "acme/app", id: "1" },
+    repository: "acme/app", state: "pending" as const, reason: "execução encerrada (exit 0) sem resultado de atendimento reconhecido",
+    promptKind: "needs-triage" as const, model: "p/m", image: "img", cloneDir: "/c",
+    startedAt: "2026-10-14T12:00:00.000Z",
+    continuity: {
+      question: "a execução terminou sem atendimento concluído; autoriza uma retomada futura desta mesma sessão?",
+      askedAt: "2026-10-14T12:05:00.000Z",
+    },
+    log: [],
+  };
+  const pendingKey = (base.ref.tracker + ":" + base.ref.project + "#" + base.ref.id) as string;
+  const write = (over: Partial<typeof base>): Parameters<typeof store.save>[0] =>
+    ({ key: pendingKey, ...base, ...over } as unknown as Parameters<typeof store.save>[0]);
+  await store.save(write({}));
+
+  const asked = await status("trabalho", { stateDir });
+  assert.equal(asked.exitCode, 0, asked.stderr);
+  assert.match(asked.stdout, /Atendimento assistido pendente \(1\)/);
+  assert.match(asked.stdout, new RegExp(`${pendingKey} — a execução terminou sem atendimento concluído`));
+  assert.match(asked.stdout, /\.\/msf trabalho resume '#1'/);
+  assert.match(asked.stdout, /\.\/msf trabalho reply '#1' --message '<resposta>'/);
+  assert.match(asked.stdout, /Sessões assistidas: abertas agora: 0, pendentes: 1/);
+
+  // An answered question is the record of truth: shown answered, no longer asked.
+  await store.save(write({ continuity: { ...base.continuity, answeredAt: "2026-10-14T12:06:00.000Z", answer: "não autorizo retomada automática" } as typeof base.continuity }));
+  const answered = await status("trabalho", { stateDir });
+  assert.match(answered.stdout, /pergunta respondida \(não autorizo retomada automática\)/);
+  assert.doesNotMatch(answered.stdout, /autoriza uma retomada futura desta mesma sessão\?/);
+  assert.doesNotMatch(answered.stdout, /Atendimento assistido pendente \(1\):?[\s\S]*autoriza/);
+
+  // A confirmed release removes the record (t55's registry discipline): the pending list
+  // reflects the store, consultable by the local commands.
+  await store.remove(pendingKey);
+  const freed = await status("trabalho", { stateDir });
+  assert.match(freed.stdout, /Sessões assistidas: abertas agora: 0, pendentes: 0/);
+  assert.doesNotMatch(freed.stdout, /Atendimento assistido pendente \(1\)/);
+});
+
+// ── the pendings consultation (ticket #59): what still needs a human, whatever the channel did ──
+
+test("persisted pendings are consultable in status with their context, provenance and actions", async () => {
+  const stateDir = await withJobs([waitingForHelp(jobOf("7"), "Qual contrato?")]);
+  await createFileAttentionStore(join(stateDir, "pendencias")).save({
+    id: "decisão|memory:samuel-santos_bjd/dora-metrics#7|abc123", kind: "decisão", key: jobOf("7").key,
+    what: "decisão do operador pendente", at: "2026-10-14T10:00:00.000Z",
+    question: "Autoriza o comentário publicado na issue?",
+    work: { repository: REPO, ref: { tracker: "memory", project: REPO, id: "7" } },
+    actions: ["reply", "resume", "release", "approve"],
+    notification: { at: "2026-10-14T10:00:01.000Z", channel: "notify-send", ok: true },
+  });
+  const { stdout } = await status("trabalho", { stateDir });
+  assert.match(stdout, /Pendências \(1\):/);
+  assert.match(stdout, /decisão memory:samuel-santos_bjd\/dora-metrics#7 — decisão do operador pendente/);
+  assert.match(stdout, /pergunta: Autoriza o comentário publicado na issue\?/);
+  assert.match(stdout, /trabalho: samuel-santos_bjd\/dora-metrics#7/);
+  assert.match(stdout, /comando executado; entrega de notificação ao desktop não comprovada/, "a prova do canal nunca é uma promessa de entrega");
+  assert.match(stdout, /\.\/msf trabalho reply '#7' --message '<resposta>'/);
+  assert.match(stdout, /\.\/msf trabalho release '#7'/);
+});
+
+test("an undelivered pending shows the failed attempt and stays, and an absent channel is said", async () => {
+  const stateDir = await withJobs([]);
+  await createFileAttentionStore(join(stateDir, "pendencias")).save({
+    id: "intervenção|memory:samuel-santos_bjd/dora-metrics#9|def456", kind: "intervenção", key: jobOf("9").key,
+    what: "execução ilegível: intervenção pedida", at: "2026-10-14T10:00:00.000Z",
+    reason: "registro de fim ilegível", work: { repository: REPO, ref: { tracker: "memory", project: REPO, id: "9" } },
+    actions: ["reply", "resume", "release"],
+    notification: { at: "2026-10-14T10:00:01.000Z", channel: "tentado", ok: false, error: "canal caiu" },
+  });
+  await createFileAttentionStore(join(stateDir, "pendencias")).save({
+    id: "intervenção|outro|ghi789", kind: "intervenção", key: "keyoutro",
+    what: "sem canal nenhum", at: "2026-10-14T10:00:02.000Z", actions: [],
+  });
+  const { stdout } = await status("trabalho", { stateDir });
+  assert.match(stdout, /Pendências \(2\):/);
+  assert.match(stdout, /falhou: canal caiu/);
+  assert.match(stdout, /sem canal tentado/);
+});
+
+test("status shows the scheduled single-use resume and its consumption (ticket #57)", async () => {
+  const stateDir = join(await mkdtemp(join(tmpdir(), "msf-status-")), "state");
+  const store = createFileAssistSessionStore(join(stateDir, "assist-sessions"));
+  const base = {
+    ref: { tracker: "memory" as const, project: "acme/app", id: "1" },
+    repository: "acme/app", state: "pending" as const, reason: "execução encerrada (exit 0) sem resultado de atendimento reconhecido",
+    promptKind: "needs-triage" as const, model: "p/m", image: "img", cloneDir: "/c",
+    startedAt: "2026-10-14T12:00:00.000Z",
+    continuity: {
+      question: "autoriza uma retomada futura desta mesma sessão?",
+      askedAt: "2026-10-14T12:05:00.000Z",
+      answeredAt: "2026-10-14T12:06:00.000Z",
+      answer: "sim, pode retomar",
+    },
+    scheduledResume: { at: "2026-10-14T12:06:00.000Z", command: "cmd-1", answer: "sim, pode retomar" },
+    log: [],
+  };
+  const pendingKey = (base.ref.tracker + ":" + base.ref.project + "#" + base.ref.id) as string;
+  const write = (over: Record<string, unknown>): Parameters<typeof store.save>[0] =>
+    ({ key: pendingKey, ...base, ...over } as unknown as Parameters<typeof store.save>[0]);
+  await store.save(write({}));
+  const scheduled = await status("trabalho", { stateDir });
+  assert.equal(scheduled.exitCode, 0, scheduled.stderr);
+  assert.match(scheduled.stdout, /retomada agendada: uso único/);
+
+  await store.save(write({ scheduledResume: { ...base.scheduledResume, consumed: { at: "2026-10-14T12:07:00.000Z", attempt: "msf-assist-outro-r1#abc12345" } } }));
+  const consumed = await status("trabalho", { stateDir });
+  assert.match(consumed.stdout, /retomada agendada consumida pela tentativa msf-assist-outro-r1#abc12345/);
 });

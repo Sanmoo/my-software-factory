@@ -105,6 +105,44 @@ operador ou por liberação do trabalho.
 _Avoid_: notificação (que é a entrega), pedido de ajuda (que é do agente),
 log passageiro
 
+**Atenção do operador**:
+Chamado da sessão da instância ao operador local: sessão aberta, decisão
+necessária, intervenção ou pedido de ajuda, combinando notificação desktop
+quando disponível com o registro que fica na instância. Falha ou ausência de
+canal não interrompe o trabalho nem elimina o registro
+(src/core/attention.ts; especificação #48, item 5).
+_Avoid_: notificação presumida antes do canal executado, linha passageira de log
+como chamamento
+
+**Pendência**:
+Registro do que ainda precisa do operador, consultável nos comandos locais e
+persistente entre ciclos e reinícios: falha de entrega nunca o elimina, e a
+mudança de estado do trabalho é o que o encerra
+(src/core/attention.ts; consultável em `status`, arquivos em `pendencias/`).
+_Avoid_: notificação entregue como pendência encerrada, pergunta repetida a cada ciclo
+
+**Aprovação (atendimento)**:
+Autorização explícita do operador, por comando local, para registrar o resultado
+proposto de um atendimento humano assistido e executar as ações aprovadas, cada
+uma confirmada por releitura; nada é escrito no tracker antes dela
+(comando `approve`; especificação #48, item 4).
+_Avoid_: fim da sessão como aprovação, aprovação implícita pela inação
+
+**Retomada agendada de uso único**:
+Autorização explícita, na resposta do operador à interrupção, de uma próxima
+abertura desta mesma sessão, tentada antes de novos atendimentos; uma nova
+interrupção exige nova decisão, e esperar capacidade ou reprovar pré-verificação
+não a consome (src/core/assist-flow.ts; especificação #48, item 5).
+_Avoid_: preservação de sessão como autorização, autorização reutilizável
+
+**Reconciliação**:
+Ao reiniciar uma instância, decisão sobre cada identidade de trabalho
+persistida contra a execução real no container — o nome do container gravado na
+sessão, nunca só PID, presença da pane ou texto de terminal — antes de qualquer
+nova admissão; execução desconhecida mantém a capacidade reservada e pede
+intervenção (src/core/assist-flow.ts `reconcile`; especificação #48, item 5).
+_Avoid_: recuperação como reexecução do agente, encerramento inferido da saída do processo
+
 **Feedback acionável**:
 Informação nova dirigida ao trabalho por uma pessoa, falha de check relevante
 do PR ou conflito do PR com a branch de destino, capaz de motivar resposta ou

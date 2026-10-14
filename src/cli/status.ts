@@ -1,5 +1,6 @@
 import { projectEligibility } from "../config/project-eligibility.js";
 import type { InstanceConfig, ProjectConfig } from "../config/types.js";
+import type { ContinuityDecision, ScheduledResume } from "../core/assist-session.js";
 import { evaluateEligibility } from "../core/eligibility.js";
 import { holdsSlot, type Job } from "../core/job.js";
 import { refForCommand } from "../core/job-ref.js";
@@ -9,13 +10,17 @@ import { createRedactor } from "../core/redaction.js";
 import { messageOf } from "../core/values.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
+import { createFileAttentionStore } from "../state/file-attention-store.js";
+import { renderPendingNotification, type AttentionPending } from "../core/attention.js";
 import { createFileJobStore } from "../state/file-job-store.js";
 import { readFailures, type RecordedFailure } from "../state/history.js";
+import { join } from "node:path";
+import { createFileAssistSessionStore } from "../state/file-assist-session-store.js";
 import type { GitHubBoundary } from "../tracker/github.js";
 import { refKey, type IssueRef, type TrackerPort } from "../tracker/port.js";
 import { composeTrackers, registerSecrets } from "./compose.js";
 import type { CliRun } from "./instance.js";
-import { stateLabel, summaryOf } from "./jobs-view.js";
+import { displayRef, stateLabel, summaryOf } from "./jobs-view.js";
 
 // `./msf [--home DIR] <instância> status`: what the instance has recorded and what its trackers show
 // now. It reads the real trackers of every enabled project, evaluates eligibility with the rules and
@@ -67,11 +72,6 @@ async function reportProject(
   return { project, scope, eligible, rejected };
 }
 
-// GitHub references are repository-qualified; Jira issue ids already carry their key.
-function displayRef(ref: IssueRef, project: ProjectConfig): string {
-  return project.adapter === "github" ? `${ref.project}#${ref.id}` : ref.id;
-}
-
 interface LocalState {
   jobs: Job[];
   unreadable: string[];
@@ -82,10 +82,47 @@ interface LocalState {
   // Observability that is failing right now: the operator lost some visibility, not the agent.
   observability: RecordedFailure[];
   observabilityUnreadable?: string;
+  // The assisted sessions' registry, the local mirror of the interruptions (ticket #56). A
+  // session is never a job; it is shown countable here and listed with its awaited decision.
+  assisted: AssistedRow[];
+  assistedUnreadable?: string;
+  // The persisted operator pendings (ticket #59): what still needs a human, with the provenance
+  // of its desktop-notification attempt. This is the consultation that does not depend on the log.
+  pendings: AttentionPending[];
+  pendingsUnreadable?: string;
+}
+
+interface AssistedRow {
+  key: string;
+  state: string;
+  reason?: string;
+  continuity?: ContinuityDecision;
+  scheduledResume?: ScheduledResume;
 }
 
 async function readLocalState(stateDir: string): Promise<LocalState & { tracked: ReadonlySet<string> }> {
   const loaded = await createFileJobStore(stateDir).load();
+  let assisted: AssistedRow[] = [];
+  let assistedUnreadable: string | undefined;
+  try {
+    const sessions = await createFileAssistSessionStore(join(stateDir, "assist-sessions")).load();
+    assisted = sessions.sessions.map((session) => ({
+      key: session.key, state: session.state, reason: session.reason, continuity: session.continuity,
+      scheduledResume: session.scheduledResume,
+    }));
+    if (sessions.unreadable.length > 0) assistedUnreadable = sessions.unreadable.join(", ");
+  } catch (error) {
+    assistedUnreadable = messageOf(error);
+  }
+  let pendings: AttentionPending[] = [];
+  let pendingsUnreadable: string | undefined;
+  try {
+    const attention = await createFileAttentionStore(join(stateDir, "pendencias")).load();
+    pendings = attention.pendings;
+    if (attention.unreadable.length > 0) pendingsUnreadable = attention.unreadable.join(", ");
+  } catch (error) {
+    pendingsUnreadable = messageOf(error);
+  }
   const queued = await createFileCommandQueue(stateDir).pending();
   const applied = await createFileInstanceControl(stateDir).isPaused();
   // The last queued pause or unpause decides the state once the queue is applied.
@@ -97,6 +134,10 @@ async function readLocalState(stateDir: string): Promise<LocalState & { tracked:
     pausePending: last !== undefined && (last.type === "pause") !== applied,
     pendingCommands: queued.commands.length + queued.unreadable.length,
     observability: [],
+    assisted,
+    ...(assistedUnreadable === undefined ? {} : { assistedUnreadable }),
+    pendings,
+    ...(pendingsUnreadable === undefined ? {} : { pendingsUnreadable }),
   };
   try {
     state.observability = await readFailures(stateDir);
@@ -110,6 +151,45 @@ const TRACKED_STATES: ReadonlySet<Job["state"]> = new Set(["running", "waiting-f
 // Only these can be taken up again by the operator with a command that is safe to paste.
 const RESUMABLE: ReadonlySet<Job["state"]> = new Set(["interrupted", "intervention-required"]);
 
+// The persisted pendings (ticket #59), where they stay consultable whatever the notification
+// channel did. Each pending names its subject (same key space the flows use), what and when,
+// the provenance of the delivery attempt (never a presumed delivery) and the paste-ready local
+// actions for its key.
+function renderPendings(state: LocalState, cli: CliHints): string[] {
+  const lines: string[] = [`Pendências (${state.pendings.length}):`];
+  const keys = [
+    ...state.jobs.map((job) => job.key),
+    ...state.assisted.map((assisted) => assisted.key),
+  ];
+  for (const pending of state.pendings) {
+    // The paste-ready actions come from the handover structure itself: nothing is re-parsed
+    // out of the sentence strings the main log prints.
+    const commands = jobCommands(cli, pending.key, keys);
+    const [base, ref] = [commands.base, commands.ref];
+    lines.push(
+      `  ${pending.kind} ${pending.key} — ${pending.what}${pending.reason === undefined ? "" : `: ${pending.reason}`}`,
+      ...(pending.question === undefined ? [] : [
+        pending.answer !== undefined
+          ? `    pergunta respondida: ${pending.question} → ${pending.answer}`
+          : `    pergunta: ${pending.question}`,
+      ]),
+      ...(pending.work === undefined ? [] : [`    trabalho: ${pending.work.repository}#${pending.work.ref.id}`]),
+      ...(pending.context === undefined ? [] : [`    ${Object.entries(pending.context).map(([name, value]) => `${name}=${value}`).join(", ")}`]),
+      `    ${renderPendingNotification(pending)}`,
+      ...pending.actions
+        .filter((action) => action !== "logs" || commands.detail !== undefined)
+        .map((action) => action === "reply" ? `    ${commands.reply}`
+          : action === "resume" ? `    ${commands.resume}`
+          : action === "logs" ? `    ${commands.logs}`
+          : `    ${base} ${action} ${ref}`),
+    );
+  }
+  if (state.pendingsUnreadable !== undefined) {
+    lines.push(`  arquivos ilegíveis de pendências: ${state.pendingsUnreadable}`);
+  }
+  return lines;
+}
+
 function renderJobs(state: LocalState, instance: InstanceConfig, cli: CliHints): string[] {
   const keys = state.jobs.map((job) => job.key);
   const nameOf = (job: Job): string => refForCommand(job.key, keys);
@@ -122,6 +202,9 @@ function renderJobs(state: LocalState, instance: InstanceConfig, cli: CliHints):
     lines.push(`  ${nameOf(job)} — ${job.question ?? ""}`, `    ${commands.reply}`, `    ${commands.logs}`);
   }
 
+  // The persisted pendings (ticket #59), right after the help requests they generalize.
+  lines.push("", ...renderPendings(state, cli));
+
   const followed = state.jobs.filter((job) => TRACKED_STATES.has(job.state));
   lines.push("", `Trabalhos acompanhados (${followed.length}):`);
   for (const job of followed) {
@@ -131,6 +214,25 @@ function renderJobs(state: LocalState, instance: InstanceConfig, cli: CliHints):
     const commands = jobCommands(cli, job.key, keys);
     lines.push(`    ${commands.resume}`, `    ${commands.logs}`);
   }
+
+  const pendings = state.assisted.filter((row) => row.state === "pending");
+  lines.push("", `Atendimento assistido pendente (${pendings.length}):`);
+  for (const row of pendings) {
+    const commands = jobCommands(cli, row.key, [...keys, ...state.assisted.map((assisted) => assisted.key)]);
+    const decision = row.continuity === undefined ? "intervenção pedida"
+      : row.continuity.answeredAt === undefined ? row.continuity.question
+      : `pergunta respondida (${row.continuity.answer ?? "sem texto"})`;
+    // The single-use resume the answer may have scheduled (ticket #57): the operator sees its
+    // demand and its consumption before any automatic opening happens.
+    const scheduled = row.scheduledResume === undefined ? ""
+      : row.scheduledResume.consumed === undefined
+        ? " (retomada agendada: uso único)"
+        : ` (retomada agendada consumida pela tentativa ${row.scheduledResume.consumed.attempt})`;
+    lines.push(`  ${row.key} — ${decision}${scheduled}${row.reason === undefined ? "" : ` (${row.reason})`}`, `    ${commands.resume}`, `    ${commands.reply}`);
+  }
+  if (state.assistedUnreadable !== undefined) lines.push(`  arquivos ilegíveis de sessão assistida: ${state.assistedUnreadable}`);
+  const opens = state.assisted.filter((row) => row.state === "opening" || row.state === "open").length;
+  lines.push("", `Sessões assistidas: abertas agora: ${opens}, pendentes: ${pendings.length}`);
 
   const count = (wanted: Job["state"]): number => state.jobs.filter((job) => job.state === wanted).length;
   lines.push("", `Encerrados: concluídos: ${count("done")}, liberados: ${count("released")}`);

@@ -308,6 +308,7 @@ test("a done whose reread failed stays pending with the reread failure as its re
   });
 });
 
+
 test("a done already shown as done writes nothing and reports an unchanged change", async () => {
   const memory = memoryOf(["1"]);
   await memory.markDone(REF("1"));
@@ -383,3 +384,46 @@ for (const row of table) {
     if ("after" in row.expected) assert.equal(change.after, row.expected.after, "after");
   });
 }
+
+
+test("a done already shown as done writes nothing and reports an unchanged change", async () => {
+  const memory = memoryOf(["1"], { labels: ["human-assisted", "needs-info"] });
+  const { writes, events } = moduleOf(memory);
+
+  const decision = await writes.updateLabels(REF("1"),
+    { remove: ["human-assisted"], add: ["ready-for-agent"] }, { job: "memory:acme/app#1", reason: "conclusão" });
+  assert.deepEqual(decision.status, "confirmed");
+  const changed = decision.status === "confirmed" ? decision.changes : [];
+  assert.deepEqual(changed.map((change) => [change.operation, change.target, change.result]), [
+    ["remover-label", "human-assisted", "confirmed"],
+    ["adicionar-label", "ready-for-agent", "confirmed"],
+  ]);
+  assert.deepEqual(kinds(events).filter((kind) => kind !== "issue-escrita-tentativa"), [
+    "issue-alteração-confirmed", "issue-alteração-confirmed",
+  ]);
+  const after = await memory.readIssue(REF("1"));
+  assert.deepEqual(after.labels.known ? after.labels.value : [], ["needs-info", "ready-for-agent"]);
+});
+
+test("a label write the reread does not confirm is not-confirmed, and the failure is said", async () => {
+  const memory = memoryOf(["1"], { labels: ["human-assisted"] });
+  memory.failNext("updateLabels", "invisível");
+  const { writes, events } = moduleOf(memory);
+
+  const decision = await writes.updateLabels(REF("1"), { remove: ["human-assisted"] }, { job: "memory:acme/app#1", reason: "conclusão" });
+  assert.deepEqual(decision.status, "not-confirmed");
+  if (decision.status === "not-confirmed") assert.match(decision.reason, /releitura não confirma/);
+  const stillThere = await memory.readIssue(REF("1"));
+  assert.ok(stillThere.labels.known && stillThere.labels.value.includes("human-assisted"), "o tracker ficou como estava");
+  assert.ok(kinds(events).includes("issue-alteração-attempted"), "o que tentou fica visível");
+});
+
+test("a label part already absent counts as unchanged, never as a failure", async () => {
+  const memory = memoryOf(["1"], { labels: ["human-assisted"] });
+  const { writes } = moduleOf(memory);
+  const decision = await writes.updateLabels(REF("1"), { remove: ["claim-inexistente"] }, { job: "x", reason: "conclusão" });
+  assert.deepEqual(decision.status, "confirmed");
+  if (decision.status === "confirmed") {
+    assert.deepEqual(decision.changes, [{ operation: "remover-label", target: "claim-inexistente", before: "ausente", after: "ausente", result: "unchanged" }]);
+  }
+});
