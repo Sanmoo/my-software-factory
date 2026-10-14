@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { renderFields } from "../core/observability.js";
 import { messageOf } from "../core/values.js";
-import { createFileJobStore } from "../state/file-job-store.js";
+import { buildOperatorView, type OperatorView } from "../core/operator-view.js";
 import { createFileHistory } from "../state/history.js";
 import { loadInstance, type CliRun } from "./instance.js";
 import { stateLabel, summaryOf } from "./jobs-view.js";
@@ -16,7 +16,13 @@ export interface LogsOptions {
   configPath: string;
   instanceName: string;
   stateDir: string;
+  // The FULL job key, exactly as `status` shows it.
   job: string;
+  // The operator's reading model already holding this instance's state (issue #65): when the
+  // caller has one, the job is loaded from it and `showLogs` does not read a store itself.
+  // When none is given (the standalone `logs` command), one is built here, through the same
+  // single seam — never a direct job-store interrogation.
+  view?: OperatorView;
 }
 
 function parseArgs(argv: readonly string[]): LogsOptions | string {
@@ -74,8 +80,11 @@ export async function showLogs(options: LogsOptions): Promise<CliRun> {
   const loaded = await loadInstance(options.configPath, options.instanceName);
   if (!loaded.ok) return loaded.run;
 
-  const { jobs } = await createFileJobStore(options.stateDir).load();
-  const job = jobs.find((candidate) => candidate.key === options.job);
+  // The reading model is the single source of the recorded state (issue #65): the job comes
+  // from the same load that feeds `status` and the TUI, never from a fresh store interrogation.
+  const model = options.view
+    ?? await buildOperatorView({ stateDir: options.stateDir, instance: loaded.instance });
+  const job = model.loadJob(options.job);
   if (!job) return { exitCode: 1, stdout: "", stderr: `trabalho ${options.job} não encontrado\n` };
 
   const lines = [`trabalho ${job.key}`, `estado: ${stateLabel(job.state)}`];

@@ -3,11 +3,13 @@ import { createFileAssistSessionStore } from "../state/file-assist-session-store
 import { createFileAttentionStore } from "../state/file-attention-store.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 import { createFileInstanceControl } from "../state/instance-control.js";
+import { readFailures, type RecordedFailure } from "../state/history.js";
 import { holdsSlot, type Job } from "./job.js";
 import { holdsCapacity, unconsumedResume, type AssistSession } from "./assist-session.js";
 import type { AttentionPending } from "./attention.js";
 import { refKey, type IssueRef, type TrackerPort } from "../tracker/port.js";
 import type { InstanceConfig } from "../config/types.js";
+import type { OperatorCommand } from "./commands.js";
 
 // The operator's reading model (issue #61, spec #60): a READ-ONLY builder over what the core
 // already recorded. It renders nothing, writes nothing (no store save/remove, no tracker write)
@@ -92,6 +94,30 @@ export interface OperatorView {
     pendingCommands: number;
     pause: { paused: boolean; pending: boolean };
   };
+
+  // The raw recorded entities the text CLIs consume (issue #65: one reading face, two faces).
+  // This is exactly what the stores have — no derivation beyond estadoVivo above, no resizing
+  // of the model beyond what `status`/`logs` need. `jobs` holds EVERY state, the done and
+  // released included (the CLIs count and list them); `sessions` is the full assisted registry.
+  jobs: Job[];
+  sessions: AssistSession[];
+  // Per-store unreadable lists (file names, as the store `load()` reports them) and the queue
+  // snapshot, so `status` needs no second local read of its own.
+  storeReads: {
+    jobs: { unreadable: string[] };
+    // `degraded`: the store's whole directory could not be read (no ENOENT-empty case): the
+    // same degradation `status` always applied, said as a line, not thrown.
+    sessions: { unreadable: string[]; degraded?: string };
+    attention: { unreadable: string[]; degraded?: string };
+    commands: { commands: OperatorCommand[]; unreadable: string[] };
+  };
+  // Observability failing right now (`observability/failures.json`): what the operator lost of
+  // the visibility, not what the agent lost of the execution. The unreadability of the file
+  // itself degrades to this line, said once, not hidden.
+  observability: { failures: RecordedFailure[]; failuresUnreadable?: string };
+  // The single loading seam the CLIs must use (issue #65): one state dir, one read of the
+  // recorded state, honoring the same JobStore port the instance itself drives.
+  loadJob(key: string): Job | undefined;
 }
 
 // The display priority the prototype encodes (spec #60: "retomada autorizada tem prioridade na
@@ -164,13 +190,40 @@ export interface OperatorViewDeps {
 // re-read every raw store after a build).
 export async function buildOperatorView(deps: OperatorViewDeps): Promise<OperatorView> {
   const { stateDir, instance } = deps;
-  const [jobs, sessions, attention, queued, appliedPause] = await Promise.all([
+  // One parallel read of every local store — the SAME loads the CLIs used to compose by hand.
+  // Job store, queue and control still throw (the reading cannot stand without the recorded
+  // jobs and the queue head); the assisted/attention stores degrade like `status` always
+  // degraded them: the store's data shows as a said unreadability line, the rest of the
+  // reading keeps standing. The observability failures file degrades the same way.
+  const [jobsResult, sessionsResult, attentionResult, queuedResult, appliedPause, failuresOnce] = await Promise.all([
     createFileJobStore(stateDir).load(),
-    createFileAssistSessionStore(`${stateDir}/assist-sessions`.replace("//", "/")).load(),
-    createFileAttentionStore(`${stateDir}/pendencias`.replace("//", "/")).load(),
+    createFileAssistSessionStore(`${stateDir}/assist-sessions`.replace("//", "/")).load().then(
+      (value) => ({ value, degraded: undefined as string | undefined }),
+      (error: unknown) => ({ value: { sessions: [], unreadable: [] as string[] }, degraded: error instanceof Error ? error.message : String(error) }),
+    ),
+    createFileAttentionStore(`${stateDir}/pendencias`.replace("//", "/")).load().then(
+      (value) => ({ value, degraded: undefined as string | undefined }),
+      (error: unknown) => ({ value: { pendings: [], unreadable: [] as string[] }, degraded: error instanceof Error ? error.message : String(error) }),
+    ),
     createFileCommandQueue(stateDir).pending(),
     createFileInstanceControl(stateDir).isPaused(),
+    // The failures file itself unreadable degrades to a said line, never an error out.
+    readFailures(stateDir)
+      .then((failures) => ({ failures, failuresUnreadable: undefined as string | undefined }))
+      .catch((error) => ({
+        failures: [] as RecordedFailure[],
+        failuresUnreadable: error instanceof Error ? error.message : String(error),
+      })),
   ]);
+  const jobs = jobsResult;
+  const sessions = sessionsResult.value;
+  const attention = attentionResult.value;
+  const queued = queuedResult;
+
+  // The one loading seam for a single work by key (issue #65, the `logs` path): the model's own
+  // snapshot, not a fresh store interrogation. `status` already holds the whole list; `logs`
+  // asks for one key and gets the same record `status` would have shown.
+  const loaded = new Map(jobs.jobs.map((job) => [job.key, job]));
 
   const autonomous = jobs.jobs
     .filter((job) => job.state !== "done" && job.state !== "released")
@@ -229,5 +282,18 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
       pendingCommands: queued.commands.length + queued.unreadable.length,
       pause: { paused, pending: lastPause !== undefined && (lastPause.type === "pause") !== appliedPause },
     },
+    jobs: jobs.jobs,
+    sessions: sessions.sessions,
+    storeReads: {
+      jobs: { unreadable: [...jobs.unreadable] },
+      sessions: { unreadable: [...sessions.unreadable], ...(sessionsResult.degraded === undefined ? {} : { degraded: sessionsResult.degraded }) },
+      attention: { unreadable: [...attention.unreadable], ...(attentionResult.degraded === undefined ? {} : { degraded: attentionResult.degraded }) },
+      commands: { commands: [...queued.commands], unreadable: [...queued.unreadable] },
+    },
+    observability: {
+      failures: failuresOnce.failures,
+      ...(failuresOnce.failuresUnreadable === undefined ? {} : { failuresUnreadable: failuresOnce.failuresUnreadable }),
+    },
+    loadJob: (key: string) => loaded.get(key),
   };
 }

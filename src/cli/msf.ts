@@ -2,8 +2,8 @@ import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveJobRef } from "../core/job-ref.js";
+import { buildOperatorView, type OperatorView } from "../core/operator-view.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
-import { createFileJobStore } from "../state/file-job-store.js";
 import { sandcastleBoundary } from "../runtime/docker-sandcastle.js";
 import type { GitHubBoundary } from "../tracker/github.js";
 import type { TrackerPort } from "../tracker/port.js";
@@ -310,10 +310,15 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
     });
   }
 
+  // The operator's reading model is the CLI's single local read (issue #65): the keys that
+  // short references resolve against and the job that `logs` shows come from ONE
+  // buildOperatorView load, the same reading the TUI consumes. Supervision keeps its own
+  // validation reads (they end in writes and re-reads; that is not this reading).
   let job: string | undefined;
+  let view: OperatorView | undefined;
   if (request.job !== undefined) {
-    const { jobs } = await createFileJobStore(stateDir).load();
-    const resolved = resolveJobRef(request.job, jobs.map((candidate) => candidate.key));
+    view = await buildOperatorView({ stateDir, instance: loaded.instance });
+    const resolved = resolveJobRef(request.job, view.jobs.map((candidate) => candidate.key));
     if (resolved.status === "none") return failure(1, `trabalho ${request.job} não encontrado na instância ${request.instance}`);
     if (resolved.status === "ambiguous") {
       return failure(1, [
@@ -325,7 +330,7 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
   }
 
   if (request.command === "logs") {
-    return showLogs({ configPath, instanceName: request.instance, stateDir, job: job! });
+    return showLogs({ configPath, instanceName: request.instance, stateDir, job: job!, view });
   }
   return applySupervision({
     command: request.command,

@@ -4,18 +4,13 @@ import type { ContinuityDecision, ScheduledResume } from "../core/assist-session
 import { evaluateEligibility } from "../core/eligibility.js";
 import { holdsSlot, type Job } from "../core/job.js";
 import { refForCommand } from "../core/job-ref.js";
-import { trackedKeys } from "../core/job-store.js";
+import { unreadableKeys } from "../core/job-store.js";
 import { jobCommands, type CliHints } from "../core/observability.js";
 import { createRedactor } from "../core/redaction.js";
 import { messageOf } from "../core/values.js";
-import { createFileCommandQueue } from "../state/command-queue.js";
-import { createFileInstanceControl } from "../state/instance-control.js";
-import { createFileAttentionStore } from "../state/file-attention-store.js";
+import { buildOperatorView } from "../core/operator-view.js";
 import { renderPendingNotification, type AttentionPending } from "../core/attention.js";
-import { createFileJobStore } from "../state/file-job-store.js";
-import { readFailures, type RecordedFailure } from "../state/history.js";
-import { join } from "node:path";
-import { createFileAssistSessionStore } from "../state/file-assist-session-store.js";
+import type { RecordedFailure } from "../state/history.js";
 import type { GitHubBoundary } from "../tracker/github.js";
 import { refKey, type IssueRef, type TrackerPort } from "../tracker/port.js";
 import { composeTrackers, registerSecrets } from "./compose.js";
@@ -100,51 +95,36 @@ interface AssistedRow {
   scheduledResume?: ScheduledResume;
 }
 
-async function readLocalState(stateDir: string): Promise<LocalState & { tracked: ReadonlySet<string> }> {
-  const loaded = await createFileJobStore(stateDir).load();
-  let assisted: AssistedRow[] = [];
-  let assistedUnreadable: string | undefined;
-  try {
-    const sessions = await createFileAssistSessionStore(join(stateDir, "assist-sessions")).load();
-    assisted = sessions.sessions.map((session) => ({
+// One reading of the recorded state, through the operator's reading model (issue #65): the CLIs
+// stopped composing their own view out of raw stores. `readLocalState` keeps its shape (the
+// presentation stays here) but every local value — raw jobs in every state, assisted registry,
+// pendings, queue, pause, unreadable lists — now comes from ONE buildOperatorView call. The
+// trackers are composed separately in runStatus: they are not part of the local reading.
+async function readLocalState(stateDir: string, instance: InstanceConfig): Promise<LocalState & { tracked: ReadonlySet<string> }> {
+  const view = await buildOperatorView({ stateDir, instance });
+  const assistedUnreadable = view.storeReads.sessions.degraded
+    ?? (view.storeReads.sessions.unreadable.length > 0 ? view.storeReads.sessions.unreadable.join(", ") : undefined);
+  const pendingsUnreadable = view.storeReads.attention.degraded
+    ?? (view.storeReads.attention.unreadable.length > 0 ? view.storeReads.attention.unreadable.join(", ") : undefined);
+  const state: LocalState = {
+    jobs: view.jobs,
+    unreadable: view.storeReads.jobs.unreadable,
+    paused: view.footer.pause.paused,
+    pausePending: view.footer.pause.pending,
+    pendingCommands: view.footer.pendingCommands,
+    observability: view.observability.failures,
+    ...(view.observability.failuresUnreadable === undefined ? {} : { observabilityUnreadable: view.observability.failuresUnreadable }),
+    assisted: view.sessions.map((session) => ({
       key: session.key, state: session.state, reason: session.reason, continuity: session.continuity,
       scheduledResume: session.scheduledResume,
-    }));
-    if (sessions.unreadable.length > 0) assistedUnreadable = sessions.unreadable.join(", ");
-  } catch (error) {
-    assistedUnreadable = messageOf(error);
-  }
-  let pendings: AttentionPending[] = [];
-  let pendingsUnreadable: string | undefined;
-  try {
-    const attention = await createFileAttentionStore(join(stateDir, "pendencias")).load();
-    pendings = attention.pendings;
-    if (attention.unreadable.length > 0) pendingsUnreadable = attention.unreadable.join(", ");
-  } catch (error) {
-    pendingsUnreadable = messageOf(error);
-  }
-  const queued = await createFileCommandQueue(stateDir).pending();
-  const applied = await createFileInstanceControl(stateDir).isPaused();
-  // The last queued pause or unpause decides the state once the queue is applied.
-  const last = queued.commands.filter((command) => command.type === "pause" || command.type === "unpause").at(-1);
-  const state: LocalState = {
-    jobs: loaded.jobs,
-    unreadable: loaded.unreadable,
-    paused: last ? last.type === "pause" : applied,
-    pausePending: last !== undefined && (last.type === "pause") !== applied,
-    pendingCommands: queued.commands.length + queued.unreadable.length,
-    observability: [],
-    assisted,
+    })),
     ...(assistedUnreadable === undefined ? {} : { assistedUnreadable }),
-    pendings,
+    pendings: view.pendings,
     ...(pendingsUnreadable === undefined ? {} : { pendingsUnreadable }),
   };
-  try {
-    state.observability = await readFailures(stateDir);
-  } catch (error) {
-    state.observabilityUnreadable = messageOf(error);
-  }
-  return { ...state, tracked: trackedKeys(loaded) };
+  // The same tracked set eligibility has always judged against: readable job keys plus the
+  // keys decodable from the unreadable file names (an unreadable file still names its issue).
+  return { ...state, tracked: new Set([...view.jobs.map((job) => job.key), ...unreadableKeys(view.storeReads.jobs.unreadable)]) };
 }
 
 const TRACKED_STATES: ReadonlySet<Job["state"]> = new Set(["running", "waiting-for-pr", "interrupted", "intervention-required"]);
@@ -274,7 +254,7 @@ export async function runStatus(options: StatusOptions): Promise<CliRun> {
 
   let local: Awaited<ReturnType<typeof readLocalState>>;
   try {
-    local = await readLocalState(options.stateDir);
+    local = await readLocalState(options.stateDir, instance);
   } catch (error) {
     return { exitCode: 1, stdout: "", stderr: `estado da instância ilegível: ${redactor.apply(messageOf(error))}\n` };
   }
