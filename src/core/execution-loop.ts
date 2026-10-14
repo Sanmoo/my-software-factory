@@ -1,10 +1,21 @@
 import type { ContinuationContext, IssueContext, Runner, RunnerContext, RunKind, RunnerOutput } from "../runtime/runner.js";
 import type { IssueRef } from "../tracker/port.js";
 import { Announcements } from "./announcements.js";
-import { recordTriageOutcome, type PlanStep, type TriageOutcome } from "./feedback.js";
-import { JobRegistry } from "./job-registry.js";
+import type { PlanStep, TriageOutcome } from "./feedback.js";
+import type { JobRegistry } from "./job-registry.js";
 import type { Delivery } from "./pr-rules.js";
 import { parseRunOutput, type PrRef } from "./result.js";
+
+// Every result carries how the invocation's triage step ended; Admission records it
+// only after interpreting the result, preserving transition-before-triage ordering.
+export type ExecutionOutcome = (
+  | { status: "pr_ready"; pr: PrRef }
+  | { status: "needs_help"; question: string; context: string }
+  | { status: "interrupted"; reason: string }
+  | { status: "invalid"; reason: string }
+  | { status: "runner_failure" }
+  | { status: "iteration_limit"; reason: string }
+) & { triage: { step: PlanStep | undefined; outcome: TriageOutcome } };
 
 // Owns dispatched invocations and their persistence-level errors.
 export class ExecutionLoop {
@@ -13,9 +24,9 @@ export class ExecutionLoop {
 
   constructor(
     private readonly runner: Runner,
-    private readonly registry: JobRegistry,
+    private readonly registry: Pick<JobRegistry, "update" | "note">,
     private readonly announcements: Announcements,
-    private readonly acceptPr: (key: string, pr: PrRef, delivery: Delivery, invocation: string) => Promise<void>,
+    private readonly interpret: (key: string, outcome: ExecutionOutcome, delivery: Delivery, invocation: string) => Promise<void>,
   ) {}
 
   // Waits for every dispatched runner to finish; returns the errors of runs that failed
@@ -35,16 +46,18 @@ export class ExecutionLoop {
     continuation?: ContinuationContext,
     issue?: IssueContext,
   ): void {
-    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue).catch((error: unknown) => {
-      this.runErrors.push(error);
-    });
+    const run: Promise<void> = this.execute(key, ref, kind, maxIterations, delivery, invocation, continuation, issue)
+      .then((outcome) => this.interpret(key, outcome, delivery, invocation))
+      .catch((error: unknown) => {
+        this.runErrors.push(error);
+      });
     this.runs.add(run);
     void run.then(() => this.runs.delete(run));
   }
 
   // Up to maxIterations invocations of the runner. A final output that is absent,
   // ambiguous or invalid is never success and stops the job at once.
-  private async execute(
+  async execute(
     key: string,
     ref: IssueRef,
     kind: RunKind,
@@ -53,7 +66,7 @@ export class ExecutionLoop {
     invocation: string,
     continuation?: ContinuationContext,
     issue?: IssueContext,
-  ): Promise<void> {
+  ): Promise<ExecutionOutcome> {
     const step: PlanStep | undefined = continuation?.plan.step;
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       let output: RunnerOutput;
@@ -72,13 +85,7 @@ export class ExecutionLoop {
         output = await this.runner.run(context);
       } catch {
         this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "falha-do-runner" }, { invocation, level: "erro" });
-        await this.registry.apply(key, "intervention-required", {
-          message: "runner falhou sem resultado estruturado",
-          reason: "runner falhou sem resultado estruturado",
-          invocation,
-        });
-        await this.settleTriage(key, step, "incomplete");
-        return;
+        return { status: "runner_failure", triage: { step, outcome: "incomplete" } };
       }
       if (output.workspace) await this.registry.update(key, { workspace: output.workspace });
       if (output.kind === "continue") {
@@ -92,52 +99,25 @@ export class ExecutionLoop {
       if (!parsed.ok) {
         const reason = `resultado inválido: ${parsed.reason}`;
         this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: "inválido" }, { invocation, level: "atenção" });
-        await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-        await this.settleTriage(key, step, "incomplete");
-        return;
+        return { status: "invalid", reason, triage: { step, outcome: "incomplete" } };
       }
       const result = parsed.result;
       this.announcements.emitFor(key, "invocação-encerrada", "invocação encerrada", { resultado: result.status }, { invocation });
       switch (result.status) {
         case "needs_help":
-          await this.registry.apply(key, "waiting-for-help", {
-            message: `pedido de ajuda: ${result.question}`,
-            question: result.question,
-            context: result.context,
-            invocation,
-          });
-          await this.settleTriage(key, step, "help");
-          return;
+          return { ...result, triage: { step, outcome: "help" } };
         case "pr_ready":
           if (step === "list") {
             // The operator has not chosen yet: a PR taken as ready now would drop the triaged comments.
             const reason = "triagem terminou com PR pronto em vez de pedido de ajuda; os comentários não foram escolhidos pelo operador";
-            await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-            await this.settleTriage(key, step, "incomplete");
-            return;
+            return { status: "invalid", reason, triage: { step, outcome: "incomplete" } };
           }
-          await this.acceptPr(key, result.pr, delivery, invocation);
-          await this.settleTriage(key, step, "complete");
-          return;
+          return { ...result, triage: { step, outcome: "complete" } };
         case "interrupted":
-          await this.registry.apply(key, "interrupted", { message: `interrompido: ${result.reason}`, reason: result.reason, invocation });
-          await this.settleTriage(key, step, "incomplete");
-          return;
+          return { ...result, triage: { step, outcome: "incomplete" } };
       }
     }
     const reason = `limite de iterações (${maxIterations}) atingido sem resultado válido`;
-    await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
-    await this.settleTriage(key, step, "incomplete");
+    return { status: "iteration_limit", reason, triage: { step, outcome: "incomplete" } };
   }
-
-  // Records how the invocation that carries a triage step ended: the phase advances, stays or is
-  // cleared by the module that owns it (issue #21).
-  private async settleTriage(key: string, step: PlanStep | undefined, outcome: TriageOutcome): Promise<void> {
-    if (step === undefined) return;
-    const current = this.registry.job(key);
-    if (!current) return;
-    const next = recordTriageOutcome(current, step, outcome);
-    if (next !== current) await this.registry.persist(next);
-  }
-
 }

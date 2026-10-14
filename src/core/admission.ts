@@ -7,8 +7,8 @@ import type { InstanceControl } from "./instance-control.js";
 import { appendLog, holdsSlot, newJob, recordPrStatus, type Continuation, type Job, type JobState, type PrStatus } from "./job.js";
 import {
   continuationCauses, describeItem, directedReply, judgeConflict, judgePrFeedback, needsTriage, noteManualResume,
-  planCommands, planContinuation, planItems, receiveFeedback,
-  resumeRefusal, triageInProgress, type DirectedReplyItem,
+  planCommands, planContinuation, planItems, receiveFeedback, recordTriageOutcome,
+  resumeRefusal, triageInProgress, type DirectedReplyItem, type PlanStep, type TriageOutcome,
 } from "./feedback.js";
 import type { JobStore } from "./job-store.js";
 import type { ProjectEligibility } from "./project-eligibility.js";
@@ -21,7 +21,7 @@ import { triggerSummary } from "./ops-events.js";
 import type { AttentionKeeper } from "./attention.js";
 import { Announcements } from "./announcements.js";
 import { JobRegistry } from "./job-registry.js";
-import { ExecutionLoop } from "./execution-loop.js";
+import { ExecutionLoop, type ExecutionOutcome } from "./execution-loop.js";
 import { IssueWrites, type IssueWritesContext } from "./issue-writes.js";
 import type { AssistOperator, AssistOperatorResult } from "./assist-flow.js";
 import { refKey, type IssueRef, type IssueSnapshot, type Known, type TrackerPort } from "../tracker/port.js";
@@ -133,7 +133,7 @@ export class Admission {
     this.writes = new IssueWrites(deps.tracker, this.obs);
     this.registry = new JobRegistry(deps.store, deps.instance.maxConcurrent, this.announcements, loaded, unreadable);
     this.loop = new ExecutionLoop(deps.runner, this.registry, this.announcements,
-      (key, pr, delivery, invocation) => this.acceptPr(key, pr, delivery, invocation));
+      (key, outcome, delivery, invocation) => this.interpretExecution(key, outcome, delivery, invocation));
     this.unreadable = this.registry.unreadable;
   }
 
@@ -562,6 +562,47 @@ export class Admission {
     } catch (error) {
       return `o perfil não pôde ser verificado: ${messageOf(error)}`;
     }
+  }
+
+  // The loop reports a result, not a state change. PR validation and job transitions
+  // stay here, followed by recording how the triage step ended.
+  private async interpretExecution(key: string, outcome: ExecutionOutcome, delivery: Delivery, invocation: string): Promise<void> {
+    switch (outcome.status) {
+      case "pr_ready":
+        await this.acceptPr(key, outcome.pr, delivery, invocation);
+        break;
+      case "needs_help":
+        await this.registry.apply(key, "waiting-for-help", {
+          message: `pedido de ajuda: ${outcome.question}`,
+          question: outcome.question,
+          context: outcome.context,
+          invocation,
+        });
+        break;
+      case "interrupted":
+        await this.registry.apply(key, "interrupted", { message: `interrompido: ${outcome.reason}`, reason: outcome.reason, invocation });
+        break;
+      case "runner_failure": {
+        const reason = "runner falhou sem resultado estruturado";
+        await this.registry.apply(key, "intervention-required", { message: reason, reason, invocation });
+        break;
+      }
+      case "invalid":
+      case "iteration_limit":
+        await this.registry.apply(key, "intervention-required", { message: outcome.reason, reason: outcome.reason, invocation });
+        break;
+    }
+    await this.settleTriage(key, outcome.triage.step, outcome.triage.outcome);
+  }
+
+  // Records how the invocation that carries a triage step ended: the phase advances, stays or is
+  // cleared by the module that owns it (issue #21).
+  private async settleTriage(key: string, step: PlanStep | undefined, outcome: TriageOutcome): Promise<void> {
+    if (step === undefined) return;
+    const current = this.registry.job(key);
+    if (!current) return;
+    const next = recordTriageOutcome(current, step, outcome);
+    if (next !== current) await this.registry.persist(next);
   }
 
   private enabledProjectOf(job: Job): ProjectConfig | undefined {
