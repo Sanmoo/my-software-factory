@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { TrackerPort } from "./tracker/port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
+import type { GitWork } from "./git/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, type PoolEntry } from "./state/derive.js";
 import { Slots } from "./pool/slots.js";
@@ -19,6 +20,8 @@ export interface LoopDeps {
   config: Config;
   tracker: TrackerPort;
   runtime: WorkerRuntime;
+  /** The git host side: one clone per target repo, work branch per work (ticket 15). */
+  git: GitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
@@ -35,7 +38,7 @@ export interface SweepResult {
  * With an empty pool: no worker is launched and the process ends clean.
  */
 export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
-  const { config, tracker, runtime, workspace } = deps;
+  const { config, tracker, runtime, git, workspace } = deps;
   const log = deps.log ?? (() => {});
 
   // Derivation — the stateless re-read of the tracker.
@@ -55,11 +58,20 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
     if (!slots.tryAcquire(key)) continue;
     log(`claiming ${key}`);
     await tracker.claim(entry.ref, config.workerGhAccount);
-    log(`launching worker for ${key} (branch ${`agent-issue-${entry.ref.number}`})`);
+
+    // Git host (ticket 15): clone once + delta fetch + work branch born from
+    // the default the clone reveals; relaunches reuse the branch untouched.
+    const prepared = await git.prepareWork(entry.ref);
+    log(
+      `launching worker for ${key} (branch ${prepared.branch}, ` +
+        `${prepared.branchCreated ? "created" : "reused"} from base ${prepared.baseBranch})`,
+    );
     const result = await runtime.launch({
       ref: entry.ref,
       workDir: workDir(workspace, entry.ref.repo, entry.ref.number),
-      branch: `agent-issue-${entry.ref.number}`,
+      branch: prepared.branch,
+      repoDir: prepared.repoDir,
+      baseBranch: prepared.baseBranch,
       attempt: 1,
     });
     launched.push(result);

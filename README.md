@@ -44,6 +44,9 @@ src/
 ├── tracker/
 │   ├── port.ts         # TrackerPort: the 9 operations + rank (honest null)
 │   └── fake-adapter.ts # in-memory fake: deterministic scenarios, no network
+├── git/
+│   ├── port.ts         # GitWork: clone-once + delta fetch + work branch per work
+│   └── local.ts        # the host side over the local git CLI — no network in tests
 ├── state/
 │   ├── derive.ts       # stateless re-read → pool of eligibles, ordered by createdAt
 │   └── outcome.ts      # the ruler: classifies desfecho.json — structured facts only
@@ -65,4 +68,5 @@ npm test
 ```
 
 Fast and deterministic: the tracker and the worker runtime are fakes; the
-workspace uses a real temp dir — the disk is never mocked.
+workspace uses a real temp dir — the disk is never mocked. The git host side
+is exercised with local bare remotes as fixtures — no GitHub, no network.
