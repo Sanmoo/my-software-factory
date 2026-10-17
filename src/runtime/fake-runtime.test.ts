@@ -33,6 +33,8 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     ref: { repo: "Sanmoo/a", number: 3 },
     workDir: dir,
     branch: "agent-issue-3",
+    repoDir: "/clones/Sanmoo#a",
+    baseBranch: "main",
     attempt: 1,
   });
 

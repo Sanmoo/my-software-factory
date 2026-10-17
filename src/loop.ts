@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { TrackerPort, IssueRef } from "./tracker/port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
+import type { GitWork } from "./git/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, type PoolEntry } from "./state/derive.js";
 import { Slots } from "./pool/slots.js";
@@ -10,7 +11,7 @@ import { Slots } from "./pool/slots.js";
  * the process is a loop — owner of time (the fixed 60 s tick), of the --once
  * boundary and of waking by event (end of worker vs tick). It interlaces the
  * four phases deciding nothing of the domain: decisions live in state/,
- * IO in tracker/ + pool/ + runtime/ (ticket 07).
+ * IO in tracker/ + pool/ + git/ + runtime/ (ticket 07).
  */
 
 export const TICK_MS = 60_000;
@@ -19,6 +20,8 @@ export interface LoopDeps {
   config: Config;
   tracker: TrackerPort;
   runtime: WorkerRuntime;
+  /** The git host side: one clone per target repo, work branch per work (ticket 15). */
+  git: GitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
@@ -39,8 +42,6 @@ export interface SweepResult {
 
 export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
-export const branchOf = (number: number): string => `agent-issue-${number}`;
-
 /**
  * One sweep with the --once boundary: derive the pool through the port,
  * claim and launch up to `y` workers concurrently, collect each one at the
@@ -53,7 +54,7 @@ export const branchOf = (number: number): string => `agent-issue-${number}`;
  * wait-for-all is the --once boundary itself.
  */
 export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
-  const { config, tracker, runtime, workspace } = deps;
+  const { config, tracker, runtime, git, workspace } = deps;
   const log = deps.log ?? (() => {});
 
   // Derivation — the stateless re-read of the tracker.
@@ -71,6 +72,24 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
   const launched: SessionResult[] = [];
   const collected: CollectedWork[] = [];
 
+  // Prepare (clone/fetch/branch) touches the shared clone of a repo — two
+  // first-launches of the same repo must not race inside it (ticket 12
+  // introduced the parallelism; the serialization stays local to prepares,
+  // the launches themselves run concurrently).
+  const preparing = new Map<string, Promise<void>>();
+  const serializePrepare = <T>(repo: string, prepare: () => Promise<T>): Promise<T> => {
+    const tail = preparing.get(repo) ?? Promise.resolve();
+    const run = tail.then(prepare, prepare);
+    preparing.set(
+      repo,
+      run.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return run;
+  };
+
   /** Claim, launch and collect one work; replenish in the same cycle. */
   const launchAndCollect = async (entry: PoolEntry): Promise<void> => {
     const key = workKey(entry.ref);
@@ -79,11 +98,19 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
     // away, so a concurrent sweep never picks the same work.
     await tracker.claim(entry.ref, config.workerGhAccount, config.labels.ready);
 
-    log(`launching worker for ${key} (branch ${branchOf(entry.ref.number)})`);
+    // Git host (ticket 15): clone once + delta fetch + work branch born from
+    // the default the clone reveals; relaunches reuse the branch untouched.
+    const prepared = await serializePrepare(entry.ref.repo, () => git.prepareWork(entry.ref));
+    log(
+      `launching worker for ${key} (branch ${prepared.branch}, ` +
+        `${prepared.branchCreated ? "created" : "reused"} from base ${prepared.baseBranch})`,
+    );
     const result = await runtime.launch({
       ref: entry.ref,
       workDir: workDir(workspace, entry.ref.repo, entry.ref.number),
-      branch: branchOf(entry.ref.number),
+      branch: prepared.branch,
+      repoDir: prepared.repoDir,
+      baseBranch: prepared.baseBranch,
       attempt: 1,
     });
     launched.push(result);
@@ -93,7 +120,8 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
     // Without PR: any end is a fall — the 1st fall releases the claim (the
     // full ruler, double fall → blocked, is ticket 13).
     const feedback = await tracker.readPrFeedback(entry.ref);
-    const prConfirmed = feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open";
+    const prConfirmed =
+      feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open";
     if (prConfirmed) {
       log(`collected ${key}: PR open — stays reserved, waiting for the human`);
     } else {

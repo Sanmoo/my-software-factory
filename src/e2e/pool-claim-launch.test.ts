@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
-import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
+import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
+import type { IssueRef } from "../tracker/port.js";
+import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 
 /**
@@ -40,6 +42,23 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+class FakeGitWork implements GitWork {
+  readonly prepared: IssueRef[] = [];
+
+  async prepareWork(ref: IssueRef): Promise<PreparedWork> {
+    this.prepared.push(ref);
+    return {
+      repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
+      branch: workBranchName(ref.number),
+      baseBranch: "main",
+      branchCreated: true,
+    };
+  }
+
+  async cleanupDoneWork(_ref: IssueRef): Promise<void> {}
+}
+
 describe("e2e: pool, claim and launch up to the outcome with PR", () => {
   let dir: string;
   let layout: WorkspaceLayout;
@@ -68,13 +87,16 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     deps: LoopDeps;
     tracker: FakeTrackerAdapter;
     runtime: FakeWorkerRuntime;
+    git: FakeGitWork;
   } {
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const git = new FakeGitWork();
     return {
       tracker,
       runtime,
-      deps: { config, tracker, runtime, workspace: layout, log: () => {} },
+      git,
+      deps: { config, tracker, runtime, git, workspace: layout, log: () => {} },
     };
   }
 
@@ -251,11 +273,12 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     // A second concurrent sweep derives the same tracker: the claimed work is
     // not in its pool, and it launches nothing.
     const secondTracker = tracker;
-    const secondRuntime = new FakeWorkerRuntime({ tracker: secondTracker });
+    const secondRuntime = new FakeWorkerRuntime({ tracker: secondTracker, outcomes: ["pr-open"] });
     const secondSweep = await runOnce({
       config,
       tracker: secondTracker,
       runtime: secondRuntime,
+      git: new FakeGitWork(),
       workspace: layout,
       log: () => {},
     });
