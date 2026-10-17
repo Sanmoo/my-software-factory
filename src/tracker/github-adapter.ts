@@ -270,23 +270,39 @@ export class GitHubTrackerAdapter implements TrackerPort {
     );
   }
 
-  /** 4. Claim: claimed label + assign the worker account (two intents, partial reported). */
-  async claim(ref: IssueRef, account: string): Promise<WriteOutcome> {
+  /** 4. Claim: swap ready→claimed (when the ready label is given) + assign the worker
+   *  account — the reservation lands on the tracker BEFORE any launch. The swap
+   *  is ordered: the ready label leaves first, so a concurrent sweep never sees
+   *  the work again; then the claimed label, then the assignee. */
+  async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
+    const performed: string[] = [];
+    if (readyLabel !== undefined) {
+      // the absent ready label is a tolerated no-op (the fake tolerates it too)
+      await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${readyLabel}`, {
+        method: "DELETE",
+        tolerate: isAbsentLabel,
+      }).then(
+        () => performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`),
+        () => {},
+      );
+    }
     await this.ensureLabelExists(ref.repo, this.claimedLabel);
     await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
       method: "POST",
       input: { labels: [this.claimedLabel] },
     });
     const labelDone = `label+${this.claimedLabel} on ${ref.repo}#${ref.number}`;
+    performed.push(labelDone);
     try {
       await this.api(`repos/${ref.repo}/issues/${ref.number}/assignees`, {
         method: "POST",
         input: { assignees: [account] },
       });
     } catch (error) {
-      throw new PartialWriteError([labelDone], (error as Error).message);
+      throw new PartialWriteError(performed, (error as Error).message);
     }
-    return { performed: [labelDone, `assignee ${account}`] };
+    performed.push(`assignee ${account}`);
+    return { performed };
   }
 
   /** 5. Release: remove only the claim mark (label + account assignee). */

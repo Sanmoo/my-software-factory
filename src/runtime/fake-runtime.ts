@@ -21,10 +21,16 @@ export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
   /** Needed so the fake can actually open the PR the script promises. */
   tracker?: FakeTrackerAdapter;
+  /** Deterministic timing control for scenario tests: each launch awaits the
+   * returned promise (before applying its outcome) — a worker can be parked
+   * mid-flight, or a signal fired at the act of its launch, without sleeps. */
+  hold?: (request: WorkRequest, index: number) => Promise<void> | void;
 }
 
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
+  /** Instance-level hold hook — settable by tests after construction. */
+  hold?: (request: WorkRequest, index: number) => Promise<void> | void;
   private readonly script: ScriptedOutcome[];
   private cursor = 0;
 
@@ -33,7 +39,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
-    this.launched.push(request);
+    const index = this.launched.push(request) - 1;
+    const hold = this.hold ?? this.options.hold;
+    if (hold) await hold(request, index);
     const outcome = this.next();
     await this.apply(outcome, request);
     return { request, outcome };

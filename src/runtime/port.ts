@@ -12,6 +12,10 @@ export interface WorkRequest {
   workDir: string;
   /** The work's branch — the memory of the work; never recreated. */
   branch: string;
+  /** The single clone of the target repo: <workspace>/repos/<owner>#<name>/. */
+  repoDir: string;
+  /** The default branch the work branch was born from — also the PR base. */
+  baseBranch: string;
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
 }

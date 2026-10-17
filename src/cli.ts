@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { loadConfigFrom } from "./config.js";
 import { ensureWorkspace } from "./layout.js";
+import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import type { WorkerRuntime } from "./runtime/port.js";
@@ -52,6 +53,7 @@ async function runCommand(argv: string[]): Promise<void> {
     config,
     tracker,
     runtime: workerRuntime(),
+    git: localGitWork({ reposDir: workspace.repos }),
     workspace,
     log: (message) => console.log(message),
   };

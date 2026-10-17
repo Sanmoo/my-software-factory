@@ -150,6 +150,28 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       },
     },
     {
+      name: "4. claim: swaps the ready label away (the reservation is the swap)",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to swap ${harness.name}`, labels: [ready, other] });
+        await adapter().claim(a.ref, harness.workerAccount, ready);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(!issue.value.labels.includes(ready), "the ready label is swapped away");
+        assert.ok(issue.value.labels.includes(harness.claimedLabel));
+        assert.ok(issue.value.labels.includes(other), "unrelated labels are untouched");
+      },
+    },
+    {
+      name: "4. claim: an absent ready label is tolerated, not an error",
+      run: async () => {
+        const a = await harness.createIssue({ title: `no ready label ${harness.name}` });
+        await assert.doesNotReject(adapter().claim(a.ref, harness.workerAccount, ready));
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(harness.claimedLabel));
+      },
+    },
+    {
       name: "5. releaseClaim: removes only the claim mark (label + assignee of the account)",
       run: async () => {
         const a = await harness.createIssue({ title: `to release ${harness.name}`, labels: [other] });

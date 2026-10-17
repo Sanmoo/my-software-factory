@@ -121,3 +121,25 @@ test("fake comments never lose the agent marker prefix", async () => {
   assert.ok(comments.known);
   assert.equal(comments.value[0]?.body, `${AGENT_MARKER} already marked`);
 });
+
+test("fake claim swaps the ready label away (the reservation is the swap, ticket 12)", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent", "triaged"] });
+  await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
+
+  const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(issue.known);
+  assert.ok(!issue.value.labels.includes("ready-for-agent"), "ready label swapped away");
+  assert.ok(issue.value.labels.includes("agent-claimed"));
+  assert.ok(issue.value.labels.includes("triaged"), "unrelated labels are untouched");
+});
+
+test("fake claim: an absent ready label is tolerated, not an error", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1 });
+  await assert.doesNotReject(
+    adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent"),
+  );
+  const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(issue.known && issue.value.labels.includes("agent-claimed"));
+});
