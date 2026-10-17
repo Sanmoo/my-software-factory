@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { AssistAreaFs, ExitRecordVerdict } from "../core/assist-flow.js";
 import type { AssistSession } from "../core/assist-session.js";
 import { messageOf } from "../core/values.js";
@@ -46,6 +46,26 @@ export function createFileAssistAreaFs(): AssistAreaFs {
 
     async ensureDirs(paths: string[]): Promise<void> {
       for (const path of paths) await mkdir(path, { recursive: true });
+    },
+
+    // The credential channel's file (ticket #76): the private mode is the point, so the directory
+    // is forced to 0700 (an area directory created by `ensureDirs` is not private by default) and
+    // the file is written 0600, like the operational history (src/state/history.ts).
+    async writeSecretFile(path: string, text: string): Promise<void> {
+      const directory = dirname(path);
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await chmod(directory, 0o700);
+      await writeFile(path, text, { mode: 0o600 });
+    },
+
+    async removeSecretFile(path: string): Promise<boolean> {
+      try {
+        await rm(path);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
     },
 
     async removeExitRecord(session: AssistSession): Promise<boolean> {

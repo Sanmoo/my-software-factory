@@ -74,6 +74,11 @@ export interface AssistExecCommandInput {
   // its reason (the strict contract of ADR 0004).
   requiredPackages: readonly string[];
   requiredTools: readonly string[];
+  // The host file with the exec's environment (`--env-file`): it carries the project account's
+  // token, and it exists only from just before the pane types the command until the container's
+  // existence proves the docker CLI already read it (ticket #76). Absent: no environment file is
+  // named — the recipe of the earlier tickets, with no credential of any kind.
+  envFileHostPath?: string;
   prompt?: string;
   resume?: boolean;
 }
@@ -106,6 +111,9 @@ export function assistExecCommand(input: AssistExecCommandInput): string {
   ].join("; ");
   // --entrypoint sh: the image's ENTRYPOINT is `sleep infinity` (Sandcastle's docker exec), so a
   // bare `sh -c` would be consumed as sleep arguments (observed in the #52 proof).
+  // `--env-file` before the image, when one is named: the docker CLI reads the file CLIENT-SIDE
+  // and injects its variables into the container's environment, so the credential's VALUE never
+  // enters this argv — only the path does (ticket #76: nothing secret in the tab text or `ps`).
   return [
     "docker run --rm -it --entrypoint sh --name", input.name, "--workdir /work --user", input.agentUidGid,
     `-v ${input.cloneHostDir}:/work`,
@@ -115,6 +123,7 @@ export function assistExecCommand(input: AssistExecCommandInput): string {
     `-v ${input.runtimeHostDir}:/msf-runtime:ro`,
     `-v ${input.npmHostDir}:/home/agent/.pi/agent/npm`,
     `-v ${input.miseHostDir}:/home/agent/.local/share/mise`,
+    ...(input.envFileHostPath === undefined ? [] : ["--env-file", shellQuote(input.envFileHostPath)]),
     input.image, "-c", shellQuote(script),
   ].join(" ");
 }
@@ -122,6 +131,25 @@ export function assistExecCommand(input: AssistExecCommandInput): string {
 // Host file where the container writes the exit record; the only accepted proof that the exec
 // inside the container really ended.
 export const assistExitRecordPath = (stateHostDir: string): string => join(stateHostDir, "msf-exit.json");
+
+// Host file with the exec's environment, inside the exec's own state directory (the /msf-state
+// mount): the credential channel of ticket #76. The container's docker CLI reads it as
+// `--env-file`, so the path — never the value — is what the pane types.
+export const assistEnvFilePath = (stateHostDir: string): string => join(stateHostDir, "gh-token.env");
+
+// Whether a minted token can be represented as the single `KEY=VALUE` line of an env file. An
+// empty value is no credential at all, and anything outside the printable ASCII range cannot ride
+// the format: a newline would inject a second variable into the container's environment.
+export const isGhTokenUsable = (token: string): boolean => /^[\u0021-\u007e]+$/.test(token);
+
+// The content of the env file: exactly one `KEY=VALUE` line, the only format the flag accepts
+// (no quotes, no `export`). An unusable value is refused HERE, before anything is written.
+export function ghTokenEnvFileText(token: string): string {
+  if (!isGhTokenUsable(token)) {
+    throw new Error("token da conta do projeto inválido para arquivo de ambiente: o valor precisa ser imprimível, sem espaço nem caractere de controle");
+  }
+  return `GH_TOKEN=${token}\n`;
+}
 
 export interface AssistExecExitRecord {
   exitCode: number;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  assistContainerName, assistExecCommand, assistExitRecordPath, assistPiArgs, parseAssistExecExitRecord,
+  assistContainerName, assistEnvFilePath, assistExecCommand, assistExitRecordPath, assistPiArgs,
+  ghTokenEnvFileText, isGhTokenUsable, parseAssistExecExitRecord,
 } from "../src/runtime/assist-exec.js";
 import { isAbsentResponse } from "../src/runtime/assist-exec-probe.js";
 
@@ -79,6 +80,41 @@ test("assistExecCommand reproduces the validated recipe: pi inside the container
 
 test("assistExitRecordPath and the record output agree", () => {
   assert.equal(assistExitRecordPath("/tmp/msf/state/assist/state"), "/tmp/msf/state/assist/state/msf-exit.json");
+});
+
+// The credential channel of the assisted exec: the docker CLI reads `--env-file` CLIENT-SIDE, so
+// only the file's PATH enters the argv the pane types (and `ps` shows). Ticket #76's whole point:
+// the project account's token is delivered without ever appearing in the tab text.
+test("assistExecCommand names the credential's env file by path only, never by value", () => {
+  const envFileHostPath = assistEnvFilePath("/tmp/msf/state/assist/state");
+  assert.equal(envFileHostPath, "/tmp/msf/state/assist/state/gh-token.env");
+  // Without the file the recipe is exactly the one the previous tickets validated: no credential
+  // flag of any form, and no `-e` either.
+  const plain = commandOf();
+  assert.doesNotMatch(plain, /--env-file/);
+  assert.doesNotMatch(plain, /GH_TOKEN/);
+  assert.doesNotMatch(plain, / -e /);
+  // With it, the flag sits right before the image and carries the path alone.
+  const command = commandOf({ envFileHostPath });
+  assert.match(command, /--env-file \/tmp\/msf\/state\/assist\/state\/gh-token\.env msf-docker-runner:local -c /);
+  assert.doesNotMatch(command, /GH_TOKEN/);
+  assert.doesNotMatch(command, /-e GH_TOKEN/);
+  // A path with a space stays one shell word (shellQuote, the same rule as every other argument).
+  assert.match(commandOf({ envFileHostPath: "/tmp/msf estado/gh-token.env" }), /--env-file '\/tmp\/msf estado\/gh-token\.env'/);
+});
+
+// The env file's content: the single `KEY=VALUE` line the format carries. A value the format
+// cannot represent (empty, whitespace, an injected second line, a control byte) is refused here,
+// before anything is written — the write is never given a value that would inject a variable.
+test("ghTokenEnvFileText writes one KEY=VALUE line and refuses a value the format cannot carry", () => {
+  const token = `ghp_${"a".repeat(36)}`;
+  assert.equal(ghTokenEnvFileText(token), `GH_TOKEN=${token}\n`);
+  assert.ok(isGhTokenUsable(token));
+  for (const bad of ["", "   ", "two words", "linha\nGH_TOKEN=outro", "retorno\r", "nulo\u0000byte", "\u007fdel"]) {
+    assert.throws(() => ghTokenEnvFileText(bad), Error, `deveria recusar: ${JSON.stringify(bad)}`);
+    assert.equal(isGhTokenUsable(bad), false, `não é utilizável: ${JSON.stringify(bad)}`);
+  }
+  assert.throws(() => ghTokenEnvFileText("linha\nGH_TOKEN=outro"), /espaço|controle|linha/);
 });
 
 test("parseAssistExecExitRecord accepts only a well-formed exit record", () => {

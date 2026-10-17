@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { loadInstance } from "../src/cli/instance.js";
@@ -18,7 +18,7 @@ import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker, type MemoryTracker } from "../src/tracker/memory.js";
 import { refKey, type IssueRef, type TrackerPort } from "../src/tracker/port.js";
-import { assistContainerName, assistExitRecordPath } from "../src/runtime/assist-exec.js";
+import { assistContainerName, assistEnvFilePath, assistExitRecordPath } from "../src/runtime/assist-exec.js";
 import type { HerdrBoundary } from "../src/runtime/herdr.js";
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 import type { AssistExecProbe, AssistExecObservation } from "../src/runtime/assist-exec-probe.js";
@@ -136,6 +136,8 @@ const arrange = async (context: TestContext, options: {
       stateDir,
       attention: attentionOf(),
       ...(options.now === undefined ? {} : { now: () => new Date(options.now!) }),
+      // The container-evidence wait of the credential's removal (ticket #76): immediate in tests.
+      sleep: async () => {},
     };
     return new AssistedAttendance(deps);
   };
@@ -297,6 +299,38 @@ test("a live exec wins over a readable stale end record: the record is supersede
   const ended = await setup.flow().poll();
   assert.ok(ended.pending.some((entry) => entry.key === pendingKey));
   assert.equal((await sessionOf(setup, pendingKey)).state, "pending");
+});
+
+// ── The credential's leftover after a restart (ticket #76) ──────────────────────────────────
+
+// The env file of an exec whose opening never got to launch (no pane identity registered): the
+// reconciliation proves no exec could have read it and the leftover leaves the area.
+test("a reconciliação remove o arquivo de ambiente de uma abertura que nunca lançou o exec", async (context) => {
+  const setup = await arrange(context, { only: ["1"] });
+  const seeded = await setup.seed({ state: "opening", tabId: undefined, paneId: undefined });
+  const envFile = assistEnvFilePath(seeded.execStateDir!);
+  await mkdir(dirname(envFile), { recursive: true });
+  await writeFile(envFile, `GH_TOKEN=ghp_${"s".repeat(36)}\n`);
+  setup.verdicts[seeded.containerName!] = "absent";
+  const report = await setup.flow().reconcile();
+  assert.equal(report.errors.length, 0, report.errors.map((e) => e.message).join("; "));
+  assert.deepEqual(report.pending.map((entry) => entry.key), [pendingKey]);
+  await assert.rejects(() => readFile(envFile), /ENOENT/);
+});
+
+// The same for an exec that really ran before the crash: its end is proven by the container's
+// identity, so no docker client is reading the file anymore.
+test("a reconciliação remove o arquivo de ambiente de uma execução encerrada durante a queda", async (context) => {
+  const setup = await arrange(context, { only: ["1"], now: "2026-10-14T12:00:00.000Z" });
+  const seeded = await setup.seed({ state: "open", startedAt: "2026-10-14T07:00:00.000Z" });
+  const envFile = assistEnvFilePath(seeded.execStateDir!);
+  await mkdir(dirname(envFile), { recursive: true });
+  await writeFile(envFile, `GH_TOKEN=ghp_${"s".repeat(36)}\n`);
+  setup.verdicts[seeded.containerName!] = "absent";
+  const report = await setup.flow().reconcile();
+  assert.equal(report.errors.length, 0, report.errors.map((e) => e.message).join("; "));
+  assert.deepEqual(report.pending.map((entry) => entry.key), [pendingKey]);
+  await assert.rejects(() => readFile(envFile), /ENOENT/);
 });
 
 // ── Ended during downtime: the structured result decides, never the exit ─────────────────────

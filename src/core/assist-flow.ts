@@ -32,7 +32,7 @@ import {
 } from "../runtime/docker-config.js";
 import { checkRequired, planSnapshot, writeSnapshot, type SnapshotPlan } from "../runtime/profile-snapshot.js";
 import {
-  assistContainerName, assistExecCommand, assistExitRecordPath,
+  assistContainerName, assistEnvFilePath, assistExecCommand, assistExitRecordPath, ghTokenEnvFileText, isGhTokenUsable,
 } from "../runtime/assist-exec.js";
 import { profileToolchain, type ProfileToolchain } from "../runtime/docker-invocation.js";
 import type { AssistExecProbe, AssistExecObservation, AssistExecStop, AssistExecStopResult } from "../runtime/assist-exec-probe.js";
@@ -91,7 +91,9 @@ export interface AssistPorts {
   herdr: HerdrBoundary;
   // The real-execution probe of the reconciliation (ticket #58): docker-inspect by the container
   // NAME recorded in the session, Never a PID alone nor the pane (the proof's rule, #52). It
-  // observes nothing else: the reconciler is its only consumer.
+  // observes nothing else, and it has two consumers: the reconciler and the evidence that lets the
+  // credential's env file leave (ticket #76 — a container that exists is a docker client that
+  // already read it; nothing else about the exec is decided here).
   exec: AssistExecProbe;
   // The identity reclaim of the exec (ticket #56, spec #48 item 5): the #52 proof measured the
   // container alive after `herdr tab close`, so a gone tab makes the supervision REQUEST the
@@ -123,6 +125,11 @@ export interface AssistAreaFs {
   ensureDirs(paths: string[]): Promise<void>;
   // Removal of the session's end record: true when a record really left, ENOENT tolerated.
   removeExitRecord(session: AssistSession): Promise<boolean>;
+  // A private file of the area (the exec's credential channel, ticket #76): the file is written
+  // 0600 inside a 0700 directory, so no other user of the host can read it while it exists.
+  writeSecretFile(path: string, text: string): Promise<void>;
+  // Removal of a private file: true when a file really left, ENOENT tolerated.
+  removeSecretFile(path: string): Promise<boolean>;
   exists(path: string): Promise<boolean>;
   // One attempt identity of a consumed resume authorization (single use, ticket #57).
   attemptUuid(): string;
@@ -166,6 +173,9 @@ export interface AssistFlowDeps {
   attention?: AttentionKeeper;
   // Injectable clock; the default is the wall clock.
   now?: () => Date;
+  // Injectable wait between the evidence looks of a credential's removal (ticket #76); the
+  // default sleeps for real. The tests drive it, like they drive `now`.
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface AssistReasoned {
@@ -224,6 +234,17 @@ const byKey = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 // (reconciliation review decision B). Until then the execution is unknown: capacity reserved.
 const OPENING_GRACE_MS = 15 * 60 * 1000;
 
+// The removal of the credential's env file is decided by EVIDENCE, never by a clock (ticket #76):
+// `--env-file` is read client-side BEFORE the container is created, so a container that exists is
+// a docker client that already read the file. The looks are bounded (~30 s at the interval below);
+// a start the probe never sees within the budget keeps the file — a slow start is not killed by a
+// clock, and the supervision removes the leftover as soon as it can prove the exec's fate.
+const CONTAINER_EVIDENCE_LOOKS = 75;
+const CONTAINER_EVIDENCE_INTERVAL_MS = 400;
+
+// The wait between two looks of the container; the tests inject their own (no real sleeping).
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 // The working directories of one assisted session, under the instance state; encoded per key,
 // like the job store file names, so a session never collides with another.
 const assistAreaDir = (stateDir: string, key: string): string =>
@@ -241,6 +262,10 @@ interface PreparedOpening {
   toolchain: ProfileToolchain;
   requiredPackages: readonly string[];
   requiredTools: readonly string[];
+  // The project account's token, minted before the claim and kept in MEMORY only (ticket #76):
+  // the session record never carries it; the container receives it through the env file whose
+  // path the command names.
+  token: string;
 }
 
 export class AssistedAttendance implements AssistOperator {
@@ -300,6 +325,9 @@ export class AssistedAttendance implements AssistOperator {
     if (session.state === "opening" && (session.tabId === undefined || session.paneId === undefined)) {
       const reason = "abertura não concluída antes do reinício (nenhuma aba de execução registrada; o exec não foi lançado); " +
         "trabalho preservado para intervenção sem reexecução automática; o claim pode ter sido confirmado ou não antes da queda";
+      // The command never reached a pane: the exec cannot have read the credential's env file, so
+      // a leftover does not survive the proven-absent decision (ticket #76).
+      await this.discardEnvFile(session);
       const parked = toPending(appendSessionLog(session, `reconciliação pós-reinício: ${reason}`), reason);
       await this.deps.sessions.save(parked);
       report.pending.push({ key, reason });
@@ -322,6 +350,9 @@ export class AssistedAttendance implements AssistOperator {
   private async recoverAlive(
     session: AssistSession, observation: AssistExecObservation, report: AssistReconcileReport,
   ): Promise<void> {
+    // The exec is provenly alive: its docker client read the credential's env file long ago (the
+    // container exists), so a leftover is removed here (ticket #76).
+    await this.discardEnvFile(session);
     const record = await this.readExitRecord(session);
     if (record.kind === "ended") {
       // `resumeExec` always removes the old record before relaunching (ticket #56), so a record
@@ -369,6 +400,8 @@ export class AssistedAttendance implements AssistOperator {
       // state was `opening`) — the regular supervision path reads this very record and verifies
       // the structured result; delegating keeps one owner for the end-handling.
       const reason = `fim da execução registrado (exit ${record.record.exitCode}); resultado estruturado a verificar pela supervisão do ciclo`;
+      // The end is registered: no docker client of this exec is reading anything anymore (ticket #76).
+      await this.discardEnvFile(session);
       report.ended.push({ key: session.key, reason });
       this.announceOnce(session.key, `aguardando-supervisão|exit${record.record.exitCode}`, () =>
         this.emit(session.key, "atendimento-pendente",
@@ -388,6 +421,8 @@ export class AssistedAttendance implements AssistOperator {
     const motive = record.kind === "unknown"
       ? `registro de fim ilegível (${record.reason}); fim comprovado pela identidade do container (${observation.detail})`
       : `registro de fim ausente; fim comprovado pela identidade do container (${observation.detail})`;
+    // Proven end by identity: the credential's env file leaves with it (ticket #76).
+    await this.discardEnvFile(session);
     const reconciled = appendSessionLog(session, `reconciliação pós-reinício: ${motive}`);
     const proposal = await this.readProposal(reconciled);
     if (proposal.kind === "none") {
@@ -525,6 +560,7 @@ export class AssistedAttendance implements AssistOperator {
     // decides the next step: a recognized proposal waits for the operator's approval, and an
     // interruption or an absent result stays pending, asking the operator the continuity
     // question once (spec #48, item 5; scheduling an authorized resume is #57).
+    await this.discardEnvFile(current);
     const proposal = await this.readProposal(current);
     if (proposal.kind !== "none") {
       return this.handleProposal(current, `exit ${record.record.exitCode}`, record.record.exitCode, proposal, report);
@@ -740,6 +776,9 @@ export class AssistedAttendance implements AssistOperator {
   private async handleRealEnd(
     session: AssistSession, endOf: string, exitCode: number | undefined, report: AssistPollReport,
   ): Promise<void> {
+    // The end is proven (record or container identity): the credential's env file leaves with it
+    // (ticket #76).
+    await this.discardEnvFile(session);
     const proposal = await this.readProposal(session);
     if (proposal.kind !== "none") {
       return this.handleProposal(session, endOf, exitCode, proposal, report);
@@ -1230,6 +1269,7 @@ export class AssistedAttendance implements AssistOperator {
       this.emit(key, "atendimento-admitido", "sessão assistida retomada (aba própria, sem roubar foco; mesma sessão e área)", {
         aba: label, "aba id": tab.tab.tabId, pane: tab.tab.paneId, clone: current.cloneDir, container: containerName,
       }, "atenção", { highlight: true });
+      const envFileHostPath = assistEnvFilePath(current.execStateDir!);
       const commandLine = assistExecCommand({
         name: containerName, image: current.image, model: current.model,
         agentUidGid: prepared.agentUidGid, startedAt: now().toISOString(),
@@ -1237,10 +1277,13 @@ export class AssistedAttendance implements AssistOperator {
         snapshotHostDir: current.profileDir!, runtimeHostDir: this.deps.runtimeImageDir,
         npmHostDir: prepared.toolchain.npm, miseHostDir: prepared.toolchain.mise,
         requiredPackages: prepared.requiredPackages, requiredTools: prepared.requiredTools,
+        envFileHostPath,
         // No new prompt: `pi -c` continues the same conversation of the same session file.
         resume: true,
       });
-      await herdr.paneRun(tab.tab.paneId, commandLine);
+      await this.launchExecWithToken({
+        paneId: tab.tab.paneId, containerName, envFileHostPath, token: prepared.token, command: commandLine,
+      });
       const opened = toOpen(appendSessionLog(opening, `exec retomado na pane ${tab.tab.paneId} (container ${containerName})`));
       await this.deps.sessions.save(opened);
       this.emit(key, "atendimento-aberto", "sessão assistida retomada e aberta (pi -c na mesma sessão, sem roubar foco)", {
@@ -1281,6 +1324,9 @@ export class AssistedAttendance implements AssistOperator {
       return { status: "rejected", reason: `release não se aplica à sessão assistida em estado ${current.state}` };
     }
     await this.deps.sessions.save(appendSessionLog(current, `liberação solicitada pelo operador (comando ${command})`));
+    // The tracking of this work ends here: a leftover credential file of its exec does not
+    // survive the release (ticket #76).
+    await this.discardEnvFile(current);
     const context: IssueWritesContext = { job: key, reason: "liberação assistida pelo operador", refs: { comando: command } };
     const claim = await this.writes.release(current.ref, context);
     if (claim.status === "not-confirmed") return { status: "rejected", reason: claim.reason };
@@ -1426,10 +1472,20 @@ export class AssistedAttendance implements AssistOperator {
     const clone = this.deps.local.checkouts[project.repository];
     const model = this.deps.instance.assistModel;
     const limit = this.deps.instance.maxAssisted;
+    // The project account's token is minted BEFORE the claim (spec #48 item 3): without it the
+    // opening is impossible and nothing is written on the tracker. The account named in the
+    // project is the ONLY source — there is no fallback to the ambient credentials nor to another
+    // account (ticket #76) — and the value stays in memory until it becomes the container's env
+    // file; the session record never carries it.
+    let token: string;
     try {
-      await this.deps.ports.sandbox.preflight({ image: this.deps.local.image, account: project.githubAccount });
+      token = (await this.deps.ports.sandbox.preflight({ image: this.deps.local.image, account: project.githubAccount })).token;
     } catch (error) {
       return `docker: ${messageOf(error)}`;
+    }
+    if (!isGhTokenUsable(token)) {
+      return `token da conta do projeto ${project.githubAccount} indisponível (gh auth token --user ${project.githubAccount});` +
+        " sem fallback para outra conta";
     }
     try {
       await this.deps.ports.herdr.available();
@@ -1472,10 +1528,79 @@ export class AssistedAttendance implements AssistOperator {
         toolchain: profileToolchain(this.deps.toolchainsDir, project.runtimeProfile),
         requiredPackages: profile.declaration.required.packages,
         requiredTools: profile.declaration.required.tools,
+        token,
       };
     } catch (error) {
       return `perfil de runtime: ${messageOf(error)}`;
     }
+  }
+
+  // ── The credential channel of the exec (ticket #76) ─────────────────────────────────────
+  // The project account's token reaches the container as the environment file the command names
+  // with `--env-file`: the docker CLI reads it CLIENT-SIDE, so the file's PATH is the only thing
+  // the pane types (and `ps` shows). The file lives in the exec's own state area (0700, file
+  // 0600) and its removal is decided by EVIDENCE, never by a clock — the container existing at
+  // all proves the client already read the file (the same `docker inspect` identity the
+  // supervision uses, ticket #58).
+
+  // Writes the credential, types the command, and removes the file with the evidence. Two
+  // outcomes are deliberate: a launch that throws before the pane received the command leaves
+  // nothing behind (no exec can have read the file), and a start the probe never sees within the
+  // budget KEEPS it — the paths that prove the exec's fate (the proven-alive recovery, the
+  // supervision's proven end, the reconciliation and the release) remove the leftover.
+  private async launchExecWithToken(input: {
+    paneId: string;
+    containerName: string;
+    envFileHostPath: string;
+    token: string;
+    command: string;
+  }): Promise<void> {
+    await this.deps.areaFs.writeSecretFile(input.envFileHostPath, ghTokenEnvFileText(input.token));
+    // Defense in depth: the same value the observer redacts from every log IT writes.
+    this.obs.registerSecret(input.token);
+    try {
+      await this.deps.ports.herdr.paneRun(input.paneId, input.command);
+    } catch (error) {
+      // The command never reached the pane: no exec can have read the file, and the launch's own
+      // error is the one the operator must read.
+      await this.removeEnvFile(input.envFileHostPath);
+      throw error;
+    }
+    if (await this.containerExists(input.containerName)) await this.removeEnvFile(input.envFileHostPath);
+  }
+
+  // Whether the container of this exec exists at all: `running` and `stopped` both prove the
+  // docker client got as far as creating it, which is exactly when it has read the env file. The
+  // looks are bounded; a probe that never sees the container answers false and the caller keeps
+  // the file.
+  private async containerExists(containerName: string): Promise<boolean> {
+    const sleep = this.deps.sleep ?? defaultSleep;
+    for (let look = 0; look < CONTAINER_EVIDENCE_LOOKS; look += 1) {
+      const observation = await this.deps.ports.exec.observe(containerName);
+      if (observation.verdict === "running" || observation.verdict === "stopped") return true;
+      await sleep(CONTAINER_EVIDENCE_INTERVAL_MS);
+    }
+    return false;
+  }
+
+  // Removal of a credential file in a path that must never fail for it: a leftover 0600 file
+  // inside the session's own area is the lesser evil, and the proven-end paths try again.
+  private async removeEnvFile(path: string): Promise<boolean> {
+    try {
+      return await this.deps.areaFs.removeSecretFile(path);
+    } catch {
+      // A cleanup failure never masks the launch's own error nor turns a launched exec into a
+      // failed opening: the leftover stays for the next path that proves the exec's fate.
+      return false;
+    }
+  }
+
+  // The credential's cleanup for one session's exec: the file's path derives from the state
+  // directory the record already carries, so no record field is needed. Idempotent by
+  // construction (ENOENT tolerated).
+  private async discardEnvFile(session: AssistSession): Promise<boolean> {
+    if (session.execStateDir === undefined) return false;
+    return this.removeEnvFile(assistEnvFilePath(session.execStateDir));
   }
 
   // Claim, persisted work, and only then the opening. Every failure after the claim lands in
@@ -1564,6 +1689,7 @@ export class AssistedAttendance implements AssistOperator {
         ab: label, aba: opening.tab.tabId, pane: opening.tab.paneId, clone: cloneDir, container: containerName,
       }, "atenção", { highlight: true });
 
+      const envFileHostPath = assistEnvFilePath(execStateDir);
       const command = assistExecCommand({
         name: containerName, image: this.deps.local.image, model: session.model,
         agentUidGid: prepared.agentUidGid, startedAt: session.startedAt,
@@ -1571,9 +1697,12 @@ export class AssistedAttendance implements AssistOperator {
         snapshotHostDir: profileDir, runtimeHostDir: this.deps.runtimeImageDir,
         npmHostDir: prepared.toolchain.npm, miseHostDir: prepared.toolchain.mise,
         requiredPackages: prepared.requiredPackages, requiredTools: prepared.requiredTools,
+        envFileHostPath,
         prompt: assistPrompt({ kind: session.promptKind, ref, title: snapshot.title }),
       });
-      await herdr.paneRun(opening.tab.paneId, command);
+      await this.launchExecWithToken({
+        paneId: opening.tab.paneId, containerName, envFileHostPath, token: prepared.token, command,
+      });
       const opened = toOpen(appendSessionLog(session, `exec lançado na pane ${opening.tab.paneId} (container ${containerName})`));
       await this.deps.sessions.save(opened);
       report.opened.push(key);

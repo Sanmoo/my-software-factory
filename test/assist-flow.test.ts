@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { loadInstance } from "../src/cli/instance.js";
@@ -23,7 +23,7 @@ import { refKey, type IssueRef, type TrackerPort } from "../src/tracker/port.js"
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 import type { HerdrBoundary } from "../src/runtime/herdr.js";
 import type { AssistExecProbe, AssistExecObservation, AssistExecStopResult } from "../src/runtime/assist-exec-probe.js";
-import { assistExitRecordPath } from "../src/runtime/assist-exec.js";
+import { assistContainerName, assistEnvFilePath, assistExitRecordPath } from "../src/runtime/assist-exec.js";
 
 // Double of the reconciliation probe (ticket #58): the observation is what the test maps.
 const probeOf = (observations: Record<string, AssistExecObservation["verdict"]>, detail = ""): AssistExecProbe => ({
@@ -95,10 +95,13 @@ const herdrOf = (options: {
   };
 };
 
-const sandboxOf = (options: { fail?: string } = {}): Pick<SandboxBoundary, "preflight"> => ({
+// The host proof of Docker/image/token: the project account's token is minted here, exactly like
+// the real boundary does (its value is what the credential channel must never leak). `token`
+// overrides the minted value so the tests can use a sentinel or an unusable one.
+const sandboxOf = (options: { fail?: string; token?: string } = {}): Pick<SandboxBoundary, "preflight"> => ({
   preflight: async (input) => {
     if (options.fail !== undefined) throw new Error(options.fail);
-    return { token: `token-de-${input.account}` };
+    return { token: options.token ?? `token-de-${input.account}` };
   },
 });
 
@@ -130,6 +133,9 @@ interface Setup {
   // The operator attention of ticket #59: what notifications attempted and the dried pendings.
   notifications: Array<{ title: string; body: string }>;
   notificationsFail: (reason: string | undefined) => void;
+  // The secret values the flow registered in the observer (ticket #76): the defense in depth
+  // that redacts them from every log the same observer writes.
+  registeredSecrets: string[];
   pendings: () => Promise<AttentionPending[]>;
   tracker: MemoryTracker;
   scoped: TrackerPort;
@@ -166,6 +172,9 @@ async function arrange(context: TestContext, options: {
   only?: string[];
   // Absent wiring of the identity stop channel (ticket #56): what a gone tab can do without it.
   stopExec?: false;
+  // The flow's wait between the looks for the exec's container (ticket #76). The default returns
+  // immediately: the suite never waits the 30 s budget, and a test may drive the look's clock.
+  sleep?: (ms: number) => Promise<void>;
 } = {}): Promise<Setup> {
   const loaded = await loadInstance(fixture("assist-instances.json"), "assistida");
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
@@ -191,6 +200,7 @@ async function arrange(context: TestContext, options: {
     },
   };
   const events: Setup["events"][number][] = [];
+  const registeredSecrets: string[] = [];
   // The attention store of the instance state and a double channel: no real OS notification.
   const snapshot: { fail: string | undefined } = { fail: undefined };
   const notifications: Array<{ title: string; body: string }> = [];
@@ -230,7 +240,9 @@ async function arrange(context: TestContext, options: {
       failure: () => undefined,
       recovered: () => undefined,
       redact: (text) => text,
-      registerSecret: () => undefined,
+      registerSecret: (secret) => {
+        if (secret !== undefined) registeredSecrets.push(secret);
+      },
       setDetailLog: () => undefined,
       commands: () => undefined,
     },
@@ -240,6 +252,8 @@ async function arrange(context: TestContext, options: {
     stateDir,
     attention,
     now: () => new Date("2026-10-14T12:00:00.000Z"),
+    // The container-evidence wait of the credential's removal (ticket #76): immediate in tests.
+    sleep: options.sleep ?? (async () => {}),
   };
   const attendance = new AssistedAttendance(deps);
   const flow = () => attendance;
@@ -253,6 +267,7 @@ async function arrange(context: TestContext, options: {
     root, stateDir, tracker, scoped, instance, config: loaded.config, local,
     sessionsDir: join(stateDir, "assist-sessions"), herdrCalls, events, flow, writeJob, writeInstance,
     notifications, notificationsFail: (reason) => { snapshot.fail = reason; },
+    registeredSecrets,
     pendings: async () => (await createFileAttentionStore(pendingsDir).load()).pendings,
     openTabs, verdicts, stops, stopResult,
   };
@@ -1281,4 +1296,123 @@ test("a Herdr tab list that cannot be asked proves nothing: the exec keeps its e
   assert.equal((await sessionOf(setup, pendingKey)).state, "open");
   assert.equal(setup.stops.length, 0);
   assert.deepEqual((await setup.pendings()).filter((pending) => pending.kind === "decisão"), [], "nada é decidido sem prova");
+});
+
+// ── Canal da credencial: o token da conta do projeto no container (ticket #76) ───────────────
+//
+// O critério não é "o token chegou", é "o token chegou e não vazou": ele é entregue por arquivo de
+// ambiente 0600 cujo PATH é a única coisa no texto digitado na aba (e, portanto, no `ps` do
+// cliente docker), removido por EVIDÊNCIA — a existência do container prova que o cliente docker
+// já leu o arquivo — e nunca no log principal, no registro da sessão nem no prompt.
+
+// Um valor com a forma de um token real: as asserções procuram ESTA string, então elas falam do
+// valor, não de um nome qualquer.
+const ACCOUNT_TOKEN = `ghp_${"s".repeat(36)}`;
+
+test("o token da conta do projeto é entregue por arquivo de ambiente 0600 e não aparece na aba, no ps nem no log", async (context) => {
+  const observed: string[] = [];
+  const setup = await arrange(context, {
+    only: ["1"],
+    sandbox: { token: ACCOUNT_TOKEN },
+    // A espera pela evidência do container, com o relógio do teste: ela lê o arquivo que o exec
+    // recebeu, então o teste o vê DURANTE a janela, não só depois do ciclo fechado.
+    sleep: async () => {
+      const current = await sessionOf(setup, pendingKey);
+      observed.push(await readFile(assistEnvFilePath(current.execStateDir!), "utf8").catch(() => "AUSENTE"));
+    },
+  });
+  const report = await setup.flow().poll();
+  assert.deepEqual(report.opened, [pendingKey]);
+  const session = await sessionOf(setup, pendingKey);
+  const envFile = assistEnvFilePath(session.execStateDir!);
+  assert.equal(envFile, join(dirname(assistExitRecordPath(session.execStateDir!)), "gh-token.env"), "vizinho do registro de fim, no diretório de estado da execução");
+
+  // (a) O comando que a aba digitou — e portanto o argv do cliente docker que o `ps` mostra —
+  // nomeia só o CAMINHO do arquivo: nem o valor, nem uma forma `-e`/`--env` que carregue um.
+  const command = setup.herdrCalls.panes[0]!.command;
+  assert.match(command, new RegExp(`--env-file ${envFile.replace(/[/.]/g, "\\$&")} msf-docker-runner:local`));
+  assert.doesNotMatch(command, new RegExp(ACCOUNT_TOKEN));
+  assert.doesNotMatch(command, /GH_TOKEN/);
+
+  // (b) O arquivo existiu durante a espera, com a única linha KEY=VALUE e os modos privados.
+  assert.ok(observed.length > 0, "o fluxo olhou a evidência ao menos uma vez");
+  assert.deepEqual([...new Set(observed)], [`GH_TOKEN=${ACCOUNT_TOKEN}\n`]);
+  assert.equal((await stat(envFile)).mode & 0o777, 0o600, "arquivo 0600");
+  assert.equal((await stat(dirname(envFile))).mode & 0o777, 0o700, "diretório de estado 0700");
+
+  // (c) Nada do token no registro da sessão (gravado 0644 e sem redação), no log principal (os
+  // eventos) nem no log detalhado; só o valor registrado no observador, que é a defesa em
+  // profundidade de quem escreve os logs de verdade.
+  assert.ok(!JSON.stringify(session).includes(ACCOUNT_TOKEN), "o registro da sessão não carrega o token");
+  assert.ok(!JSON.stringify(setup.events).includes(ACCOUNT_TOKEN), "o log principal não carrega o token");
+  assert.deepEqual(setup.registeredSecrets, [ACCOUNT_TOKEN]);
+  // O prompt inicial segue o do atendimento assistido: a entrega da credencial não o muda.
+  assert.match(command, new RegExp(`pi --model ${session.model}`));
+
+  // (d) O orçamento estourou (o container nunca foi provado): o arquivo é MANTIDO de propósito —
+  // um start lento não é morto pelo relógio — e a supervisão o remove quando provar o destino.
+  assert.equal(await readFile(envFile, "utf8"), `GH_TOKEN=${ACCOUNT_TOKEN}\n`);
+});
+
+test("o arquivo de ambiente sai assim que o container existe: a remoção é por evidência, não por relógio", async (context) => {
+  const setup = await arrange(context, { only: ["1"], sandbox: { token: ACCOUNT_TOKEN } });
+  // O cliente docker já criou o container: a existência dele é a prova de que o arquivo foi lido.
+  setup.verdicts[assistContainerName(pendingKey, "2026-10-14T12:00:00.000Z")] = "running";
+  const report = await setup.flow().poll();
+  assert.deepEqual(report.opened, [pendingKey]);
+  const session = await sessionOf(setup, pendingKey);
+  await assert.rejects(() => readFile(assistEnvFilePath(session.execStateDir!)), /ENOENT/);
+  assert.ok(!setup.herdrCalls.panes[0]!.command.includes(ACCOUNT_TOKEN));
+  // A entrega aconteceu (o valor foi escrito e registrado) e mesmo assim o arquivo já não está
+  // lá: o que o removeu foi a evidência do container, não a ausência de entrega.
+  assert.deepEqual(setup.registeredSecrets, [ACCOUNT_TOKEN]);
+});
+
+test("o arquivo de ambiente que sobrou sai quando a supervisão prova o fim da execução", async (context) => {
+  const setup = await arrange(context, { only: ["1"], sandbox: { token: ACCOUNT_TOKEN } });
+  await setup.flow().poll();
+  const session = await sessionOf(setup, pendingKey);
+  const envFile = assistEnvFilePath(session.execStateDir!);
+  assert.equal(await readFile(envFile, "utf8"), `GH_TOKEN=${ACCOUNT_TOKEN}\n`, "a abertura não provou o container: o arquivo ficou");
+  await writeFile(assistExitRecordPath(session.execStateDir!), '{"exitCode":0,"at":"2026-10-14T12:05:00.000Z"}');
+  const ended = await setup.flow().poll();
+  assert.deepEqual(ended.pending.map((entry) => entry.key), [pendingKey]);
+  await assert.rejects(() => readFile(envFile), /ENOENT/);
+});
+
+test("a liberação do operador remove o arquivo de ambiente que sobrou na área", async (context) => {
+  const setup = await pendingOf(context, { sandbox: { token: ACCOUNT_TOKEN } });
+  const parked = await sessionOf(setup, pendingKey);
+  const envFile = assistEnvFilePath(parked.execStateDir!);
+  // Um arquivo que ficou de uma abertura cujo container nunca foi provado.
+  await mkdir(dirname(envFile), { recursive: true });
+  await writeFile(envFile, `GH_TOKEN=${ACCOUNT_TOKEN}\n`);
+  assert.deepEqual(await setup.flow().release(pendingKey, "cmd-libera"), { status: "applied" });
+  await assert.rejects(() => readFile(envFile), /ENOENT/);
+});
+
+test("sem token da conta do projeto a abertura é recusada antes do claim, sem fallback para outra conta", async (context) => {
+  const setup = await arrange(context, { only: ["1"], sandbox: { token: "   " } });
+  const report = await setup.flow().poll();
+  assert.deepEqual(report.opened, []);
+  assert.equal(setup.tracker.calls("claim"), 0, "nenhum claim enquanto a credencial não existe");
+  const skipped = report.skipped.map((entry) => entry.reason).join(" | ");
+  assert.match(skipped, /token da conta do projeto acme/, skipped);
+  assert.match(skipped, /sem fallback para outra conta/, skipped);
+  assert.equal(setup.herdrCalls.panes.length, 0, "nenhuma aba, nenhum exec");
+  assert.equal((await createFileAssistSessionStore(setup.sessionsDir).load()).sessions.length, 0, "nenhuma sessão registrada");
+});
+
+test("a retomada entrega o token da conta pelo mesmo canal e o remove quando o container existe", async (context) => {
+  const setup = await pendingOf(context, { sandbox: { token: ACCOUNT_TOKEN } });
+  const parked = await sessionOf(setup, pendingKey);
+  await writeFile(`${parked.sessionsDir!}/pi-msf.jsonl`, "{}\n");
+  setup.verdicts[assistContainerName(pendingKey, "2026-10-14T12:00:00.000Z")] = "running";
+  assert.deepEqual(await setup.flow().resume(pendingKey, "cmd-retoma"), { status: "applied" });
+  const command = setup.herdrCalls.panes.at(-1)!.command;
+  assert.match(command, /--env-file /);
+  assert.doesNotMatch(command, new RegExp(ACCOUNT_TOKEN));
+  const opened = await sessionOf(setup, pendingKey);
+  assert.ok(!JSON.stringify(opened).includes(ACCOUNT_TOKEN), "o registro da sessão retomada não carrega o token");
+  await assert.rejects(() => readFile(assistEnvFilePath(opened.execStateDir!)), /ENOENT/);
 });

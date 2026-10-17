@@ -106,6 +106,17 @@ assistido. Permanece aberta enquanto aguarda o humano; seu encerramento não
 significa atendimento concluído.
 _Avoid_: vaga de execução autônoma, atendimento concluído como sessão encerrada
 
+**Arquivo de ambiente da execução assistida**:
+Arquivo `KEY=VALUE` privado (0600, em diretório 0700) no diretório de estado de
+uma execução assistida: é por ele que a credencial da **conta do projeto do
+trabalho** chega ao container, que a recebe por `--env-file` — só o caminho entra
+no comando digitado na aba, e o valor nunca aparece na aba, no `ps` nem em log. O
+arquivo sai quando a existência do container prova que o cliente docker já o leu;
+sem token da conta, a abertura é recusada, sem fallback
+(src/core/assist-flow.ts; ticket #76; ADR 0005).
+_Avoid_: `-e GH_TOKEN=<valor>` no `docker run`, credencial ambiente do host como
+fallback, arquivo deixado como credencial em repouso
+
 **Pedido de ajuda**:
 Solicitação do agente que precisa de informação ou decisão humana, ou chegou ao
 limite de iterações, sem declarar o trabalho concluído.
