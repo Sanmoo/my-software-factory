@@ -32,6 +32,8 @@ import { DEFAULT_LABELS } from "../config.js";
 
 const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanup\n\n${AGENT_MARKER}`;
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 interface Journal {
   /** Issues created by the harness (issues can't be deleted via the API; they are closed). */
   issues: number[];
@@ -88,25 +90,65 @@ class RealGithubHarness implements ContractHarness {
     ]);
     const ref = { repo: this.repo, number: this.parseNumber(stdout, /\/issues\/(\d+)/, "gh issue create") };
     this.journal.issues.push(ref.number);
-    const createdAt = await this.gh(["issue", "view", String(ref.number), "-R", this.repo, "--json", "createdAt", "--jq", ".createdAt"])
-      .then((r) => r.stdout.trim());
+    // REST: no search-index involvement, cheap on the GraphQL budget
+    const { stdout: createdAt } = await this.gh([
+      "api", `repos/${this.repo}/issues/${ref.number}`, "--jq", ".created_at",
+    ]);
     if (input.closed) {
       await this.gh(["issue", "close", String(ref.number), "-R", this.repo, "--reason", "completed"]);
+    }
+    // GitHub's search index lags a few seconds behind creation AND closing:
+    // the label-filtered listing (the candidates) must reflect the issue's
+    // state before any check reads it. Poll the listing until it does.
+    const firstLabel = (input.labels ?? [])[0];
+    if (firstLabel !== undefined) {
+      if (input.closed) {
+        await this.settleOut(ref, firstLabel);
+      } else {
+        await this.settleIn(ref, firstLabel);
+      }
     }
     return createdAt === "" ? { ref } : { ref, createdAt };
   }
 
-  async missingRef(): Promise<IssueRef> {
-    let max = 0;
-    for (const kind of ["issue", "pr"]) {
-      const { stdout } = await this.gh([
-        kind, "list", "-R", this.repo, "--state", "all", "--limit", "500", "--json", "number",
-      ]);
-      for (const item of JSON.parse(stdout) as { number: number }[]) {
-        max = Math.max(max, item.number);
+  private async settleIn(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const numbers = await this.listingNumbers(label);
+      if (numbers.includes(ref.number)) return;
+      if (Date.now() > deadline) {
+        throw new Error(`issue ${this.repo}#${ref.number} did not appear in the "${label}" listing within 30s (search index lag)`);
       }
+      await sleep(2_000);
     }
-    return { repo: this.repo, number: max + 1_000_000 };
+  }
+
+  private async settleOut(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const numbers = await this.listingNumbers(label);
+      if (!numbers.includes(ref.number)) return;
+      if (Date.now() > deadline) {
+        throw new Error(`issue ${this.repo}#${ref.number} is closed but still appears in the "${label}" open listing after 30s (search index lag)`);
+      }
+      await sleep(2_000);
+    }
+  }
+
+  private async listingNumbers(label: string): Promise<number[]> {
+    const { stdout } = await this.gh([
+      "issue", "list", "-R", this.repo, "--state", "open", "--label", label, "--json", "number",
+    ]);
+    return (JSON.parse(stdout) as { number: number }[]).map((item) => item.number);
+  }
+
+  async missingRef(): Promise<IssueRef> {
+    // the REST listing returns issues only (never PRs), but issues and PRs
+    // share the numbering: newest issue number + 1_000_000 is safely missing
+    const { stdout } = await this.gh([
+      "api", `repos/${this.repo}/issues?state=all&sort=created&direction=desc&per_page=1`, "--jq", ".[0].number",
+    ]);
+    return { repo: this.repo, number: Number(stdout.trim()) + 1_000_000 };
   }
 
   async addBlocker(ref: IssueRef, blocker: IssueRef): Promise<void> {
@@ -183,7 +225,7 @@ class RealGithubHarness implements ContractHarness {
 
   async defaultBranch(): Promise<string> {
     const { stdout } = await this.gh([
-      "repo", "view", this.repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name",
+      "api", `repos/${this.repo}`, "--jq", ".default_branch",
     ]);
     return stdout.trim();
   }
@@ -253,7 +295,7 @@ class RealGithubHarness implements ContractHarness {
     for (const issue of this.journal.issues) {
       try {
         const { stdout: blockers } = await this.gh([
-          "issue", "view", String(issue), "-R", this.repo, "--json", "blockedBy", "--jq", ".blockedBy[].number",
+          "issue", "view", String(issue), "-R", this.repo, "--json", "blockedBy", "--jq", ".blockedBy.nodes[].number",
         ]);
         for (const blocker of blockers.split("\n").map((l) => l.trim()).filter((l) => l !== "")) {
           await this.gh(["issue", "edit", String(issue), "-R", this.repo, "--remove-blocked-by", blocker]);
@@ -267,7 +309,7 @@ class RealGithubHarness implements ContractHarness {
         }
         const { stdout: state } = await this.gh(["issue", "view", String(issue), "-R", this.repo, "--json", "state", "--jq", ".state"]);
         if (state.trim() === "OPEN") {
-          await this.gh(["issue", "close", String(issue), "-R", this.repo, "--reason", "not-planned"]);
+          await this.gh(["issue", "close", String(issue), "-R", this.repo, "--reason", "not planned"]);
         }
       } catch (error) {
         failures.push(`issue #${issue}: ${(error as Error).message}`);
@@ -420,7 +462,7 @@ async function fullCycle(harness: RealGithubHarness, adapter: TrackerPort): Prom
 
   // derivation over the real adapter: the pool derivation of ticket 11
   const pool = await derivePool(adapter, [repo], DEFAULT_LABELS);
-  if (!pool.some((entry) => entry.ref.number === issue.ref.number)) {
+  if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
     throw new Error("derive: the claimed issue must NOT be eligible");
   }
   console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → claimed issue kept out of the pool");
@@ -464,10 +506,18 @@ async function main(): Promise<void> {
 
     console.log("\n== full cycle: every operation executed, verified — reverted at the end ==");
     await fullCycle(harness, adapter);
-
     console.log("\n== reversion ==");
     await harness.cleanup();
     console.log("smoke PASSED: all operations executed and verified; nothing left behind in the repo");
+  } catch (error) {
+    console.log("\n== reversion (after a failure) ==");
+    try {
+      await harness.cleanup();
+      console.log("reversion completed despite the failure above");
+    } catch (cleanupError) {
+      console.error(`ADDITIONALLY, reversion failed: ${(cleanupError as Error).message}`);
+    }
+    throw error;
   } finally {
     rmSync(clonesDir, { recursive: true, force: true });
   }
