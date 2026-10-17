@@ -1,0 +1,154 @@
+/**
+ * The tracker port: the factory's only boundary with the world of issues.
+ *
+ * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
+ * speaks of works (trabalhos). A second real tracker (Jira) couples on the far
+ * side of the same port. Contract from ticket 02 / prior art of v1:
+ *
+ *  - Writes are performed by the adapter only; confirmation is always by
+ *    re-reading (ADR 0001). Adapters report the intents they performed, never
+ *    "confirmed". Composite writes report partial failure via PartialWriteError.
+ *  - Unknown is never absent: a field not consulted does not count as "without
+ *    impediment" (Known<T>).
+ *  - Priority: GitHub has no native rank — the honest answer is known(null),
+ *    and "eligible the longest" orders by createdAt from the same listing.
+ */
+
+/** Marks everything the factory or the worker publishes; adapters never remove it. */
+export const AGENT_MARKER = "<!-- msf:agent -->";
+
+/** Unknown is never absent: a value not consulted is `known: false`. */
+export type Known<T> = { known: true; value: T } | { known: false };
+
+export const known = <T>(value: T): Known<T> => ({ known: true, value });
+export const notKnown: Known<never> = { known: false };
+
+export interface IssueRef {
+  repo: string;
+  number: number;
+}
+
+export interface IssueSnapshot {
+  ref: IssueRef;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+  /** "completed" = done; "not-planned" is NOT done (unknown terminal). */
+  stateReason: "completed" | "not-planned" | null;
+  labels: string[];
+  assignees: string[];
+  /** ISO 8601 creation date — age-based priority of the pool. */
+  createdAt: string;
+}
+
+export interface Candidate {
+  ref: IssueRef;
+  title: string;
+  createdAt: string;
+}
+
+export interface Blocker {
+  ref: IssueRef;
+  state: "open" | "closed";
+}
+
+export interface IssueComment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface PullRequest {
+  number: number;
+  state: "open" | "closed";
+  merged: boolean;
+  headBranch: string;
+  baseBranch: string;
+  author: string;
+}
+
+/** PR feedback: conversation + reviews + checks/merge state, read as structured facts. */
+export interface PrFeedback {
+  /** The open-or-closed PR linked to the issue, or null when none exists. */
+  pr: PullRequest | null;
+  /** Conversation comments (issue comments on the PR). */
+  comments: IssueComment[];
+  /** Review comments (inline). */
+  reviews: IssueComment[];
+}
+
+export interface OpenPrInput {
+  repo: string;
+  issueNumber: number;
+  headBranch: string;
+  baseBranch: string;
+  title: string;
+}
+
+export interface PushBranchInput {
+  repo: string;
+  branch: string;
+}
+
+/** Adapters report the intents they performed — never "confirmed". */
+export interface WriteOutcome {
+  performed: string[];
+}
+
+/** A composite write where some intents landed and others did not. */
+export class PartialWriteError extends Error {
+  readonly performed: string[];
+
+  constructor(performed: string[], reason: string) {
+    super(`partial write (${performed.join(", ") || "nothing"} performed): ${reason}`);
+    this.name = "PartialWriteError";
+    this.performed = performed;
+  }
+}
+
+/**
+ * The 9 operations + rank (ticket 02, table 1), in port terms:
+ *
+ *   1. listCandidates   2. readIssue        3. readBlockers
+ *   4. claim            5. releaseClaim     6. markDone
+ *   7. comment          8. readComments     9. readPrFeedback / openPr / pushBranch
+ *   +. rank (honest null on GitHub)
+ */
+export interface TrackerPort {
+  /** 1. Open issues carrying the ready label, excluding PRs. */
+  listCandidates(repo: string, readyLabel: string): Promise<Candidate[]>;
+
+  /** 2. Snapshot of one issue. */
+  readIssue(ref: IssueRef): Promise<Known<IssueSnapshot>>;
+
+  /** 3. Native blocked_by dependencies with each blocker's terminal state. */
+  readBlockers(ref: IssueRef): Promise<Known<Blocker[]>>;
+
+  /** 4. Claim: claimed label + assign the worker account. */
+  claim(ref: IssueRef, account: string): Promise<WriteOutcome>;
+
+  /** 5. Release: remove only the claim mark (label + account assignee). */
+  releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome>;
+
+  /** 6. Done: close the issue as completed. */
+  markDone(ref: IssueRef): Promise<WriteOutcome>;
+
+  /** 7. Comment on the issue (the port carries the agent marker). */
+  comment(ref: IssueRef, body: string): Promise<WriteOutcome>;
+
+  /** 8. Read the issue's comments. */
+  readComments(ref: IssueRef): Promise<Known<IssueComment[]>>;
+
+  /** 9a. Read the PR feedback of the issue's work. */
+  readPrFeedback(ref: IssueRef): Promise<Known<PrFeedback>>;
+
+  /** 9b. Open the PR of a work's branch. */
+  openPr(input: OpenPrInput): Promise<PullRequest>;
+
+  /** 9c. Push a work's branch (git on the GitHub adapter; a plain write here). */
+  pushBranch(input: PushBranchInput): Promise<WriteOutcome>;
+
+  /** Native rank, when the tracker has one. GitHub: known(null). */
+  rank(ref: IssueRef): Promise<Known<number | null>>;
+}
