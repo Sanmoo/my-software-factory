@@ -11,5 +11,5 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   const run = await runConfigMigration(process.argv.slice(2), REPOSITORY_ROOT);
   process.stdout.write(run.stdout);
   process.stderr.write(run.stderr);
-  process.exit(run.exitCode);
+  process.exitCode = run.exitCode;
 }

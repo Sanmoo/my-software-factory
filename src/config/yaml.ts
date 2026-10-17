@@ -12,6 +12,8 @@ import { isScalar, LineCounter, parseAllDocuments, stringify, visit } from "yaml
 const MAX_ALIASES = 100;
 const MAX_NODES = 100_000;
 
+const MULTIPLE_DOCUMENTS = "mais de um documento YAML";
+
 export type YamlResult = { ok: true; value: unknown } | { ok: false; message: string };
 
 // Every rejection is phrased here, from the error code only: the parser's own message carries a
@@ -26,7 +28,7 @@ const SAFE_REASONS: Record<string, string> = {
   KEY_OVER_1024_CHARS: "chave longa demais",
   MISSING_CHAR: "documento incompleto",
   MULTILINE_IMPLICIT_KEY: "chave implícita em várias linhas",
-  MULTIPLE_DOCS: "mais de um documento YAML",
+  MULTIPLE_DOCS: MULTIPLE_DOCUMENTS,
   TAB_AS_INDENT: "tabulador usado como indentação",
   TAG_RESOLVE_FAILED: "tag personalizada ou desconhecida não é suportada",
   UNEXPECTED_TOKEN: "token inesperado",
@@ -80,17 +82,17 @@ function refuse(document: ReturnType<typeof parseAllDocuments>[number], lineCoun
   const version = document.directives?.yaml?.version;
   if (version !== undefined && version !== "1.2") return `versão YAML ${version} não é suportada; use 1.2`;
   let aliases = 0;
-  let mergeKey: Position | undefined;
+  let mergeKey: { position: Position | undefined } | undefined;
   visit(document, {
     Alias() { aliases += 1; },
     Pair(_key, pair) {
       if (mergeKey !== undefined || !isScalar(pair.key) || pair.key.value !== "<<") return;
       const start = pair.key.range?.[0];
       const position = start === undefined ? undefined : lineCounter.linePos(start);
-      mergeKey = position === undefined ? [0, 0] : [position.line, position.col];
+      mergeKey = { position: position === undefined ? undefined : [position.line, position.col] };
     },
   });
-  if (mergeKey !== undefined) return withPosition("merge key (<<) não é suportada", mergeKey[0] === 0 ? undefined : mergeKey);
+  if (mergeKey !== undefined) return withPosition("merge key (<<) não é suportada", mergeKey.position);
   if (aliases > MAX_ALIASES) return `mais de ${MAX_ALIASES} aliases no documento`;
   return undefined;
 }
@@ -105,7 +107,7 @@ export function parseYamlDocument(text: string): YamlResult {
     lineCounter,
   });
   if (documents.length === 0) return { ok: true, value: undefined };
-  if (documents.length > 1) return { ok: false, message: "mais de um documento YAML" };
+  if (documents.length > 1) return { ok: false, message: MULTIPLE_DOCUMENTS };
   const document = documents[0]!;
   const refusal = refuse(document, lineCounter);
   if (refusal !== undefined) return { ok: false, message: refusal };

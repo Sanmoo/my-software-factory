@@ -12,7 +12,16 @@ import { join } from "node:path";
 
 export type ConfigRole = "config" | "local";
 
-const YAML_EXTENSIONS = [".yaml", ".yml"] as const;
+// The default base directory, relative to the repository root: where discovery looks when the
+// operator does not pass `--home`. Kept here so the CLI and the migration share one definition.
+export const DEFAULT_HOME_DIR = ".msf";
+
+// Both extensions are accepted for either role; the first one is what a conversion writes.
+export const YAML_EXTENSIONS = [".yaml", ".yml"] as const;
+
+// The two names one role may have in a base directory, in preference order.
+export const yamlPaths = (homeDir: string, role: ConfigRole): string[] =>
+  YAML_EXTENSIONS.map((extension) => join(homeDir, `${role}${extension}`));
 
 export type Discovery =
   | { ok: true; path: string }
@@ -31,7 +40,7 @@ async function discover(homeDir: string, role: ConfigRole): Promise<Discovery> {
         + `converta com \`${migrationHint(homeDir)}\` (o original é preservado como ${role}.json.bak)`,
     };
   }
-  const candidates = YAML_EXTENSIONS.map((extension) => join(homeDir, `${role}${extension}`));
+  const candidates = yamlPaths(homeDir, role);
   const found: string[] = [];
   for (const candidate of candidates) if (await exists(candidate)) found.push(candidate);
   if (found.length > 1) {

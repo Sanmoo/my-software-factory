@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { discoverConfigFile, discoverLocalFile } from "../config/files.js";
+import { DEFAULT_HOME_DIR, discoverConfigFile, discoverLocalFile } from "../config/files.js";
 import { resolveJobRef } from "../core/job-ref.js";
 import { buildOperatorView, type OperatorView } from "../core/operator-view.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
@@ -30,7 +30,7 @@ export const COMMANDS = ["run", "status", "assist", "logs", "reply", "resume", "
 type Command = (typeof COMMANDS)[number];
 
 // The default base directory, relative to the repository root.
-export const DEFAULT_HOME = ".msf";
+export const DEFAULT_HOME = DEFAULT_HOME_DIR;
 
 interface CommandSpec {
   usage: string;

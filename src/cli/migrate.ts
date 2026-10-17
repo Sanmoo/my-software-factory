@@ -1,5 +1,6 @@
 import { chmod, lstat, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { DEFAULT_HOME_DIR, type ConfigRole, yamlPaths } from "../config/files.js";
 import { messageOf } from "../core/values.js";
 import type { CliRun } from "./instance.js";
 import { parseLocalSettings } from "./local-settings.js";
@@ -21,15 +22,13 @@ import { parseYamlDocument, sameData, stringifyYaml } from "../config/yaml.js";
 // Two files are involved and the filesystem gives no transaction across them: the message after
 // a failure says what remains where, without promising that both roles moved together.
 
-export const DEFAULT_MIGRATION_HOME = ".msf";
 const USAGE = `uso: npm run config:migrate -- [--home DIR]
---home DIR: diretório base com config.json e local.json (padrão: ${DEFAULT_MIGRATION_HOME}/ na raiz do repositório; um caminho relativo parte da raiz).`;
+--home DIR: diretório base com config.json e local.json (padrão: ${DEFAULT_HOME_DIR}/ na raiz do repositório; um caminho relativo parte da raiz).`;
 
-type ConfigJson = "config" | "local";
-const ROLES: readonly ConfigJson[] = ["config", "local"];
+const ROLES: readonly ConfigRole[] = ["config", "local"];
 
 interface Plan {
-  role: ConfigJson;
+  role: ConfigRole;
   source: string;
   destination: string;
   backup: string;
@@ -80,7 +79,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 
 // What the configuration file must mean. The same validators the factory uses, so a file that
 // would be refused at startup is refused here too — before anything is written.
-function validate(role: ConfigJson, raw: unknown): string | undefined {
+function validate(role: ConfigRole, raw: unknown): string | undefined {
   if (role === "config") {
     const parsed = parseConfig(raw);
     return parsed.ok ? undefined : parsed.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
@@ -89,7 +88,7 @@ function validate(role: ConfigJson, raw: unknown): string | undefined {
   return typeof local === "string" ? local : undefined;
 }
 
-async function plan(role: ConfigJson, homeDir: string): Promise<Plan | "absent" | CliRun> {
+async function plan(role: ConfigRole, homeDir: string): Promise<Plan | "absent" | CliRun> {
   const source = join(homeDir, `${role}.json`);
   const sourceState = await inspect(source);
   if (sourceState === "absent") return "absent";
@@ -98,7 +97,7 @@ async function plan(role: ConfigJson, homeDir: string): Promise<Plan | "absent" 
   // Nothing may be overwritten: a YAML destination of either extension, or a backup, refuses the
   // whole migration. The operator resolves the conflict and runs the command again. A link in any
   // of these places is refused for the same reason: the migration writes where it says it writes.
-  const destinations = [join(homeDir, `${role}.yaml`), join(homeDir, `${role}.yml`)];
+  const destinations = yamlPaths(homeDir, role);
   for (const destination of destinations) {
     const state = await inspect(destination);
     if (state === "symlink") return fail(`${destination} é um link simbólico: a migração não segue links; nada foi modificado`);
@@ -132,6 +131,7 @@ async function plan(role: ConfigJson, homeDir: string): Promise<Plan | "absent" 
   if (!sameData(reread.value, raw)) {
     return fail(`o YAML gerado para ${source} não preserva exatamente os dados do JSON; nada foi modificado`);
   }
+  // The written name is the preferred extension; the other one was only refused above.
   return { role, source, destination: destinations[0]!, backup, document };
 }
 
@@ -153,8 +153,10 @@ async function rollback(
   for (const path of created) {
     try {
       await fs.unlink(path);
-    } catch {
-      problems.push(`${path} foi criado e não pôde ser removido`);
+    } catch (error) {
+      // A file that never came to exist (the failure happened before its creation) is nothing
+      // to undo; anything else is reported with its path.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") problems.push(`${path} foi criado e não pôde ser removido`);
     }
   }
   return problems;
@@ -169,7 +171,7 @@ export async function runConfigMigration(
   const parsed = parseArgs(argv);
   if (parsed === "help") return { exitCode: 0, stdout: `${USAGE}\n`, stderr: "" };
   if ("error" in parsed) return parsed.error;
-  const homeDir = parsed.home === undefined ? resolve(root, DEFAULT_MIGRATION_HOME) : resolve(root, parsed.home);
+  const homeDir = parsed.home === undefined ? resolve(root, DEFAULT_HOME_DIR) : resolve(root, parsed.home);
 
   const plans: Plan[] = [];
   for (const role of ROLES) {
@@ -186,8 +188,10 @@ export async function runConfigMigration(
   const renamed: Plan[] = [];
   try {
     for (const plan of plans) {
-      await fs.writeRestricted(plan.destination, plan.document);
+      // Recorded before the write: a failure between creating the file and setting its
+      // permissions must still be rolled back.
       created.push(plan.destination);
+      await fs.writeRestricted(plan.destination, plan.document);
     }
     for (const plan of plans) {
       await fs.rename(plan.source, plan.backup);

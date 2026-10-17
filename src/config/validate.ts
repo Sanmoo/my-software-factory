@@ -391,7 +391,7 @@ function checkOwnership(instances: InstanceConfig[], issues: Issues): void {
 export function parseConfig(raw: unknown): ConfigResult {
   const issues = new Issues();
   if (!isObject(raw)) {
-    issues.add("", "configuração deve ser um objeto JSON");
+    issues.add("", "configuração deve ser um objeto");
     return { ok: false, issues: issues.list };
   }
   checkKeys(raw, ["credentials", "runtimeProfiles", "instances"], "", issues);
