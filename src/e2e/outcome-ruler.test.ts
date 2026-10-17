@@ -3,6 +3,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
@@ -360,5 +361,70 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(second.collected[0]?.ruling?.decision, "block", "the 2nd consecutive fall is blocked");
     const labels = await labelsOf(tracker, 1);
     assert.ok(labels.includes(DEFAULT_LABELS.blocked));
+  });
+});
+
+describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-status-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function seedRegistry(): void {
+    const works = join(dir, "ws", "trabalhos");
+    const archive = join(dir, "ws", "arquivo");
+    // In flight: an attempt up, no outcome record.
+    mkdirSync(join(works, "Sanmoo", "my-tasks#1"), { recursive: true });
+    // Last outcome: a concluded attempt on disk.
+    mkdirSync(join(works, "Sanmoo", "my-tasks#2"), { recursive: true });
+    writeFileSync(
+      join(works, "Sanmoo", "my-tasks#2", DESFECHO_FILENAME),
+      JSON.stringify({ class: "pr-open", attempt: 1 }),
+      "utf8",
+    );
+    // Done, archived.
+    mkdirSync(join(archive, "Sanmoo", "my-tasks#2-2026-02-01"), { recursive: true });
+  }
+
+  function runStatus(): { stdout: string; stderr: string; status: number | null } {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "repos:",
+        "  - Sanmoo/my-tasks",
+        `workspace: ${join(dir, "ws")}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const cli = new URL("../cli.js", import.meta.url).pathname;
+    const result = spawnSync(process.execPath, [cli, "status"], { cwd: dir, encoding: "utf8" });
+    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  }
+
+  test("status never creates the workspace and answers in flight / last outcome / archived from disk alone", () => {
+    seedRegistry();
+    const before = existsSync(join(dir, "ws", "repos"));
+    const result = runStatus();
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.ok(!before, "status created nothing before the run");
+    assert.ok(!existsSync(join(dir, "ws", "repos")), "status never ensures the workspace (read-only)");
+    assert.match(result.stdout, /in flight.*Sanmoo\/my-tasks#1/);
+    assert.match(result.stdout, /last outcome: Sanmoo\/my-tasks#2 = pr-open \(attempt 1\)/);
+    assert.match(result.stdout, /archived.*my-tasks#2-2026-02-01/);
+  });
+
+  test("status before any run is a legal state: empty pool, empty registry, exit 0", () => {
+    const result = runStatus();
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /0 eligible/);
+    assert.match(result.stdout, /in flight: none/);
+    assert.match(result.stdout, /last outcome: none/);
   });
 });

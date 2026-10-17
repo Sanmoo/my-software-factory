@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { join } from "node:path";
 import { loadConfigFrom } from "./config.js";
-import { ensureWorkspace } from "./layout.js";
+import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { FakeTrackerAdapter } from "./tracker/fake-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
+import { deriveStatus, renderStatus } from "./state/status.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 
 /**
@@ -21,7 +23,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "status") {
-    statusCommand(argv.slice(1));
+    await statusCommand(argv.slice(1));
     return;
   }
   console.error("usage: msf run [--once] [--config <path>]\n       msf status");
@@ -84,10 +86,23 @@ function workerRuntime(): WorkerRuntime {
   };
 }
 
-function statusCommand(argv: string[]): void {
+async function statusCommand(argv: string[]): Promise<void> {
   const configIndex = argv.indexOf("--config");
   const overridePath = configIndex >= 0 ? argv[configIndex + 1] : undefined;
   const config = loadConfigFrom(process.cwd(), overridePath);
-  // TODO(ticket-14): derivation on demand + local registry sweep.
-  console.log(`msf status: watching ${config.repos.length} repo(s) — status view lands in a later ticket`);
+
+  // Read-only: status never creates the workspace — an absent one is empty
+  // (status before any run is a legal, informative state).
+  const layout: WorkspaceLayout = {
+    root: config.workspace,
+    repos: join(config.workspace, WORKSPACE_SUBPATHS.repos),
+    works: join(config.workspace, WORKSPACE_SUBPATHS.works),
+    archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
+  };
+
+  // Derivation on demand through the same port the run uses (ticket 16 wires
+  // the real GitHub adapter here too) — the factory being stopped changes nothing.
+  const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+  const view = await deriveStatus(tracker, config, layout);
+  console.log(renderStatus(view));
 }
