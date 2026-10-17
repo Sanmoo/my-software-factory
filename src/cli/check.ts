@@ -26,7 +26,8 @@ export interface CheckOptions {
   local: LocalSettings;
   deps: AdmissionDeps;
   sandbox: SandboxBoundary;
-  // Root of the persistent per-profile toolchains, under the factory `--home` (ADR 0004).
+  // Root of the persistent toolchains, under the factory `--home` (ADR 0004): the per-profile Pi package
+  // trees and the mise data dir shared by every profile.
   toolchainsDir: string;
   env?: NodeJS.ProcessEnv;
 }

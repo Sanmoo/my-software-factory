@@ -21,8 +21,9 @@ Configuração do agente do operador (autenticação, pacotes, skills, extensõe
 ferramentas que ele declara no mise) que um trabalho reproduz ao rodar fora do host.
 Delimitado pelas origens permitidas e por itens obrigatórios: sem um obrigatório, o
 trabalho não é admitido. Os pacotes e as ferramentas convergem uma vez, num diretório
-persistente por perfil sob o `--home`; o retrato do perfil carrega o lock e a declaração
-de mise de onde eles vêm (ADR 0004).
+persistente sob o `--home` (os pacotes do Pi por perfil; os dados do mise compartilhados
+pelos perfis); o retrato do perfil carrega o lock e a declaração de mise de onde eles vêm
+(ADR 0004).
 _Avoid_: instância, ambiente, perfil global do operador como sinônimo
 
 **Roteamento**:
@@ -154,12 +155,15 @@ uma confirmada por releitura; nada é escrito no tracker antes dela
 _Avoid_: fim da sessão como aprovação, aprovação implícita pela inação
 
 **Retomada agendada de uso único**:
-A forma PERSISTIDA da retomada autorizada: a autorização fica gravada no registro
-da sessão e é tentada antes de novos atendimentos; uma nova interrupção exige nova
+O nome pelo qual a **Retomada autorizada** aparece no registro da sessão e nas telas
+(`status`, `assist`): é a MESMA decisão — a autorização gravada no registro da sessão e
+tentada antes de novos atendimentos —, não um segundo tipo de retomada. O que a distingue da
+**Retomada manual** é a origem (a resposta afirmativa à pergunta de continuidade, não o pedido
+do momento), não a forma como fica gravada; uma nova interrupção exige nova
 decisão, e esperar capacidade ou reprovar pré-verificação não a consome
-(src/core/assist-flow.ts; especificação #48, item 5).
-_Avoid_: preservação de sessão como autorização, autorização reutilizável,
-retomada manual como agendamento
+(src/core/assist-flow.ts; src/cli/status.ts; especificação #48, item 5).
+_Avoid_: retomada agendada como um segundo tipo de retomada, preservação de sessão como
+autorização, autorização reutilizável, retomada manual como agendamento
 
 **Reconciliação**:
 Ao reiniciar uma instância, decisão sobre cada identidade de trabalho
@@ -225,7 +229,9 @@ _Avoid_: pedido de ajuda, intervenção necessária, falha como conclusão
 Continuidade de um trabalho solicitada EXPLICITAMENTE pelo operador, a partir da
 sessão anterior e da área preservada, nos DOIS fluxos (autônomo e humano
 assistido): o comando local, ou a tecla `t` no atendimento assistido, vale para a
-tentativa daquele momento e não autoriza nenhuma abertura futura
+tentativa daquele momento e não autoriza nenhuma abertura futura. É o pedido de agora, contra as
+duas formas da autorização: a decisão (**Retomada autorizada**) e o nome que ela recebe no
+registro e nas telas (**Retomada agendada de uso único**)
 (src/core/assist-flow.ts `resume`; src/core/operator-actions.ts `retomar`).
 _Avoid_: recuperação automática, pedido de agora como autorização permanente,
 nova implementação para contornar uma falha
@@ -234,10 +240,12 @@ nova implementação para contornar uma falha
 Autorização explícita do operador, dada na resposta afirmativa à pergunta de
 continuidade de um trabalho humano assistido interrompido, para UMA próxima
 abertura desta mesma sessão, tentada antes de novos atendimentos: é de uso único e
-distinta do pedido manual, que vale só para o momento em que é feito. Preservar a
-sessão não autoriza, por si só, sua retomada (spec #48, item 5; #57).
+distinta do pedido manual, que vale só para o momento em que é feito. É esta a decisão; quando
+ela fica gravada no registro da sessão e é impressa em `status`/`assist`, é ela mesma sob o
+nome **Retomada agendada de uso único** (ver o verbete), nunca uma autorização diferente.
+Preservar a sessão não autoriza, por si só, sua retomada (spec #48, item 5; #57).
 _Avoid_: replay automático, sessão preservada como autorização, pedido manual como
-autorização permanente
+autorização permanente, retomada agendada como autorização distinta
 
 **Conclusão**:
 Reconhecimento do merge externo do PR vinculado a um trabalho de implementação

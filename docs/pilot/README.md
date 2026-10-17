@@ -80,8 +80,10 @@ o mesmo bloqueio vira pedido de ajuda e nenhum container é criado. Um projeto h
 tem declaração nos dois arquivos é erro de configuração ao iniciar a instância, sem fallback.
 
 Já dentro do container, antes do prompt, o setup copia o retrato e **converge a toolchain uma vez**
-(ADR 0004): os pacotes do Pi saem do lock do host com `npm ci` num diretório persistente por perfil sob
-o `--home` da factory, e as ferramentas saem da declaração de mise do operador. A convergência é
+(ADR 0004): os pacotes do Pi saem do lock do host com `npm ci` num diretório persistente **por perfil**
+sob o `--home` da factory, e as ferramentas saem da declaração de mise do operador para um diretório de
+dados **compartilhado por todos os perfis** daquele `--home` (a mesma trava serializa a convergência de
+todos). A convergência é
 distinguida por um selo (hash do lock mais ABI do Node): selo igual não instala nada e não imprime nada,
 então a segunda invocação de um perfil funciona sem rede. Duas invocações simultâneas não instalam por
 cima uma da outra (`flock`), e um install interrompido é refeito no start seguinte. Depois disso a

@@ -161,8 +161,8 @@ export interface AssistFlowDeps {
   observer?: Observer;
   // Host directory with the container scripts (src/runtime/docker-image), mounted read-only.
   runtimeImageDir: string;
-  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`: the Pi package
-  // tree and the mise data dir of the profile, shared by the autonomous jobs of the same profile.
+  // Root of the persistent toolchains (ADR 0004), under the factory `--home`: the per-profile Pi package
+  // tree and the mise data dir shared by every profile of the `--home`. `profileToolchain` derives both.
   toolchainsDir: string;
   // State directory of the instance: the working directories of each session live in it.
   stateDir: string;
@@ -255,7 +255,8 @@ const agentIdentities = (): string =>
   `${typeof process.getuid === "function" ? process.getuid() : 1000}:${typeof process.getgid === "function" ? process.getgid() : 1000}`;
 
 // The opening verified before the claim: the host-resolved snapshot plan (ADR 0002), the identity of
-// the host user for the container, and the persistent toolchain the container converges once (ADR 0004).
+// the host user for the container, and the persistent toolchain the container converges once (ADR 0004:
+// the profile's package tree and the mise data dir shared by every profile).
 interface PreparedOpening {
   plan: SnapshotPlan;
   agentUidGid: string;

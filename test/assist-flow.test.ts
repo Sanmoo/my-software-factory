@@ -140,6 +140,9 @@ interface Setup {
   // The secret values the flow registered in the observer (ticket #76): the defense in depth
   // that redacts them from every log the same observer writes.
   registeredSecrets: string[];
+  // The detailed-log paths the observer was handed (`setDetailLog`): empty for the assisted flow,
+  // which has no detailed log of its own — the token proof scans them when they exist.
+  detailLogs: string[];
   pendings: () => Promise<AttentionPending[]>;
   tracker: MemoryTracker;
   scoped: TrackerPort;
@@ -205,6 +208,10 @@ async function arrange(context: TestContext, options: {
   };
   const events: Setup["events"][number][] = [];
   const registeredSecrets: string[] = [];
+  // Every detailed-log path the observer was given: the assisted flow opens none (the detailed log
+  // belongs to an autonomous invocation, src/runtime/docker-runner.ts), and the token proof asserts
+  // that and scans whatever a future flow hands over.
+  const detailLogs: string[] = [];
   // The attention store of the instance state and a double channel: no real OS notification.
   const snapshot: { fail: string | undefined } = { fail: undefined };
   const notifications: Array<{ title: string; body: string }> = [];
@@ -247,7 +254,7 @@ async function arrange(context: TestContext, options: {
       registerSecret: (secret) => {
         if (secret !== undefined) registeredSecrets.push(secret);
       },
-      setDetailLog: () => undefined,
+      setDetailLog: (_job, path) => { detailLogs.push(path); },
       commands: () => undefined,
     },
     ports: { sandbox: sandboxOf(options.sandbox), herdr: herdrOf({ ...(options.herdr === undefined ? {} : options.herdr), calls: herdrCalls, openTabs }), exec: probeOf(verdicts), ...(stopPort === undefined ? {} : { stopExec: stopPort }) },
@@ -271,7 +278,7 @@ async function arrange(context: TestContext, options: {
     root, stateDir, tracker, scoped, instance, config: loaded.config, local,
     sessionsDir: join(stateDir, "assist-sessions"), herdrCalls, events, flow, writeJob, writeInstance,
     notifications, notificationsFail: (reason) => { snapshot.fail = reason; },
-    registeredSecrets,
+    registeredSecrets, detailLogs,
     pendings: async () => (await createFileAttentionStore(pendingsDir).load()).pendings,
     openTabs, verdicts, stops, stopResult,
   };
@@ -289,6 +296,18 @@ const sessionOf = async (setup: Setup, key: string): Promise<SessionView> => {
   assert.ok(found, `sessão ${key} deveria existir`);
   return found;
 };
+
+// Todos os arquivos regulares sob um diretório, com o texto de cada um: a varredura da prova de que o
+// token não ficou em nenhum arquivo do estado da instância.
+async function filesUnder(dir: string): Promise<Array<[path: string, text: string]>> {
+  const found: Array<[path: string, text: string]> = [];
+  for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...await filesUnder(path));
+    else if (entry.isFile()) found.push([path, await readFile(path, "utf8").catch(() => "")]);
+  }
+  return found.sort(([a], [b]) => a.localeCompare(b));
+}
 
 test("the eligible issue is admitted, claimed and opened end to end without stealing focus", async (context) => {
   const setup = await arrange(context, { only: ["1"] });
@@ -1435,7 +1454,10 @@ test("o token da conta do projeto é entregue por arquivo de ambiente 0600 e nã
 
   // (c) Nada do token no registro da sessão (gravado 0644 e sem redação), no log principal (os
   // eventos) nem no log detalhado; só o valor registrado no observador, que é a defesa em
-  // profundidade de quem escreve os logs de verdade.
+  // profundidade de quem escreve os logs de verdade. O log detalhado tem prova própria abaixo
+  // ("depois do lançamento o token não aparece em nenhum arquivo de estado nem no log detalhado"):
+  // o fluxo assistido não abre log detalhado nenhum, e a prova varre todos os arquivos que ele
+  // escreve de fato.
   assert.ok(!JSON.stringify(session).includes(ACCOUNT_TOKEN), "o registro da sessão não carrega o token");
   assert.ok(!JSON.stringify(setup.events).includes(ACCOUNT_TOKEN), "o log principal não carrega o token");
   assert.deepEqual(setup.registeredSecrets, [ACCOUNT_TOKEN]);
@@ -1445,6 +1467,48 @@ test("o token da conta do projeto é entregue por arquivo de ambiente 0600 e nã
   // (d) O orçamento estourou (o container nunca foi provado): o arquivo é MANTIDO de propósito —
   // um start lento não é morto pelo relógio — e a supervisão o remove quando provar o destino.
   assert.equal(await readFile(envFile, "utf8"), `GH_TOKEN=${ACCOUNT_TOKEN}\n`);
+});
+
+test("depois do lançamento o token não aparece em nenhum arquivo de estado nem no log detalhado", async (context) => {
+  const setup = await arrange(context, { only: ["1"], sandbox: { token: ACCOUNT_TOKEN } });
+  // O cliente docker já criou o container: a evidência faz o arquivo de ambiente sair, e o que sobra
+  // no estado é exatamente o que a fábrica escreveu.
+  setup.verdicts[assistContainerName(pendingKey, "2026-10-14T12:00:00.000Z")] = "running";
+  const report = await setup.flow().poll();
+  assert.deepEqual(report.opened, [pendingKey]);
+
+  const session = await sessionOf(setup, pendingKey);
+  const envFile = assistEnvFilePath(session.execStateDir!);
+  // (a) O arquivo de ambiente — o único que carrega o valor DE PROPÓSITO — realmente saiu.
+  await assert.rejects(() => readFile(envFile), /ENOENT/, "sem credencial em repouso depois do lançamento");
+
+  // (b) O log PRINCIPAL (eventos e campos) não carrega o valor, evento a evento.
+  for (const event of setup.events) {
+    assert.ok(!JSON.stringify(event).includes(ACCOUNT_TOKEN), `o evento ${event.kind} não carrega o token`);
+  }
+
+  // (c) O log DETALHADO: o fluxo assistido não abre um próprio — quem tem log detalhado é a invocação
+  // autônoma (`setDetailLog` em src/runtime/docker-runner.ts) —, então a prova afirma isso e varre
+  // qualquer caminho que o observador venha a receber.
+  assert.deepEqual(setup.detailLogs, [], "o fluxo assistido não abre log detalhado próprio");
+  const detailFiles = await Promise.all(setup.detailLogs.map(async (path) => {
+    return [path, await readFile(path, "utf8").catch(() => "")] as [string, string];
+  }));
+
+  // (d) Nenhum arquivo que sobrou sob o diretório de estado da instância carrega o valor — registro da
+  // sessão, pontos de atenção, histórico, fila de comandos e as áreas da execução inclusive.
+  const files = [...await filesUnder(setup.stateDir), ...detailFiles];
+  const scanned = new Set(files.map(([path]) => path));
+  assert.ok(scanned.has(join(setup.sessionsDir, `${encodeURIComponent(pendingKey)}.json`)),
+    "o registro da sessão foi varrido");
+  assert.ok([...scanned].some((path) => path.startsWith(`${join(setup.stateDir, "pendencias")}/`)),
+    "os pontos de atenção foram varridos");
+  assert.ok(scanned.has(join(session.profileDir!, "settings.json")), "o retrato do perfil foi varrido");
+  const leaked = files.filter(([, text]) => text.includes(ACCOUNT_TOKEN)).map(([path]) => path);
+  assert.deepEqual(leaked, [], "nenhum arquivo de estado carrega o token");
+  // E não sobra nada no diretório de estado da execução: o registro de fim é escrito pelo container,
+  // nunca pelo fluxo.
+  assert.deepEqual(await readdir(session.execStateDir!), [], "nada sobrou no diretório de estado da execução");
 });
 
 test("o arquivo de ambiente sai assim que o container existe: a remoção é por evidência, não por relógio", async (context) => {

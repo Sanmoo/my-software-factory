@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   COMPLETION_SIGNAL,
   effectiveIterationLimit,
+  profilePreparationSteps,
   profileSetupCommand,
   profileToolchain,
   sandboxMounts,
   sandcastleRequest,
+  SHARED_MISE_DIR,
 } from "../src/runtime/docker-invocation.js";
 
 test("a new invocation may use the configured Sandcastle iterations, and the effective limit is visible", () => {
@@ -56,26 +59,37 @@ test("the container mounts the profile snapshot, the image scripts, the session 
     snapshotDir: "/state/areas/job/profile",
     sessionsDir: "/state/sessions/job",
     npmDir: "/home/op/.msf/toolchains/personal/npm",
-    miseDir: "/home/op/.msf/toolchains/personal/mise",
+    miseDir: "/home/op/.msf/toolchains/mise",
   }, "/repo/src/runtime/docker-image");
   assert.deepEqual(mounts, [
     { hostPath: "/state/areas/job/profile", sandboxPath: "/msf-profile", readonly: true },
     { hostPath: "/repo/src/runtime/docker-image", sandboxPath: "/msf-runtime", readonly: true },
     { hostPath: "/state/sessions/job", sandboxPath: "/home/agent/.pi/agent/sessions", readonly: false },
     { hostPath: "/home/op/.msf/toolchains/personal/npm", sandboxPath: "/home/agent/.pi/agent/npm", readonly: false },
-    { hostPath: "/home/op/.msf/toolchains/personal/mise", sandboxPath: "/home/agent/.local/share/mise", readonly: false },
+    { hostPath: "/home/op/.msf/toolchains/mise", sandboxPath: "/home/agent/.local/share/mise", readonly: false },
   ]);
 });
 
-test("the persistent toolchain of a profile lives under the factory home, keyed by the profile name", () => {
+test("the persistent toolchain of a profile lives under the factory home: packages per profile, mise data shared", () => {
   assert.deepEqual(profileToolchain("/home/op/.msf/toolchains", "personal"), {
     base: "/home/op/.msf/toolchains/personal",
     npm: "/home/op/.msf/toolchains/personal/npm",
-    mise: "/home/op/.msf/toolchains/personal/mise",
+    // Spec #74: instalações, downloads, cache e estado num diretório persistente por `--home`,
+    // COMPARTILHADO pelos perfis (o mesmo flock serializa a convergência de todos).
+    mise: "/home/op/.msf/toolchains/mise",
   });
-  // Two profiles never share a tree, and a name that would climb out is encoded, not followed.
+  // Dois perfis nunca dividem a árvore de pacotes, e um nome que subiria de diretório é codificado,
+  // não seguido.
   assert.notEqual(profileToolchain("/t", "personal").base, profileToolchain("/t", "work").base);
+  assert.notEqual(profileToolchain("/t", "personal").npm, profileToolchain("/t", "work").npm);
   assert.equal(profileToolchain("/t", "../work").base, "/t/..%2Fwork");
+  // ...mas o diretório de dados do mise é o MESMO para os dois: uma convergência serve os dois perfis.
+  assert.equal(profileToolchain("/t", "personal").mise, profileToolchain("/t", "work").mise);
+  assert.equal(profileToolchain("/t", "personal").mise, join("/t", SHARED_MISE_DIR));
+  assert.equal(dirname(profileToolchain("/t", "personal").npm), profileToolchain("/t", "personal").base,
+    "a árvore de pacotes fica DENTRO do diretório do perfil");
+  assert.notEqual(dirname(profileToolchain("/t", "personal").mise), profileToolchain("/t", "personal").base,
+    "e o mise fica FORA dele");
 });
 
 test("the setup copies the snapshot, converges the toolchain once and checks the required packages and tools before the agent gets its prompt", () => {
@@ -89,4 +103,16 @@ test("the setup copies the snapshot, converges the toolchain once and checks the
     profileSetupCommand({ requiredPackages: [], requiredTools: [] }),
     "sh /msf-runtime/prepare-profile.sh /msf-profile && sh /msf-runtime/converge-profile.sh /msf-profile && sh /msf-runtime/check-profile.sh",
   );
+});
+
+// O encadeamento prepare -> converge -> check vive num construtor só, usado pelo preparo autônomo e
+// pelo exec assistido (que só acrescenta o `pi`): renomear um passo é editar um lugar.
+test("the preparation steps are one ordered chain, and the setup command is exactly that chain joined", () => {
+  assert.deepEqual(profilePreparationSteps({ requiredPackages: ["npm:pi-subagents"], requiredTools: ["rtk"] }), [
+    "sh /msf-runtime/prepare-profile.sh /msf-profile",
+    "sh /msf-runtime/converge-profile.sh /msf-profile rtk",
+    "sh /msf-runtime/check-profile.sh npm:pi-subagents",
+  ]);
+  const input = { requiredPackages: ["npm:two words"], requiredTools: ["rtk", "jq"] };
+  assert.equal(profileSetupCommand(input), profilePreparationSteps(input).join(" && "));
 });

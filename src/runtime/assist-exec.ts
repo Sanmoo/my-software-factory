@@ -1,6 +1,7 @@
 import { shellQuote } from "../core/observability.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { profilePreparationSteps } from "./docker-invocation.js";
 
 // The container recipe of one assisted exec, the production form of the validated proof
 // (ticket #52): the Herdr pane only ever hosts the `docker run` client; pi runs interactively
@@ -96,11 +97,11 @@ export function assistExecCommand(input: AssistExecCommandInput): string {
     prompt: input.prompt, resume: input.resume,
   });
   const exitFormat = `{"exitCode":%s,"at":"${input.startedAt}"}`;
-  // The first failing step decides the recorded exit code; pi only runs when all of them passed.
+  // The same preparation steps the autonomous runner runs (ONE builder, src/runtime/docker-invocation.ts),
+  // plus the interactive `pi` of this exec. The first failing step decides the recorded exit code; pi only
+  // runs when all of them passed.
   const preparation = [
-    "sh /msf-runtime/prepare-profile.sh /msf-profile",
-    ["sh", "/msf-runtime/converge-profile.sh", "/msf-profile", ...input.requiredTools.map(shellQuote)].join(" "),
-    ["sh", "/msf-runtime/check-profile.sh", ...input.requiredPackages.map(shellQuote)].join(" "),
+    ...profilePreparationSteps({ requiredPackages: input.requiredPackages, requiredTools: input.requiredTools }),
     "pi " + piArgs.map(shellQuote).join(" "),
   ].join(" && ");
   const script = [

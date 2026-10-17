@@ -21,11 +21,12 @@ export async function populateProfile(dir: string, extras: Record<string, string
 }
 
 // The two runner options that carry the declaration of one profile name, plus the persistent
-// toolchain root the runner creates the profile's directories under (ADR 0004).
+// toolchain root the runner creates the directories under (ADR 0004): the per-profile package tree
+// and the mise data dir shared by every profile (`runtimeOptionsRoot/mise`).
 export const runtimeOptions = (name: string, declaration: RuntimeProfileConfig = DECLARATION) => ({
   runtimeProfiles: { [name]: declaration },
   allowedRoots: { [name]: [] as string[] },
-  toolchainsDir: join(runtimeOptionsRoot, name),
+  toolchainsDir: runtimeOptionsRoot,
 });
 
 // Tests are not about where the toolchains live: a directory under the test's own tmpdir is enough.

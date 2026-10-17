@@ -11,6 +11,7 @@ import {
 import type { AssistExecProbe } from "../runtime/assist-exec-probe.js";
 import { dockerExecProbe } from "../runtime/assist-exec-probe.js";
 import { describePlan, planSnapshot, writeSnapshot } from "../runtime/profile-snapshot.js";
+import { profileToolchain } from "../runtime/docker-invocation.js";
 import { herdrBoundary } from "../runtime/herdr.js";
 import { assistPrompt } from "../core/assist-prompts.js";
 import { assistResultDigest, recognizeAssistResult } from "../core/assist-result.js";
@@ -71,6 +72,9 @@ const sessionsStoreDir = join(orchestrationDir, "assist-sessions");
 const liveSessionsDir = join(demoDir, "sessions");
 const liveExecStateDir = join(demoDir, "live-state");
 const liveProfileDir = join(demoDir, "live-profile");
+// O mesmo contrato de ADR 0004 do runtime: a árvore de pacotes do Pi é por perfil e o diretório de
+// dados do mise é compartilhado (spec #74).
+const toolchain = profileToolchain(join(demoDir, "toolchains"), "docker-default");
 
 const startedAt = new Date().toISOString();
 const liveKey = "memory:demo/app#1";
@@ -172,7 +176,7 @@ async function main(): Promise<void> {
     throw new Error("a demonstração roda dentro de uma pane do Herdr (HERDR_ENV=1); nunca é parte de npm test");
   }
   for (const dir of [demoDir, join(fixtureDir, "src"), cloneDir, liveSessionsDir, liveExecStateDir,
-    liveProfileDir, orchestrationDir, sessionsStoreDir]) {
+    liveProfileDir, orchestrationDir, sessionsStoreDir, toolchain.npm, toolchain.mise]) {
     await mkdir(dir, { recursive: true });
   }
   await writeFile(join(fixtureDir, "README.md"), "Fixture descartável da demonstração de reconciliação (#58).\n");
@@ -206,7 +210,7 @@ async function main(): Promise<void> {
     startedAt,
     cloneHostDir: cloneDir, sessionsHostDir: liveSessionsDir, stateHostDir: liveExecStateDir,
     snapshotHostDir: liveProfileDir, runtimeHostDir: runtimeImageDirOf(),
-    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    npmHostDir: toolchain.npm, miseHostDir: toolchain.mise,
     requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     prompt: `${assistPrompt({ kind: "needs-triage", ref: liveRef, title: `demonstração de reconciliação ${slug}` })}\n\n`
       + `Primeira mensagem do operador (demonstração ${slug}): registre os passos desta triagem, `

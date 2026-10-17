@@ -46,7 +46,11 @@ e confirma os pacotes e ferramentas obrigatórios; se faltar algum, a invocaçã
 com o motivo (ver [ADR 0004](../adr/0004-convergencia-de-perfil-fora-do-container.md)). A
 convergência é estrita: não há modo fail-open. O retrato também
 carrega o lock do Pi e a declaração de mise do operador, e a primeira invocação de um perfil
-instala dentro do container; as seguintes não instalam nada e não precisam de rede.
+instala dentro do container; as seguintes não instalam nada e não precisam de rede. Os dois
+diretórios persistentes têm tempos de vida diferentes: a árvore de pacotes do Pi é **por
+perfil** (`<home>/toolchains/<perfil>/npm`) e o diretório de dados do mise é **compartilhado
+por todos os perfis** (`<home>/toolchains/mise`), com a mesma trava serializando a convergência
+de todos.
 
 ## Papéis, modelos e autenticação
 

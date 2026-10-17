@@ -1,5 +1,5 @@
 import { Box, Text, render, useApp, useInput, useStdin, useStdout } from "ink";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { buildOperatorView, comandoAtender, nextStepHint, type AtenderContext, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
 import {
   COR_DA_BORDA,
@@ -106,11 +106,29 @@ const capacidadeDoTerminal = (options: Pick<TuiOptions, "env" | "isTTY">): { ter
   return { terminal, color: corHabilitada(options.env ?? process.env, terminal) };
 };
 
+// A `write` mais recente do stdout. O Ink não promete a mesma identidade de `useStdout().write` a
+// cada render; guardá-la num ref é o que mantém o efeito instalado UMA vez por mount. Sem o ref, a
+// dependência mudaria a cada render e o ouvinte de `resize` seria reinscrito a cada re-renderização.
+export interface LatestWrite {
+  current: (data: string) => void;
+}
+
+// O escritor estável da limpeza: recebe o ref e chama SEMPRE a função mais recente dele. Assim o
+// ouvinte é instalado uma vez e ainda assim escreve pela `write` do render atual.
+export const alwaysLatest = (ref: LatestWrite): ((data: string) => void) =>
+  (data: string) => { ref.current(data); };
+
 // O efeito de tela dentro do app: cada resize limpa pela `write` do próprio stdout do Ink (que
-// zera a contabilidade de quadro e repinta), e o desmonte remove o ouvinte.
+// zera a contabilidade de quadro e repinta), e o desmonte remove o ouvinte. A `write` vive num ref,
+// então `stdout` e `interactive` são as únicas dependências reais do efeito.
 function useResizeClear(interactive: boolean): void {
   const { stdout, write } = useStdout();
-  useEffect(() => installResizeClear({ stdout, interactive, write }), [stdout, interactive, write]);
+  const writeRef = useRef(write);
+  writeRef.current = write;
+  useEffect(
+    () => installResizeClear({ stdout, interactive, write: alwaysLatest(writeRef) }),
+    [stdout, interactive],
+  );
 }
 
 // PT-BR labels for the estados vivos, including the two derived states registered as deviations

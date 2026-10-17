@@ -13,7 +13,8 @@ import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
 import { noopObserver, type OpsEvent, type Observer } from "../src/core/observability.js";
 import type { ContinuationPlan, FeedbackItem } from "../src/core/feedback.js";
-import { DECLARATION, populateProfile, runtimeOptions } from "./support/runtime-profile.js";
+import { DECLARATION, populateProfile, runtimeOptions, runtimeOptionsRoot } from "./support/runtime-profile.js";
+import { SHARED_MISE_DIR } from "../src/runtime/docker-invocation.js";
 
 const GPT = "github-copilot/gpt-6-luna";
 const TOKEN = "ghp_fixture_token_value_0123";
@@ -475,9 +476,12 @@ test("the runner creates the profile's persistent toolchain before the container
   await runnerFor(f, boundary).run(newContext());
   const run = runs[0]!;
   // Created as the invoking user (Docker would create a missing bind target as root) and mounted by the
-  // boundary: the profile's package tree and the mise data directory, siblings under the profile dir.
+  // boundary: the profile's package tree and the mise data dir — the second one SHARED by every profile,
+  // so it is not under the profile's directory (spec #74).
   for (const dir of [run.npmDir, run.miseDir]) assert.equal((await stat(dir)).isDirectory(), true, dir);
-  assert.equal(dirname(run.npmDir), dirname(run.miseDir), "both live under the profile's toolchain directory");
+  assert.equal(run.npmDir, join(runtimeOptionsRoot, "personal", "npm"), "pacotes por perfil");
+  assert.equal(run.miseDir, join(runtimeOptionsRoot, SHARED_MISE_DIR), "dados do mise compartilhados");
+  assert.notEqual(dirname(run.miseDir), dirname(run.npmDir), "o mise não vive dentro do diretório do perfil");
   assert.deepEqual(run.requiredPackages, DECLARATION.required.packages);
   assert.deepEqual(run.requiredTools, DECLARATION.required.tools);
 });

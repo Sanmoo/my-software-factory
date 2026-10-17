@@ -7,7 +7,7 @@ import { checkInstance, type CheckOptions } from "../src/cli/check.js";
 import type { AdmissionDeps } from "../src/core/admission.js";
 import { git } from "../src/runtime/docker-area.js";
 import { populateProfile } from "./support/runtime-profile.js";
-import { PROFILE_NPM_STAMP } from "../src/runtime/docker-invocation.js";
+import { PROFILE_NPM_STAMP, SHARED_MISE_DIR } from "../src/runtime/docker-invocation.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { ProjectConfig } from "../src/config/types.js";
 import { projectEligibility } from "../src/config/project-eligibility.js";
@@ -176,10 +176,12 @@ test("the check reports the converged tree, the installed tools and the declared
   const toolchainsDir = join(dir, "toolchains");
   const miseConfig = join(dir, "mise", "config.toml");
   await mkdir(join(toolchainsDir, "personal", "npm"), { recursive: true });
-  await mkdir(join(toolchainsDir, "personal", "mise", "shims"), { recursive: true });
+  // O diretório de dados do mise é COMPARTILHADO pelos perfis (spec #74): vive na raiz das toolchains,
+  // não dentro do diretório do perfil.
+  await mkdir(join(toolchainsDir, SHARED_MISE_DIR, "shims"), { recursive: true });
   await writeFile(join(toolchainsDir, "personal", "npm", PROFILE_NPM_STAMP), "a1b2c3d4e5f6a7b8\n");
-  await writeFile(join(toolchainsDir, "personal", "mise", "shims", "rtk"), "#!/bin/sh\n");
-  await writeFile(join(toolchainsDir, "personal", "mise", "shims", "node"), "#!/bin/sh\n");
+  await writeFile(join(toolchainsDir, SHARED_MISE_DIR, "shims", "rtk"), "#!/bin/sh\n");
+  await writeFile(join(toolchainsDir, SHARED_MISE_DIR, "shims", "node"), "#!/bin/sh\n");
   await mkdir(dirname(miseConfig), { recursive: true });
   await writeFile(miseConfig, '[tools]\nrtk = "latest"\n');
   const lines = await check({

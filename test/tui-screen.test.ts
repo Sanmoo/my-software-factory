@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { FULL_CLEAR, installResizeClear, type ResizeWritable } from "../src/cli/tui.js";
+import { FULL_CLEAR, alwaysLatest, installResizeClear, type LatestWrite, type ResizeWritable } from "../src/cli/tui.js";
 
 interface FakeStdout {
   stream: ResizeWritable;
@@ -66,4 +66,27 @@ test("o write injetado leva a limpeza (o caminho do Ink, que também repinta o q
   assert.deepEqual(viaWrite, [FULL_CLEAR]);
   // Com write injetado, a costura não escreve direto no stream.
   assert.deepEqual(fake.written, []);
+});
+
+// O ouvinte de resize é instalado UMA vez por mount: a `write` do Ink vai num ref e o efeito depende
+// só dela, então o escritor que a costura recebe é estável e chama sempre a versão mais recente.
+test("o escritor da limpeza é estável e chama sempre a write mais recente", () => {
+  const primeiro: string[] = [];
+  const segundo: string[] = [];
+  const ref: LatestWrite = { current: (data) => { primeiro.push(data); } };
+  const write = alwaysLatest(ref);
+  // A mesma função instalada no ouvinte, com a `write` trocada por outra (o que o Ink pode fazer a
+  // cada render): o resize seguinte tem de escrever pela nova.
+  ref.current = (data) => { segundo.push(data); };
+  write(FULL_CLEAR);
+  assert.deepEqual(primeiro, [], "a função antiga não é mais chamada");
+  assert.deepEqual(segundo, [FULL_CLEAR]);
+  // E a costura continua instalando um ouvinte só com esse escritor.
+  const fake = fakeStdout();
+  const dispose = installResizeClear({ stdout: fake.stream, interactive: true, write });
+  assert.equal(fake.listenerCount(), 1);
+  fake.resize();
+  assert.deepEqual([...segundo], [FULL_CLEAR, FULL_CLEAR]);
+  dispose();
+  assert.equal(fake.listenerCount(), 0);
 });

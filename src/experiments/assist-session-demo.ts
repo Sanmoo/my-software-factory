@@ -9,6 +9,7 @@ import {
   assistContainerName, assistExecCommand, assistExitRecordPath, parseAssistExecExitRecord, runtimeImageDirOf,
 } from "../runtime/assist-exec.js";
 import { describePlan, planSnapshot, writeSnapshot } from "../runtime/profile-snapshot.js";
+import { profileToolchain } from "../runtime/docker-invocation.js";
 import { herdrBoundary } from "../runtime/herdr.js";
 import { assistPrompt } from "../core/assist-prompts.js";
 import { recognizeAssistResult } from "../core/assist-result.js";
@@ -47,6 +48,9 @@ const cloneDir = join(demoDir, "clone");
 const sessionsDir = join(demoDir, "sessions");
 const execStateDir = join(demoDir, "state");
 const profileDir = join(demoDir, "profile");
+// O mesmo contrato de ADR 0004 do runtime: a árvore de pacotes do Pi é por perfil e o diretório de
+// dados do mise é compartilhado (spec #74).
+const toolchain = profileToolchain(join(demoDir, "toolchains"), "docker-default");
 const containerName = assistContainerName("demo", new Date().toISOString());
 
 const execFileP = (command: string, args: readonly string[], timeoutMs = 120_000): Promise<string> =>
@@ -129,7 +133,8 @@ async function main(): Promise<void> {
   if (process.env.HERDR_ENV !== "1") {
     throw new Error("a demonstração roda dentro de uma pane do Herdr (HERDR_ENV=1); nunca é parte de npm test");
   }
-  for (const dir of [demoDir, join(fixtureDir, "src"), cloneDir, sessionsDir, execStateDir, profileDir]) {
+  for (const dir of [demoDir, join(fixtureDir, "src"), cloneDir, sessionsDir, execStateDir, profileDir,
+    toolchain.npm, toolchain.mise]) {
     await mkdir(dir, { recursive: true });
   }
   await writeFile(join(fixtureDir, "README.md"), "Fixture descartável da demonstração da Assistência (#54).\n");
@@ -169,7 +174,7 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     cloneHostDir: cloneDir, sessionsHostDir: sessionsDir, stateHostDir: execStateDir,
     snapshotHostDir: profileDir, runtimeHostDir: runtimeImageDirOf(),
-    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    npmHostDir: toolchain.npm, miseHostDir: toolchain.mise,
     requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     // The demo's user turn names the scan token, so the model's answer is findable in the
     // session files the demonstration scans; without it the marker check can never pass.
@@ -216,7 +221,7 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     cloneHostDir: cloneDir, sessionsHostDir: sessionsDir, stateHostDir: execStateDir,
     snapshotHostDir: profileDir, runtimeHostDir: runtimeImageDirOf(),
-    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    npmHostDir: toolchain.npm, miseHostDir: toolchain.mise,
     requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     resume: true,
     prompt: `continuação de demonstração: responda mencionando o token ${resumeToken}`,

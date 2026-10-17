@@ -44,7 +44,7 @@ const commandOf = (extra: Partial<Parameters<typeof assistExecCommand>[0]> = {})
   snapshotHostDir: "/tmp/msf/state/assist/profile",
   runtimeHostDir: "/msf-repo/src/runtime/docker-image",
   npmHostDir: "/home/op/.msf/toolchains/personal/npm",
-  miseHostDir: "/home/op/.msf/toolchains/personal/mise",
+  miseHostDir: "/home/op/.msf/toolchains/mise",
   requiredPackages: ["npm:pi-subagents"],
   requiredTools: ["rtk"],
   prompt: "apoiar a triagem da issue #7",
@@ -64,7 +64,7 @@ test("assistExecCommand reproduces the validated recipe: pi inside the container
   assert.match(command, /-v \/tmp\/msf\/state\/assist\/state:\/msf-state\b/);
   assert.match(command, /-v \/msf-repo\/src\/runtime\/docker-image:\/msf-runtime:ro\b/);
   assert.match(command, /-v \/home\/op\/\.msf\/toolchains\/personal\/npm:\/home\/agent\/\.pi\/agent\/npm\b(?!:)/);
-  assert.match(command, /-v \/home\/op\/\.msf\/toolchains\/personal\/mise:\/home\/agent\/\.local\/share\/mise\b(?!:)/);
+  assert.match(command, /-v \/home\/op\/\.msf\/toolchains\/mise:\/home\/agent\/\.local\/share\/mise\b(?!:)/);
   // The wrapper traps INT so a Ctrl+C of the pane group still lets the container write the
   // exit record (the quoting is the one the proof validated, on the pane's shell).
   assert.match(command, /trap .*INT;/);

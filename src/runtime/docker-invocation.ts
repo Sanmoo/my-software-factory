@@ -50,32 +50,43 @@ export function sandcastleRequest(input: {
 export const SANDBOX_PROFILE_DIR = "/msf-profile";
 export const SANDBOX_RUNTIME_DIR = "/msf-runtime";
 export const SANDBOX_SESSIONS_DIR = "/home/agent/.pi/agent/sessions";
-// The converged toolchain of the profile, persistent across invocations (ADR 0004): the Pi package
-// tree installed from the operator's lock, and the mise data dir (installs, cache and state).
+// The converged toolchain, persistent across invocations (ADR 0004): the Pi package tree installed from
+// the operator's lock (per profile) and the mise data dir — installs, downloads, cache and state — which
+// is SHARED by every profile of the `--home` (spec #74).
 export const SANDBOX_NPM_DIR = "/home/agent/.pi/agent/npm";
 export const SANDBOX_MISE_DATA_DIR = "/home/agent/.local/share/mise";
 // The operator's mise declaration rides the read-only profile snapshot: the image reads it from
 // <snapshot>/mise (MISE_CONFIG_DIR), so nothing of the host is mounted for it.
 export const PROFILE_NPM_STAMP = ".msf-stamp";
 
-// Where the persistent toolchain of one runtime profile lives on the host: under the factory's `--home`,
-// keyed by the profile name and shared by every instance and job that names that profile. The container
-// mounts these as binds (never a named volume: a fresh named volume is root-owned, ADR 0004).
+// The directory name of the shared mise data dir under the toolchains root.
+export const SHARED_MISE_DIR = "mise";
+
+// Where the persistent toolchain lives on the host, under the factory's `--home` (ADR 0004, spec #74).
+// It has two lifetimes, deliberately:
+// - the Pi package tree is PER PROFILE (`<toolchains>/<perfil>/npm`), keyed by the profile name and
+//   shared by every instance and job that names that profile: profiles declare different packages;
+// - the mise data dir (installs, downloads, cache and state) is SHARED by all profiles
+//   (`<toolchains>/mise`), one dir for the whole `--home`: the tools converge once for every profile
+//   that declares them, and the same flock serializes the convergence of all of them.
+// The container mounts these as binds (never a named volume: a fresh named volume is root-owned).
 export interface ProfileToolchain {
+  // The profile's own directory: the package tree lives here and nowhere else.
   base: string;
   npm: string;
+  // Shared by every profile of this `--home`; never under `base`.
   mise: string;
 }
 
 export function profileToolchain(toolchainsDir: string, profile: string): ProfileToolchain {
   const base = join(toolchainsDir, encodeURIComponent(profile));
-  return { base, npm: join(base, "npm"), mise: join(base, "mise") };
+  return { base, npm: join(base, "npm"), mise: join(toolchainsDir, SHARED_MISE_DIR) };
 }
 
 // What the container mounts (ADR 0002, ADR 0004): the profile snapshot and the image scripts read-only,
-// the Pi session read-write, and the profile's persistent toolchain (package tree and mise data dir)
-// read-write. The work area is the cwd Sandcastle bind-mounts. The operator's profile directory, the
-// roots its links lead to, and anything installed on the host are not mounted.
+// the Pi session read-write, and the persistent toolchain read-write — the profile's package tree and the
+// mise data dir shared by every profile. The work area is the cwd Sandcastle bind-mounts. The operator's
+// profile directory, the roots its links lead to, and anything installed on the host are not mounted.
 export function sandboxMounts(
   input: { snapshotDir: string; sessionsDir: string; npmDir: string; miseDir: string },
   imageDir: string,
@@ -89,14 +100,23 @@ export function sandboxMounts(
   ];
 }
 
+// The ordered preparation steps of one profile inside the container, from the read-only snapshot to the
+// confirmed toolchain. ONE builder, because the autonomous runner appends nothing and the assisted exec
+// appends `pi`: a renamed script or a changed argument order has to be edited here only, and both public
+// commands keep composing over the same steps (they chain them with `&&`).
+export function profilePreparationSteps(input: { requiredPackages: readonly string[]; requiredTools: readonly string[] }): string[] {
+  return [
+    `sh ${SANDBOX_RUNTIME_DIR}/prepare-profile.sh ${SANDBOX_PROFILE_DIR}`,
+    // The declaration is read from the read-only snapshot itself (<snapshot>/mise as MISE_CONFIG_DIR).
+    ["sh", `${SANDBOX_RUNTIME_DIR}/converge-profile.sh`, SANDBOX_PROFILE_DIR, ...input.requiredTools.map(shellQuote)].join(" "),
+    ["sh", `${SANDBOX_RUNTIME_DIR}/check-profile.sh`, ...input.requiredPackages.map(shellQuote)].join(" "),
+  ];
+}
+
 // One command, because Sandcastle runs the hooks of a sandbox concurrently: the snapshot is copied into
 // the writable Pi directory first, then the toolchain converges once (Pi packages from the lock, mise
 // tools from the operator's declaration) and the required packages and tools are confirmed. Every step
 // is strict: a failure stops the invocation with its reason before the agent receives the prompt.
 export function profileSetupCommand(input: { requiredPackages: readonly string[]; requiredTools: readonly string[] }): string {
-  const prepare = `sh ${SANDBOX_RUNTIME_DIR}/prepare-profile.sh ${SANDBOX_PROFILE_DIR}`;
-  // The declaration is read from the read-only snapshot itself (<snapshot>/mise as MISE_CONFIG_DIR).
-  const converge = ["sh", `${SANDBOX_RUNTIME_DIR}/converge-profile.sh`, SANDBOX_PROFILE_DIR, ...input.requiredTools.map(shellQuote)].join(" ");
-  const check = ["sh", `${SANDBOX_RUNTIME_DIR}/check-profile.sh`, ...input.requiredPackages.map(shellQuote)].join(" ");
-  return `${prepare} && ${converge} && ${check}`;
+  return profilePreparationSteps(input).join(" && ");
 }

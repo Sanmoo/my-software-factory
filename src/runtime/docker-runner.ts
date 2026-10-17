@@ -51,7 +51,8 @@ export interface SandboxRun {
   requiredPackages: readonly string[];
   requiredTools: readonly string[];
   // The profile's persistent toolchain (ADR 0004), created here as the invoking user and bind-mounted by
-  // the boundary: the Pi package tree converged from the operator's lock and the mise data directory.
+  // the boundary: the Pi package tree converged from the operator's lock (per profile) and the mise data
+  // directory (one for every profile of the `--home`).
   npmDir: string;
   miseDir: string;
   model: string; // implementer model: the main agent of the invocation
@@ -92,8 +93,9 @@ export interface DockerRunnerOptions {
   runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
   allowedRoots: Readonly<Record<string, readonly string[]>>;
   stateDir: string;
-  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`. The runner
-  // creates the profile's directories before the container starts, so a bind never lands root-owned.
+  // Root of the persistent toolchains (ADR 0004), under the factory `--home`: the per-profile Pi package
+  // trees and the mise data dir shared by every profile. The runner creates them before the container
+  // starts, so a bind never lands root-owned.
   toolchainsDir: string;
   image: string;
   // Local clone each project's job area is cloned from (the operator's checkout).
@@ -206,6 +208,7 @@ class DockerRunner implements Runner {
       });
       // The toolchain directories exist before the container starts, owned by the invoking user: Docker
       // creates a missing bind target as root, and the convergence inside could not write to it (ADR 0004).
+      // The mise data dir is the shared one, so this is idempotent for every profile.
       await mkdir(toolchain.npm, { recursive: true });
       await mkdir(toolchain.mise, { recursive: true });
       const outcome = await this.options.boundary.run({

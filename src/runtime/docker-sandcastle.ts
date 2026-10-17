@@ -107,7 +107,8 @@ export function sandcastleBoundary(): SandboxBoundary {
           sandbox: docker({
             imageName: input.image,
             env: { GH_TOKEN: input.token },
-            mounts: sandboxMounts(input, IMAGE_DIR),          }),
+            mounts: sandboxMounts(input, IMAGE_DIR),
+          }),
           cwd: input.cwd,
           branchStrategy: { type: "head" },
           prompt: input.request.prompt,
