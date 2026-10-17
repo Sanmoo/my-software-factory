@@ -145,30 +145,40 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     };
 
     const sweep = runOnce(deps);
-    await launched2.promise; // slots 1 and 2 taken, in age order
+    try {
+      await launched2.promise; // slots 1 and 2 taken, in age order
 
-    // The gate frees worker 2: it ends, is collected at the act, and the
-    // freed slot replenishes with #3 — all while worker 1 is still held.
-    openGate2.resolve();
-    await launched3.promise;
+      // The gate frees worker 2: it ends, is collected at the act, and the
+      // freed slot replenishes with #3 — all while worker 1 is still held.
+      openGate2.resolve();
+      await launched3.promise;
 
-    assert.deepEqual(
-      runtime.launched.map((r) => r.ref.number),
-      [1, 2, 3],
-      "claims follow the age order; #3 is launched without waiting for the slowest",
-    );
+      assert.deepEqual(
+        runtime.launched.map((r) => r.ref.number),
+        [1, 2, 3],
+        "claims follow the age order; #3 is launched without waiting for the slowest",
+      );
 
-    // Same cycle, no barrier: #2 already has its PR confirmed open and #3 is
-    // already claimed while worker 1 is still in flight.
-    assert.ok((await labelsOf(tracker, 3)).includes("agent-claimed"), "#3 claimed in the same cycle");
-    const feedback2 = await tracker.readPrFeedback({ repo: REPO, number: 2 });
-    assert.ok(feedback2.known && feedback2.value.pr !== null, "#2 collected: PR open");
+      // Same cycle, no barrier: #2 already has its PR confirmed open and #3
+      // is already claimed while worker 1 is still in flight.
+      assert.ok(
+        (await labelsOf(tracker, 3)).includes("agent-claimed"),
+        "#3 claimed in the same cycle",
+      );
+      const feedback2 = await tracker.readPrFeedback({ repo: REPO, number: 2 });
+      assert.ok(feedback2.known && feedback2.value.pr !== null, "#2 collected: PR open");
 
-    // Releasing the slow work lets --once finish with everything collected.
-    releaseSlow.resolve();
-    const result = await sweep;
-    assert.equal(result.collected.length, 3);
-    assert.ok(result.collected.every((c) => c.prConfirmed), "every outcome confirmed its PR");
+      // Releasing the slow work lets --once finish with everything collected.
+      releaseSlow.resolve();
+      const result = await sweep;
+      assert.equal(result.collected.length, 3);
+      assert.ok(result.collected.every((c) => c.prConfirmed), "every outcome confirmed its PR");
+    } finally {
+      // Every hold has a release path — a mid-test failure never leaves a
+      // worker parked (the hold mechanism cannot hang by construction).
+      openGate2.resolve();
+      releaseSlow.resolve();
+    }
   });
 
   test("a long work never blocks the other slots", async () => {
@@ -202,21 +212,27 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     };
 
     const sweep = runOnce(deps);
-    await launchedLong.promise;
+    try {
+      await launchedLong.promise;
 
-    // While the long worker is parked, the other slot works through #2 and #3.
-    await launched3.promise;
-    await waitUntil("#3 collected", async () => {
-      const feedback = await tracker.readPrFeedback({ repo: REPO, number: 3 });
-      return feedback.known && feedback.value.pr !== null;
-    });
+      // While the long worker is parked, the other slot works through #2 and #3.
+      await launched3.promise;
+      await waitUntil("#3 collected", async () => {
+        const feedback = await tracker.readPrFeedback({ repo: REPO, number: 3 });
+        return feedback.known && feedback.value.pr !== null;
+      });
 
-    // #1 is still in flight (not yet collected) while #2 and #3 are done —
-    // the long work blocked nothing.
-    assert.ok(!longCollected, "the long work is still in flight");
-    releaseLong.resolve();
-    const result = await sweep;
-    assert.equal(result.collected.length, 3);
+      // #1 is still in flight (not yet collected) while #2 and #3 are done —
+      // the long work blocked nothing.
+      assert.ok(!longCollected, "the long work is still in flight");
+      releaseLong.resolve();
+      const result = await sweep;
+      assert.equal(result.collected.length, 3);
+    } finally {
+      // Every hold has a release path — a mid-test failure never leaves a
+      // worker parked (the hold mechanism cannot hang by construction).
+      releaseLong.resolve();
+    }
   });
 
   // ---- checklist 2: blockers gate the pool ----
@@ -260,33 +276,38 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     };
 
     const firstSweep = runOnce(deps);
-    await launchedWorker.promise;
+    try {
+      await launchedWorker.promise;
 
-    // The swap happened before the launch: ready is gone, claimed is on, the
-    // worker account is assigned — and the worker is still running.
-    const labels = await labelsOf(tracker, 1);
-    assert.ok(!labels.includes("ready-for-agent"), "ready label swapped away before the launch");
-    assert.ok(labels.includes("agent-claimed"), "claimed label on before the launch");
-    const issue = await tracker.readIssue({ repo: REPO, number: 1 });
-    assert.ok(issue.known && issue.value.assignees.includes("bot-do-samuca"));
+      // The swap happened before the launch: ready is gone, claimed is on, the
+      // worker account is assigned — and the worker is still running.
+      const labels = await labelsOf(tracker, 1);
+      assert.ok(!labels.includes("ready-for-agent"), "ready label swapped away before the launch");
+      assert.ok(labels.includes("agent-claimed"), "claimed label on before the launch");
+      const issue = await tracker.readIssue({ repo: REPO, number: 1 });
+      assert.ok(issue.known && issue.value.assignees.includes("bot-do-samuca"));
 
-    // A second concurrent sweep derives the same tracker: the claimed work is
-    // not in its pool, and it launches nothing.
-    const secondTracker = tracker;
-    const secondRuntime = new FakeWorkerRuntime({ tracker: secondTracker, outcomes: ["pr-open"] });
-    const secondSweep = await runOnce({
-      config,
-      tracker: secondTracker,
-      runtime: secondRuntime,
-      git: new FakeGitWork(),
-      workspace: layout,
-      log: () => {},
-    });
-    assert.equal(secondSweep.pool.length, 0, "the claimed work is out of the second sweep's pool");
-    assert.equal(secondRuntime.launched.length, 0, "the second sweep claims nothing");
+      // A second concurrent sweep derives the same tracker: the claimed work
+      // is not in its pool, and it launches nothing.
+      const secondRuntime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+      const secondSweep = await runOnce({
+        config,
+        tracker,
+        runtime: secondRuntime,
+        git: new FakeGitWork(),
+        workspace: layout,
+        log: () => {},
+      });
+      assert.equal(secondSweep.pool.length, 0, "the claimed work is out of the second sweep's pool");
+      assert.equal(secondRuntime.launched.length, 0, "the second sweep claims nothing");
 
-    releaseWorker.resolve();
-    await firstSweep;
+      releaseWorker.resolve();
+      await firstSweep;
+    } finally {
+      // Every hold has a release path — a mid-test failure never leaves a
+      // worker parked (the hold mechanism cannot hang by construction).
+      releaseWorker.resolve();
+    }
   });
 
   // ---- checklist 4: --once waits for every launched worker ----
