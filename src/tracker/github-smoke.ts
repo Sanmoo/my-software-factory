@@ -9,7 +9,7 @@ import {
   readGhToken,
   type CommandRunner,
 } from "./github-adapter.js";
-import { runContractChecks, type ContractHarness, type ContractIssue } from "./contract.js";
+import { type ContractHarness, type ContractIssue } from "./contract.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
 import { derivePool } from "../state/derive.js";
 import { DEFAULT_LABELS } from "../config.js";
@@ -17,20 +17,27 @@ import { DEFAULT_LABELS } from "../config.js";
 /**
  * The real smoke of the GitHub adapter (ticket 16), in the empirical-proof
  * pattern of wayfinder ticket 09: against a REAL repo (default
- * `Sanmoo/my-tasks`, the config's example repo) with the bot account, every
- * operation is executed, verified and reverted — nothing stays behind
- * (comments deleted, labels and assignees removed, blockers unlinked, PRs
- * closed, branches deleted, issues closed).
+ * `Sanmoo/my-tasks`, the config's example repo) with the bot account, ONE
+ * issue's full cycle is executed, verified and reverted — nothing stays
+ * behind (comments deleted, labels and assignees removed, blockers unlinked,
+ * PR closed, branch deleted, issue closed).
  *
- * Credential-gated: without the bot token in the gh keyring the smoke is
- * SKIPPED with the reason — never faked. Run explicitly:
+ * The port contract suite against the real adapter runs OFFLINE in `npm test`
+ * over the in-memory REST sim (`github-sim.ts`); the real repo cannot host it
+ * within the shared-IP REST budget (60 req/h) — the full cycle alone is its
+ * empirical proof on the real thing.
  *
- *   npm run smoke:github
- *
- * Overrides: MSF_SMOKE_REPO, MSF_SMOKE_ACCOUNT.
+ * Credential- AND budget-gated: without the bot token in the gh keyring the
+ * smoke is SKIPPED with the reason — never faked; with the token but a REST
+ * budget that cannot host the cycle, also SKIPPED with the numbers. Run
+ * explicitly: `npm run smoke:github`. Overrides: MSF_SMOKE_REPO,
+ * MSF_SMOKE_ACCOUNT.
  */
 
 const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanup\n\n${AGENT_MARKER}`;
+
+/** The full cycle is planned to stay under this many REST calls. */
+const PLANNED_REST_CALLS = 55;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,6 +59,8 @@ interface Journal {
 class RealGithubHarness implements ContractHarness {
   readonly name = "real (gh CLI)";
   readonly journal: Journal = { issues: [], prs: [], branches: new Set(), comments: [], blockers: [], repoLabelsCreated: [] };
+  /** Internal issue ids (the dependencies API speaks ids, not numbers). */
+  private readonly issueIds = new Map<number, number>();
   private readonly runner: CommandRunner;
   private readonly token: string;
 
@@ -75,159 +84,31 @@ class RealGithubHarness implements ContractHarness {
     // the real repo is shared across checks; cleanup is the only reversion
   }
 
-  // ---- seeding over gh ----
+  // ---- the REST plumbing (gh api, bodies over stdin, never argv) ----
 
-  async createIssue(input: { title: string; labels?: string[]; closed?: boolean }): Promise<ContractIssue> {
-    for (const label of input.labels ?? []) {
-      await this.ensureRepoLabel(label);
-    }
-    const labelArgs = (input.labels ?? []).length > 0 ? ["--label", (input.labels ?? []).join(",")] : [];
-    const { stdout } = await this.gh([
-      "issue", "create", "-R", this.repo,
-      "--title", input.title,
-      "--body", SMOKE_BODY,
-      ...labelArgs,
-    ]);
-    const ref = { repo: this.repo, number: this.parseNumber(stdout, /\/issues\/(\d+)/, "gh issue create") };
-    this.journal.issues.push(ref.number);
-    // REST: no search-index involvement, cheap on the GraphQL budget
-    const { stdout: createdAt } = await this.gh([
-      "api", `repos/${this.repo}/issues/${ref.number}`, "--jq", ".created_at",
-    ]);
-    if (input.closed) {
-      await this.gh(["issue", "close", String(ref.number), "-R", this.repo, "--reason", "completed"]);
-    }
-    // GitHub's search index lags a few seconds behind creation AND closing:
-    // the label-filtered listing (the candidates) must reflect the issue's
-    // state before any check reads it. Poll the listing until it does.
-    const firstLabel = (input.labels ?? [])[0];
-    if (firstLabel !== undefined) {
-      if (input.closed) {
-        await this.settleOut(ref, firstLabel);
-      } else {
-        await this.settleIn(ref, firstLabel);
-      }
-    }
-    return createdAt === "" ? { ref } : { ref, createdAt };
+  private async rest(
+    path: string,
+    init: { method?: "POST" | "PATCH" | "DELETE" | "PUT"; input?: unknown; tolerate?: (stderr: string) => boolean } = {},
+  ): Promise<unknown> {
+    const args = ["api", ...(init.method ? ["-X", init.method] : []), path];
+    const { stdout } = await this.gh(
+      init.input === undefined ? args : [...args, "--input", "-"],
+      {
+        ...(init.input === undefined ? {} : { input: JSON.stringify(init.input) }),
+        ...(init.tolerate ? { tolerate: init.tolerate } : {}),
+      },
+    );
+    return stdout.trim() === "" ? null : JSON.parse(stdout);
   }
 
-  private async settleIn(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const numbers = await this.listingNumbers(label);
-      if (numbers.includes(ref.number)) return;
-      if (Date.now() > deadline) {
-        throw new Error(`issue ${this.repo}#${ref.number} did not appear in the "${label}" listing within 30s (search index lag)`);
-      }
-      await sleep(2_000);
-    }
-  }
-
-  private async settleOut(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const numbers = await this.listingNumbers(label);
-      if (!numbers.includes(ref.number)) return;
-      if (Date.now() > deadline) {
-        throw new Error(`issue ${this.repo}#${ref.number} is closed but still appears in the "${label}" open listing after 30s (search index lag)`);
-      }
-      await sleep(2_000);
-    }
-  }
-
-  private async listingNumbers(label: string): Promise<number[]> {
-    const { stdout } = await this.gh([
-      "issue", "list", "-R", this.repo, "--state", "open", "--label", label, "--json", "number",
-    ]);
-    return (JSON.parse(stdout) as { number: number }[]).map((item) => item.number);
-  }
-
-  async missingRef(): Promise<IssueRef> {
-    // the REST listing returns issues only (never PRs), but issues and PRs
-    // share the numbering: newest issue number + 1_000_000 is safely missing
-    const { stdout } = await this.gh([
-      "api", `repos/${this.repo}/issues?state=all&sort=created&direction=desc&per_page=1`, "--jq", ".[0].number",
-    ]);
-    return { repo: this.repo, number: Number(stdout.trim()) + 1_000_000 };
-  }
-
-  async addBlocker(ref: IssueRef, blocker: IssueRef): Promise<void> {
-    await this.gh(["issue", "edit", String(ref.number), "-R", this.repo, "--add-blocked-by", String(blocker.number)]);
-    this.journal.blockers.push({ issueNumber: ref.number, blockerNumber: blocker.number });
-  }
-
-  async addComment(ref: IssueRef, _author: string, body: string): Promise<void> {
-    const { stdout } = await this.gh(["issue", "comment", String(ref.number), "-R", this.repo, "--body", body]);
-    const commentId = this.parseNumber(stdout, /#issuecomment-(\d+)/, "gh issue comment");
-    this.journal.comments.push({ containerNumber: ref.number, commentId: String(commentId) });
-  }
-
-  async ensureBranch(branch: string, baseBranch = "main"): Promise<void> {
-    const existed = await this.branchExists(branch);
-    if (!existed) {
-      const { stdout: sha } = await this.gh([
-        "api", `repos/${this.repo}/git/ref/heads/${baseBranch}`, "--jq", ".object.sha",
-      ]);
-      await this.gh(
-        ["api", "-X", "POST", `repos/${this.repo}/git/refs`, "-f", `ref=refs/heads/${branch}`, "-f", `sha=${sha.trim()}`],
-        { tolerate: (stderr) => stderr.includes("Reference already exists") },
-      );
-      this.journal.branches.add(branch);
-    }
-    // one commit beyond the base, so a PR can exist
-    const path = `msf-smoke/${Date.now()}-${Math.floor(Math.random() * 10_000)}.txt`;
-    await this.gh([
-      "api", "-X", "PUT", `repos/${this.repo}/contents/${path}`,
-      "-f", "message=msf smoke probe commit",
-      "-f", `content=${Buffer.from("smoke").toString("base64")}`,
-      "-f", `branch=${branch}`,
-    ]);
-  }
-
-  async createPullRequest(
-    issue: IssueRef,
-    input?: { headBranch?: string; baseBranch?: string },
-  ): Promise<number> {
-    const headBranch = input?.headBranch ?? `agent-issue-${issue.number}`;
-    const baseBranch = input?.baseBranch ?? (await this.defaultBranch());
-    await this.ensureBranch(headBranch, baseBranch);
-    const { stdout } = await this.gh([
-      "pr", "create", "-R", this.repo,
-      "--head", headBranch, "--base", baseBranch,
-      "--title", `msf smoke: work #${issue.number}`,
-      "--body", `Closes #${issue.number}\n\n${SMOKE_BODY}`,
-    ]);
-    const prNumber = this.parseNumber(stdout, /\/pull\/(\d+)/, "gh pr create");
-    this.journal.prs.push(prNumber);
-    return prNumber;
-  }
-
-  async branchExists(branch: string): Promise<boolean> {
+  private async restOrNull(path: string): Promise<unknown | null> {
     try {
-      await this.gh(["api", `repos/${this.repo}/branches/${branch}`, "--jq", ".name"]);
-      // journal it: a branch the ADAPTER created (pushBranch) must be reverted too
-      this.journal.branches.add(branch);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async ensureRepoLabel(label: string): Promise<void> {
-    try {
-      await this.gh(["label", "create", label, "-R", this.repo]);
-      this.journal.repoLabelsCreated.push(label);
+      return await this.rest(path);
     } catch (error) {
       const stderr = (error as { stderr?: string }).stderr ?? String(error);
-      if (!stderr.includes("already exists")) throw error;
+      if (stderr.includes("Not Found") || stderr.includes("HTTP 404")) return null;
+      throw error;
     }
-  }
-
-  async defaultBranch(): Promise<string> {
-    const { stdout } = await this.gh([
-      "api", `repos/${this.repo}`, "--jq", ".default_branch",
-    ]);
-    return stdout.trim();
   }
 
   private async gh(
@@ -243,10 +124,167 @@ class RealGithubHarness implements ContractHarness {
     }
   }
 
-  private parseNumber(stdout: string, pattern: RegExp, what: string): number {
-    const match = stdout.match(pattern);
-    if (!match) throw new Error(`${what} did not return the expected URL: ${stdout.trim()}`);
-    return Number(match[1]);
+  // ---- seeding over REST ----
+
+  async createIssue(input: { title: string; labels?: string[]; closed?: boolean }): Promise<ContractIssue> {
+    for (const label of input.labels ?? []) {
+      await this.ensureRepoLabel(label);
+    }
+    const created = (await this.rest(`repos/${this.repo}/issues`, {
+      method: "POST",
+      input: { title: input.title, body: SMOKE_BODY, labels: input.labels ?? [] },
+    })) as { number: number; id: number; created_at: string };
+    const ref = { repo: this.repo, number: created.number };
+    this.journal.issues.push(ref.number);
+    this.issueIds.set(ref.number, created.id);
+    if (input.closed) {
+      await this.rest(`repos/${this.repo}/issues/${ref.number}`, {
+        method: "PATCH",
+        input: { state: "closed", state_reason: "completed" },
+      });
+    }
+    // a fresh issue (or its fresh label) can lag the label-filtered listing a
+    // few seconds: poll the listing until it reflects the issue's state
+    const firstLabel = (input.labels ?? [])[0];
+    if (firstLabel !== undefined) {
+      if (input.closed) {
+        await this.settleOut(ref, firstLabel);
+      } else {
+        await this.settleIn(ref, firstLabel);
+      }
+    }
+    return { ref, createdAt: created.created_at };
+  }
+
+  private async settleIn(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const numbers = await this.listingNumbers(label);
+      if (numbers.includes(ref.number)) return;
+      if (Date.now() > deadline) {
+        throw new Error(`issue ${this.repo}#${ref.number} did not appear in the "${label}" listing within 30s (listing lag)`);
+      }
+      await sleep(2_000);
+    }
+  }
+
+  private async settleOut(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const numbers = await this.listingNumbers(label);
+      if (!numbers.includes(ref.number)) return;
+      if (Date.now() > deadline) {
+        throw new Error(`issue ${this.repo}#${ref.number} is closed but still appears in the "${label}" open listing after 30s (listing lag)`);
+      }
+      await sleep(2_000);
+    }
+  }
+
+  private async listingNumbers(label: string): Promise<number[]> {
+    const { stdout } = await this.gh([
+      "issue", "list", "-R", this.repo, "--state", "open", "--label", label, "--json", "number",
+    ]);
+    return (JSON.parse(stdout) as { number: number }[]).map((item) => item.number);
+  }
+
+  async missingRef(): Promise<IssueRef> {
+    // the REST listing returns issues only (never PRs), but issues and PRs
+    // share the numbering: newest issue number + 1_000_000 is safely missing
+    const items = (await this.restOrNull(
+      `repos/${this.repo}/issues?state=all&sort=created&direction=desc&per_page=1`,
+    )) as { number: number }[] | null;
+    const max = items?.[0]?.number ?? 0;
+    return { repo: this.repo, number: max + 1_000_000 };
+  }
+
+  private async issueId(number: number): Promise<number> {
+    const known = this.issueIds.get(number);
+    if (known !== undefined) return known;
+    const issue = (await this.rest(`repos/${this.repo}/issues/${number}`)) as { id: number };
+    this.issueIds.set(number, issue.id);
+    return issue.id;
+  }
+
+  async addBlocker(ref: IssueRef, blocker: IssueRef): Promise<void> {
+    await this.rest(`repos/${this.repo}/issues/${ref.number}/dependencies/blocked_by`, {
+      method: "POST",
+      input: { issue_id: await this.issueId(blocker.number) },
+    });
+    this.journal.blockers.push({ issueNumber: ref.number, blockerNumber: blocker.number });
+  }
+
+  async addComment(ref: IssueRef, _author: string, body: string): Promise<void> {
+    const comment = (await this.rest(`repos/${this.repo}/issues/${ref.number}/comments`, {
+      method: "POST",
+      input: { body },
+    })) as { id: number };
+    this.journal.comments.push({ containerNumber: ref.number, commentId: String(comment.id) });
+  }
+
+  async ensureBranch(branch: string, baseBranch = "main"): Promise<void> {
+    const existed = await this.branchExists(branch);
+    if (!existed) {
+      const base = (await this.rest(`repos/${this.repo}/git/ref/heads/${baseBranch}`)) as { object: { sha: string } };
+      await this.rest(`repos/${this.repo}/git/refs`, {
+        method: "POST",
+        input: { ref: `refs/heads/${branch}`, sha: base.object.sha },
+        tolerate: (stderr) => stderr.includes("Reference already exists"),
+      });
+      this.journal.branches.add(branch);
+    }
+    // one commit beyond the base, so a PR can exist
+    const path = `msf-smoke/${Date.now()}-${Math.floor(Math.random() * 10_000)}.txt`;
+    await this.rest(`repos/${this.repo}/contents/${path}`, {
+      method: "PUT",
+      input: {
+        message: "msf smoke probe commit",
+        content: Buffer.from("smoke").toString("base64"),
+        branch,
+      },
+    });
+  }
+
+  async createPullRequest(
+    issue: IssueRef,
+    input?: { headBranch?: string; baseBranch?: string },
+  ): Promise<number> {
+    const headBranch = input?.headBranch ?? `agent-issue-${issue.number}`;
+    const baseBranch = input?.baseBranch ?? (await this.defaultBranch());
+    await this.ensureBranch(headBranch, baseBranch);
+    const pull = (await this.rest(`repos/${this.repo}/pulls`, {
+      method: "POST",
+      input: {
+        title: `msf smoke: work #${issue.number}`,
+        head: headBranch,
+        base: baseBranch,
+        body: `Closes #${issue.number}\n\n${SMOKE_BODY}`,
+      },
+    })) as { number: number };
+    this.journal.prs.push(pull.number);
+    return pull.number;
+  }
+
+  async branchExists(branch: string): Promise<boolean> {
+    const exists = (await this.restOrNull(`repos/${this.repo}/branches/${branch}`)) !== null;
+    if (exists) {
+      // journal it: a branch the ADAPTER created (pushBranch) must be reverted too
+      this.journal.branches.add(branch);
+    }
+    return exists;
+  }
+
+  private async ensureRepoLabel(label: string): Promise<void> {
+    await this.rest(`repos/${this.repo}/labels`, {
+      method: "POST",
+      input: { name: label },
+      tolerate: (stderr) => /already.?exists/i.test(stderr),
+    });
+    this.journal.repoLabelsCreated.push(label);
+  }
+
+  async defaultBranch(): Promise<string> {
+    const repo = (await this.rest(`repos/${this.repo}`)) as { default_branch: string };
+    return repo.default_branch;
   }
 
   // ---- the reversion: every artifact back out of the repo ----
@@ -258,9 +296,9 @@ class RealGithubHarness implements ContractHarness {
     // PRs: closed (GitHub offers no PR deletion)
     for (const pr of this.journal.prs) {
       try {
-        const { stdout } = await this.gh(["pr", "view", String(pr), "-R", this.repo, "--json", "state", "--jq", ".state"]);
-        if (stdout.trim() === "OPEN") {
-          await this.gh(["pr", "close", String(pr), "-R", this.repo]);
+        const pull = (await this.rest(`repos/${this.repo}/pulls/${pr}`)) as { state: string };
+        if (pull.state === "open") {
+          await this.rest(`repos/${this.repo}/pulls/${pr}`, { method: "PATCH", input: { state: "closed" } });
         }
       } catch (error) {
         failures.push(`pr #${pr}: ${(error as Error).message}`);
@@ -270,10 +308,10 @@ class RealGithubHarness implements ContractHarness {
     // branches: deleted
     for (const branch of this.journal.branches) {
       try {
-        await this.gh(
-          ["api", "-X", "DELETE", `repos/${this.repo}/git/refs/heads/${branch}`],
-          { tolerate: (stderr) => stderr.includes("does not exist") },
-        );
+        await this.rest(`repos/${this.repo}/git/refs/heads/${branch}`, {
+          method: "DELETE",
+          tolerate: (stderr) => stderr.includes("does not exist"),
+        });
       } catch (error) {
         failures.push(`branch ${branch}: ${(error as Error).message}`);
       }
@@ -282,35 +320,30 @@ class RealGithubHarness implements ContractHarness {
     // comments: every comment on our issues/PRs (ours from seeding AND from the port) deleted
     for (const container of containers) {
       try {
-        const { stdout } = await this.gh(["api", `repos/${this.repo}/issues/${container}/comments`, "--jq", ".[].id"]);
-        for (const id of stdout.split("\n").map((l) => l.trim()).filter((l) => l !== "")) {
-          await this.gh(["api", "-X", "DELETE", `repos/${this.repo}/issues/comments/${id}`]);
+        const comments = (await this.restOrNull(`repos/${this.repo}/issues/${container}/comments`)) as { id: number }[] | null;
+        for (const comment of comments ?? []) {
+          await this.rest(`repos/${this.repo}/issues/comments/${comment.id}`, { method: "DELETE" });
         }
       } catch (error) {
         failures.push(`comments of #${container}: ${(error as Error).message}`);
       }
     }
 
-    // issues: blockers unlinked, assignees and labels removed, then closed
+    // issues: blockers unlinked, then labels + assignees cleared and closed in ONE patch
     for (const issue of this.journal.issues) {
       try {
-        const { stdout: blockers } = await this.gh([
-          "issue", "view", String(issue), "-R", this.repo, "--json", "blockedBy", "--jq", ".blockedBy.nodes[].number",
-        ]);
-        for (const blocker of blockers.split("\n").map((l) => l.trim()).filter((l) => l !== "")) {
-          await this.gh(["issue", "edit", String(issue), "-R", this.repo, "--remove-blocked-by", blocker]);
+        const blockers = (await this.restOrNull(
+          `repos/${this.repo}/issues/${issue}/dependencies/blocked_by`,
+        )) as { id: number }[] | null;
+        for (const blocker of blockers ?? []) {
+          await this.rest(`repos/${this.repo}/issues/${issue}/dependencies/blocked_by/${blocker.id}`, {
+            method: "DELETE",
+          });
         }
-        await this.gh(["issue", "edit", String(issue), "-R", this.repo, "--remove-assignee", this.workerAccount]);
-        const { stdout: labels } = await this.gh([
-          "issue", "view", String(issue), "-R", this.repo, "--json", "labels", "--jq", ".labels[].name",
-        ]);
-        for (const label of labels.split("\n").map((l) => l.trim()).filter((l) => l !== "")) {
-          await this.gh(["issue", "edit", String(issue), "-R", this.repo, "--remove-label", label]);
-        }
-        const { stdout: state } = await this.gh(["issue", "view", String(issue), "-R", this.repo, "--json", "state", "--jq", ".state"]);
-        if (state.trim() === "OPEN") {
-          await this.gh(["issue", "close", String(issue), "-R", this.repo, "--reason", "not planned"]);
-        }
+        await this.rest(`repos/${this.repo}/issues/${issue}`, {
+          method: "PATCH",
+          input: { labels: [], assignees: [], state: "closed", state_reason: "not planned" },
+        });
       } catch (error) {
         failures.push(`issue #${issue}: ${(error as Error).message}`);
       }
@@ -319,7 +352,10 @@ class RealGithubHarness implements ContractHarness {
     // repo labels we created: deleted
     for (const label of [...new Set(this.journal.repoLabelsCreated)]) {
       try {
-        await this.gh(["label", "delete", label, "-R", this.repo, "--yes"]);
+        await this.rest(`repos/${this.repo}/labels/${label}`, {
+          method: "DELETE",
+          tolerate: (stderr) => stderr.includes("Not Found"),
+        });
       } catch (error) {
         failures.push(`repo label ${label}: ${(error as Error).message}`);
       }
@@ -327,34 +363,35 @@ class RealGithubHarness implements ContractHarness {
 
     // verification pass: nothing left behind
     for (const issue of this.journal.issues) {
-      const { stdout } = await this.gh([
-        "issue", "view", String(issue), "-R", this.repo,
-        "--json", "state,labels,assignees,comments",
-      ]);
-      const view = JSON.parse(stdout) as {
-        state: string;
-        labels: unknown[];
-        assignees: unknown[];
-        comments: unknown[];
-      };
-      if (view.state !== "CLOSED") failures.push(`issue #${issue} still open`);
-      if (view.comments.length !== 0) failures.push(`issue #${issue} still has comments`);
-      if (view.labels.length !== 0) failures.push(`issue #${issue} still has labels`);
-      if (view.assignees.length !== 0) failures.push(`issue #${issue} still has assignees`);
+      try {
+        const view = (await this.rest(`repos/${this.repo}/issues/${issue}`)) as {
+          state: string;
+          labels: unknown[];
+          assignees: unknown[];
+        };
+        if (view.state !== "closed") failures.push(`issue #${issue} still open`);
+        if (view.labels.length !== 0) failures.push(`issue #${issue} still has labels`);
+        if (view.assignees.length !== 0) failures.push(`issue #${issue} still has assignees`);
+        const comments = (await this.restOrNull(`repos/${this.repo}/issues/${issue}/comments`)) as unknown[] | null;
+        if ((comments ?? []).length !== 0) failures.push(`issue #${issue} still has comments`);
+      } catch (error) {
+        failures.push(`issue #${issue} verification: ${(error as Error).message}`);
+      }
     }
     for (const pr of this.journal.prs) {
-      const { stdout } = await this.gh(["pr", "view", String(pr), "-R", this.repo, "--json", "state", "--jq", ".state"]);
-      if (stdout.trim() !== "CLOSED") failures.push(`pr #${pr} still open`);
+      try {
+        const pull = (await this.rest(`repos/${this.repo}/pulls/${pr}`)) as { state: string };
+        if (pull.state !== "closed") failures.push(`pr #${pr} still open`);
+      } catch (error) {
+        failures.push(`pr #${pr} verification: ${(error as Error).message}`);
+      }
     }
     for (const branch of this.journal.branches) {
       if (await this.branchExists(branch)) failures.push(`branch ${branch} still exists`);
     }
     for (const label of [...new Set(this.journal.repoLabelsCreated)]) {
-      try {
-        await this.gh(["label", "view", label, "-R", this.repo]);
+      if ((await this.restOrNull(`repos/${this.repo}/labels/${label}`)) !== null) {
         failures.push(`repo label ${label} still exists`);
-      } catch {
-        // gone: good
       }
     }
 
@@ -368,6 +405,7 @@ class RealGithubHarness implements ContractHarness {
     this.journal.comments = [];
     this.journal.blockers = [];
     this.journal.repoLabelsCreated = [];
+    this.issueIds.clear();
   }
 }
 
@@ -496,14 +534,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  // the rate gate: GET /rate_limit is free; the cycle must fit the hour window
+  const budget = await restBudget(token);
+  if (budget.remaining < PLANNED_REST_CALLS) {
+    const minutes = Math.max(0, Math.round((budget.resetAt - Date.now()) / 60_000));
+    console.log(
+      `SKIPPED: REST budget cannot host the full cycle — ${budget.remaining}/${budget.limit} remaining, ` +
+        `the cycle is planned for ~${PLANNED_REST_CALLS} calls, window resets in ~${minutes} min. ` +
+        `Run again in the fresh window: npm run smoke:github`,
+    );
+    console.log("nothing was executed; nothing to revert");
+    return;
+  }
+  console.log(`budget gate: ${budget.remaining}/${budget.limit} REST calls remaining — the cycle plans ~${PLANNED_REST_CALLS}`);
+
   const clonesDir = mkdtempSync(join(tmpdir(), "msf-smoke-clones-"));
   const adapter = await createGitHubAdapter({ account, clonesDir });
   const harness = new RealGithubHarness(repo, account, DEFAULT_LABELS.claimed, adapter, token);
 
   try {
-    console.log("\n== the contract suite (the same the fake satisfies) ==");
-    await runContractChecks(harness);
-
     console.log("\n== full cycle: every operation executed, verified — reverted at the end ==");
     await fullCycle(harness, adapter);
     console.log("\n== reversion ==");
@@ -521,6 +570,17 @@ async function main(): Promise<void> {
   } finally {
     rmSync(clonesDir, { recursive: true, force: true });
   }
+}
+
+/** The free rate-limit read: how many REST calls the hour window still allows. */
+async function restBudget(token: string): Promise<{ remaining: number; limit: number; resetAt: number }> {
+  const { stdout } = await defaultCommandRunner(
+    "gh",
+    ["api", "rate_limit", "--jq", ".resources.core"],
+    { env: ghCliEnv(token) },
+  );
+  const core = JSON.parse(stdout) as { remaining: number; limit: number; reset: number };
+  return { remaining: core.remaining, limit: core.limit, resetAt: core.reset * 1000 };
 }
 
 main().catch((error: unknown) => {
