@@ -167,7 +167,7 @@ test("the check reports the toolchain state read-only: an absent tree is the fir
   const state = lines.find((line) => line.what === "perfil de runtime personal: toolchain persistente")!;
   assert.equal(state.ok, true);
   assert.match(state.detail, /ainda não convergidos/);
-  assert.match(state.detail, /declaração de mise: não configurada em local\.json/);
+  assert.match(state.detail, /declaração de mise: não configurada em local\.yaml/);
 });
 
 test("the check reports the converged tree, the installed tools and the declared mise declaration", async () => {

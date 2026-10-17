@@ -11,7 +11,7 @@ A decisão é que o perfil **converge**, não instala: a primeira invocação de
 seguintes não instalam nada e funcionam sem rede.
 
 1. O retrato passa a carregar também o `npm/package.json` e o `npm/package-lock.json` do perfil e a
-   declaração de mise do operador (`mise/config.toml`, vinda de `local.json`). Continua valendo o
+   declaração de mise do operador (`mise/config.toml`, vinda de `local.yaml`). Continua valendo o
    ADR 0002: só arquivos reais, links resolvidos nas raízes permitidas, e `node_modules` nunca é
    copiado (carrega os bindings da plataforma do host).
 2. O container monta dois diretórios persistentes sob o `--home` da factory, criados pelo host como o
@@ -53,7 +53,7 @@ seguintes não instalam nada e funcionam sem rede.
    Os ajustes de OTP valem só no sandbox e ficam no `ENV` da imagem: alvo pré-compilado (`ubuntu-22.04`)
    e recusa de compilar do código-fonte, para um pin de Erlang não baixar 100 MB a cada start numa
    imagem Debian. No host, essas duas variáveis quebrariam o próximo install de OTP.
-8. As ferramentas obrigatórias de `config.json` (`required.tools`, nomes simples como `rtk`) são
+8. As ferramentas obrigatórias de `config.yaml` (`required.tools`, nomes simples como `rtk`) são
    confirmadas no `PATH` do container depois da convergência; sem uma delas, a invocação é
    interrompida com o nome.
 

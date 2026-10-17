@@ -114,7 +114,7 @@ export async function checkInstance(options: CheckOptions): Promise<CheckLine[]>
         ? "ferramentas do mise: nenhuma instalada ainda"
         : `ferramentas do mise: ${state.tools.join(", ")}`;
       const declaration = local.mise[name] === undefined
-        ? "declaração de mise: não configurada em local.json"
+        ? "declaração de mise: não configurada em local.yaml"
         : `declaração de mise: ${local.mise[name]}`;
       return `${toolchain.base} (${packages}; ${tools}; ${declaration})`;
     }));

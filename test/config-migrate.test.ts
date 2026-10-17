@@ -65,7 +65,7 @@ test("converts config.json and local.json, keeps the same data and preserves the
   const parsedConfig = parseConfig(await converted(home, "config"));
   assert.equal(parsedConfig.ok, true, JSON.stringify(parsedConfig.ok ? [] : parsedConfig.issues));
   const parsedLocal = parseLocalSettings(await converted(home, "local"));
-  assert.deepEqual(parsedLocal, local);
+  assert.deepEqual(parsedLocal, parseLocalSettings(local), "o YAML tem o mesmo significado do JSON");
 
   // The old names no longer block startup; the data stays in the backups.
   await assert.rejects(lstat(join(home, "config.json")));

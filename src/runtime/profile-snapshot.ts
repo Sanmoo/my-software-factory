@@ -11,7 +11,7 @@ import { isObject, messageOf } from "../core/values.js";
 export interface ProfileSource {
   dir: string; // the profile directory (it may itself be a link)
   allowedRoots: readonly string[]; // where links may lead, besides the profile directory itself
-  // The operator's mise declaration on this host, when local.json declares one for the profile. It is
+  // The operator's mise declaration on this host, when local.yaml declares one for the profile. It is
   // carried into the snapshot as a real file (ADR 0002, ADR 0004); the tools the container converges
   // come from it, never from a host binary mounted inside.
   mise?: string;
@@ -52,7 +52,7 @@ const MAX_HOPS = 40;
 interface Context {
   profile: string; // real path of the profile directory
   roots: string[]; // real paths of the allowed roots, the profile included
-  mise?: string; // the declared mise declaration, as given by local.json
+  mise?: string; // the declared mise declaration, as given by local.yaml
 }
 
 const within = (path: string, roots: readonly string[]): boolean =>
@@ -159,7 +159,7 @@ async function readSettings(ctx: Context, exclude: readonly string[]): Promise<{
 // The operator's mise declaration as a real file of the snapshot, or why it is not one.
 async function resolveMise(ctx: Context): Promise<{ ok: true; item: SnapshotItem } | { ok: false; reason: string }> {
   if (ctx.mise === undefined) {
-    return { ok: false, reason: "declaração de mise do operador não declarada em local.json para este perfil" };
+    return { ok: false, reason: "declaração de mise do operador não declarada em local.yaml para este perfil" };
   }
   const resolved = await resolveItem(ctx.mise, ctx);
   if (!resolved.ok) return { ok: false, reason: `declaração de mise ${ctx.mise}: ${resolved.reason}` };

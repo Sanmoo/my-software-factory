@@ -239,7 +239,7 @@ test("a required tool needs the operator's mise declaration; without it the job 
   const w = await world();
   await layered(w);
   const blocked = await checkRequired({ dir: w.profile, allowedRoots: w.roots }, requirements({ tools: ["rtk"] }));
-  assert.match(blocked.join("\n"), /ferramentas obrigatórias \(rtk\): .*local\.json/);
+  assert.match(blocked.join("\n"), /ferramentas obrigatórias \(rtk\): .*local\.yaml/);
 
   // Declared, but the file is not there: the reason names the declaration, and the optional case only skips it.
   const absent = join(w.base, "dotfiles/mise/config.toml");
