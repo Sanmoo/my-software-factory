@@ -57,14 +57,14 @@ export type OutcomeRuling =
   /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
    * reserved awaiting the human; a fall is never recorded, the claim is held. */
   | { decision: "reserve"; because: "pr-open" }
-  /** Class 6: blocked self-report — the worker already posted mounted marker + label; the factory only records it. */
+  /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
   | { decision: "record-only"; because: "blocked-self-report" }
   /** Class 2: fall without PR, 1st consecutive — release (claimed→ready; the branch stays). */
   | { decision: "release"; because: "fall-first" }
   /** Class 3/4: fall without PR, 2nd consecutive — blocked + comment carrying the exact outcome. */
   | { decision: "block"; because: "fall-second"; comment: string };
 
-/** The structured facts the ruler reads — nothing else, zero prose (ticket 05 Q5: mounting the artifact). */
+/** The structured facts the ruler reads — nothing else, zero prose (the two-rulers contract). */
 export interface OutcomeFacts {
   /** desfecho.json of the collected attempt; null = absent = abrupt fall. */
   record: OutcomeRecord | null;
