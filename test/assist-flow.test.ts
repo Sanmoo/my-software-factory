@@ -112,7 +112,7 @@ async function localOf(root: string, options: { clone?: boolean } = {}): Promise
   return {
     image: "msf-docker-runner:local",
     profiles: { copilot: profileDir, "docker-default": profileDir },
-    allowedRoots: { "docker-default": [root] },
+    allowedRoots: { "docker-default": [root] }, mise: {},
     checkouts: options.clone === false ? {} : { "acme/app": checkout },
   };
 }
@@ -236,6 +236,7 @@ async function arrange(context: TestContext, options: {
     },
     ports: { sandbox: sandboxOf(options.sandbox), herdr: herdrOf({ ...(options.herdr === undefined ? {} : options.herdr), calls: herdrCalls, openTabs }), exec: probeOf(verdicts), ...(stopPort === undefined ? {} : { stopExec: stopPort }) },
     runtimeImageDir: "/msf-repo/src/runtime/docker-image",
+    toolchainsDir: join(stateDir, "toolchains"),
     stateDir,
     attention,
     now: () => new Date("2026-10-14T12:00:00.000Z"),
@@ -798,6 +799,7 @@ test("pendings persist across orchestrator restart: state round-trip, no re-noti
     observer: { emit: () => undefined, flush: async () => undefined, failure: () => undefined, recovered: () => undefined, redact: (text) => text, registerSecret: () => undefined, setDetailLog: () => undefined, commands: () => undefined },
     ports: { sandbox: sandboxOf(), herdr: herdrOf(), exec: probeOf({}) },
     runtimeImageDir: "/msf-repo/src/runtime/docker-image",
+    toolchainsDir: join(setup.stateDir, "toolchains"),
     stateDir: setup.stateDir,
     // The restarted keeper reads the same state directory: its stored pendings survive the
     // process entirely, and its dedupe continues to respect what was already raised.

@@ -395,7 +395,7 @@ test("the container receives only the profile snapshot: real files, packages fil
   const runner = createDockerRunner({
     instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir },
     runtimeProfiles: { personal: DECLARATION }, allowedRoots: { personal: [dotfiles] },
-    stateDir: f.stateDir, image: "x", repositorySource: () => f.source, boundary,
+    stateDir: f.stateDir, toolchainsDir: join(f.stateDir, "toolchains"), image: "x", repositorySource: () => f.source, boundary,
   });
   await runner.run(newContext());
 
@@ -510,7 +510,7 @@ test("the triage skill is judged by the same resolution: a link out of the roots
 test("a project whose runtime profile has no declaration in both files is a configuration error when the runner is built", async () => {
   const f = await fixture();
   const { boundary } = doneBoundary();
-  const base = { instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir, image: "x", repositorySource: () => f.source, boundary };
+  const base = { instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir, toolchainsDir: join(f.stateDir, "toolchains"), image: "x", repositorySource: () => f.source, boundary };
   assert.throws(
     () => createDockerRunner({ ...base, runtimeProfiles: {}, allowedRoots: { personal: [] } }),
     (error: unknown) => error instanceof RunnerConfigError && /personal.*config\.json.*sem fallback/.test(error.message),

@@ -49,6 +49,7 @@ test("the template declares the initial runtime profile for every profile a proj
       files: ["settings.json", "auth.json"], packages: ["npm:pi-subagents"],
       skills: ["implement", "tdd", "code-review", "gh-address-comments"],
       agents: ["implementer", "code-reviewer", "spec-reviewer"],
+      tools: ["rtk"],
     },
     excludePackages: ["npm:pi-lens"],
   };

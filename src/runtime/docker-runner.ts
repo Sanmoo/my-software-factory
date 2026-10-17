@@ -18,7 +18,7 @@ import {
   type JobLayout,
 } from "./docker-area.js";
 import { jobBranch } from "../core/job.js";
-import { sandcastleRequest, type SandcastleRequest } from "./docker-invocation.js";
+import { profileToolchain, sandcastleRequest, type SandcastleRequest } from "./docker-invocation.js";
 import { interpretOutput } from "./docker-output.js";
 import { continuationItems, continuationPrompt, implementPrompt } from "./docker-prompt.js";
 import { planCommands, type ContinuationPlan } from "../core/feedback.js";
@@ -46,8 +46,14 @@ export interface SandboxRun {
   // The runtime profile as real files, written by the runner for this invocation and mounted read-only. It
   // is all the container sees of the operator's profile: no profile directory, no link roots (ADR 0002).
   snapshotDir: string;
-  // Packages the container must find installed before the agent gets its prompt; otherwise it stops.
+  // Packages and tools the container must find converged before the agent gets its prompt; otherwise it
+  // stops with the reason (ADR 0004).
   requiredPackages: readonly string[];
+  requiredTools: readonly string[];
+  // The profile's persistent toolchain (ADR 0004), created here as the invoking user and bind-mounted by
+  // the boundary: the Pi package tree converged from the operator's lock and the mise data directory.
+  npmDir: string;
+  miseDir: string;
   model: string; // implementer model: the main agent of the invocation
   token: string; // GitHub token for the container environment only
   request: SandcastleRequest;
@@ -86,6 +92,9 @@ export interface DockerRunnerOptions {
   runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
   allowedRoots: Readonly<Record<string, readonly string[]>>;
   stateDir: string;
+  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`. The runner
+  // creates the profile's directories before the container starts, so a bind never lands root-owned.
+  toolchainsDir: string;
   image: string;
   // Local clone each project's job area is cloned from (the operator's checkout).
   repositorySource: (project: ProjectConfig) => string;
@@ -148,6 +157,9 @@ class DockerRunner implements Runner {
       const models = requireRunModels(project);
       const auth = resolveModelAuth(this.options.instance, this.options.credentials, this.options.profiles);
       const profile = this.profileOf(project, auth.agentDir);
+      // The profile's persistent toolchain: created here, as the invoking user, because Docker creates a
+      // missing bind target as root and the container would then not be able to write (ADR 0004).
+      const toolchain = profileToolchain(this.options.toolchainsDir, project.runtimeProfile);
       // Resolved on the host before anything is created: a required item missing stops here, with no container.
       const plan = await planSnapshot(profile.source, profile.declaration);
       if (plan.blockers.length > 0) throw new Error(`perfil de runtime bloqueado: ${plan.blockers.join("; ")}`);
@@ -192,9 +204,14 @@ class DockerRunner implements Runner {
         lines: [`tail -f ${shellQuote(detailPath)}`],
         fields: { detalhado: detailPath, artefatos: artifactsDir, "limite-de-silêncio": `${IDLE_TIMEOUT_SECONDS}s` },
       });
+      // The toolchain directories exist before the container starts, owned by the invoking user: Docker
+      // creates a missing bind target as root, and the convergence inside could not write to it (ADR 0004).
+      await mkdir(toolchain.npm, { recursive: true });
+      await mkdir(toolchain.mise, { recursive: true });
       const outcome = await this.options.boundary.run({
         image: this.options.image, cwd: layout.repoDir, sessionsDir: layout.sessionsDir,
         snapshotDir: layout.snapshotDir, requiredPackages: profile.declaration.required.packages,
+        requiredTools: profile.declaration.required.tools, npmDir: toolchain.npm, miseDir: toolchain.mise,
         model: models.implementer, token: preflight.token, request,
         activity, idleTimeoutSeconds: IDLE_TIMEOUT_SECONDS, idleWarningSeconds: IDLE_WARNING_SECONDS, runtimeLogPath,
         redact: (text) => observer.redact(text),

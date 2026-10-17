@@ -46,7 +46,7 @@ async function localOf(root: string, options: { profile?: boolean; checkout?: bo
   return {
     image: "msf-docker-runner:local",
     profiles: { copilot: profileDir, "docker-default": profileDir, "docker-vazio": join(root, "vazio") },
-    allowedRoots: { "docker-default": [root], "docker-vazio": [root] },
+    allowedRoots: { "docker-default": [root], "docker-vazio": [root] }, mise: {},
     checkouts: options.checkout === false ? {} : { "acme/app": options.checkoutPath ?? join(root, "clone-app"), "acme/mono": join(root, "clone-mono") },
   };
 }

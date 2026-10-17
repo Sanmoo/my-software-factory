@@ -39,8 +39,11 @@ Se for **obrigatório**, a issue não é claimed: o motivo aparece no log princi
 ajuda e **nenhum container é criado**. Um projeto habilitado cujo perfil não tem declaração
 nos dois arquivos é erro de configuração ao iniciar a instância, sem fallback.
 
-Dentro do container, antes do prompt, o setup instala os pacotes do `settings.json` e
-confirma os obrigatórios; se faltar algum, a invocação é interrompida com o motivo.
+Dentro do container, antes do prompt, o setup copia o retrato, **converge** a toolchain uma vez
+e confirma os pacotes e ferramentas obrigatórios; se faltar algum, a invocação é interrompida
+com o motivo (ADR 0004). A convergência é estrita: não há modo fail-open. O retrato também
+carrega o lock do Pi e a declaração de mise do operador, e a primeira invocação de um perfil
+instala dentro do container; as seguintes não instalam nada e não precisam de rede.
 
 ## Papéis, modelos e autenticação
 
@@ -129,7 +132,10 @@ continuações → trabalho novo por prioridade. O efeito:
   vai direto para a retomada ou correção, sem triagem.
 - Se a skill de triagem não estiver no perfil autorizado, a issue não é admitida e
   comentário humano vira pedido de ajuda visível, nunca correção sem triagem.
-- A triagem exige `python3` na imagem do runner.
+- A triagem exige `python3` na imagem do runner; o perfil precisa de `mise`, `ripgrep` e `fd`
+  na imagem e da declaração de mise do operador em `local.json` (`mise.<perfil>`) quando
+  declarar `required.tools`. `./msf <instância> run --check` relata o que falta e o estado da
+  toolchain persistente, e nunca repara.
 
 Feedback nunca amplia escopo, não autoriza merge nem deploy produtivo, e consumir um
 comentário não é declará-lo resolvido.

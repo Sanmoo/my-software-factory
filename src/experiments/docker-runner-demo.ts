@@ -45,7 +45,7 @@ const profiles = { DEMO_PI_AUTH: piAgentDir, "demo-profile": piAgentDir };
 // The demo's profile is the operator's own, with the pilot's declaration (ADR 0002).
 const runtimeProfiles = {
   "demo-profile": {
-    required: { files: ["settings.json", "auth.json"], packages: [], skills: ["implement", "tdd"], agents: [] },
+    required: { files: ["settings.json", "auth.json"], packages: [], skills: ["implement", "tdd"], agents: [], tools: [] },
     excludePackages: ["npm:pi-lens"],
   },
 };
@@ -87,7 +87,7 @@ committed locally, stop with interrupted and the reason "fixture local: sem PR".
 
 function runnerFor(boundary = sandcastleBoundary(), image = IMAGE) {
   return createDockerRunner({
-    instance, credentials, profiles, runtimeProfiles, allowedRoots, stateDir, image,
+    instance, credentials, profiles, runtimeProfiles, allowedRoots, stateDir, toolchainsDir: join(stateDir, "toolchains"), image,
     repositorySource: () => source, boundary,
   });
 }

@@ -132,6 +132,7 @@ const arrange = async (context: TestContext, options: {
       },
       ports: { sandbox: sandboxOf(), herdr: herdrOf(herdrCalls), exec: probe(map) },
       runtimeImageDir: "/msf-repo/src/runtime/docker-image",
+      toolchainsDir: join(stateDir, "toolchains"),
       stateDir,
       attention: attentionOf(),
       ...(options.now === undefined ? {} : { now: () => new Date(options.now!) }),
@@ -198,7 +199,7 @@ const localOf = async (root: string): Promise<LocalSettings> => {
   return {
     image: "msf-docker-runner:local",
     profiles: { copilot: profileDir, "docker-default": profileDir },
-    allowedRoots: { "docker-default": [root] },
+    allowedRoots: { "docker-default": [root] }, mise: {},
     checkouts: { "acme/app": checkout },
   };
 };

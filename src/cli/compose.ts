@@ -34,6 +34,8 @@ export interface ComposeOptions {
   instance: InstanceConfig;
   local: LocalSettings;
   stateDir: string;
+  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`.
+  toolchainsDir: string;
   env?: NodeJS.ProcessEnv;
   // Boundaries are injectable for tests; the defaults are the real ones.
   github?: GitHubBoundary;
@@ -158,6 +160,7 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps & { assi
     runtimeProfiles: config.runtimeProfiles,
     allowedRoots: local.allowedRoots,
     stateDir: options.stateDir,
+    toolchainsDir: options.toolchainsDir,
     image: local.image,
     repositorySource: (project) => local.checkouts[project.repository]!,
     remoteUrl: (project) => `https://github.com/${project.repository}.git`,
@@ -207,6 +210,7 @@ export function composeInstance(options: ComposeOptions): AdmissionDeps & { assi
     },
     runtimeImageDir: runtimeImageDirOf(),
     stateDir: options.stateDir,
+    toolchainsDir: options.toolchainsDir,
     attention,
   });
 

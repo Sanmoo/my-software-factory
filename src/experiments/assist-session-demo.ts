@@ -32,7 +32,7 @@ const IMAGE = "msf-docker-runner:local";
 const PROFILE_SOURCE = join(homedir(), ".pi", "agent");
 const ALLOWED_ROOTS = [join(homedir(), ".agents"), join(homedir(), "dev")];
 const PROFILE_DECLARATION: RuntimeProfileConfig = {
-  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [] },
+  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [], tools: [] },
   excludePackages: ["npm:pi-lens"],
 };
 // The demo waits the model's turn out; a slow provider is a documented limitation, not a
@@ -169,6 +169,8 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     cloneHostDir: cloneDir, sessionsHostDir: sessionsDir, stateHostDir: execStateDir,
     snapshotHostDir: profileDir, runtimeHostDir: runtimeImageDirOf(),
+    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     // The demo's user turn names the scan token, so the model's answer is findable in the
     // session files the demonstration scans; without it the marker check can never pass.
     prompt: `${assistPrompt({ kind: "needs-triage", ref: { tracker: "memory", project: "demo", id: "1" }, title: `demonstração ${slug}` })}\n\n`
@@ -214,6 +216,8 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     cloneHostDir: cloneDir, sessionsHostDir: sessionsDir, stateHostDir: execStateDir,
     snapshotHostDir: profileDir, runtimeHostDir: runtimeImageDirOf(),
+    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     resume: true,
     prompt: `continuação de demonstração: responda mencionando o token ${resumeToken}`,
   });

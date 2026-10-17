@@ -10,8 +10,9 @@ desta máquina:
 
 - `config.json`: copie [`config.template.json`](config.template.json) e habilite só os alvos do piloto
   (os demais ficam `enabled: false` até terem sua própria spec);
-- `local.json`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), checkouts, imagem
-  e insumos de review desta máquina;
+- `local.json`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), a declaração de
+  mise do operador (`mise.<perfil>`, o `~/.config/mise/config.toml` de onde as ferramentas declaradas
+  convergem), checkouts, imagem e insumos de review desta máquina;
 - `state/<instância>/`: o estado de cada instância.
 
 O token do Jira não fica em arquivo: exporte `JIRA_URL`, `JIRA_USERNAME` e `JIRA_API_TOKEN` no ambiente
@@ -62,11 +63,15 @@ os links em todos os níveis e grava um retrato só com arquivos reais (em `stat
 recriado a cada invocação). O container monta só o retrato, somente leitura. Dois arquivos, a mesma divisão
 de sempre (o quê no `config.json`, o onde no `local.json`):
 
-- `config.json`, `runtimeProfiles.<perfil>`: `required` (`files`, `packages`, `skills`, `agents`) e
+- `config.json`, `runtimeProfiles.<perfil>`: `required` (`files`, `packages`, `skills`, `agents`, `tools`) e
   `excludePackages` (por exemplo `npm:pi-lens`, retirado do `settings.json` do container, nunca do seu).
-  A lista inicial está em `config.template.json`, igual para `pessoal` e `trabalho`.
+  A lista inicial está em `config.template.json`, igual para `pessoal` e `trabalho`; `tools` traz o `rtk`
+  que o operador declara no mise global.
 - `local.json`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio diretório do perfil
   (`~/` vale). Para `pessoal`: `["~/.pi/agent", "~/.agents", "~/dev/github.com/Sanmoo/dotfiles"]`.
+- `local.json`, `mise.<perfil>`: a declaração de mise do operador no host (normalmente
+  `~/.config/mise/config.toml`), levada pelo retrato e lida dentro do container. Sem ela, um perfil que
+  declara `tools` obrigatórias não é admitido.
 
 Link com destino fora das raízes, quebrado ou cíclico é pulado e listado no log detalhado da invocação
 (`perfil de runtime`, linhas `incluído:` e `fora:`). Se for **obrigatório**, a issue não é claimed: o motivo
@@ -74,10 +79,16 @@ Link com destino fora das raízes, quebrado ou cíclico é pulado e listado no l
 o mesmo bloqueio vira pedido de ajuda e nenhum container é criado. Um projeto habilitado cujo perfil não
 tem declaração nos dois arquivos é erro de configuração ao iniciar a instância, sem fallback.
 
-Já dentro do container, antes do prompt, `check-profile.sh` instala os pacotes do `settings.json` e confirma
-com `pi list` que os obrigatórios estão instalados; se não, a invocação é interrompida com o motivo. O Pi 1.1.0
-não lista ferramentas sem chamar o modelo, então a ferramenta `subagent` não é confirmada por aqui: o pacote
-`pi-subagents` instalado é a evidência.
+Já dentro do container, antes do prompt, o setup copia o retrato e **converge a toolchain uma vez**
+(ADR 0004): os pacotes do Pi saem do lock do host com `npm ci` num diretório persistente por perfil sob
+o `--home` da factory, e as ferramentas saem da declaração de mise do operador. A convergência é
+distinguida por um selo (hash do lock mais ABI do Node): selo igual não instala nada e não imprime nada,
+então a segunda invocação de um perfil funciona sem rede. Duas invocações simultâneas não instalam por
+cima uma da outra (`flock`), e um install interrompido é refeito no start seguinte. Depois disso a
+checagem confirma com `pi list` que os pacotes obrigatórios estão na árvore e as `required.tools`
+respondem no `PATH`; se faltar algo, a invocação é interrompida com o motivo (não há fail-open). O Pi
+1.1.0 não lista ferramentas sem chamar o modelo, então a ferramenta `subagent` não é confirmada por
+aqui: o pacote `pi-subagents` instalado é a evidência.
 
 ## Triagem de comentários do PR (issue #21)
 
@@ -96,8 +107,10 @@ Pré-requisitos, verificados por `./msf <instância> run --check`:
   `ln -s ~/.agents/skills/gh-address-comments <perfil>/skills/gh-address-comments`. Ela é obrigatória no perfil
   de runtime e tem de resolver dentro das raízes permitidas (mesma resolução do retrato). Sem ela, a issue não
   é admitida e comentário humano vira pedido de ajuda visível (nunca correção sem triagem), sem consumir nada.
-- **`python3` na imagem do runner**, exigido pelo script da skill: reconstrua a imagem
-  (`docker build ... src/runtime/docker-image`).
+- **`python3` na imagem do runner**, exigido pelo script da skill, e **`mise`, `ripgrep` e `fd`** (o Pi
+  os sonda e os baixaria a cada start). Reconstrua a imagem (`docker build ... src/runtime/docker-image`);
+  a base é `node:22-trixie-slim` pelo motivo do ADR 0004. O `rtk` do `pi-rtk-optimizer` não vem da
+  imagem: ele é declarado no mise do operador e converge para o diretório persistente do perfil.
 
 ## Pendências que dependem do operador
 

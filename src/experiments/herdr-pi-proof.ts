@@ -46,7 +46,7 @@ const IMAGE_DIR = resolve("src/runtime/docker-image");
 // npm:pi-lens crashed marksman in earlier containers (2026-10-11 evidence); excluded from the
 // container copy of settings.json only, as ADR 0002 prescribes for the sandbox profile.
 const PROFILE_DECLARATION: RuntimeProfileConfig = {
-  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [] },
+  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [], tools: [] },
   excludePackages: ["npm:pi-lens"],
 };
 const WAIT_MS = 240_000;

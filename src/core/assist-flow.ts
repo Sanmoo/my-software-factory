@@ -34,6 +34,7 @@ import { checkRequired, planSnapshot, writeSnapshot, type SnapshotPlan } from ".
 import {
   assistContainerName, assistExecCommand, assistExitRecordPath,
 } from "../runtime/assist-exec.js";
+import { profileToolchain, type ProfileToolchain } from "../runtime/docker-invocation.js";
 import type { AssistExecProbe, AssistExecObservation, AssistExecStop, AssistExecStopResult } from "../runtime/assist-exec-probe.js";
 import type { HerdrBoundary } from "../runtime/herdr.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
@@ -153,6 +154,9 @@ export interface AssistFlowDeps {
   observer?: Observer;
   // Host directory with the container scripts (src/runtime/docker-image), mounted read-only.
   runtimeImageDir: string;
+  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`: the Pi package
+  // tree and the mise data dir of the profile, shared by the autonomous jobs of the same profile.
+  toolchainsDir: string;
   // State directory of the instance: the working directories of each session live in it.
   stateDir: string;
   // The operator attention of ticket #59: open sessions, decisions and interventions become
@@ -229,11 +233,14 @@ const assistAreaDir = (stateDir: string, key: string): string =>
 const agentIdentities = (): string =>
   `${typeof process.getuid === "function" ? process.getuid() : 1000}:${typeof process.getgid === "function" ? process.getgid() : 1000}`;
 
-// The opening verified before the claim: the host-resolved snapshot plan (ADR 0002) and the
-// identity of the host user for the container.
+// The opening verified before the claim: the host-resolved snapshot plan (ADR 0002), the identity of
+// the host user for the container, and the persistent toolchain the container converges once (ADR 0004).
 interface PreparedOpening {
   plan: SnapshotPlan;
   agentUidGid: string;
+  toolchain: ProfileToolchain;
+  requiredPackages: readonly string[];
+  requiredTools: readonly string[];
 }
 
 export class AssistedAttendance implements AssistOperator {
@@ -1184,7 +1191,7 @@ export class AssistedAttendance implements AssistOperator {
     let opening: AssistSession = current;
     try {
       const recordRemoved = await this.deps.areaFs.removeExitRecord(current);
-      await this.deps.areaFs.ensureDirs([current.profileDir!]);
+      await this.deps.areaFs.ensureDirs([current.profileDir!, prepared.toolchain.npm, prepared.toolchain.mise]);
       await writeSnapshot(prepared.plan, current.profileDir!);
       const now = this.deps.now ?? (() => new Date());
       const containerName = assistContainerName(key, now().toISOString());
@@ -1228,6 +1235,8 @@ export class AssistedAttendance implements AssistOperator {
         agentUidGid: prepared.agentUidGid, startedAt: now().toISOString(),
         cloneHostDir: current.cloneDir, sessionsHostDir: current.sessionsDir!, stateHostDir: current.execStateDir!,
         snapshotHostDir: current.profileDir!, runtimeHostDir: this.deps.runtimeImageDir,
+        npmHostDir: prepared.toolchain.npm, miseHostDir: prepared.toolchain.mise,
+        requiredPackages: prepared.requiredPackages, requiredTools: prepared.requiredTools,
         // No new prompt: `pi -c` continues the same conversation of the same session file.
         resume: true,
       });
@@ -1457,7 +1466,13 @@ export class AssistedAttendance implements AssistOperator {
       if (blockers.length > 0) return `perfil de runtime: ${blockers.join("; ")}`;
       const plan = await planSnapshot(profile.source, profile.declaration);
       if (plan.blockers.length > 0) return `perfil de runtime: ${plan.blockers.join("; ")}`;
-      return { plan, agentUidGid: agentIdentities() };
+      return {
+        plan,
+        agentUidGid: agentIdentities(),
+        toolchain: profileToolchain(this.deps.toolchainsDir, project.runtimeProfile),
+        requiredPackages: profile.declaration.required.packages,
+        requiredTools: profile.declaration.required.tools,
+      };
     } catch (error) {
       return `perfil de runtime: ${messageOf(error)}`;
     }
@@ -1528,7 +1543,7 @@ export class AssistedAttendance implements AssistOperator {
     session = { ...session, claimedAt: now().toISOString() };
     session = appendSessionLog(session, "claim confirmado por releitura (mecanismo único do núcleo)");
     await this.deps.sessions.save(session);
-    await this.deps.areaFs.ensureDirs([sessionsDir, execStateDir]);
+    await this.deps.areaFs.ensureDirs([sessionsDir, execStateDir, prepared.toolchain.npm, prepared.toolchain.mise]);
     try {
       // The snapshot holds the operator's credentials (auth.json); it is written only after the
       // confirmed claim, with real files only (ADR 0002), and mounted read-only in the container.
@@ -1554,6 +1569,8 @@ export class AssistedAttendance implements AssistOperator {
         agentUidGid: prepared.agentUidGid, startedAt: session.startedAt,
         cloneHostDir: cloneDir, sessionsHostDir: sessionsDir, stateHostDir: execStateDir,
         snapshotHostDir: profileDir, runtimeHostDir: this.deps.runtimeImageDir,
+        npmHostDir: prepared.toolchain.npm, miseHostDir: prepared.toolchain.mise,
+        requiredPackages: prepared.requiredPackages, requiredTools: prepared.requiredTools,
         prompt: assistPrompt({ kind: session.promptKind, ref, title: snapshot.title }),
       });
       await herdr.paneRun(opening.tab.paneId, command);

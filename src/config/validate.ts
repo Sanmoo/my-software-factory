@@ -18,7 +18,7 @@ const JIRA_KEYS = ["projectKey", "routingLabel", "doingTransition", "doneTransit
   "blockingLinkTypes", "credential", "operator", "priorityRanks"];
 const INSTANCE_KEYS = ["name", "maxConcurrent", "maxAssisted", "assistModel", "pollIntervalSeconds", "maxIterations", "modelAuth", "projects"];
 const RUNTIME_PROFILE_KEYS = ["required", "excludePackages"];
-const REQUIRED_KEYS = ["files", "packages", "skills", "agents"];
+const REQUIRED_KEYS = ["files", "packages", "skills", "agents", "tools"];
 // A required file, skill or agent is a plain name inside the profile: no path, so it cannot point elsewhere.
 const PLAIN_NAME_PATTERN = /^(?!\.{1,2}$)[^/\\\s]+$/;
 const CREDENTIAL_KEYS = ["kind", "ref"];
@@ -134,7 +134,8 @@ function parseRuntimeProfile(raw: unknown, path: string, issues: Issues): Runtim
     const packages = nameList(requiredRaw, "packages", at, issues);
     const skills = nameList(requiredRaw, "skills", at, issues, PLAIN_NAME_PATTERN, hint);
     const agents = nameList(requiredRaw, "agents", at, issues, PLAIN_NAME_PATTERN, hint);
-    if (files && packages && skills && agents) required = { files, packages, skills, agents };
+    const tools = nameList(requiredRaw, "tools", at, issues, PLAIN_NAME_PATTERN, hint);
+    if (files && packages && skills && agents && tools) required = { files, packages, skills, agents, tools };
   }
   const excludePackages = nameList(raw, "excludePackages", path, issues);
   return required && excludePackages ? { required, excludePackages } : undefined;

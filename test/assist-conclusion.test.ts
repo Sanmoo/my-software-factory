@@ -60,7 +60,7 @@ const localSwap = async (root: string): Promise<LocalSettings> => {
   return {
     image: "msf-docker-runner:local",
     profiles: { copilot: profileDir, "docker-default": profileDir },
-    allowedRoots: { "docker-default": [root] },
+    allowedRoots: { "docker-default": [root] }, mise: {},
     checkouts: { "acme/app": checkout },
   };
 };
@@ -120,6 +120,7 @@ const arrange = async (context: TestContext, ids: readonly string[]): Promise<Se
     },
     ports: { sandbox: sandboxSwap(), herdr: herdrSwap(), exec: { observe: async (name) => ({ containerName: name, verdict: "absent", detail: "injuntado" }) } },
     runtimeImageDir: "/msf-repo/src/runtime/docker-image",
+    toolchainsDir: join(root, "toolchains"),
     stateDir,
     now: () => new Date("2026-10-14T12:00:00.000Z"),
   };

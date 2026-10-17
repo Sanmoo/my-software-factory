@@ -9,7 +9,8 @@
         "files": ["settings.json", "auth.json"],
         "packages": ["npm:pi-subagents"],
         "skills": ["implement", "tdd", "code-review", "gh-address-comments"],
-        "agents": ["implementer", "code-reviewer", "spec-reviewer"]
+        "agents": ["implementer", "code-reviewer", "spec-reviewer"],
+        "tools": ["rtk"]
       },
       "excludePackages": ["npm:pi-lens"]
     }

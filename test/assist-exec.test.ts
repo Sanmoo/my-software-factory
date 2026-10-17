@@ -42,6 +42,10 @@ const commandOf = (extra: Partial<Parameters<typeof assistExecCommand>[0]> = {})
   stateHostDir: "/tmp/msf/state/assist/state",
   snapshotHostDir: "/tmp/msf/state/assist/profile",
   runtimeHostDir: "/msf-repo/src/runtime/docker-image",
+  npmHostDir: "/home/op/.msf/toolchains/personal/npm",
+  miseHostDir: "/home/op/.msf/toolchains/personal/mise",
+  requiredPackages: ["npm:pi-subagents"],
+  requiredTools: ["rtk"],
   prompt: "apoiar a triagem da issue #7",
   ...extra,
 });
@@ -51,18 +55,23 @@ test("assistExecCommand reproduces the validated recipe: pi inside the container
   // The host docker client is the pane's foreground process; the exec is a run container.
   assert.match(command, /^docker run --rm -it --entrypoint sh --name msf-assist-/);
   assert.match(command, /--user 1000:1000/);
-  // The profile snapshot is read-only (ADR 0002); the clone is writable; nothing else is mounted.
+  // The profile snapshot is read-only (ADR 0002); the clone is writable; the profile's persistent
+  // toolchain is writable so the convergence installs once (ADR 0004).
   assert.match(command, /-v \/tmp\/msf\/state\/assist\/profile:\/msf-profile:ro\b/);
   assert.match(command, /-v \/home\/op\/dev\/acme\/app:\/work\b(?!:)/);
   assert.match(command, /-v \/tmp\/msf\/state\/assist\/sessions:\/msf-sessions\b/);
   assert.match(command, /-v \/tmp\/msf\/state\/assist\/state:\/msf-state\b/);
   assert.match(command, /-v \/msf-repo\/src\/runtime\/docker-image:\/msf-runtime:ro\b/);
+  assert.match(command, /-v \/home\/op\/\.msf\/toolchains\/personal\/npm:\/home\/agent\/\.pi\/agent\/npm\b(?!:)/);
+  assert.match(command, /-v \/home\/op\/\.msf\/toolchains\/personal\/mise:\/home\/agent\/\.local\/share\/mise\b(?!:)/);
   // The wrapper traps INT so a Ctrl+C of the pane group still lets the container write the
   // exit record (the quoting is the one the proof validated, on the pane's shell).
   assert.match(command, /trap .*INT;/);
-  assert.match(command, /sh \/msf-runtime\/prepare-profile\.sh \/msf-profile/);
-  assert.match(command, /sh \/msf-runtime\/check-profile\.sh/);
-  assert.match(command, /pi --model opencode-go\/gpt-6-luna/);
+  // The preparation is strict: every step chained with &&, so a convergence failure stops the
+  // invocation with its reason instead of starting the agent without what the profile declared.
+  assert.match(command, /sh \/msf-runtime\/prepare-profile\.sh \/msf-profile && sh \/msf-runtime\/converge-profile\.sh \/msf-profile rtk/);
+  assert.match(command, /converge-profile\.sh \/msf-profile rtk && sh \/msf-runtime\/check-profile\.sh npm:pi-subagents/);
+  assert.match(command, /check-profile\.sh npm:pi-subagents && pi --model opencode-go\/gpt-6-luna/);
   assert.match(command, / > \/msf-state\/msf-exit\.json/);
   // The explicit model is in the pi argv: never a silent inheritance of the implementation model.
   assert.ok(!command.includes("gpt-6-luna --approve"));

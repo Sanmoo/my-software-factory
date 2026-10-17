@@ -25,6 +25,8 @@ export interface RunOptions {
   configPath: string;
   instanceName: string;
   stateDir: string;
+  // Root of the persistent per-profile toolchains (ADR 0004), under the factory `--home`.
+  toolchainsDir: string;
   localPath: string;
   // Absolute base directory, only when it is not the default: it is what the printed commands carry.
   home?: string;
@@ -85,7 +87,7 @@ export async function runInstance(options: RunOptions): Promise<number> {
   let deps;
   try {
     deps = composeInstance({
-      config: loaded.config, instance, local, stateDir: options.stateDir, sandbox, observer, env: options.env,
+      config: loaded.config, instance, local, stateDir: options.stateDir, toolchainsDir: options.toolchainsDir, sandbox, observer, env: options.env,
       ...(options.github === undefined ? {} : { github: options.github }),
     });
   } catch (error) {
@@ -94,7 +96,7 @@ export async function runInstance(options: RunOptions): Promise<number> {
   }
 
   if (options.check) {
-    const lines = await checkInstance({ config: loaded.config, instance, local, deps, sandbox, env: options.env });
+    const lines = await checkInstance({ config: loaded.config, instance, local, deps, sandbox, env: options.env, toolchainsDir: options.toolchainsDir });
     for (const line of lines) options.stdout(`${line.ok ? "ok   " : "FALHA"} ${line.what}: ${line.detail}`);
     return lines.every((line) => line.ok) ? 0 : 1;
   }

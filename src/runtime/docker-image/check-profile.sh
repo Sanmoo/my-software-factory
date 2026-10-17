@@ -1,27 +1,16 @@
 #!/bin/sh
-# Installs the packages of the container's settings.json and confirms the required ones are installed.
-# Runs inside the sandbox after prepare-profile.sh and before the agent gets its prompt (ADR 0002). A failure
-# stops the invocation, and the message on stderr is its reason.
-#
-# Usage: check-profile.sh [<required-package-source>...]
+# Confirms the required packages of the profile are installed in the converged package tree (ADR 0004).
+# Runs inside the sandbox after the convergence and before the agent gets its prompt: converge-profile.sh
+# installed the packages from the operator's lock into the persistent tree, and nothing is installed here.
+# A steady start therefore does no network work and prints nothing. A failure stops the invocation, and
+# the message on stderr is its reason.
 #
 # `pi list` prints a package's installed path on the line below it; a package that is only listed in the
 # settings has no path line. That is how "installed" is told apart from "declared".
+#
+# Usage: check-profile.sh [<required-package-source>...]
 set -eu
 export PI_CODING_AGENT_DIR="${HOME}/.pi/agent"
-SETTINGS="$PI_CODING_AGENT_DIR/settings.json"
-
-if [ -f "$SETTINGS" ]; then
-  sources=$(node -e '
-    const settings = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-    for (const entry of settings.packages || []) console.log(typeof entry === "string" ? entry : entry.source);
-  ' "$SETTINGS")
-  for source in $sources; do
-    # A package that is not required may fail to install without stopping the job; it is only reported.
-    pi install "$source" >&2 || echo "profile-check: could not install package $source" >&2
-  done
-fi
-
 listing=$(pi list 2>&1) || { echo "profile-check: pi list failed: $listing" >&2; exit 1; }
 missing=""
 for package in "$@"; do
@@ -36,4 +25,3 @@ if [ -n "$missing" ]; then
   echo "profile-check: required package not installed:$missing" >&2
   exit 1
 fi
-echo "profile-check: required packages installed: $*" >&2

@@ -37,7 +37,7 @@ async function world(): Promise<World> {
 }
 
 const requirements = (over: Partial<RuntimeProfileConfig["required"]> = {}, excludePackages: string[] = ["npm:pi-lens"]): RuntimeProfileConfig => ({
-  required: { files: ["settings.json"], packages: ["npm:pi-subagents"], skills: [], agents: [], ...over },
+  required: { files: ["settings.json"], packages: ["npm:pi-subagents"], skills: [], agents: [], tools: [], ...over },
   excludePackages,
 });
 
@@ -201,4 +201,51 @@ test("file modes survive the copy so auth.json stays private", async () => {
   const out = join(w.base, "snap");
   await writeSnapshot(plan, out);
   assert.equal((await stat(join(out, "auth.json"))).mode & 0o777, 0o600);
+});
+
+// The toolchain converges from the operator's own declaration (ADR 0004): the snapshot carries the
+// package declaration and its lock, and the mise declaration, as real files.
+test("the snapshot carries the lock and the mise declaration as real files and never walks node_modules", async () => {
+  const w = await world();
+  await layered(w);
+  await w.put("dotfiles/npm/package.json", '{"name":"profile"}\n');
+  await w.put("dotfiles/npm/package-lock.json", '{"lockfileVersion":3}\n');
+  await w.put("dotfiles/npm/node_modules/pi-subagents/index.js", "x\n");
+  await w.link("pi/agent/npm", "../../dotfiles/npm");
+  await w.link("deere/agent/npm", "../../pi/agent/npm");
+  await w.put("dotfiles/mise/config.toml", '[tools]\nrtk = "latest"\n');
+  const mise = join(w.base, "dotfiles/mise/config.toml");
+  const plan = await planSnapshot(
+    { dir: w.profile, allowedRoots: w.roots, mise },
+    requirements({ skills: ["tdd"], tools: ["rtk"] }),
+  );
+  assert.deepEqual(plan.blockers, []);
+  const sources = Object.fromEntries(plan.included.map((item) => [item.path, item.source]));
+  assert.equal(sources["npm/package.json"], join(w.base, "dotfiles/npm/package.json"));
+  assert.equal(sources["npm/package-lock.json"], join(w.base, "dotfiles/npm/package-lock.json"));
+  assert.equal(sources["mise/config.toml"], mise);
+  assert.ok(!plan.included.some((item) => item.path.startsWith("npm/node_modules")), "the host's own tree is never carried");
+
+  const out = join(w.base, "snapshot");
+  await writeSnapshot(plan, out);
+  assert.equal(await readFile(join(out, "npm", "package-lock.json"), "utf8"), '{"lockfileVersion":3}\n');
+  assert.match(await readFile(join(out, "mise", "config.toml"), "utf8"), /rtk/);
+  const lines = describePlan(plan);
+  assert.ok(lines.includes("incluído: npm/package-lock.json"));
+  assert.ok(lines.includes("incluído: mise/config.toml"));
+});
+
+test("a required tool needs the operator's mise declaration; without it the job is blocked with the reason", async () => {
+  const w = await world();
+  await layered(w);
+  const blocked = await checkRequired({ dir: w.profile, allowedRoots: w.roots }, requirements({ tools: ["rtk"] }));
+  assert.match(blocked.join("\n"), /ferramentas obrigatórias \(rtk\): .*local\.json/);
+
+  // Declared, but the file is not there: the reason names the declaration, and the optional case only skips it.
+  const absent = join(w.base, "dotfiles/mise/config.toml");
+  const missingRequired = await checkRequired({ dir: w.profile, allowedRoots: w.roots, mise: absent }, requirements({ tools: ["rtk"] }));
+  assert.match(missingRequired.join("\n"), /ferramentas obrigatórias \(rtk\): declaração de mise .*ausente/);
+  const optional = await planSnapshot({ dir: w.profile, allowedRoots: w.roots, mise: absent }, requirements());
+  assert.deepEqual(optional.blockers, []);
+  assert.match(optional.skipped.map((item) => `${item.path} ${item.reason}`).join("\n"), /mise\/config\.toml .*ausente/);
 });
