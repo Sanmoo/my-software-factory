@@ -1,0 +1,45 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+/**
+ * The workspace: root of clones, worktrees, works and the archive.
+ *
+ * Disk names are decided in tickets 05/10 and stay in PT-BR — layout of disk
+ * is a taken decision, not code:
+ *   <workspace>/repos/      — single clone per target repo
+ *   <workspace>/trabalhos/  — in-flight per-work artifacts (sessao/, log-<n>.jsonl, desfecho.json)
+ *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
+ */
+
+/** The PT-BR subpath names as decided on disk. */
+export const WORKSPACE_SUBPATHS = {
+  repos: "repos",
+  works: "trabalhos",
+  archive: "arquivo",
+} as const;
+
+export interface WorkspaceLayout {
+  root: string;
+  repos: string;
+  works: string;
+  archive: string;
+}
+
+/** Directory of one work's artifacts: <workspace>/trabalhos/<repo>#<n>/ */
+export function workDir(layout: WorkspaceLayout, repo: string, number: number): string {
+  return join(layout.works, `${repo}#${number}`);
+}
+
+/** Guarantee the workspace and its derived subpaths exist (idempotent). */
+export function ensureWorkspace(root: string): WorkspaceLayout {
+  const layout: WorkspaceLayout = {
+    root,
+    repos: join(root, WORKSPACE_SUBPATHS.repos),
+    works: join(root, WORKSPACE_SUBPATHS.works),
+    archive: join(root, WORKSPACE_SUBPATHS.archive),
+  };
+  for (const path of [layout.root, layout.repos, layout.works, layout.archive]) {
+    mkdirSync(path, { recursive: true });
+  }
+  return layout;
+}
