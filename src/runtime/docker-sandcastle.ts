@@ -33,12 +33,21 @@ async function preflight(input: { image: string; account: string }): Promise<{ t
   }
   let token: string;
   try {
-    const { stdout } = await execFileAsync("gh", ["auth", "token", "--user", input.account], { encoding: "utf8" });
+    // The named project account is the ONLY source of the credential: `GH_TOKEN`/`GITHUB_TOKEN`
+    // are removed from the environment of this call (the same hygiene as the tracker's boundary,
+    // src/tracker/github.ts), so `gh auth token --user` is answered by the account's stored
+    // credential — never by the ambient one — and no fallback to another account is attempted.
+    const env = { ...process.env };
+    delete env.GH_TOKEN;
+    delete env.GITHUB_TOKEN;
+    const { stdout } = await execFileAsync("gh", ["auth", "token", "--user", input.account], { encoding: "utf8", env });
     token = stdout.trim();
   } catch {
-    throw new Error(`gh has no token for account ${input.account}; the active gh account is not changed to fix this.`);
+    throw new Error(`gh has no token for account ${input.account}; the project account is the only source — no fallback to another account.`);
   }
-  if (token === "") throw new Error(`gh returned an empty token for account ${input.account}`);
+  if (token === "") {
+    throw new Error(`gh returned an empty token for account ${input.account}; the project account is the only source — no fallback to another account.`);
+  }
   return { token };
 }
 

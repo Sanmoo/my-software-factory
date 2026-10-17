@@ -123,6 +123,8 @@ const arrange = async (context: TestContext, ids: readonly string[]): Promise<Se
     toolchainsDir: join(root, "toolchains"),
     stateDir,
     now: () => new Date("2026-10-14T12:00:00.000Z"),
+    // The container-evidence wait of the credential's removal (ticket #76): immediate in tests.
+    sleep: async () => {},
   };
   const queue = createFileCommandQueue(stateDir);
   return {
