@@ -66,20 +66,21 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
   const adapter = () => harness.getAdapter();
   return [
     {
-      name: "1. listCandidates: open issues with the ready label, excluding closed ones and PRs",
+      name: "1. listCandidates: open issues with the ready label, excluding closed ones",
       run: async () => {
         const a = await harness.createIssue({ title: `ready one ${harness.name}`, labels: [ready] });
         await harness.createIssue({ title: `wrong label ${harness.name}`, labels: [other] });
         await harness.createIssue({ title: `closed ready ${harness.name}`, labels: [ready], closed: true });
-        const prIssue = await harness.createIssue({ title: `pr holder ${harness.name}`, labels: [ready] });
-        await harness.createPullRequest(prIssue.ref, { headBranch: `agent-issue-${prIssue.ref.number}` });
 
         const candidates = await adapter().listCandidates(harness.repo, ready);
         const numbers = candidates.map((c) => c.ref.number);
         assert.ok(numbers.includes(a.ref.number), "the ready open issue is a candidate");
-        assert.ok(!numbers.includes(prIssue.ref.number), "PRs are never candidates");
         assert.ok(!candidates.some((c) => c.title === `wrong label ${harness.name}`), "other labels are excluded");
         assert.ok(!candidates.some((c) => c.title === `closed ready ${harness.name}`), "closed issues are excluded");
+        // PRs themselves never appear: `gh issue list` only lists issues (the
+        // v1 REST adapter filtered the pull_request key of the same endpoint).
+        // An issue WITH a linked PR is still a listing item — the factory
+        // excludes it later through the derived PR-open state (tickets 12/14).
       },
     },
     {
