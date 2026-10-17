@@ -10,7 +10,7 @@ import { AGENT_MARKER } from "./port.js";
 /**
  * The contract suite of the tracker port: the single behavior suite that
  * every adapter must satisfy (ticket 16). The fake (in-memory) runs it in
- * `npm test`, fully offline; the real GitHub adapter runs the same suite in
+ * `npm test`, fully offline; the real GitHub adapter runs the same checks in
  * the credential-gated smoke (`npm run smoke:github`).
  *
  * A harness abstracts what adapters cannot share: how issues, PRs, blockers
@@ -54,233 +54,252 @@ export interface ContractHarness {
   createPullRequest(issue: IssueRef, input?: { headBranch?: string; baseBranch?: string }): Promise<number>;
   /** Whether the branch exists on the remote (real) or was pushed (fake). */
   branchExists(branch: string): Promise<boolean>;
-  /** Full reversion of every artifact the harness created. */
+  /** Full reversion of every artifact the harness created (idempotent). */
   cleanup(): Promise<void>;
 }
 
-export function runTrackerContractSuite(harness: ContractHarness): void {
-  const ready = "ready-for-agent";
-  const other = "other-label";
+const ready = "ready-for-agent";
+const other = "other-label";
 
+/** The checks, in port order. Each check is self-contained: it seeds what it needs. */
+export function contractChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
+  const adapter = () => harness.getAdapter();
+  return [
+    {
+      name: "1. listCandidates: open issues with the ready label, excluding closed ones and PRs",
+      run: async () => {
+        const a = await harness.createIssue({ title: `ready one ${harness.name}`, labels: [ready] });
+        await harness.createIssue({ title: `wrong label ${harness.name}`, labels: [other] });
+        await harness.createIssue({ title: `closed ready ${harness.name}`, labels: [ready], closed: true });
+        const prIssue = await harness.createIssue({ title: `pr holder ${harness.name}`, labels: [ready] });
+        await harness.createPullRequest(prIssue.ref, { headBranch: `agent-issue-${prIssue.ref.number}` });
+
+        const candidates = await adapter().listCandidates(harness.repo, ready);
+        const numbers = candidates.map((c) => c.ref.number);
+        assert.ok(numbers.includes(a.ref.number), "the ready open issue is a candidate");
+        assert.ok(!numbers.includes(prIssue.ref.number), "PRs are never candidates");
+        assert.ok(!candidates.some((c) => c.title === `wrong label ${harness.name}`), "other labels are excluded");
+        assert.ok(!candidates.some((c) => c.title === `closed ready ${harness.name}`), "closed issues are excluded");
+      },
+    },
+    {
+      name: "1. listCandidates: candidates carry createdAt for age-based priority",
+      run: async () => {
+        const seeded = await harness.createIssue({ title: `aged candidate ${harness.name}`, labels: [ready] });
+        const candidates = await adapter().listCandidates(harness.repo, ready);
+        const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
+        assert.ok(candidate, "seeded issue is a candidate");
+        if (seeded.createdAt !== undefined) {
+          assert.equal(candidate.createdAt, seeded.createdAt);
+        } else {
+          assert.ok(!Number.isNaN(Date.parse(candidate.createdAt)), "createdAt is a date");
+        }
+      },
+    },
+    {
+      name: "2. readIssue: full snapshot (title, state, labels, createdAt)",
+      run: async () => {
+        const seeded = await harness.createIssue({ title: `do the thing ${harness.name}`, labels: [ready] });
+        const issue = await adapter().readIssue(seeded.ref);
+        assert.ok(issue.known, "existing issue is known");
+        assert.equal(issue.value.title, `do the thing ${harness.name}`);
+        assert.equal(issue.value.state, "open");
+        assert.deepEqual([...issue.value.labels].sort(), [ready]);
+        assert.ok(!Number.isNaN(Date.parse(issue.value.createdAt)));
+      },
+    },
+    {
+      name: "2. readIssue: missing issue is unknown, never absent-as-empty",
+      run: async () => {
+        const issue = await adapter().readIssue(await harness.missingRef());
+        assert.ok(!issue.known);
+      },
+    },
+    {
+      name: "3. readBlockers: native blocked_by with each blocker's terminal state",
+      run: async () => {
+        const a = await harness.createIssue({ title: `blocked one ${harness.name}` });
+        const b = await harness.createIssue({ title: `the blocker ${harness.name}`, closed: true });
+        await harness.addBlocker(a.ref, b.ref);
+        const blockers = await adapter().readBlockers(a.ref);
+        assert.ok(blockers.known);
+        assert.equal(blockers.value.length, 1);
+        assert.equal(blockers.value[0]?.ref.number, b.ref.number);
+        assert.equal(blockers.value[0]?.state, "closed");
+      },
+    },
+    {
+      name: "3. readBlockers: no dependencies is known-empty, not unknown",
+      run: async () => {
+        const a = await harness.createIssue({ title: `no blockers ${harness.name}` });
+        const blockers = await adapter().readBlockers(a.ref);
+        assert.ok(blockers.known);
+        assert.deepEqual(blockers.value, []);
+      },
+    },
+    {
+      name: "4. claim: adds the claimed label + assigns the worker account",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to claim ${harness.name}` });
+        await adapter().claim(a.ref, harness.workerAccount);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(harness.claimedLabel));
+        assert.deepEqual(issue.value.assignees, [harness.workerAccount]);
+      },
+    },
+    {
+      name: "5. releaseClaim: removes only the claim mark (label + assignee of the account)",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to release ${harness.name}`, labels: [other] });
+        await adapter().claim(a.ref, harness.workerAccount);
+        await adapter().releaseClaim(a.ref, harness.workerAccount);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(!issue.value.labels.includes(harness.claimedLabel), "claim label removed");
+        assert.deepEqual(issue.value.assignees, []);
+        assert.ok(issue.value.labels.includes(other), "unrelated labels are untouched");
+      },
+    },
+    {
+      name: "5. releaseClaim: removing an absent claim mark is tolerated, not an error",
+      run: async () => {
+        const a = await harness.createIssue({ title: `never claimed ${harness.name}` });
+        await assert.doesNotReject(adapter().releaseClaim(a.ref, harness.workerAccount));
+      },
+    },
+    {
+      name: "6. markDone: closes the issue as completed",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to done ${harness.name}` });
+        await adapter().markDone(a.ref);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.equal(issue.value.state, "closed");
+        assert.equal(issue.value.stateReason, "completed");
+      },
+    },
+    {
+      name: "7. comment: posts on the issue carrying the invisible agent marker",
+      run: async () => {
+        const a = await harness.createIssue({ title: `commented one ${harness.name}` });
+        await adapter().comment(a.ref, "fell over");
+        const comments = await adapter().readComments(a.ref);
+        assert.ok(comments.known);
+        const ours = comments.value.find((c) => c.body.includes("fell over"));
+        assert.ok(ours, "the comment is readable back");
+        assert.ok(ours.body.startsWith(AGENT_MARKER), "the port carries the agent marker");
+      },
+    },
+    {
+      name: "8. readComments: reads back issue comments with author and body",
+      run: async () => {
+        const a = await harness.createIssue({ title: `human feedback target ${harness.name}` });
+        await harness.addComment(a.ref, "a-human", "human feedback");
+        const comments = await adapter().readComments(a.ref);
+        assert.ok(comments.known);
+        const ours = comments.value.find((c) => c.body === "human feedback");
+        assert.ok(ours, "the human comment is readable back");
+        assert.ok(ours.author.length > 0, "the author is attributed");
+      },
+    },
+    {
+      name: "9a. readPrFeedback: reads the PR conversation of the issue's work",
+      run: async () => {
+        const issue = await harness.createIssue({ title: `with a PR ${harness.name}` });
+        const prNumber = await harness.createPullRequest(issue.ref, {
+          headBranch: `agent-issue-${issue.ref.number}`,
+        });
+        await harness.addComment({ repo: harness.repo, number: prNumber }, "a-human", "fix this");
+        const feedback = await adapter().readPrFeedback(issue.ref);
+        assert.ok(feedback.known);
+        assert.equal(feedback.value.pr?.number, prNumber);
+        assert.equal(feedback.value.pr?.state, "open");
+        const conversation = feedback.value.comments.find((c) => c.body === "fix this");
+        assert.ok(conversation, "PR conversation comment is readable back");
+      },
+    },
+    {
+      name: "9a. readPrFeedback: no PR is known-null, not unknown",
+      run: async () => {
+        const a = await harness.createIssue({ title: `no pr yet ${harness.name}` });
+        const feedback = await adapter().readPrFeedback(a.ref);
+        assert.ok(feedback.known);
+        assert.equal(feedback.value.pr, null);
+      },
+    },
+    {
+      name: "9b. openPr: creates an open PR linked to the issue's branch",
+      run: async () => {
+        const issue = await harness.createIssue({ title: `pr comes from the port ${harness.name}` });
+        const branch = `agent-issue-${issue.ref.number}`;
+        await harness.ensureBranch(branch, "main");
+        const pr = await adapter().openPr({
+          repo: harness.repo,
+          issueNumber: issue.ref.number,
+          headBranch: branch,
+          baseBranch: "main",
+          title: `work #${issue.ref.number}`,
+        });
+        assert.equal(pr.state, "open");
+        assert.equal(pr.headBranch, branch);
+        const feedback = await adapter().readPrFeedback(issue.ref);
+        assert.ok(feedback.known, "the opened PR is linked to the issue");
+        assert.equal(feedback.value.pr?.number, pr.number);
+      },
+    },
+    {
+      name: "9c. pushBranch: the branch lands on the remote",
+      run: async () => {
+        const branch = `agent-issue-push-${Date.now()}`;
+        const outcome = await adapter().pushBranch({ repo: harness.repo, branch });
+        assert.ok(outcome.performed.length > 0);
+        assert.ok(await harness.branchExists(branch), "the pushed branch exists on the remote");
+      },
+    },
+    {
+      name: "rank: GitHub has no native priority — the honest answer is known(null)",
+      run: async () => {
+        const a = await harness.createIssue({ title: `ranked? ${harness.name}` });
+        const rank = await adapter().rank(a.ref);
+        assert.ok(rank.known);
+        assert.equal(rank.value, null);
+      },
+    },
+    {
+      name: "writes report intents performed; confirmation stays with the re-read",
+      run: async () => {
+        const a = await harness.createIssue({ title: `intent report ${harness.name}` });
+        const outcome = await adapter().claim(a.ref, harness.workerAccount);
+        assert.ok(Array.isArray(outcome.performed));
+        assert.ok(outcome.performed.length > 0);
+      },
+    },
+  ];
+}
+
+/** Run all checks sequentially against one harness — the smoke's path. */
+export async function runContractChecks(harness: ContractHarness): Promise<void> {
+  await harness.reset();
+  for (const check of contractChecks(harness)) {
+    await check.run();
+    console.log(`  ✔ ${check.name}`);
+  }
+}
+
+/** Run all checks as a node:test suite — the `npm test` path (the fake). */
+export function runTrackerContractSuite(harness: ContractHarness): void {
   describe(`tracker port contract — ${harness.name}`, () => {
     beforeEach(async () => {
       await harness.reset();
     });
-
     after(async () => {
       await harness.cleanup();
     });
-
-    test("1. listCandidates: open issues with the ready label, excluding closed ones and PRs", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "ready one", labels: [ready] });
-      await harness.createIssue({ title: "wrong label", labels: [other] });
-      await harness.createIssue({ title: "closed ready", labels: [ready], closed: true });
-      const prIssue = await harness.createIssue({ title: "pr holder", labels: [ready] });
-      await harness.createPullRequest(prIssue.ref, { headBranch: `agent-issue-${prIssue.ref.number}` });
-
-      const candidates = await adapter.listCandidates(harness.repo, ready);
-      const numbers = candidates.map((c) => c.ref.number);
-      assert.ok(numbers.includes(a.ref.number), "the ready open issue is a candidate");
-      assert.ok(!numbers.includes(prIssue.ref.number), "PRs are never candidates");
-      assert.ok(!candidates.some((c) => c.title === "wrong label"), "other labels are excluded");
-      assert.ok(!candidates.some((c) => c.title === "closed ready"), "closed issues are excluded");
-    });
-
-    test("1. listCandidates: candidates carry createdAt for age-based priority", async () => {
-      const adapter = harness.getAdapter();
-      const seeded = await harness.createIssue({ title: "aged candidate", labels: [ready] });
-
-      const candidates = await adapter.listCandidates(harness.repo, ready);
-      const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
-
-      assert.ok(candidate, "seeded issue is a candidate");
-      if (seeded.createdAt !== undefined) {
-        assert.equal(candidate.createdAt, seeded.createdAt);
-      } else {
-        assert.ok(!Number.isNaN(Date.parse(candidate.createdAt)), "createdAt is a date");
-      }
-    });
-
-    test("2. readIssue: full snapshot (title, state, labels, createdAt)", async () => {
-      const adapter = harness.getAdapter();
-      const seeded = await harness.createIssue({ title: "do the thing", labels: [ready] });
-
-      const issue = await adapter.readIssue(seeded.ref);
-
-      assert.ok(issue.known, "existing issue is known");
-      assert.equal(issue.value.title, "do the thing");
-      assert.equal(issue.value.state, "open");
-      assert.deepEqual([...issue.value.labels].sort(), [ready]);
-      assert.ok(!Number.isNaN(Date.parse(issue.value.createdAt)));
-    });
-
-    test("2. readIssue: missing issue is unknown, never absent-as-empty", async () => {
-      const adapter = harness.getAdapter();
-      const issue = await adapter.readIssue(await harness.missingRef());
-      assert.ok(!issue.known);
-    });
-
-    test("3. readBlockers: native blocked_by with each blocker's terminal state", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "blocked one" });
-      const b = await harness.createIssue({ title: "the blocker", closed: true });
-      await harness.addBlocker(a.ref, b.ref);
-
-      const blockers = await adapter.readBlockers(a.ref);
-
-      assert.ok(blockers.known);
-      assert.equal(blockers.value.length, 1);
-      assert.equal(blockers.value[0]?.ref.number, b.ref.number);
-      assert.equal(blockers.value[0]?.state, "closed");
-    });
-
-    test("3. readBlockers: no dependencies is known-empty, not unknown", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "no blockers" });
-      const blockers = await adapter.readBlockers(a.ref);
-      assert.ok(blockers.known);
-      assert.deepEqual(blockers.value, []);
-    });
-
-    test("4. claim: adds the claimed label + assigns the worker account", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "to claim" });
-
-      await adapter.claim(a.ref, harness.workerAccount);
-
-      const issue = await adapter.readIssue(a.ref);
-      assert.ok(issue.known);
-      assert.ok(issue.value.labels.includes(harness.claimedLabel));
-      assert.deepEqual(issue.value.assignees, [harness.workerAccount]);
-    });
-
-    test("5. releaseClaim: removes only the claim mark (label + assignee of the account)", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "to release", labels: [other] });
-
-      await adapter.claim(a.ref, harness.workerAccount);
-      await adapter.releaseClaim(a.ref, harness.workerAccount);
-
-      const issue = await adapter.readIssue(a.ref);
-      assert.ok(issue.known);
-      assert.ok(!issue.value.labels.includes(harness.claimedLabel), "claim label removed");
-      assert.deepEqual(issue.value.assignees, []);
-      assert.ok(issue.value.labels.includes(other), "unrelated labels are untouched");
-    });
-
-    test("5. releaseClaim: removing an absent claim mark is tolerated, not an error", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "never claimed" });
-      await assert.doesNotReject(adapter.releaseClaim(a.ref, harness.workerAccount));
-    });
-
-    test("6. markDone: closes the issue as completed", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "to done" });
-
-      await adapter.markDone(a.ref);
-
-      const issue = await adapter.readIssue(a.ref);
-      assert.ok(issue.known);
-      assert.equal(issue.value.state, "closed");
-      assert.equal(issue.value.stateReason, "completed");
-    });
-
-    test("7. comment: posts on the issue carrying the invisible agent marker", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "commented one" });
-
-      await adapter.comment(a.ref, "fell over");
-
-      const comments = await adapter.readComments(a.ref);
-      assert.ok(comments.known);
-      const ours = comments.value.find((c) => c.body.includes("fell over"));
-      assert.ok(ours, "the comment is readable back");
-      assert.ok(ours.body.startsWith(AGENT_MARKER), "the port carries the agent marker");
-    });
-
-    test("8. readComments: reads back issue comments with author and body", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "human feedback target" });
-      await harness.addComment(a.ref, "a-human", "human feedback");
-
-      const comments = await adapter.readComments(a.ref);
-      assert.ok(comments.known);
-      const ours = comments.value.find((c) => c.body === "human feedback");
-      assert.ok(ours, "the human comment is readable back");
-      assert.ok(ours.author.length > 0, "the author is attributed");
-    });
-
-    test("9a. readPrFeedback: reads the PR conversation of the issue's work", async () => {
-      const adapter = harness.getAdapter();
-      const issue = await harness.createIssue({ title: "with a PR" });
-      const prNumber = await harness.createPullRequest(issue.ref, {
-        headBranch: `agent-issue-${issue.ref.number}`,
+    for (const check of contractChecks(harness)) {
+      test(check.name, async () => {
+        await check.run();
       });
-      await harness.addComment({ repo: harness.repo, number: prNumber }, "a-human", "fix this");
-
-      const feedback = await adapter.readPrFeedback(issue.ref);
-      assert.ok(feedback.known);
-      assert.equal(feedback.value.pr?.number, prNumber);
-      assert.equal(feedback.value.pr?.state, "open");
-      const conversation = feedback.value.comments.find((c) => c.body === "fix this");
-      assert.ok(conversation, "PR conversation comment is readable back");
-    });
-
-    test("9a. readPrFeedback: no PR is known-null, not unknown", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "no pr yet" });
-      const feedback = await adapter.readPrFeedback(a.ref);
-      assert.ok(feedback.known);
-      assert.equal(feedback.value.pr, null);
-    });
-
-    test("9b. openPr: creates an open PR linked to the issue's branch", async () => {
-      const adapter = harness.getAdapter();
-      const issue = await harness.createIssue({ title: "pr comes from the port" });
-      const branch = `agent-issue-${issue.ref.number}`;
-      await harness.ensureBranch(branch, "main");
-
-      const pr = await adapter.openPr({
-        repo: harness.repo,
-        issueNumber: issue.ref.number,
-        headBranch: branch,
-        baseBranch: "main",
-        title: `work #${issue.ref.number}`,
-      });
-
-      assert.equal(pr.state, "open");
-      assert.equal(pr.headBranch, branch);
-      const feedback = await adapter.readPrFeedback(issue.ref);
-      assert.ok(feedback.known, "the opened PR is linked to the issue");
-      assert.equal(feedback.value.pr?.number, pr.number);
-    });
-
-    test("9c. pushBranch: the branch lands on the remote", async () => {
-      const adapter = harness.getAdapter();
-      const branch = `agent-issue-push-${Date.now()}`;
-
-      const outcome = await adapter.pushBranch({ repo: harness.repo, branch });
-
-      assert.ok(outcome.performed.length > 0);
-      assert.ok(await harness.branchExists(branch), "the pushed branch exists on the remote");
-    });
-
-    test("rank: GitHub has no native priority — the honest answer is known(null)", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "ranked?" });
-      const rank = await adapter.rank(a.ref);
-      assert.ok(rank.known);
-      assert.equal(rank.value, null);
-    });
-
-    test("writes report intents performed; confirmation stays with the re-read", async () => {
-      const adapter = harness.getAdapter();
-      const a = await harness.createIssue({ title: "intent report" });
-      const outcome = await adapter.claim(a.ref, harness.workerAccount);
-      assert.ok(Array.isArray(outcome.performed));
-      assert.ok(outcome.performed.length > 0);
-    });
+    }
   });
 }

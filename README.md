@@ -43,6 +43,9 @@ src/
 ├── loop.ts             # the thin loop: owner of time, the --once boundary, waking by event
 ├── tracker/
 │   ├── port.ts         # TrackerPort: the 9 operations + rank (honest null)
+│   ├── github-adapter.ts # the real adapter: gh CLI + git push, token from the gh keyring
+│   ├── contract.ts     # the behavior suite every adapter must satisfy (fake + real)
+│   ├── github-smoke.ts # credential-gated smoke: executed, verified, reverted
 │   └── fake-adapter.ts # in-memory fake: deterministic scenarios, no network
 ├── state/
 │   ├── derive.ts       # stateless re-read → pool of eligibles, ordered by createdAt
@@ -66,3 +69,20 @@ npm test
 
 Fast and deterministic: the tracker and the worker runtime are fakes; the
 workspace uses a real temp dir — the disk is never mocked.
+
+## Real smoke (credential-gated)
+
+The GitHub adapter's behavior against the real thing:
+
+```sh
+npm run smoke:github
+```
+
+Runs the same contract suite the fake satisfies, plus the full cycle of one
+issue, against the repo of the config example (`Sanmoo/my-tasks`, override
+with `MSF_SMOKE_REPO`) as the bot account (`MSF_SMOKE_ACCOUNT`). Every
+operation is executed, verified and **reverted** — comments deleted, labels
+and assignees removed, blockers unlinked, PR closed, branches deleted,
+issues closed. Without the bot token in the gh keyring
+(`gh auth token --user bot-do-samuca`) the smoke is skipped with the reason,
+and `msf run` fails at boot with a clear message.

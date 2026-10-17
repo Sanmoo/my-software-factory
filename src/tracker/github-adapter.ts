@@ -85,7 +85,13 @@ class CommandError extends Error {
   }
 }
 
-const defaultRunner: CommandRunner = (file, args, options) =>
+/** The env every gh/git call of the factory runs with: the bot token and no prompts. */
+export function ghCliEnv(token: string): Record<string, string | undefined> {
+  return { ...process.env, GH_TOKEN: token, GIT_TERMINAL_PROMPT: "0" };
+}
+
+/** The production command runner (real child processes); injectable in tests. */
+export const defaultCommandRunner: CommandRunner = (file, args, options) =>
   new Promise((resolve, reject) => {
     const child = spawn(file, args, { env: options.env, cwd: options.cwd, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -111,7 +117,7 @@ const defaultRunner: CommandRunner = (file, args, options) =>
  */
 export async function readGhToken(
   account: string,
-  runner: CommandRunner = defaultRunner,
+  runner: CommandRunner = defaultCommandRunner,
 ): Promise<string> {
   const env = { ...process.env } as Record<string, string | undefined>;
   delete env.GH_TOKEN;
@@ -130,7 +136,7 @@ export async function readGhToken(
 
 /** Factory: reads the credential (boot check) and hands back the adapter. */
 export async function createGitHubAdapter(options: GitHubAdapterOptions): Promise<GitHubTrackerAdapter> {
-  const runner = options.runner ?? defaultRunner;
+  const runner = options.runner ?? defaultCommandRunner;
   const token = await readGhToken(options.account, runner);
   return new GitHubTrackerAdapter({ ...options, token, runner });
 }
@@ -184,7 +190,7 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   constructor(options: GitHubTrackerAdapterOptions) {
     this.token = options.token;
-    this.runner = options.runner ?? defaultRunner;
+    this.runner = options.runner ?? defaultCommandRunner;
     this.account = options.account;
     this.workerAccount = options.workerAccount ?? options.account;
     this.claimedLabel = options.claimedLabel ?? "agent-claimed";
@@ -401,7 +407,7 @@ export class GitHubTrackerAdapter implements TrackerPort {
   // ---- internals ----
 
   private ghEnv(): Record<string, string | undefined> {
-    return { ...process.env, GH_TOKEN: this.token, GIT_TERMINAL_PROMPT: "0" };
+    return ghCliEnv(this.token);
   }
 
   private gitEnv(): Record<string, string | undefined> {
