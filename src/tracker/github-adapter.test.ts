@@ -117,11 +117,11 @@ describe("the 9 operations over gh", () => {
         number: 5,
         title: "do the thing",
         body: "body",
-        state: "OPEN",
-        stateReason: "REOPENED",
+        state: "open",
+        state_reason: "reopened",
         labels: [{ name: "ready-for-agent" }],
         assignees: [{ login: "bot-do-samuca" }],
-        createdAt: "2026-01-01T10:00:00Z",
+        created_at: "2026-01-01T10:00:00Z",
       }),
     }));
     const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 5 });
@@ -134,14 +134,14 @@ describe("the 9 operations over gh", () => {
   });
 
   test("2. readIssue: completed maps to completed, not-planned to not-planned", async () => {
-    let reason = "COMPLETED";
+    let reason: string | null = "completed";
     const { adapter } = await makeAdapter(() => ({
-      stdout: JSON.stringify({ number: 1, title: "t", body: "", state: "CLOSED", stateReason: reason, labels: [], assignees: [], createdAt: "2026-01-01T00:00:00Z" }),
+      stdout: JSON.stringify({ number: 1, title: "t", body: "", state: "closed", state_reason: reason, labels: [], assignees: [], created_at: "2026-01-01T00:00:00Z" }),
     }));
     const done = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
     assert.ok(done.known);
     assert.equal(done.value.stateReason, "completed");
-    reason = "NOT_PLANNED";
+    reason = "not planned";
     const rejected = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
     assert.ok(rejected.known);
     assert.equal(rejected.value.stateReason, "not-planned");
@@ -149,22 +149,18 @@ describe("the 9 operations over gh", () => {
 
   test("2. readIssue: missing issue is unknown, never absent-as-empty", async () => {
     const { adapter } = await makeAdapter(() => ({
-      fail: "gh: Could not resolve to an issue or pull request with the number of 999.",
+      fail: "gh: Not Found (HTTP 404)",
     }));
     const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 999 });
     assert.ok(!issue.known);
   });
 
-  test("3. readBlockers: blockedBy nodes mapped with terminal state", async () => {
-    const { adapter } = await makeAdapter(() => ({
-      stdout: JSON.stringify({
-        blockedBy: {
-          nodes: [
-            { number: 2, state: "CLOSED", title: "b" },
-            { number: 3, state: "OPEN", title: "c" },
-          ],
-        },
-      }),
+  test("3. readBlockers: blocked_by dependencies mapped with terminal state", async () => {
+    const { adapter, calls } = await makeAdapter(() => ({
+      stdout: JSON.stringify([
+        { number: 2, state: "closed", title: "b" },
+        { number: 3, state: "open", title: "c" },
+      ]),
     }));
     const blockers = await adapter.readBlockers({ repo: "Sanmoo/a", number: 1 });
     assert.ok(blockers.known);
@@ -172,23 +168,26 @@ describe("the 9 operations over gh", () => {
       { ref: { repo: "Sanmoo/a", number: 2 }, state: "closed" },
       { ref: { repo: "Sanmoo/a", number: 3 }, state: "open" },
     ]);
+    const api = ghCall(calls, () => true);
+    assert.ok(api.args.some((a) => a.includes("dependencies/blocked_by")), "the native dependencies endpoint");
   });
 
   test("4. claim: ensures the label, adds label and assignee as two intents", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
     const outcome = await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
     assert.ok(outcome.performed.length >= 2);
-    const edits = calls.filter((c) => c.file === "gh" && c.args.includes("edit"));
-    assert.ok(edits.some((c) => c.args.includes("--add-label") && c.args.includes("agent-claimed")));
-    assert.ok(edits.some((c) => c.args.includes("--add-assignee") && c.args.includes("bot-do-samuca")));
+    const posts = calls.filter((c) => c.file === "gh" && c.args.includes("-X") && c.args.includes("POST"));
+    assert.ok(posts.some((c) => c.args.some((a) => a.endsWith("/labels") && !a.includes("issues/"))), "the repo label is ensured first");
+    assert.ok(posts.some((c) => c.args.some((a) => a.endsWith("/issues/1/labels"))), "the claim label lands on the issue");
+    assert.ok(posts.some((c) => c.args.some((a) => a.endsWith("/issues/1/assignees"))), "the account is assigned");
   });
 
   test("4. claim: label landing but assignee failing is a PartialWriteError", async () => {
-    let editCalls = 0;
+    let postCalls = 0;
     const { adapter } = await makeAdapter((call) => {
-      if (call.args.includes("edit")) {
-        editCalls += 1;
-        if (editCalls === 2) return { fail: "assignment failed" };
+      if (call.args.includes("-X") && call.args.includes("POST")) {
+        postCalls += 1;
+        if (postCalls === 3) return { fail: "assignment failed" }; // repo label, issue label, then the assignee
       }
       return { stdout: "" };
     });
@@ -202,72 +201,100 @@ describe("the 9 operations over gh", () => {
     );
   });
 
+  test("4. claim: the label ensure is cached per repo+label — one call, not one per claim", async () => {
+    const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
+    await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
+    const repoLabelPosts = calls.filter(
+      (c) => c.file === "gh" && c.args.some((a) => a === "repos/Sanmoo/a/labels"),
+    ).length;
+    assert.equal(repoLabelPosts, 1);
+    await adapter.claim({ repo: "Sanmoo/a", number: 2 }, "bot-do-samuca");
+    const after = calls.filter(
+      (c) => c.file === "gh" && c.args.some((a) => a === "repos/Sanmoo/a/labels"),
+    ).length;
+    assert.equal(after, 1, "no second POST for the same repo label");
+  });
+
   test("5. releaseClaim: removes label and assignee; 'not found' is tolerated", async () => {
-    let editCalls = 0;
+    let deletes = 0;
     const { adapter, calls } = await makeAdapter((call) => {
-      if (call.args.includes("edit")) {
-        editCalls += 1;
-        if (editCalls === 1) return { fail: "failed to update: 'agent-claimed' not found" };
+      if (call.args.includes("-X") && call.args.includes("DELETE")) {
+        deletes += 1;
+        if (deletes === 1) return { fail: "gh: Not Found (HTTP 404)" }; // absent claim label
       }
       return { stdout: "" };
     });
     const outcome = await adapter.releaseClaim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
     assert.ok(Array.isArray(outcome.performed));
-    const edits = calls.filter((c) => c.args.includes("edit"));
-    assert.ok(edits.some((c) => c.args.includes("--remove-label")));
-    assert.ok(edits.some((c) => c.args.includes("--remove-assignee")));
+    const deleteCalls = calls.filter((c) => c.args.includes("-X") && c.args.includes("DELETE"));
+    assert.ok(deleteCalls.some((c) => c.args.some((a) => a.includes("/labels/agent-claimed"))));
+    assert.ok(deleteCalls.some((c) => c.args.some((a) => a.endsWith("/issues/1/assignees"))));
   });
 
   test("6. markDone: closes as completed", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
     await adapter.markDone({ repo: "Sanmoo/a", number: 1 });
-    const gh = ghCall(calls, () => true);
-    assert.ok(gh.args.includes("close"));
-    assert.ok(gh.args.includes("--reason") && gh.args.includes("completed"));
+    const api = ghCall(calls, () => true);
+    assert.ok(api.args.includes("-X") && api.args.includes("PATCH"));
+    assert.equal(api.input, JSON.stringify({ state: "closed", state_reason: "completed" }));
   });
 
   test("7. comment: posts the body with the marker over stdin", async () => {
-    const { adapter, calls } = await makeAdapter(() => ({ stdout: "url" }));
+    const { adapter, calls } = await makeAdapter(() => ({ stdout: JSON.stringify({ id: 9 }) }));
     await adapter.comment({ repo: "Sanmoo/a", number: 1 }, "fell over");
-    const gh = ghCall(calls, () => true);
-    assert.ok(gh.args.includes("comment"));
-    assert.ok(gh.args.includes("--body-file") && gh.args.includes("-"));
-    assert.ok(gh.input?.startsWith(AGENT_MARKER));
-    assert.ok(gh.input?.includes("fell over"));
+    const api = ghCall(calls, () => true);
+    assert.ok(api.args.some((a) => a.endsWith("/issues/1/comments")));
+    assert.ok(api.args.includes("--input") && api.args.includes("-"));
+    const posted = JSON.parse(api.input ?? "") as { body: string };
+    assert.ok(posted.body.startsWith(AGENT_MARKER));
+    assert.ok(posted.body.includes("fell over"));
   });
 
   test("8. readComments: maps id, author, body, createdAt", async () => {
     const { adapter } = await makeAdapter(() => ({
-      stdout: JSON.stringify({
-        comments: [{ id: "IC_1", author: { login: "samuca" }, body: "hi", createdAt: "2026-01-01T00:00:00Z" }],
-      }),
+      stdout: JSON.stringify([
+        { id: 1, user: { login: "samuca" }, body: "hi", created_at: "2026-01-01T00:00:00Z" },
+      ]),
     }));
     const comments = await adapter.readComments({ repo: "Sanmoo/a", number: 1 });
     assert.ok(comments.known);
-    assert.deepEqual(comments.value, [{ id: "IC_1", author: "samuca", body: "hi", createdAt: "2026-01-01T00:00:00Z" }]);
+    assert.deepEqual(comments.value, [{ id: "1", author: "samuca", body: "hi", createdAt: "2026-01-01T00:00:00Z" }]);
   });
 
   test("9a. readPrFeedback: linked PR via the issue timeline, PR fields mapped", async () => {
     const { adapter, calls } = await makeAdapter((call) => {
-      if (call.args.some((a) => a.includes("timeline"))) {
-        // the jq of the real gh collapses the timeline to linked PR numbers
-        return { stdout: "3\n" };
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/timeline")) {
+        return {
+          stdout: JSON.stringify([
+            { event: "cross-referenced", source: { issue: { number: 3, pull_request: { merged_at: null } } } },
+          ]),
+        };
       }
-      if (call.args[0] === "issue" && call.args[1] === "view") {
-        return { stdout: JSON.stringify({ comments: [] }) };
+      if (path?.includes("/pulls/3/reviews")) {
+        return {
+          stdout: JSON.stringify([
+            { id: 7, user: { login: "samuca" }, body: "review body", submitted_at: "2026-01-02T00:00:00Z" },
+          ]),
+        };
       }
-      if (call.args.includes("pr") && call.args.includes("view")) {
+      if (path?.endsWith("/pulls/3")) {
         return {
           stdout: JSON.stringify({
             number: 3,
-            state: "OPEN",
-            mergedAt: null,
-            headRefName: "agent-issue-1",
-            baseRefName: "main",
-            author: { login: "bot-do-samuca" },
-            comments: [{ id: "IC_2", author: { login: "samuca" }, body: "fix this", createdAt: "2026-01-01T00:00:00Z" }],
-            reviews: [{ id: "PRR_1", author: { login: "samuca" }, body: "review body", submittedAt: "2026-01-02T00:00:00Z" }],
+            state: "open",
+            merged_at: null,
+            head: { ref: "agent-issue-1" },
+            base: { ref: "main" },
+            user: { login: "bot-do-samuca" },
           }),
+        };
+      }
+      if (path?.includes("/issues/3/comments")) {
+        return {
+          stdout: JSON.stringify([
+            { id: 2, user: { login: "samuca" }, body: "fix this", created_at: "2026-01-01T00:00:00Z" },
+          ]),
         };
       }
       return { stdout: "" };
@@ -285,15 +312,16 @@ describe("the 9 operations over gh", () => {
     assert.equal(feedback.value.comments[0]?.author, "samuca");
     assert.equal(feedback.value.reviews[0]?.body, "review body");
     assert.equal(feedback.value.reviews[0]?.createdAt, "2026-01-02T00:00:00Z");
-    const timeline = ghCall(calls, (c) => c.args.some((a) => a.includes("timeline")));
+    const timeline = ghCall(calls, (c) => c.args.some((a) => a.includes("/timeline")));
     assert.ok(timeline.args.some((a) => a.includes("/issues/1/timeline")));
   });
 
   test("9a. readPrFeedback: no linked PR is known-null, comments still read", async () => {
     const { adapter } = await makeAdapter((call) => {
-      if (call.args.some((a) => a.includes("timeline"))) return { stdout: "\n" };
-      if (call.args.includes("view")) {
-        return { stdout: JSON.stringify({ comments: [{ id: "IC_1", author: { login: "samuca" }, body: "hi", createdAt: "2026-01-01T00:00:00Z" }] }) };
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/timeline")) return { stdout: "[]" };
+      if (path?.includes("/comments")) {
+        return { stdout: JSON.stringify([{ id: 1, user: { login: "samuca" }, body: "hi", created_at: "2026-01-01T00:00:00Z" }]) };
       }
       return { stdout: "" };
     });
@@ -304,7 +332,7 @@ describe("the 9 operations over gh", () => {
   });
 
   test("9b. openPr: creates with head/base, 'Closes #N' linkage and the agent marker", async () => {
-    const { adapter, calls } = await makeAdapter(() => ({ stdout: "https://github.com/Sanmoo/a/pull/12\n" }));
+    const { adapter, calls } = await makeAdapter(() => ({ stdout: JSON.stringify({ number: 12, state: "open" }) }));
     const pr = await adapter.openPr({
       repo: "Sanmoo/a",
       issueNumber: 5,
@@ -315,12 +343,11 @@ describe("the 9 operations over gh", () => {
     assert.equal(pr.number, 12);
     assert.equal(pr.state, "open");
     assert.equal(pr.headBranch, "agent-issue-5");
-    const gh = ghCall(calls, () => true);
-    assert.ok(gh.args.includes("pr") && gh.args.includes("create"));
-    assert.ok(gh.args.includes("--head") && gh.args.includes("agent-issue-5"));
-    assert.ok(gh.args.includes("--base") && gh.args.includes("main"));
-    assert.ok(gh.input?.includes("Closes #5"));
-    assert.ok(gh.input?.includes(AGENT_MARKER));
+    const api = ghCall(calls, () => true);
+    assert.ok(api.args.some((a) => a.endsWith("/pulls")));
+    assert.ok(api.args.includes("-X") && api.args.includes("POST"));
+    assert.ok(api.input?.includes("Closes #5"));
+    assert.ok(api.input?.includes(AGENT_MARKER));
   });
 
   test("rank: GitHub has no native rank — known(null)", async () => {

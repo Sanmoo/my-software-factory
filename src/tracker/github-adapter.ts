@@ -31,6 +31,10 @@ import {
  * credential helper baked into the clone (the pattern proven in ticket 09:
  * `!gh auth git-credential` + `GH_TOKEN` authenticates clone and push).
  *
+ * REST-only (the machine's shared-IP budget leaves no GraphQL room): the gh
+ * calls are `gh issue list` (REST under the hood) and `gh api` against the
+ * REST endpoints — never `gh issue view`/`gh pr view`/`gh pr create` (GraphQL).
+ *
  * Contract from the port: writes report intents, never confirmations; unknown
  * is never absent; priority is createdAt from the same listing (GitHub has no
  * native rank).
@@ -141,39 +145,55 @@ export async function createGitHubAdapter(options: GitHubAdapterOptions): Promis
   return new GitHubTrackerAdapter({ ...options, token, runner });
 }
 
-// ---- gh JSON shapes (only the fields the adapter reads) ----
+// ---- REST JSON shapes (only the fields the adapter reads) ----
 
-interface GhIssueView {
+/** GET /repos/{owner}/{repo}/issues/{n} */
+interface RestIssue {
   number: number;
   title: string;
   body: string | null;
-  state: "OPEN" | "CLOSED";
-  stateReason: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | null;
+  state: "open" | "closed";
+  state_reason: "completed" | "not planned" | "reopened" | null;
   labels: { name: string }[];
   assignees: { login: string }[];
-  createdAt: string;
+  created_at: string;
 }
 
-interface GhComment {
-  id: string;
-  author: { login: string };
+/** GET /repos/{owner}/{repo}/issues/{n}/comments */
+interface RestComment {
+  id: number;
+  user: { login: string };
   body: string;
-  createdAt: string;
+  created_at: string;
 }
 
-interface GhPrView {
+/** GET /repos/{owner}/{repo}/pulls/{n} */
+interface RestPull {
   number: number;
-  state: "OPEN" | "CLOSED" | "MERGED";
-  mergedAt: string | null;
-  headRefName: string;
-  baseRefName: string;
-  author: { login: string };
-  comments: GhComment[];
-  reviews: { id: string; author: { login: string }; body: string; submittedAt: string | null }[];
+  state: "open" | "closed";
+  merged_at: string | null;
+  head: { ref: string };
+  base: { ref: string };
+  user: { login: string };
 }
 
-const isNotFound = (stderr: string): boolean => stderr.includes("Could not resolve to an issue");
-const isAbsentLabel = (stderr: string): boolean => /'[^']+' not found/.test(stderr);
+/** GET /repos/{owner}/{repo}/pulls/{n}/reviews */
+interface RestReview {
+  id: number;
+  user: { login: string };
+  body: string;
+  submitted_at: string | null;
+}
+
+/** GET /repos/{owner}/{repo}/issues/{n}/timeline (cross-referenced event) */
+interface RestTimelineEvent {
+  event: string;
+  source?: { issue?: { number: number; pull_request?: unknown } };
+}
+
+const isNotFound = (stderr: string): boolean => stderr.includes("Not Found") || stderr.includes("HTTP 404");
+const isAbsentLabel = (stderr: string): boolean => /'[^']+' not found/.test(stderr) || isNotFound(stderr);
+const isLabelAlreadyExists = (stderr: string): boolean => /already.?exists/i.test(stderr);
 
 export interface GitHubTrackerAdapterOptions extends GitHubAdapterOptions {
   token: string;
@@ -187,6 +207,8 @@ export class GitHubTrackerAdapter implements TrackerPort {
   readonly workerAccount: string;
   readonly claimedLabel: string;
   private readonly clonesDir: string;
+  /** Repo labels already ensured this boot — one REST call, not one per claim. */
+  private readonly labelsEnsured = new Set<string>();
 
   constructor(options: GitHubTrackerAdapterOptions) {
     this.token = options.token;
@@ -220,29 +242,30 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   /** 2. Snapshot of one issue. */
   async readIssue(ref: IssueRef): Promise<Known<IssueSnapshot>> {
-    const view = await this.issueView<GhIssueView>(ref, "number,title,body,state,stateReason,labels,assignees,createdAt");
+    const view = await this.apiOrNull<RestIssue>(`repos/${ref.repo}/issues/${ref.number}`);
     if (!view) return notKnown;
     return known({
       ref,
       title: view.title,
       body: view.body ?? "",
-      state: view.state === "CLOSED" ? "closed" : "open",
-      stateReason: terminalReason(view.stateReason),
+      state: view.state === "closed" ? "closed" : "open",
+      stateReason: terminalReason(view.state_reason),
       labels: view.labels.map((label) => label.name),
       assignees: view.assignees.map((assignee) => assignee.login),
-      createdAt: view.createdAt,
+      createdAt: view.created_at,
     });
   }
 
   /** 3. Native blocked_by dependencies with each blocker's terminal state. */
   async readBlockers(ref: IssueRef): Promise<Known<Blocker[]>> {
-    const view = await this.issueView<{ blockedBy?: { nodes?: { number: number; state: string }[] } }>(ref, "blockedBy");
-    if (!view) return notKnown;
-    const nodes = view.blockedBy?.nodes ?? [];
+    const nodes = await this.apiOrNull<RestIssue[]>(
+      `repos/${ref.repo}/issues/${ref.number}/dependencies/blocked_by`,
+    );
+    if (!nodes) return notKnown;
     return known(
       nodes.map((node) => ({
         ref: { repo: ref.repo, number: node.number },
-        state: node.state === "CLOSED" ? ("closed" as const) : ("open" as const),
+        state: node.state === "closed" ? ("closed" as const) : ("open" as const),
       })),
     );
   }
@@ -250,10 +273,16 @@ export class GitHubTrackerAdapter implements TrackerPort {
   /** 4. Claim: claimed label + assign the worker account (two intents, partial reported). */
   async claim(ref: IssueRef, account: string): Promise<WriteOutcome> {
     await this.ensureLabelExists(ref.repo, this.claimedLabel);
-    await this.gh(["issue", "edit", String(ref.number), "-R", ref.repo, "--add-label", this.claimedLabel]);
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+      method: "POST",
+      input: { labels: [this.claimedLabel] },
+    });
     const labelDone = `label+${this.claimedLabel} on ${ref.repo}#${ref.number}`;
     try {
-      await this.gh(["issue", "edit", String(ref.number), "-R", ref.repo, "--add-assignee", account]);
+      await this.api(`repos/${ref.repo}/issues/${ref.number}/assignees`, {
+        method: "POST",
+        input: { assignees: [account] },
+      });
     } catch (error) {
       throw new PartialWriteError([labelDone], (error as Error).message);
     }
@@ -264,15 +293,18 @@ export class GitHubTrackerAdapter implements TrackerPort {
   async releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     // absent label (on the issue or in the repo) is a tolerated no-op
-    await this.gh(
-      ["issue", "edit", String(ref.number), "-R", ref.repo, "--remove-label", this.claimedLabel],
-      { tolerate: isAbsentLabel },
-    ).then(
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${this.claimedLabel}`, {
+      method: "DELETE",
+      tolerate: isAbsentLabel,
+    }).then(
       () => performed.push(`label-${this.claimedLabel} on ${ref.repo}#${ref.number}`),
       () => {},
     );
     try {
-      await this.gh(["issue", "edit", String(ref.number), "-R", ref.repo, "--remove-assignee", account]);
+      await this.api(`repos/${ref.repo}/issues/${ref.number}/assignees`, {
+        method: "DELETE",
+        input: { assignees: [account] },
+      });
     } catch (error) {
       throw new PartialWriteError(performed, (error as Error).message);
     }
@@ -282,56 +314,62 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   /** 6. Done: close the issue as completed. */
   async markDone(ref: IssueRef): Promise<WriteOutcome> {
-    await this.gh(["issue", "close", String(ref.number), "-R", ref.repo, "--reason", "completed"]);
+    await this.api(`repos/${ref.repo}/issues/${ref.number}`, {
+      method: "PATCH",
+      input: { state: "closed", state_reason: "completed" },
+    });
     return { performed: [`close as completed ${ref.repo}#${ref.number}`] };
   }
 
   /** 7. Comment on the issue — everything published carries the agent marker. */
   async comment(ref: IssueRef, body: string): Promise<WriteOutcome> {
     const marked = body.startsWith(AGENT_MARKER) ? body : `${AGENT_MARKER} ${body}`;
-    await this.gh(["issue", "comment", String(ref.number), "-R", ref.repo, "--body-file", "-"], {
-      input: marked,
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/comments`, {
+      method: "POST",
+      input: { body: marked },
     });
     return { performed: [`comment on ${ref.repo}#${ref.number}`] };
   }
 
   /** 8. The issue's comments. */
   async readComments(ref: IssueRef): Promise<Known<IssueComment[]>> {
-    const view = await this.issueView<{ comments: GhComment[] }>(ref, "comments");
-    if (!view) return notKnown;
-    return known(view.comments.map(mapComment));
+    const comments = await this.apiOrNull<RestComment[]>(`repos/${ref.repo}/issues/${ref.number}/comments`);
+    if (!comments) return notKnown;
+    return known(comments.map(mapComment));
   }
 
   /** 9a. PR feedback: the PR linked to the issue (timeline linkage), its conversation and reviews. */
   async readPrFeedback(ref: IssueRef): Promise<Known<PrFeedback>> {
-    const view = await this.issueView<{ comments: GhComment[] }>(ref, "comments");
-    if (!view) return notKnown;
-    const comments = (view.comments ?? []).map(mapComment);
-
-    const prNumber = await this.findLinkedPrNumber(ref);
+    const timeline = await this.apiOrNull<RestTimelineEvent[]>(
+      `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
+    );
+    if (!timeline) return notKnown;
+    const prNumber = linkedPrNumber(timeline);
     if (prNumber === null) {
-      return known({ pr: null, comments, reviews: [] });
+      const comments = await this.apiOrNull<RestComment[]>(`repos/${ref.repo}/issues/${ref.number}/comments`);
+      if (!comments) return notKnown;
+      return known({ pr: null, comments: comments.map(mapComment), reviews: [] });
     }
-    const { stdout } = await this.gh([
-      "pr", "view", String(prNumber), "-R", ref.repo,
-      "--json", "number,state,mergedAt,headRefName,baseRefName,author,comments,reviews",
+    const [pull, comments, reviews] = await Promise.all([
+      this.api<RestPull>(`repos/${ref.repo}/pulls/${prNumber}`),
+      this.api<RestComment[]>(`repos/${ref.repo}/issues/${prNumber}/comments`),
+      this.api<RestReview[]>(`repos/${ref.repo}/pulls/${prNumber}/reviews`),
     ]);
-    const pr = JSON.parse(stdout) as GhPrView;
     return known({
       pr: {
-        number: pr.number,
-        state: pr.state === "OPEN" ? "open" : "closed",
-        merged: pr.mergedAt !== null,
-        headBranch: pr.headRefName,
-        baseBranch: pr.baseRefName,
-        author: pr.author.login,
+        number: pull.number,
+        state: pull.state === "open" ? "open" : "closed",
+        merged: pull.merged_at !== null,
+        headBranch: pull.head.ref,
+        baseBranch: pull.base.ref,
+        author: pull.user.login,
       },
-      comments: pr.comments.map(mapComment),
-      reviews: pr.reviews.map((review) => ({
-        id: review.id,
-        author: review.author.login,
+      comments: comments.map(mapComment),
+      reviews: reviews.map((review) => ({
+        id: String(review.id),
+        author: review.user.login,
         body: review.body,
-        createdAt: review.submittedAt ?? "",
+        createdAt: review.submitted_at ?? "",
       })),
     });
   }
@@ -339,23 +377,12 @@ export class GitHubTrackerAdapter implements TrackerPort {
   /** 9b. Open the PR of a work's branch, linked to the issue ("Closes #N"). */
   async openPr(input: OpenPrInput): Promise<PullRequest> {
     const body = `Closes #${input.issueNumber}\n\n${AGENT_MARKER}`;
-    const { stdout } = await this.gh(
-      [
-        "pr", "create",
-        "-R", input.repo,
-        "--head", input.headBranch,
-        "--base", input.baseBranch,
-        "--title", input.title,
-        "--body-file", "-",
-      ],
-      { input: body },
-    );
-    const match = stdout.match(/\/pull\/(\d+)/);
-    if (!match) {
-      throw new Error(`gh pr create did not return a PR URL: ${stdout.trim()}`);
-    }
+    const pull = await this.api<{ number: number }>(`repos/${input.repo}/pulls`, {
+      method: "POST",
+      input: { title: input.title, head: input.headBranch, base: input.baseBranch, body },
+    });
     return {
-      number: Number(match[1]),
+      number: pull.number,
       state: "open",
       merged: false,
       headBranch: input.headBranch,
@@ -432,53 +459,66 @@ export class GitHubTrackerAdapter implements TrackerPort {
     }
   }
 
-  /** Issue view or null when the issue does not exist (unknown is never absent). */
-  private async issueView<T>(ref: IssueRef, fields: string): Promise<T | null> {
+  /** One REST call over `gh api` — the body goes over stdin (`--input -`), never argv. */
+  private async api<T>(
+    path: string,
+    init: { method?: "POST" | "PATCH" | "DELETE"; input?: unknown; tolerate?: (stderr: string) => boolean } = {},
+  ): Promise<T> {
+    const args = ["api", ...(init.method ? ["-X", init.method] : []), path];
+    const { stdout } = await this.gh(
+      init.input === undefined ? args : [...args, "--input", "-"],
+      {
+        ...(init.input === undefined ? {} : { input: JSON.stringify(init.input) }),
+        ...(init.tolerate ? { tolerate: init.tolerate } : {}),
+      },
+    );
+    return (stdout.trim() === "" ? null : JSON.parse(stdout)) as T;
+  }
+
+  /** The REST call or null when GitHub answers 404 (unknown is never absent). */
+  private async apiOrNull<T>(path: string): Promise<T | null> {
     try {
-      const { stdout } = await this.gh(["issue", "view", String(ref.number), "-R", ref.repo, "--json", fields]);
-      return JSON.parse(stdout) as T;
+      return await this.api<T>(path);
     } catch (error) {
       const stderr = (error as CommandError).stderr ?? (error as Error).message;
-      if (isNotFound(stderr)) return null;
+      if (typeof stderr === "string" && isNotFound(stderr)) return null;
       throw error;
     }
   }
 
-  /** The PR linked to the issue: the latest cross-reference from a PR ("Closes #N"). */
-  private async findLinkedPrNumber(ref: IssueRef): Promise<number | null> {
-    const { stdout } = await this.gh([
-      "api",
-      `repos/${ref.repo}/issues/${ref.number}/timeline`,
-      "--paginate",
-      "--jq",
-      `.[] | select(.event == "cross-referenced") | .source.issue | select(.pull_request != null) | .number`,
-    ]);
-    const numbers = stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line !== "");
-    const last = numbers.at(-1);
-    return last === undefined ? null : Number(last);
-  }
-
   private async ensureLabelExists(repo: string, label: string): Promise<void> {
-    await this.gh(["label", "create", label, "-R", repo], {
-      tolerate: (stderr) => stderr.includes("already exists"),
+    const cacheKey = `${repo}/${label}`;
+    if (this.labelsEnsured.has(cacheKey)) return;
+    await this.api(`repos/${repo}/labels`, {
+      method: "POST",
+      input: { name: label },
+      tolerate: isLabelAlreadyExists,
     });
+    this.labelsEnsured.add(cacheKey);
   }
 }
 
-function terminalReason(reason: GhIssueView["stateReason"]): IssueSnapshot["stateReason"] {
-  if (reason === "COMPLETED") return "completed";
-  if (reason === "NOT_PLANNED") return "not-planned";
+/** The PR linked to the issue: the latest cross-reference from a PR ("Closes #N"). */
+function linkedPrNumber(timeline: RestTimelineEvent[]): number | null {
+  const numbers = timeline
+    .filter((event) => event.event === "cross-referenced")
+    .map((event) => event.source?.issue)
+    .flatMap((issue) => (issue !== undefined && issue.pull_request != null ? [issue.number] : []));
+  const last = numbers.at(-1);
+  return last === undefined ? null : last;
+}
+
+function terminalReason(reason: RestIssue["state_reason"]): IssueSnapshot["stateReason"] {
+  if (reason === "completed") return "completed";
+  if (reason === "not planned") return "not-planned";
   return null; // reopened (or absent) is not a terminal reason
 }
 
-function mapComment(comment: GhComment): IssueComment {
+function mapComment(comment: RestComment): IssueComment {
   return {
-    id: comment.id,
-    author: comment.author.login,
+    id: String(comment.id),
+    author: comment.user.login,
     body: comment.body,
-    createdAt: comment.createdAt,
+    createdAt: comment.created_at,
   };
 }
