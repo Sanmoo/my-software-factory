@@ -22,6 +22,7 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
     prOpen: false,
     blockedLabelOnIssue: false,
     consecutiveFall: false,
+    attempt: 1,
     ...overrides,
   };
 }
@@ -123,10 +124,12 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
 
     test("an absent record after a previous fall blocks, with the abrupt class in the comment", () => {
-      const ruling = classifyOutcome(facts({ record: null, consecutiveFall: true }));
+      const ruling = classifyOutcome(
+        facts({ record: null, consecutiveFall: true, attempt: 3 }),
+      );
       assert.equal(ruling.decision, "block");
       assert.equal(ruling.because, "fall-second");
-      assert.match(ruling.comment, /abrupt fall/i);
+      assert.match(ruling.comment, /attempt 3/);
       assert.match(ruling.comment, /no outcome record/i);
     });
   });

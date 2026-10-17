@@ -74,6 +74,8 @@ export interface OutcomeFacts {
   blockedLabelOnIssue: boolean;
   /** The registry's fact from launch time: the previous attempt on this branch also fell. */
   consecutiveFall: boolean;
+  /** The attempt being collected (the registry's launch fact) — names the fall in the blocked comment. */
+  attempt: number;
 }
 
 /**
@@ -93,7 +95,7 @@ export function classifyOutcome(facts: OutcomeFacts): OutcomeRuling {
     return {
       decision: "block",
       because: "fall-second",
-      comment: blockedCommentBody(facts.record, facts.record?.attempt),
+      comment: blockedCommentBody(facts.record, facts.attempt),
     };
   }
   return { decision: "release", because: "fall-first" };
