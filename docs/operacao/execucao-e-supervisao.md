@@ -28,10 +28,12 @@ O perfil Pi do operador é resolvido **no host** e o container recebe um retrato
 arquivos reais (ver [ADR 0002](../adr/0002-perfil-de-runtime-resolvido-no-host.md)):
 
 - `config.json`, `runtimeProfiles.<perfil>`: itens obrigatórios (`files`, `packages`,
-  `skills`, `agents`) e `excludePackages` (por exemplo `npm:pi-lens`, retirado só da cópia
+  `skills`, `agents`, `tools`) e `excludePackages` (por exemplo `npm:pi-lens`, retirado só da cópia
   do container, nunca do perfil do operador).
 - `local.json`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio
   diretório do perfil.
+- `local.json`, `mise.<perfil>`: a declaração de mise do operador no host, levada pelo retrato
+  e lida dentro do container; sem ela, um perfil com `tools` obrigatórias não é admitido.
 
 Link com destino fora das raízes, quebrado ou cíclico é pulado e listado no log detalhado.
 Se for **obrigatório**, a issue não é claimed: o motivo aparece no log principal como
@@ -41,7 +43,8 @@ nos dois arquivos é erro de configuração ao iniciar a instância, sem fallbac
 
 Dentro do container, antes do prompt, o setup copia o retrato, **converge** a toolchain uma vez
 e confirma os pacotes e ferramentas obrigatórios; se faltar algum, a invocação é interrompida
-com o motivo (ADR 0004). A convergência é estrita: não há modo fail-open. O retrato também
+com o motivo (ver [ADR 0004](../adr/0004-convergencia-de-perfil-fora-do-container.md)). A
+convergência é estrita: não há modo fail-open. O retrato também
 carrega o lock do Pi e a declaração de mise do operador, e a primeira invocação de um perfil
 instala dentro do container; as seguintes não instalam nada e não precisam de rede.
 
