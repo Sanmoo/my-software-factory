@@ -171,11 +171,18 @@ export class FakeTrackerAdapter implements TrackerPort {
     return known(blockers);
   }
 
-  async claim(ref: IssueRef, account: string): Promise<WriteOutcome> {
+  async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
+    const performed: string[] = [];
+    // The swap ready→claimed is one composite write: removing the ready label
+    // is what keeps a concurrent sweep from ever seeing the work again.
+    if (readyLabel !== undefined && issue.labels.delete(readyLabel)) {
+      performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`);
+    }
     issue.labels.add("agent-claimed");
     issue.assignees.add(account);
-    return { performed: [`label+agent-claimed on ${ref.repo}#${ref.number}`, `assignee ${account}`] };
+    performed.push(`label+agent-claimed on ${ref.repo}#${ref.number}`, `assignee ${account}`);
+    return { performed };
   }
 
   async releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome> {

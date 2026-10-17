@@ -125,8 +125,8 @@ export interface TrackerPort {
   /** 3. Native blocked_by dependencies with each blocker's terminal state. */
   readBlockers(ref: IssueRef): Promise<Known<Blocker[]>>;
 
-  /** 4. Claim: claimed label + assign the worker account. */
-  claim(ref: IssueRef, account: string): Promise<WriteOutcome>;
+  /** 4. Claim: swap ready→claimed (when the ready label is given) + assign the worker account — the reservation lands on the tracker BEFORE any launch. */
+  claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
   /** 5. Release: remove only the claim mark (label + account assignee). */
   releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome>;
