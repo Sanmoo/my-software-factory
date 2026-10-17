@@ -50,8 +50,10 @@ export async function readLaunchFacts(workDir: string): Promise<LaunchFacts> {
   // No record: either nothing ever happened (empty dir) or the previous
   // attempt died before writing — abrupt fall. The session dir and the
   // per-attempt logs are the evidence the runtime leaves at launch time.
-  const hasEvidence = (await attemptNumbers(workDir)).length > 0 || existsSync(join(workDir, "sessao"));
-  if (hasEvidence) return { attempt: (await attemptNumbers(workDir)).at(-1)! + 1, previousFall: true };
+  const logs = await attemptNumbers(workDir);
+  if (logs.length > 0 || existsSync(join(workDir, "sessao"))) {
+    return { attempt: logs.at(-1)! + 1, previousFall: true };
+  }
 
   return { attempt: 1, previousFall: false };
 }

@@ -279,31 +279,10 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.ok(!existsSync(workDir(layout, REPO, 1) + "/desfecho.json"), "no fall recorded, no artifacts");
     const labels = await labelsOf(t, 1);
     assert.ok(labels.includes(DEFAULT_LABELS.ready), "the ready label was never swapped");
-  });
-
-  test("class 5 — a fall record with the PR open is reserved, never a fall (no consecutiveness)", async () => {
-    const config = makeConfig(1);
-    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
-    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
-
-    // Attempt 1 opens the PR (reserved). The relaunch of a reserved work is a
-    // feedback round (ticket 14) — here the ruler's exception is probed
-    // directly through the same collection path: seed the record of a fall
-    // while the PR stays open, then the next claim still sees the PR first.
-    const { deps, tracker: t } = makeFactory(config, tracker, ["pr-open"]);
-    await runOnce(deps);
-
-    // Force the exact ruler fact combination at collection: the record of a
-    // fall with the PR still open — the work stays reserved, no fall recorded.
-    const wd = workDir(layout, REPO, 1);
-    writeFileSync(
-      join(wd, DESFECHO_FILENAME),
-      JSON.stringify({ class: "clean-without-pr", attempt: 2 }),
-      "utf8",
-    );
-    const labels = await labelsOf(t, 1);
-    assert.ok(labels.includes(DEFAULT_LABELS.claimed), "the claim was never released");
-    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "no fall was recorded");
+    // The ruler's exception at collection (a fall record with the PR open is
+    // reserved, never a fall) is decided in classifyOutcome — covered by the
+    // ruler's unit suite; the loop can only reach that combination once
+    // feedback/retomada relaunches exist (ticket 14).
   });
 
   // ---- class 6: blocked self-report → the factory only records it ----
