@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parseConfig } from "../src/config/validate.js";
 import { loadConfigFile } from "../src/config/load.js";
+import { parseYamlDocument, stringifyYaml } from "../src/config/yaml.js";
+import { loadLocalSettings } from "../src/cli/local-settings.js";
 
 const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
 test("loads two instances (work and personal) with their projects", async () => {
-  const result = await loadConfigFile(fixture("instances.json"));
+  const result = await loadConfigFile(fixture("instances.yaml"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
   const names = result.config.instances.map((instance) => instance.name);
@@ -47,7 +51,7 @@ const EXPECTED_TARGETS: Array<[string, string, string]> = [
 ];
 
 test("the fixture carries all 16 configured targets: 5 personal and 11 work, Jira and GitHub", async () => {
-  const result = await loadConfigFile(fixture("instances.json"));
+  const result = await loadConfigFile(fixture("instances.yaml"));
   assert.equal(result.ok, true, JSON.stringify(result.ok ? [] : result.issues));
   if (!result.ok) return;
   const targets = result.config.instances.flatMap((instance) => instance.projects.map((project) => {
@@ -63,7 +67,11 @@ test("the fixture carries all 16 configured targets: 5 personal and 11 work, Jir
 
 // oxlint-disable-next-line typescript/no-explicit-any -- error-case tests deliberately mutate arbitrary JSON fixture shapes
 type Raw = Record<string, any>;
-const readRaw = async (): Promise<Raw> => JSON.parse(await readFile(fixture("instances.json"), "utf8"));
+const readRaw = async (): Promise<Raw> => {
+  const parsed = parseYamlDocument(await readFile(fixture("instances.yaml"), "utf8"));
+  if (!parsed.ok) throw new Error(parsed.message);
+  return parsed.value as Raw;
+};
 const parse = async (mutate: (raw: Raw) => void) => {
   const raw = await readRaw();
   mutate(raw);
@@ -161,15 +169,58 @@ test("non-positive or non-integer instance limits are visible errors", async () 
 });
 
 test("the documented example configuration validates and carries no credential values", async () => {
-  const path = fileURLToPath(new URL("../docs/config.example.json", import.meta.url));
+  const path = fileURLToPath(new URL("../docs/config.example.yaml", import.meta.url));
   const result = await loadConfigFile(path);
   assert.equal(result.ok, true, JSON.stringify(result.ok ? [] : result.issues));
   const text = await readFile(path, "utf8");
   assert.doesNotMatch(text, /ghp_|github_pat_|token"\s*:/i);
 });
 
+test("the same configuration written as YAML passes through the same validation unchanged", async () => {
+  const first = await loadConfigFile(fixture("instances.yaml"));
+  assert.equal(first.ok, true, JSON.stringify(first.ok ? [] : first.issues));
+  if (!first.ok) return;
+  // Written out again from the validated data, the document must be the same configuration: the
+  // migration's roundtrip and the loader's validation agree on meaning (ticket #72).
+  const dir = await mkdtemp(join(tmpdir(), "msf-config-"));
+  const path = join(dir, "config.yaml");
+  await writeFile(path, stringifyYaml(first.config));
+  assert.deepEqual(await loadConfigFile(path), first);
+});
+
+test("a broken YAML file reports the path, the reason and the line, never the file's values", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "msf-config-"));
+  const path = join(dir, "config.yaml");
+  await writeFile(path, "credentials:\n  SEGREDO-NAO-VAZAR: 1\n  SEGREDO-NAO-VAZAR: 2\n");
+  const result = await loadConfigFile(path);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.issues[0]?.path, path);
+  assert.match(result.issues[0]?.message ?? "", /chave duplicada/);
+  assert.match(result.issues[0]?.message ?? "", /linha 3, coluna 3/);
+  assert.doesNotMatch(result.issues[0]?.message ?? "", /SEGREDO-NAO-VAZAR/);
+
+  // The format follows the extension: the same text is not retried as JSON.
+  const other = join(dir, "config.yml");
+  await writeFile(other, "{\n");
+  const broken = await loadConfigFile(other);
+  assert.equal(broken.ok, false);
+  assert.match(broken.ok ? "" : broken.issues[0]?.message ?? "", /^(?!.*JSON)/);
+});
+
+test("a broken local YAML file reports the path and the reason, never the file's values", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "msf-local-"));
+  const path = join(dir, "local.yaml");
+  await writeFile(path, "image: x\nprofiles: {}\nprofiles: {}\n");
+  const result = await loadLocalSettings(path);
+  assert.equal(typeof result, "string");
+  assert.match(result as string, /configuração local inválida/);
+  assert.ok((result as string).includes(path));
+  assert.match(result as string, /chave duplicada/);
+});
+
 test("projects without label overrides use the default ready and claimed labels", async () => {
-  const result = await loadConfigFile(fixture("instances.json"));
+  const result = await loadConfigFile(fixture("instances.yaml"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
   for (const project of result.config.instances.flatMap((instance) => instance.projects)) {
@@ -206,8 +257,11 @@ test("a GitHub project cannot carry a priority rank map", async () => {
 });
 
 test("the documented example names the Jira operator as an accountId placeholder, not an e-mail", async () => {
-  const path = fileURLToPath(new URL("../docs/config.example.json", import.meta.url));
-  const raw = JSON.parse(await readFile(path, "utf8"));
+  const path = fileURLToPath(new URL("../docs/config.example.yaml", import.meta.url));
+  const parsed = parseYamlDocument(await readFile(path, "utf8"));
+  assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.message);
+  if (!parsed.ok) return;
+  const raw = parsed.value as { instances: Array<{ projects: Array<{ jira?: { operator: string } }> }> };
   const operators = raw.instances.flatMap((instance: { projects: Array<{ jira?: { operator: string } }> }) =>
     instance.projects.flatMap((project) => (project.jira ? [project.jira.operator] : [])));
   assert.ok(operators.length > 0, "the example has a Jira project");
@@ -218,7 +272,7 @@ test("the documented example names the Jira operator as an accountId placeholder
 });
 
 test("the Jira project of the fixture uses the done transition confirmed by the conformance report (007)", async () => {
-  const result = await loadConfigFile(fixture("instances.json"));
+  const result = await loadConfigFile(fixture("instances.yaml"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
   const van = result.config.instances.flatMap((instance) => instance.projects)

@@ -1,0 +1,137 @@
+credentials:
+  copilot:
+    kind: pi-auth
+    ref: copilot
+  jira-van:
+    kind: env
+    ref: JIRA_VAN_TOKEN
+runtimeProfiles:
+  docker-default:
+    required:
+      files:
+        - settings.json
+  docker-vazio:
+    required:
+      files: []
+instances:
+  - name: assistida
+    maxConcurrent: 2
+    maxAssisted: 3
+    assistModel: github-copilot/claude-haiku-5.5
+    pollIntervalSeconds: 300
+    maxIterations: 5
+    modelAuth: copilot
+    projects:
+      - name: app
+        enabled: true
+        adapter: github
+        repository: acme/app
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: acme
+        labels:
+          ready: ready-for-agent
+          claimed: agent-claimed
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: monolith
+        enabled: true
+        adapter: jira
+        repository: acme/mono
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: acme
+        labels:
+          ready: ready-for-agent
+          claimed: agent-claimed
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+        jira:
+          projectKey: VAN
+          routingLabel: monolith
+          doingTransition: Doing
+          doneTransition: Done
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: alguem-operador
+      - name: dealer
+        enabled: true
+        adapter: jira
+        repository: acme/dealer-mono
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: acme
+        labels:
+          ready: ready-for-agent
+          claimed: agent-claimed
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+        jira:
+          projectKey: VAN
+          routingLabel: dealer
+          doingTransition: Doing
+          doneTransition: Done
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: alguem-operador
+  - name: sem-config
+    maxConcurrent: 1
+    pollIntervalSeconds: 300
+    maxIterations: 5
+    modelAuth: copilot
+    projects:
+      - name: app-2
+        enabled: true
+        adapter: github
+        repository: acme/app2
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-vazio
+        githubAccount: acme
+        labels:
+          ready: ready-for-agent
+          claimed: agent-claimed
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: mono-off
+        enabled: false
+        adapter: jira
+        repository: acme/mono-off
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-vazio
+        githubAccount: acme
+        labels:
+          ready: ready-for-agent
+          claimed: agent-claimed
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+        jira:
+          projectKey: MON
+          routingLabel: mono-off
+          doingTransition: Doing
+          doneTransition: Done
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: alguem-operador

@@ -27,12 +27,12 @@ da branch de destino; o container empurra para `https://github.com/<repo>.git` c
 O perfil Pi do operador é resolvido **no host** e o container recebe um retrato só com
 arquivos reais (ver [ADR 0002](../adr/0002-perfil-de-runtime-resolvido-no-host.md)):
 
-- `config.json`, `runtimeProfiles.<perfil>`: itens obrigatórios (`files`, `packages`,
+- `config.yaml`, `runtimeProfiles.<perfil>`: itens obrigatórios (`files`, `packages`,
   `skills`, `agents`, `tools`) e `excludePackages` (por exemplo `npm:pi-lens`, retirado só da cópia
   do container, nunca do perfil do operador).
-- `local.json`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio
+- `local.yaml`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio
   diretório do perfil.
-- `local.json`, `mise.<perfil>`: a declaração de mise do operador no host, levada pelo retrato
+- `local.yaml`, `mise.<perfil>`: a declaração de mise do operador no host, levada pelo retrato
   e lida dentro do container; sem ela, um perfil com `tools` obrigatórias não é admitido.
 
 Link com destino fora das raízes, quebrado ou cíclico é pulado e listado no log detalhado.
@@ -140,7 +140,7 @@ continuações → trabalho novo por prioridade. O efeito:
 - Se a skill de triagem não estiver no perfil autorizado, a issue não é admitida e
   comentário humano vira pedido de ajuda visível, nunca correção sem triagem.
 - A triagem exige `python3` na imagem do runner; o perfil precisa de `mise`, `ripgrep` e `fd`
-  na imagem e da declaração de mise do operador em `local.json` (`mise.<perfil>`) quando
+  na imagem e da declaração de mise do operador em `local.yaml` (`mise.<perfil>`) quando
   declarar `required.tools`. `./msf <instância> run --check` relata o que falta e o estado da
   toolchain persistente, e nunca repara.
 

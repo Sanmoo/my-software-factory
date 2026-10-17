@@ -6,6 +6,7 @@ import test from "node:test";
 import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
+import { stringifyYaml } from "../src/config/yaml.js";
 import { FakeRunner, finished } from "../src/runtime/fake-runner.js";
 import type { RunnerContext, RunnerOutput } from "../src/runtime/runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
@@ -82,10 +83,10 @@ interface Fixtures {
 // real admission, so the state directory is what the operator would see.
 async function prepare(extraJobFile?: { name: string; content: string }): Promise<Fixtures> {
   const dir = await mkdtemp(join(tmpdir(), "msf-cli-"));
-  const configPath = join(dir, "config.json");
+  const configPath = join(dir, "config.yaml");
   const fixturePath = join(dir, "tracker.json");
   const stateDir = join(dir, "state");
-  await writeFile(configPath, JSON.stringify(CONFIG));
+  await writeFile(configPath, stringifyYaml(CONFIG));
   await writeFile(fixturePath, JSON.stringify(TRACKER));
   const loaded = await loadConfigFile(configPath);
   if (!loaded.ok) throw new Error(JSON.stringify(loaded.issues));

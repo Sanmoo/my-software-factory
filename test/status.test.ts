@@ -21,7 +21,7 @@ const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, im
 const memoryTracker = async (): Promise<TrackerPort> => loadMemoryTracker(JSON.parse(await readFile(fixture("status-tracker.json"), "utf8")));
 
 async function status(instanceName: string, extra: Partial<StatusOptions> = {}) {
-  const loaded = await loadInstance(fixture("instances.json"), instanceName);
+  const loaded = await loadInstance(fixture("instances.yaml"), instanceName);
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
   const stateDir = extra.stateDir ?? join(await mkdtemp(join(tmpdir(), "msf-status-")), "state");
   return runStatus({ instance: loaded.instance, stateDir, env: {}, tracker: await memoryTracker(), ...extra });

@@ -89,7 +89,7 @@ export interface DockerRunnerOptions {
   instance: InstanceConfig;
   credentials: Readonly<Record<string, CredentialRef>>;
   profiles: Readonly<Record<string, string>>;
-  // What each runtime profile must carry (config.json) and where its links may lead (local.json).
+  // What each runtime profile must carry (config.yaml) and where its links may lead (local.yaml).
   runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
   allowedRoots: Readonly<Record<string, readonly string[]>>;
   stateDir: string;

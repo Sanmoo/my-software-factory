@@ -85,7 +85,7 @@ procura o humano.
   factory guarda o token.
 - **GitHub:** o token da conta do projeto é obtido do keyring (`gh auth token --user
   <conta>`) e injetado apenas no processo/container do trabalho; a conta ativa do `gh` não
-  muda. O `config.json` referencia credenciais por nome, nunca pelo valor.
+  muda. O `config.yaml` referencia credenciais por nome, nunca pelo valor.
 
 ## Pendências conhecidas
 

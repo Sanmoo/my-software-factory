@@ -83,7 +83,7 @@ const arrange = async (context: TestContext, options: {
   instanceOverrides?: { maxAssisted?: number };
   now?: string;
 } = {}): Promise<Setup> => {
-  const loaded = await loadInstance(fixture("assist-instances.json"), "assistida");
+  const loaded = await loadInstance(fixture("assist-instances.yaml"), "assistida");
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
   const root = await mkdtemp(join(tmpdir(), "msf-assist-reconcile-"));
   context.after(() => rm(root, { recursive: true, force: true }));

@@ -531,10 +531,10 @@ test("a project whose runtime profile has no declaration in both files is a conf
   const base = { instance: instance(), credentials, profiles: { PI_AUTH: f.agentDir, personal: f.agentDir }, stateDir: f.stateDir, toolchainsDir: join(f.stateDir, "toolchains"), image: "x", repositorySource: () => f.source, boundary };
   assert.throws(
     () => createDockerRunner({ ...base, runtimeProfiles: {}, allowedRoots: { personal: [] } }),
-    (error: unknown) => error instanceof RunnerConfigError && /personal.*config\.json.*sem fallback/.test(error.message),
+    (error: unknown) => error instanceof RunnerConfigError && /personal.*config\.yaml.*sem fallback/.test(error.message),
   );
   assert.throws(
     () => createDockerRunner({ ...base, runtimeProfiles: { personal: DECLARATION }, allowedRoots: {} }),
-    (error: unknown) => error instanceof RunnerConfigError && /personal.*local\.json.*sem fallback/.test(error.message),
+    (error: unknown) => error instanceof RunnerConfigError && /personal.*local\.yaml.*sem fallback/.test(error.message),
   );
 });

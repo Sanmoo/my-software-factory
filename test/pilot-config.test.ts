@@ -2,13 +2,26 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parseConfig } from "../src/config/validate.js";
+import { parseYamlDocument } from "../src/config/yaml.js";
 
 // The pilot template (issue #10): every configured target across the two instances.
+async function yamlOfText(text: string): Promise<unknown> {
+  const parsed = parseYamlDocument(text);
+  assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.message);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+async function yamlOf(path: string): Promise<unknown> {
+  const parsed = parseYamlDocument(await readFile(path, "utf8"));
+  assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.message);
+  return parsed.ok ? parsed.value : undefined;
+}
+
 async function template() {
-  const text = (await readFile("docs/pilot/config.template.json", "utf8"))
+  const text = (await readFile("docs/pilot/config.template.yaml", "utf8"))
     .replaceAll("__JIRA_OPERATOR_ACCOUNT_ID__", "operator-account-id")
     .replaceAll("__CON_DONE_TRANSITION__", "Itens concluídos");
-  const parsed = parseConfig(JSON.parse(text));
+  const parsed = parseConfig((await yamlOfText(text)));
   assert.ok(parsed.ok, JSON.stringify(!parsed.ok && parsed.issues));
   return parsed.config;
 }
@@ -38,7 +51,7 @@ test("the work and personal model auths are separate references", async () => {
 });
 
 test("the template carries placeholders only where the operator must supply a value", async () => {
-  const text = await readFile("docs/pilot/config.template.json", "utf8");
+  const text = await readFile("docs/pilot/config.template.yaml", "utf8");
   assert.deepEqual([...new Set(text.match(/__[A-Z_]+__/g))].sort(), ["__CON_DONE_TRANSITION__", "__JIRA_OPERATOR_ACCOUNT_ID__"]);
 });
 
@@ -59,7 +72,7 @@ test("the template declares the initial runtime profile for every profile a proj
 });
 
 test("the documented example declares the runtime profile its projects name", async () => {
-  const parsed = parseConfig(JSON.parse(await readFile("docs/config.example.json", "utf8")));
+  const parsed = parseConfig(await yamlOf("docs/config.example.yaml"));
   assert.ok(parsed.ok, JSON.stringify(!parsed.ok && parsed.issues));
   const named = new Set(parsed.config.instances.flatMap((instance) => instance.projects.map((project) => project.runtimeProfile)));
   for (const name of named) assert.ok(parsed.config.runtimeProfiles[name], `${name} is declared`);

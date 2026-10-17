@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { projectEligibility } from "../src/config/project-eligibility.js";
 import { parseConfig } from "../src/config/validate.js";
+import { parseYamlDocument } from "../src/config/yaml.js";
 import type { InstanceConfig } from "../src/config/types.js";
 
 const fixture = async (): Promise<InstanceConfig[]> => {
-  const path = fileURLToPath(new URL("./fixtures/instances.json", import.meta.url));
-  const result = parseConfig(JSON.parse(await readFile(path, "utf8")));
+  const path = fileURLToPath(new URL("./fixtures/instances.yaml", import.meta.url));
+  const parsed = parseYamlDocument(await readFile(path, "utf8"));
+  if (!parsed.ok) throw new Error(parsed.message);
+  const result = parseConfig(parsed.value);
   if (!result.ok) throw new Error(JSON.stringify(result.issues));
   return result.config.instances;
 };

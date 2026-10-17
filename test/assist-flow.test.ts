@@ -183,7 +183,7 @@ async function arrange(context: TestContext, options: {
   // immediately: the suite never waits the 30 s budget, and a test may drive the look's clock.
   sleep?: (ms: number) => Promise<void>;
 } = {}): Promise<Setup> {
-  const loaded = await loadInstance(fixture("assist-instances.json"), "assistida");
+  const loaded = await loadInstance(fixture("assist-instances.yaml"), "assistida");
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
   const root = await mkdtemp(join(tmpdir(), "msf-assist-flow-"));
   context.after(() => rm(root, { recursive: true, force: true }));

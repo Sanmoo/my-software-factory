@@ -1,0 +1,324 @@
+credentials:
+  copilot-trabalho:
+    kind: pi-auth
+    ref: copilot-trabalho
+  copilot-pessoal:
+    kind: pi-auth
+    ref: copilot-pessoal
+  jira-van:
+    kind: env
+    ref: JIRA_VAN_TOKEN
+  jira-con:
+    kind: env
+    ref: JIRA_CON_TOKEN
+instances:
+  - name: trabalho
+    maxConcurrent: 1
+    pollIntervalSeconds: 300
+    maxIterations: 5
+    modelAuth: copilot-trabalho
+    projects:
+      - name: dora-metrics
+        enabled: true
+        adapter: github
+        repository: samuel-santos_bjd/dora-metrics
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-monolith-backend
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-monolith-backend
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: monolith
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-dealer-services
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-dealer-services
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: dealer-services
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-mfe
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-mfe
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: mfe
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-fdm
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-fiscal-document-management
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: fdm
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-common-infra
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-products-common-infra
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: common-infra
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-lambda-auth
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-multi-issuer-lambda-authorizer
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: lambda-auth
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: revolving-playbooks
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/revolving-credit-playbooks
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: VAN
+          routingLabel: playbooks
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-van
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: consorcio-monolith-backend
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/consorcio-monolith-backend
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: CON
+          routingLabel: monolith
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-con
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: consorcio-mfe
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/consorcio-mfe
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: CON
+          routingLabel: mfe
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-con
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: consorcio-playbooks
+        enabled: true
+        adapter: jira
+        repository: bancojohndeere/consorcio-playbooks
+        targetBranch: develop
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: samuel-santos_bjd
+        jira:
+          projectKey: CON
+          routingLabel: playbooks
+          doingTransition: Em andamento
+          doneTransition: Itens concluídos
+          blockingLinkTypes:
+            - Blocks
+          credential: jira-con
+          operator: 712020:0000-fixture-operator
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+  - name: pessoal
+    maxConcurrent: 2
+    pollIntervalSeconds: 600
+    maxIterations: 5
+    modelAuth: copilot-pessoal
+    projects:
+      - name: my-tasks
+        enabled: true
+        adapter: github
+        repository: Sanmoo/my-tasks
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: Sanmoo
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: my-software-factory
+        enabled: true
+        adapter: github
+        repository: Sanmoo/my-software-factory
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: Sanmoo
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: my-finances
+        enabled: true
+        adapter: github
+        repository: Sanmoo/my-finances
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: Sanmoo
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: lorebase-frontend
+        enabled: true
+        adapter: github
+        repository: Sanmoo/lorebase-frontend
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: Sanmoo
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5
+      - name: lorebase-backend
+        enabled: true
+        adapter: github
+        repository: Sanmoo/lorebase-backend
+        targetBranch: main
+        prIntegration: github.com
+        runtimeProfile: docker-default
+        githubAccount: Sanmoo
+        models:
+          implementer: github-copilot/gpt-6-luna
+          reviewer-standards: github-copilot/claude-haiku-5.5
+          reviewer-spec: github-copilot/claude-haiku-5.5
+          default: github-copilot/claude-haiku-5.5

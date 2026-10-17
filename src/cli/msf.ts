@@ -1,6 +1,6 @@
-import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { discoverConfigFile, discoverLocalFile } from "../config/files.js";
 import { resolveJobRef } from "../core/job-ref.js";
 import { buildOperatorView, type OperatorView } from "../core/operator-view.js";
 import type { SandboxBoundary } from "../runtime/docker-runner.js";
@@ -21,7 +21,8 @@ import { runTui, type TuiRunner } from "./tui.js";
 //
 //   ./msf [--home DIR] <instância> <comando> [trabalho] [opções]
 //
-// It resolves the base directory (config.json, local.json and state/<instância>/), the job
+// It resolves the base directory (config.yaml or config.yml, local.yaml or local.yml and
+// state/<instância>/), the job
 // reference and the help, and hands over to the commands that already exist. The main log prints
 // exactly this form, so what the operator copies from it works as printed.
 
@@ -124,7 +125,7 @@ const SPECS: Record<Command, CommandSpec> = {
 };
 
 const JOB_NOTE = "trabalho: a referência curta do log (#13, PAY-7) ou a chave completa (github:dono/repo#13); com `#`, use aspas.";
-const HOME_NOTE = `--home DIR: diretório base com config.json, local.json e state/<instância>/ (padrão: ${DEFAULT_HOME}/ na raiz do repositório; um caminho relativo parte da raiz).`;
+const HOME_NOTE = `--home DIR: diretório base com config.yaml (ou config.yml), local.yaml (ou local.yml) e state/<instância>/ (padrão: ${DEFAULT_HOME}/ na raiz do repositório; um caminho relativo parte da raiz).`;
 
 const GLOBAL_USAGE = [
   "uso: ./msf [--home DIR] <instância> <comando> [trabalho] [opções]",
@@ -238,34 +239,29 @@ export interface MsfDeps {
   tui?: TuiRunner;
 }
 
-const exists = (path: string): Promise<boolean> => access(path).then(() => true, () => false);
-
 export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<CliRun> {
   const request = parse(argv);
   if ("exitCode" in request) return request;
 
   const defaultHome = resolve(deps.root, DEFAULT_HOME);
   const homeDir = request.home === undefined ? defaultHome : resolve(deps.root, request.home);
-  const configPath = join(homeDir, "config.json");
+  const configFile = await discoverConfigFile(homeDir);
+  if (!configFile.ok) return failure(1, configFile.message);
+  const configPath = configFile.path;
   const stateDir = join(homeDir, "state", request.instance);
   // The persistent toolchains of the runtime profiles live under the factory home, shared by every
   // instance (ADR 0004): keyed by profile name, never by instance state.
   const toolchainsDir = join(homeDir, "toolchains");
 
-  if (!(await exists(configPath))) {
-    return failure(1, `config.json não encontrado em ${configPath} (diretório base: ${homeDir}; use --home para indicar outro)`);
-  }
   const loaded = await loadInstance(configPath, request.instance);
   if (!loaded.ok) return loaded.run;
 
   if (request.command === "run") return runCommand(request, { deps, homeDir, defaultHome, configPath, stateDir, toolchainsDir });
 
   if (request.command === "assist") {
-    const localPath = join(homeDir, "local.json");
-    if (!(await exists(localPath))) {
-      return failure(1, `local.json não encontrado em ${localPath} (diretório base: ${homeDir}; use --home para indicar outro)`);
-    }
-    const local = await loadLocalSettings(localPath);
+    const localFile = await discoverLocalFile(homeDir);
+    if (!localFile.ok) return failure(1, localFile.message);
+    const local = await loadLocalSettings(localFile.path);
     if (typeof local === "string") return failure(1, local);
     return runAssist({
       config: loaded.config,
@@ -291,7 +287,7 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
   }
 
   // The TUI is a pure reading view of this one instance: same resolution as `status`, no
-  // local.json requirement. Without a TTY there is nothing to render; it refuses before
+  // local.yaml requirement. Without a TTY there is nothing to render; it refuses before
   // touching any state (spec #60: one TUI per instance, reading first).
   if (request.command === "tui") {
     if (deps.isTTY === false) {
@@ -362,10 +358,9 @@ async function runCommand(
   where: { deps: MsfDeps; homeDir: string; defaultHome: string; configPath: string; stateDir: string; toolchainsDir: string },
 ): Promise<CliRun> {
   const { deps, homeDir } = where;
-  const localPath = join(homeDir, "local.json");
-  if (!(await exists(localPath))) {
-    return failure(1, `local.json não encontrado em ${localPath} (diretório base: ${homeDir}; use --home para indicar outro)`);
-  }
+  const localFile = await discoverLocalFile(homeDir);
+  if (!localFile.ok) return failure(1, localFile.message);
+  const localPath = localFile.path;
   // A check is a report: it is returned. The loop is a stream: it goes out as it happens.
   const buffered = { stdout: [] as string[], stderr: [] as string[] };
   const live = deps.live ?? {

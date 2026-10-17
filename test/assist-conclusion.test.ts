@@ -77,7 +77,7 @@ interface Setup {
 }
 
 const arrange = async (context: TestContext, ids: readonly string[]): Promise<Setup> => {
-  const loaded = await loadInstance(fixture("assist-instances.json"), "assistida");
+  const loaded = await loadInstance(fixture("assist-instances.yaml"), "assistida");
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
   const root = await mkdtemp(join(tmpdir(), "msf-assist-end-"));
   context.after(() => rm(root, { recursive: true, force: true }));

@@ -11,6 +11,7 @@ import { loadMemoryTracker } from "../src/tracker/memory.js";
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
+import { writeConfigYaml, writeLocalYaml } from "./support/config-files.js";
 
 // The operator's single entry point: `./msf [--home DIR] <instância> <comando> [trabalho] [opções]`.
 // The tests call the entry with a temporary repository root, so no process is spawned.
@@ -59,12 +60,12 @@ async function setup(options: { home?: string; jobs?: Array<[string, string]>; c
   const root = await mkdtemp(join(tmpdir(), "msf-root-"));
   const home = join(root, options.home ?? ".msf");
   await mkdir(home, { recursive: true });
-  if (options.config !== false) await writeFile(join(home, "config.json"), JSON.stringify(CONFIG));
-  if (options.local !== false) await writeFile(join(home, "local.json"), JSON.stringify({
+  if (options.config !== false) await writeConfigYaml(home, CONFIG);
+  if (options.local !== false) await writeLocalYaml(home, {
     profiles: { copilot: join(root, "profile"), "docker-default": join(root, "profile") },
     allowedRoots: { "docker-default": [join(root, "roots")] },
     checkouts: { "acme/app": join(root, "app"), "acme/other": join(root, "other"), "acme/mono": join(root, "mono"), "acme/mixed": join(root, "mixed"), "acme/mixed-mono": join(root, "mixed-mono") },
-  }));
+  });
   const store = createFileJobStore(join(home, "state", "pessoal"));
   for (const [repository, id] of options.jobs ?? []) await store.save(jobOf(repository, id, true));
   return { root, deps: { root, env: options.env ?? {} }, stateDir: (name, inst = "pessoal") => join(root, name, "state", inst) };
@@ -149,15 +150,42 @@ test("an unknown instance lists the available ones", async () => {
   assert.match(run.stderr, /instância 'inexistente' não encontrada; disponíveis: pessoal, trabalho/);
 });
 
-test("a base directory without config.json or local.json names the path it looked for", async () => {
+test("a base directory without config.yaml/.yml or local.yaml/.yml names the paths it looked for", async () => {
   const noConfig = await setup({ config: false });
   const run = await runMsf(["pessoal", "pause"], noConfig.deps);
   assert.equal(run.exitCode, 1);
-  assert.match(run.stderr, new RegExp(`config\\.json não encontrado em ${join(noConfig.root, ".msf", "config.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  for (const extension of ["yaml", "yml"]) {
+    assert.ok(run.stderr.includes(join(noConfig.root, ".msf", `config.${extension}`)), run.stderr);
+  }
   const noLocal = await setup({ local: false });
   const check = await runMsf(["pessoal", "run", "--check"], noLocal.deps);
   assert.equal(check.exitCode, 1);
-  assert.match(check.stderr, new RegExp(`local\\.json não encontrado em ${join(noLocal.root, ".msf", "local.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  for (const extension of ["yaml", "yml"]) {
+    assert.ok(check.stderr.includes(join(noLocal.root, ".msf", `local.${extension}`)), check.stderr);
+  }
+});
+
+test("the old config.json and local.json are a migration error, never a silent fallback", async () => {
+  const ctx = await setup({ config: false });
+  await writeFile(join(ctx.root, ".msf", "config.json"), JSON.stringify(CONFIG));
+  const missing = await runMsf(["pessoal", "pause"], ctx.deps);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.stderr, /config\.json.*JSON não é mais aceito/);
+  assert.match(missing.stderr, /npm run config:migrate/);
+
+  // Also when the YAML file is already there: the older file is neither read nor ignored.
+  await writeConfigYaml(join(ctx.root, ".msf"), CONFIG);
+  const both = await runMsf(["pessoal", "pause"], ctx.deps);
+  assert.equal(both.exitCode, 1);
+  assert.match(both.stderr, /config\.json.*JSON não é mais aceito/);
+
+  // The local file keeps its own check, and only the commands that need it pay for it.
+  const local = await setup({ local: false });
+  await writeFile(join(local.root, ".msf", "local.json"), JSON.stringify({ image: "x" }));
+  assert.equal((await runMsf(["pessoal", "status"], { ...local.deps, tracker: emptyTracker() })).exitCode, 0);
+  const check = await runMsf(["pessoal", "run", "--check"], local.deps);
+  assert.equal(check.exitCode, 1);
+  assert.match(check.stderr, /local\.json.*JSON não é mais aceito/);
 });
 
 test("help: global, by command, with and without the instance; always the ./msf form", async () => {
@@ -236,7 +264,7 @@ const emptyTracker = (over: Partial<TrackerPort> = {}): TrackerPort => ({
 }) as TrackerPort;
 const githubEmpty = { accountToken: async () => "t", api: async () => ({ status: 200, body: [] }) };
 
-test("status needs no --config, --state-dir or --fixture, and not even local.json", async () => {
+test("status needs no --config, --state-dir or --fixture, and not even local.yaml", async () => {
   const ctx = await setup({ local: false, jobs: [["acme/app", "13"]] });
   const run = await runMsf(["pessoal", "status"], { ...ctx.deps, tracker: emptyTracker() });
   assert.equal(run.exitCode, 0, run.stderr);

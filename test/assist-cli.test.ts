@@ -14,6 +14,7 @@ import { createFileJobStore } from "../src/state/file-job-store.js";
 import { loadMemoryTracker } from "../src/tracker/memory.js";
 import type { TrackerPort } from "../src/tracker/port.js";
 import type { SandboxBoundary } from "../src/runtime/docker-runner.js";
+import { writeConfigYaml } from "./support/config-files.js";
 
 // `./msf <instância> assist`: diagnóstico local do atendimento assistido. Lê os trackers e o
 // estado gravado, avalia a elegibilidade assistida e verifica o ambiente sem iniciar execução:
@@ -52,7 +53,7 @@ async function localOf(root: string, options: { profile?: boolean; checkout?: bo
 }
 
 async function assist(instanceName: string, extra: Partial<AssistOptions> = {}): Promise<CliRun> {
-  const loaded = await loadInstance(fixture("assist-instances.json"), instanceName);
+  const loaded = await loadInstance(fixture("assist-instances.yaml"), instanceName);
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.run.stderr);
   const root = await mkdtemp(join(tmpdir(), "msf-assist-"));
   const local = extra.local ?? await localOf(root);
@@ -100,18 +101,18 @@ test("assist --help mostra o uso; assist não recebe trabalho nem --check/--once
   const root = await mkdtemp(join(tmpdir(), "msf-assist-"));
   const home = join(root, ".msf");
   await mkdir(home, { recursive: true });
-  await writeFile(join(home, "config.json"), JSON.stringify({ credentials: {}, runtimeProfiles: {}, instances: [] }));
+  await writeConfigYaml(home, { credentials: {}, runtimeProfiles: {}, instances: [] });
   const deps: MsfDeps = { root, env: {} };
   assert.match((await runMsf(["assistida", "assist", "--help"], deps)).stdout, /uso: \.\/msf \[--home DIR\] <instância> assist/);
   assert.equal((await runMsf(["assistida", "assist", "#13"], deps)).exitCode, 2);
   assert.equal((await runMsf(["assistida", "assist", "--check"], deps)).exitCode, 2);
 });
 
-test("assist exige local.json e nomeia o caminho procurado", async () => {
+test("assist exige local.yaml/.yml e nomeia os caminhos procurados", async () => {
   const root = await mkdtemp(join(tmpdir(), "msf-assist-"));
   const home = join(root, ".msf");
   await mkdir(home, { recursive: true });
-  await writeFile(join(home, "config.json"), JSON.stringify({
+  await writeConfigYaml(home, {
     credentials: { copilot: { kind: "pi-auth", ref: "copilot" } },
     runtimeProfiles: { "docker-vazio": { required: { files: [] } } },
     instances: [{
@@ -124,10 +125,12 @@ test("assist exige local.json e nomeia o caminho procurado", async () => {
         },
       }],
     }],
-  }));
+  });
   const run = await runMsf(["i", "assist"], { root, env: {} });
   assert.equal(run.exitCode, 1);
-  assert.match(run.stderr, new RegExp(`local\\.json não encontrado em ${join(home, "local.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  for (const extension of ["yaml", "yml"]) {
+    assert.ok(run.stderr.includes(join(home, `local.${extension}`)), run.stderr);
+  }
 });
 
 // ── capacidade e parâmetros de assistência ────────────────────────────────────────────────────
@@ -142,8 +145,8 @@ test("o diagnóstico apresenta os dois limites N independentes e a assistModel c
 
 test("maxAssisted e assistModel ausentes aparecem como não configurados, sem inventar limite nem herdar o modelo", async () => {
   const { stdout } = await assist("sem-config");
-  assert.match(stdout, /sessões assistidas: não configurado \(maxAssisted ausente no config\.json\)/);
-  assert.match(stdout, /modelo de assistência: não configurado \(assistModel ausente no config\.json; não herda o modelo de implementação\)/);
+  assert.match(stdout, /sessões assistidas: não configurado \(maxAssisted ausente no config\.yaml\)/);
+  assert.match(stdout, /modelo de assistência: não configurado \(assistModel ausente no config\.yaml; não herda o modelo de implementação\)/);
 });
 
 // ── ambiente, sem iniciar execução ────────────────────────────────────────────────────────────
@@ -235,10 +238,10 @@ test("clone assistido configurado aparece como gerenciado pelo operador, sem wor
   assert.match(stdout, /a factory não cria worktree nem impõe proibição de escrita/);
 });
 
-test("clone assistido ausente do local.json é impedimento; o texto afirma quem gerencia o clone", async () => {
+test("clone assistido ausente do local.yaml é impedimento; o texto afirma quem gerencia o clone", async () => {
   const root = await mkdtemp(join(tmpdir(), "msf-assist-"));
   const { stdout } = await assist("assistida", { local: await localOf(root, { checkout: false }) });
-  assert.match(stdout, /clone assistido: impedimento — clone local de acme\/app não configurado \(checkouts do local\.json\)/);
+  assert.match(stdout, /clone assistido: impedimento — clone local de acme\/app não configurado \(checkouts do local\.yaml\)/);
   assert.match(stdout, /o clone assistido é gerenciado pelo operador: a factory não cria worktree nem impõe proibição de escrita/);
 });
 
@@ -251,7 +254,7 @@ test("perfil de runtime: obrigatórios resolvendo no host aparece como ok (ADR 0
   assert.match(blocked.stdout, /perfil de runtime docker-default: impedimento — obrigatório settings\.json: ausente/);
 });
 
-test("perfil não configurado no local.json aparece como impedimento nomeado", async () => {
+test("perfil não configurado no local.yaml aparece como impedimento nomeado", async () => {
   const root = await mkdtemp(join(tmpdir(), "msf-assist-"));
   const local = await localOf(root);
   delete local.profiles["docker-default"];

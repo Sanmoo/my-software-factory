@@ -64,8 +64,8 @@ export function resolveRuntimeProfile(
   return dir;
 }
 
-// The runtime profile of a project is declared in two places (ADR 0002): what it must carry in config.json,
-// where it lives and where its links may lead in local.json. Missing either is a configuration error.
+// The runtime profile of a project is declared in two places (ADR 0002): what it must carry in config.yaml,
+// where it lives and where its links may lead in local.yaml. Missing either is a configuration error.
 export interface RuntimeProfileDeclarations {
   runtimeProfiles: Readonly<Record<string, RuntimeProfileConfig>>;
   allowedRoots: Readonly<Record<string, readonly string[]>>;
@@ -83,11 +83,11 @@ export function resolveRuntimeProfileDeclaration(
 ): RuntimeProfile {
   const declaration = declarations.runtimeProfiles[project.runtimeProfile];
   if (!declaration) {
-    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem declaração em runtimeProfiles do config.json; sem fallback`);
+    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem declaração em runtimeProfiles do config.yaml; sem fallback`);
   }
   const allowedRoots = declarations.allowedRoots[project.runtimeProfile];
   if (!allowedRoots) {
-    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem raízes permitidas em allowedRoots do local.json; sem fallback`);
+    throw new RunnerConfigError(`perfil de runtime ${project.runtimeProfile} (projeto ${project.name}) sem raízes permitidas em allowedRoots do local.yaml; sem fallback`);
   }
   return { source: { dir, allowedRoots }, declaration };
 }

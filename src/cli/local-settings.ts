@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { isObject } from "../core/values.js";
+import { parseYamlDocument } from "../config/yaml.js";
 
 // Machine-local settings of one run: where the profiles and checkouts live on this host. They
 // are not part of the versioned configuration: paths and the image are the operator's.
@@ -120,9 +121,7 @@ export async function loadLocalSettings(path: string): Promise<LocalSettings | s
   } catch {
     return `configuração local não pode ser lida: ${path}`;
   }
-  try {
-    return parseLocalSettings(JSON.parse(text));
-  } catch {
-    return "configuração local: JSON inválido";
-  }
+  const parsed = parseYamlDocument(text);
+  if (!parsed.ok) return `configuração local inválida em ${path}: ${parsed.message}`;
+  return parseLocalSettings(parsed.value);
 }

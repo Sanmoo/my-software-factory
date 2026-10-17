@@ -12,6 +12,7 @@
     "verify": "npm run typecheck && npm run lint && npm test",
     "test": "tsx --test test/*.test.ts",
     "msf": "tsx src/cli/msf.ts",
+    "config:migrate": "tsx scripts/migrate-config.ts",
     "logs": "tsx src/cli/logs.ts",
     "reply": "tsx src/cli/supervision.ts reply",
     "resume": "tsx src/cli/supervision.ts resume",
@@ -31,7 +32,8 @@
   "dependencies": {
     "@ai-hero/sandcastle": "0.12.0",
     "ink": "^8.0.0",
-    "react": "^19.3.0"
+    "react": "^19.3.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

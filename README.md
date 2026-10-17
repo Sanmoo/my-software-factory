@@ -85,9 +85,10 @@ de cada um.
 `status` lê os trackers reais e o estado gravado da instância e não escreve nada: se um tracker não responde, o
 estado local continua na saída e o código de saída é 1.
 
-- **Diretório base.** O padrão é `.msf/` na raiz do repositório (git-ignored) e traz `config.json`,
-  `local.json` e `state/<instância>/`. `--home DIR` aponta para outro diretório (um caminho relativo parte
-  da raiz do repositório). O log principal imprime `--home` só quando ele não é o padrão.
+- **Diretório base.** O padrão é `.msf/` na raiz do repositório (git-ignored) e traz `config.yaml`
+  (ou `config.yml`), `local.yaml` (ou `local.yml`) e `state/<instância>/`. `--home DIR` aponta para outro
+  diretório (um caminho relativo parte da raiz do repositório). O log principal imprime `--home` só quando
+  ele não é o padrão.
 - **Trabalho.** A referência curta que o log mostra (`#13`, `PAY-7`) ou a chave completa
   (`github:dono/repo#13`). Com `#`, use aspas: `./msf pessoal resume '#13'`. Se a referência curta
   corresponde a mais de um trabalho, o comando recusa e lista as chaves completas.
@@ -104,8 +105,10 @@ estado local continua na saída e o código de saída é 1.
 
 ## Configuração
 
-[`docs/config.example.json`](docs/config.example.json) traz apenas placeholders
-`EXAMPLE_*`: nenhum token, conta ou valor real. Campos principais:
+[`docs/config.example.yaml`](docs/config.example.yaml) traz apenas placeholders
+`EXAMPLE_*`: nenhum token, conta ou valor real. Os dois arquivos do diretório base são **YAML 1.2**:
+`config.yaml` (ou `.yml`) é a configuração compartilhável e `local.yaml` (ou `.yml`) é a parte desta
+máquina. Só uma extensão por arquivo: `config.yaml` e `config.yml` juntos são erro. Campos principais:
 
 - `credentials`: referências nomeadas (`pi-auth` ou variável de ambiente); a
   configuração nunca carrega o valor do segredo.
@@ -122,10 +125,12 @@ estado local continua na saída e o código de saída é 1.
   A seção `Pendências (n)` de `./msf <instância> status` é a consulta persistente: cada
   pendência nomeia o trabalho e a sessão (referência, modelo, aba/pane, clone), o que é
   pedido, a proveniência da tentativa de notificação e os comandos locais prontos para colar.
-  A notificação desktop é melhor esforço, configurável em `local.json`:
+  A notificação desktop é melhor esforço, configurável em `local.yaml`:
 
-  ```json
-  { "notifications": { "enabled": true, "command": "herd-notify {title} {body}" } }
+  ```yaml
+  notifications:
+    enabled: true
+    command: herd-notify {title} {body}
   ```
 
   Sem `command`, vale o padrão da plataforma (`osascript` no macOS, `notify-send` no Linux);
@@ -133,6 +138,40 @@ estado local continua na saída e o código de saída é 1.
   comando executou — nunca a entrega no desktop. A prova da técnica (herdr 0.9.3) não achou
   comando de notificação no Herdr; presumir que "notificação do Herdr" entrega no desktop é
   proibido aqui. Falha de entrega não interrompe o trabalho nem apaga a pendência.
+
+### YAML aceito e recusado
+
+Comentários (`#`) e âncoras/aliases dentro do mesmo documento são aceitos; `yes`/`on` são texto,
+não booleanos (YAML 1.2). O que muda o significado de forma silenciosa é recusado, com caminho, motivo e
+linha/coluna quando disponíveis, sem repetir conteúdo nem valores do arquivo:
+
+- chave duplicada no mesmo mapa, mais de um documento, tag personalizada (`!foo`) e merge key (`<<`);
+- alias sem âncora anterior, expansão de âncoras acima do limite e âncora que referencia o próprio nó;
+- tabulador como indentação e `%YAML` diferente de 1.2.
+
+O formato é escolhido pela extensão descoberta: um YAML inválido é reportado como YAML inválido, nunca
+lido como JSON.
+
+### Migrar de JSON para YAML
+
+`config.json` e `local.json` **não são mais lidos**. Se um deles estiver no diretório base, o comando que
+leria esse arquivo recusa e pede a migração — mesmo que o YAML correspondente já exista. A checagem do
+`local` continua restrita aos comandos que precisam dele (`run` e `assist`). A conversão é uma ação
+explícita do operador, em um comando:
+
+```sh
+npm run config:migrate -- --home DIR     # sem --home, usa .msf/ na raiz do repositório
+```
+
+O script lê e valida todos os arquivos antes de escrever qualquer um, confere que o YAML gerado preserva
+exatamente os dados do JSON, cria os arquivos com permissão restrita e **não imprime valores**. Ele recusa
+destinos `.yaml`/`.yml` e backups já existentes, recusa links simbólicos nos arquivos envolvidos e nunca
+sobrescreve nada. Os originais ficam como `config.json.bak` e `local.json.bak`, então os nomes antigos
+deixam de bloquear a inicialização. `local.json` ausente não é exigido.
+
+A migração **não é atômica entre os dois arquivos**: se falhar no meio, as mensagens dizem o que foi
+revertido e onde os dados originais estão. Para recuperar, renomeie o `.bak` de volta para `.json` e
+remova o YAML criado; nada é apagado pelo script.
 
 Regras por assunto: [admissão e prioridade](docs/operacao/admissao-e-prioridade.md),
 [trackers](docs/operacao/trackers.md) e

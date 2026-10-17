@@ -10,9 +10,9 @@ que entrou e o que ficou de fora. Já dentro do container, depois de instalar os
 e antes do prompt, uma checagem confirma os pacotes e as ferramentas obrigatórios; se
 falhar, a invocação é interrompida com o motivo.
 
-A divisão da configuração segue a regra que já existe: o `config.json` guarda o quê
+A divisão da configuração segue a regra que já existe: o `config.yaml` guarda o quê
 (pacotes, skills e agents obrigatórios, exclusões como `npm:pi-lens`), que é igual em
-qualquer máquina; o `local.json` guarda o onde (diretório do perfil e raízes permitidas),
+qualquer máquina; o `local.yaml` guarda o onde (diretório do perfil e raízes permitidas),
 que são caminhos do host.
 
 Motivo: o runner montava `~/.pi/agent` e `~/.agents` e copiava no container com

@@ -6,6 +6,7 @@ import test from "node:test";
 import { projectEligibility } from "../src/config/project-eligibility.js";
 import { Admission } from "../src/core/admission.js";
 import { loadConfigFile } from "../src/config/load.js";
+import { stringifyYaml } from "../src/config/yaml.js";
 import { runLogs } from "../src/cli/logs.js";
 import { loadInstance } from "../src/cli/instance.js";
 import { runStatus } from "../src/cli/status.js";
@@ -97,12 +98,12 @@ interface Fixtures {
 
 async function fixturesIn(dir: string): Promise<Fixtures> {
   const fixtures = {
-    configPath: join(dir, "config.json"),
+    configPath: join(dir, "config.yaml"),
     fixturePath: join(dir, "tracker.json"),
     stateDir: join(dir, "state"),
     tracker: loadMemoryTracker(TRACKER),
   };
-  await writeFile(fixtures.configPath, JSON.stringify(CONFIG));
+  await writeFile(fixtures.configPath, stringifyYaml(CONFIG));
   await writeFile(fixtures.fixturePath, JSON.stringify(TRACKER));
   return fixtures;
 }

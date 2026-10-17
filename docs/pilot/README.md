@@ -8,9 +8,9 @@ Tudo passa pela CLI `./msf [--home DIR] <instância> <comando> [trabalho] [opç�
 [README](../../README.md#operação-msf)). O diretório base (padrão `.msf/`, git-ignored) guarda o que é
 desta máquina:
 
-- `config.json`: copie [`config.template.json`](config.template.json) e habilite só os alvos do piloto
+- `config.yaml`: copie [`config.template.yaml`](config.template.yaml) e habilite só os alvos do piloto
   (os demais ficam `enabled: false` até terem sua própria spec);
-- `local.json`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), a declaração de
+- `local.yaml`: perfis Pi, raízes permitidas de cada perfil de runtime (`allowedRoots`), a declaração de
   mise do operador (`mise.<perfil>`, o `~/.config/mise/config.toml` de onde as ferramentas declaradas
   convergem), checkouts, imagem e insumos de review desta máquina;
 - `state/<instância>/`: o estado de cada instância.
@@ -22,7 +22,7 @@ antes de iniciar a instância `trabalho` (exemplo com o Keychain no README).
 
 | Peça | Onde |
 | --- | --- |
-| Config dos alvos (**16** alvos, não 13: 5 pessoais + 11 do trabalho) | `config.template.json` |
+| Config dos alvos (**16** alvos, não 13: 5 pessoais + 11 do trabalho) | `config.template.yaml` |
 | Loop da instância (polling, admissão, runner Docker, PR, feedback) | `./msf <instância> run` (`src/cli/run.ts`) |
 | Check de prontidão, só leitura | `./msf <instância> run --check` |
 | Composição dos adapters reais | `src/cli/compose.ts`, `src/tracker/routing.ts` |
@@ -61,15 +61,15 @@ subagente e filhos reconciliados. O piloto demonstra esse review pelo log e pela
 O container reproduz o perfil Pi do operador, mas não o monta: a factory percorre o perfil no host, resolve
 os links em todos os níveis e grava um retrato só com arquivos reais (em `state/<instância>/areas/<job>/profile`,
 recriado a cada invocação). O container monta só o retrato, somente leitura. Dois arquivos, a mesma divisão
-de sempre (o quê no `config.json`, o onde no `local.json`):
+de sempre (o quê no `config.yaml`, o onde no `local.yaml`):
 
-- `config.json`, `runtimeProfiles.<perfil>`: `required` (`files`, `packages`, `skills`, `agents`, `tools`) e
+- `config.yaml`, `runtimeProfiles.<perfil>`: `required` (`files`, `packages`, `skills`, `agents`, `tools`) e
   `excludePackages` (por exemplo `npm:pi-lens`, retirado do `settings.json` do container, nunca do seu).
-  A lista inicial está em `config.template.json`, igual para `pessoal` e `trabalho`; `tools` traz o `rtk`
+  A lista inicial está em `config.template.yaml`, igual para `pessoal` e `trabalho`; `tools` traz o `rtk`
   que o operador declara no mise global.
-- `local.json`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio diretório do perfil
+- `local.yaml`, `allowedRoots.<perfil>`: de onde os links podem vir, além do próprio diretório do perfil
   (`~/` vale). Para `pessoal`: `["~/.pi/agent", "~/.agents", "~/dev/github.com/Sanmoo/dotfiles"]`.
-- `local.json`, `mise.<perfil>`: a declaração de mise do operador no host (normalmente
+- `local.yaml`, `mise.<perfil>`: a declaração de mise do operador no host (normalmente
   `~/.config/mise/config.toml`), levada pelo retrato e lida dentro do container. Sem ela, um perfil que
   declara `tools` obrigatórias não é admitido.
 
@@ -133,6 +133,6 @@ Pré-requisitos, verificados por `./msf <instância> run --check`:
 | --- | --- |
 | 16 alvos configurados nas duas instâncias | template + `config.test.ts`/`pilot-config.test.ts`; você habilita só os do piloto (os demais ficam `enabled: false` até terem sua própria spec) |
 | Tarefa real ponta a ponta em GitHub e em Jira | `./msf <instância> run` com uma issue autorizada (`ready-for-agent`) em cada tracker; **merge feito por você** |
-| N=1 e depois N=2 | `maxConcurrent` da instância no `config.json` |
+| N=1 e depois N=2 | `maxConcurrent` da instância no `config.yaml` |
 | Relatório | medições do `state/` do piloto; `report-template.md` |
 | Estouro do envelope volta ao operador | registre no relatório; nada muda no MVP sem decisão |

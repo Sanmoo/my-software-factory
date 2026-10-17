@@ -1,6 +1,6 @@
 # Relatório do piloto — instâncias trabalho e pessoal (issue #10)
 
-Data: AAAA-MM-DD. Preencher a partir do diretório base do piloto (`config.json`, `local.json`) e de `state/*` (jobs, `runs/*.audit.jsonl`).
+Data: AAAA-MM-DD. Preencher a partir do diretório base do piloto (`config.yaml`, `local.yaml`) e de `state/*` (jobs, `runs/*.audit.jsonl`).
 Não colar tokens nem transcrições brutas.
 
 ## Setup

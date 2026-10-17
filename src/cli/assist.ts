@@ -157,7 +157,7 @@ const describeFinding = (what: string, finding: AssistFinding): string =>
 async function cloneFinding(local: LocalSettings, project: ProjectConfig): Promise<AssistFinding> {
   const clone = local.checkouts[project.repository];
   if (clone === undefined) {
-    return { status: "impedimento", reason: `clone local de ${project.repository} não configurado (checkouts do local.json)` };
+    return { status: "impedimento", reason: `clone local de ${project.repository} não configurado (checkouts do local.yaml)` };
   }
   return (await exists(clone))
     ? { status: "ok", detail: `${clone} (gerenciado pelo operador; sem worktree da factory)` }
@@ -313,15 +313,15 @@ export async function runAssist(options: AssistOptions): Promise<CliRun> {
     "Diagnóstico local: nenhuma escrita no tracker; nenhuma sessão, pane ou container é aberto.",
     "",
     "Capacidade (dois limites independentes):",
-    `  ${describeCapacity(instance.maxConcurrent, "implementação autônoma", `vagas em uso agora: ${state.slots}`, "maxConcurrent ausente no config.json")}`,
-    `  ${describeCapacity(instance.maxAssisted, "sessões assistidas", `abertas agora: ${assistOpened}${assistSessions.problems.length > 0 ? `; ${assistSessions.problems.join(", ")}` : ""}`, "maxAssisted ausente no config.json")}`,
+    `  ${describeCapacity(instance.maxConcurrent, "implementação autônoma", `vagas em uso agora: ${state.slots}`, "maxConcurrent ausente no config.yaml")}`,
+    `  ${describeCapacity(instance.maxAssisted, "sessões assistidas", `abertas agora: ${assistOpened}${assistSessions.problems.length > 0 ? `; ${assistSessions.problems.join(", ")}` : ""}`, "maxAssisted ausente no config.yaml")}`,
     "",
     "Sessões assistidas registradas:",
     ...sessionLines(assistSessions.rows),
     "",
     "Parâmetros de assistência:",
     instance.assistModel === undefined
-      ? "  modelo de assistência: não configurado (assistModel ausente no config.json; não herda o modelo de implementação)"
+      ? "  modelo de assistência: não configurado (assistModel ausente no config.yaml; não herda o modelo de implementação)"
       : `  modelo de assistência: ${instance.assistModel}`,
     `  ${describeFinding("Herdr", herdrFinding)}`,
     ...dockerFindings.map(({ finding }) => `  ${describeFinding("Docker", finding)}`),

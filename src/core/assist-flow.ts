@@ -1532,7 +1532,7 @@ export class AssistedAttendance implements AssistOperator {
       return `herdr: ${messageOf(error)}`;
     }
     if (clone === undefined) {
-      return "clone assistido: clone local do projeto não configurado (checkouts do local.json)";
+      return "clone assistido: clone local do projeto não configurado (checkouts do local.yaml)";
     }
     if (!(await this.deps.areaFs.exists(clone))) {
       return `clone assistido: configurado em ${clone}, mas não existe no host`;
