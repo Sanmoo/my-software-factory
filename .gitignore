@@ -8,3 +8,5 @@
 !.env.example
 /.pilot/
 /.msf/
+
+/dist/
