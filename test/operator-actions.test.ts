@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,9 +7,10 @@ import { operatorCommand } from "../src/core/operator-actions.js";
 import { buildOperatorView, type OperatorView, type OperatorWork } from "../src/core/operator-view.js";
 import type { CommandBody, CommandQueue } from "../src/core/commands.js";
 import type { InstanceConfig } from "../src/config/types.js";
-import { newJob, transitionJob } from "../src/core/job.js";
+import { encodeRefPart, newJob, transitionJob } from "../src/core/job.js";
 import type { AssistSession } from "../src/core/assist-session.js";
 import { refKey, type IssueRef } from "../src/tracker/port.js";
+import { assistExitRecordPath } from "../src/runtime/assist-exec.js";
 import { createFileJobStore } from "../src/state/file-job-store.js";
 import { createFileAssistSessionStore } from "../src/state/file-assist-session-store.js";
 import { createFileCommandQueue } from "../src/state/command-queue.js";
@@ -42,9 +43,13 @@ const instance: InstanceConfig = {
   }],
 };
 
+// Diretório de estado da execução de uma sessão, como o fluxo o grava (#77).
+const execStateDirOf = (stateDir: string, key: string): string => join(stateDir, "assist", encodeRefPart(key), "state");
+
 // Um cenário semeado com um trabalho real de cada estado vivo relevante para as validações:
 // autônomos 1–5 (em-invocacao, pedido-de-ajuda, interrompido, retomada-autorizada, espera-externa)
-// e sessões assistidas 6–10 (proposed, open, pending, pending com retomada, concluding).
+// e sessões assistidas 6–11 (proposed, open, pending, pending com retomada, concluding, open
+// com o registro de fim já no canal — o caso do `t` logo depois do Ctrl-C).
 interface Scenario {
   root: string;
   stateDir: string;
@@ -66,6 +71,11 @@ async function scenario(): Promise<Scenario> {
   await sessions.save(sessionOf("8", "pending"));
   await sessions.save(sessionOf("9", "pending", { scheduledResume: { at: "2026-10-14T13:00:00.000Z", command: "c", answer: "s" } }));
   await sessions.save(sessionOf("10", "concluding"));
+  // Sessão 11: estado gravado ainda `open`, mas o registro de fim da execução já existe.
+  const endedDir = execStateDirOf(stateDir, keyOf("11"));
+  await sessions.save(sessionOf("11", "open", { execStateDir: endedDir }));
+  await mkdir(endedDir, { recursive: true });
+  await writeFile(assistExitRecordPath(endedDir), '{"exitCode":130,"at":"2026-10-14T12:05:00.000Z"}');
   const view = await buildOperatorView({ stateDir, instance });
   return { root, stateDir, view };
 }
@@ -231,6 +241,54 @@ test("liberar é recusado em sessão assistida aberta", async () => {
 test("liberar enfileira release para sessão assistida parada", async () => {
   const s = await scenario();
   assert.deepEqual(operatorCommand("liberar", workOf(s, "8"), s.view), { ok: true, command: { type: "release", job: keyOf("8") } });
+  await cleanup(s);
+});
+
+// ── retomar (#77): a retomada manual pela TUI ─────────────────────────────────────────────────
+
+test("retomar enfileira resume para atendimento assistido interrompido", async () => {
+  const s = await scenario();
+  assert.deepEqual(
+    operatorCommand("retomar", workOf(s, "8"), s.view),
+    { ok: true, command: { type: "resume", job: keyOf("8") } },
+  );
+  await cleanup(s);
+});
+
+test("retomar enfileira resume em sessão aberta quando o registro de fim já existe", async () => {
+  const s = await scenario();
+  const work = workOf(s, "11");
+  assert.equal(work.estadoVivo, "sessao-aberta");
+  assert.equal(work.registroDeFim, "presente");
+  assert.deepEqual(
+    operatorCommand("retomar", work, s.view),
+    { ok: true, command: { type: "resume", job: keyOf("11") } },
+  );
+  await cleanup(s);
+});
+
+test("retomar recusa sessão aberta sem registro de fim, com o motivo honesto", async () => {
+  const s = await scenario();
+  const refused = operatorCommand("retomar", workOf(s, "7"), s.view);
+  assert.equal(refused.ok, false);
+  assert.match(refused.ok ? "" : refused.reason, /fim da execução ainda não confirmado/);
+  await cleanup(s);
+});
+
+test("retomar recusa trabalho autônomo", async () => {
+  const s = await scenario();
+  assert.deepEqual(
+    operatorCommand("retomar", workOf(s, "3"), s.view),
+    { ok: false, reason: "retomada manual se aplica apenas a atendimento assistido" },
+  );
+  await cleanup(s);
+});
+
+test("retomar recusa sem retomada a pedir: já autorizada, aguardando aprovação e em conclusão", async () => {
+  const s = await scenario();
+  assert.deepEqual(operatorCommand("retomar", workOf(s, "9"), s.view), { ok: false, reason: "retomada já autorizada" });
+  assert.deepEqual(operatorCommand("retomar", workOf(s, "6"), s.view), { ok: false, reason: "resultado proposto aguardando sua decisão: aprove o resultado (approve)" });
+  assert.deepEqual(operatorCommand("retomar", workOf(s, "10"), s.view), { ok: false, reason: "atendimento em conclusão: nada a retomar" });
   await cleanup(s);
 });
 

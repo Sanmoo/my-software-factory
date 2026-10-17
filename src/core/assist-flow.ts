@@ -1042,23 +1042,59 @@ export class AssistedAttendance implements AssistOperator {
 
   // Manual resume of one parked attendance (never automatic): the same session and area — pi -c
   // on the same pi session file, the same clone re-mounted — after the full revalidation of the
-  // current conditions. A condition the tracker or the environment cannot confirm keeps the
-  // work parked with a visible reason; a missing context asks for intervention instead of
-  // starting a silent new conversation.
+  // current conditions, and WITH focus (the operator asked, so the new tab must be where they
+  // continue; #77). A condition the tracker or the environment cannot confirm keeps the work
+  // parked with a visible reason; a missing context asks for intervention instead of starting a
+  // silent new conversation.
+  //
+  // The operator may ask while the persisted state still says the session is open (`open` or
+  // `opening`): the queue's single drain runs BEFORE the supervision pass of the same cycle, so
+  // the flow cannot rely on that pass to park the session first. The end record is therefore
+  // reread NOW, in this cycle — the only accepted proof the exec ended:
+  //   * ended  ⇒ park (pending, one session-log line) and continue to the conditions + open in
+  //              the SAME cycle, which is what makes the press right after Ctrl-C work once (the
+  //              window is the moment between the end and the next supervision pass);
+  //   * running/unknown ⇒ refused with the honest reason (the record has not landed / cannot be
+  //              read); nothing is persisted, so no intent is ever kept to fire later;
+  //   * a recognized proposed result ⇒ refused naming `approve`: there is a result to decide,
+  //              and resuming the conversation would bypass the approval.
   async resume(key: string, command: string): Promise<AssistOperatorResult> {
     const loaded = await this.deps.sessions.load();
     const current = loaded.sessions.find((candidate) => candidate.key === key);
     if (current === undefined) return { status: "rejected", reason: "atendimento assistido desconhecido" };
-    if (current.state !== "pending") {
+    let base = current;
+    if (current.state === "open" || current.state === "opening") {
+      const record = await this.readExitRecord(current);
+      if (record.kind !== "ended") {
+        return {
+          status: "rejected",
+          reason: record.kind === "unknown"
+            ? `fim da execução ainda não confirmado: registro de fim ilegível (${record.reason})`
+            : "fim da execução ainda não confirmado; o registro de fim aparece no fim real da execução e a próxima passagem de supervisão libera a retomada",
+        };
+      }
+      const proposal = await this.readProposal(current);
+      if (proposal.kind === "recognized" && proposal.result.status !== "interrupted") {
+        return {
+          status: "rejected",
+          reason: `resultado do atendimento já reconhecido (${statusName(proposal.result.status)});`
+            + " a retomada de sessão aberta não se aplica — aprove o resultado (approve)",
+        };
+      }
+      const parkedReason = `fim da execução registrado (exit ${record.record.exitCode}); retomada manual do operador:`
+        + " a sessão é estacionada e retomada no mesmo ciclo";
+      base = toPending(appendSessionLog(current, parkedReason), parkedReason);
+      await this.deps.sessions.save(base);
+    } else if (current.state !== "pending") {
       return { status: "rejected", reason: `resume não se aplica à sessão assistida em estado ${current.state}` };
     }
     const parked = async (reason: string): Promise<AssistOperatorResult> => {
-      await this.deps.sessions.save(appendSessionLog(current, `retomada recusada: ${reason}`));
+      await this.deps.sessions.save(appendSessionLog(base, `retomada recusada: ${reason}`));
       return { status: "rejected", reason };
     };
-    const conditions = await this.resumeConditions(current);
+    const conditions = await this.resumeConditions(base);
     if (typeof conditions === "string") return parked(conditions);
-    return this.resumeExec(current, conditions, command);
+    return this.resumeExec(base, conditions, command, true);
   }
 
   // The full revalidation ONE opening (manual or scheduled) must pass before it launches
@@ -1151,7 +1187,7 @@ export class AssistedAttendance implements AssistOperator {
       report.skipped.push({ key, reason: `retomada agendada aguardando condições: ${conditions}` });
       return;
     }
-    const outcome = await this.resumeExec(session, conditions, "retomada-agendada");
+    const outcome = await this.resumeExec(session, conditions, "retomada-agendada", false);
     if (outcome.status === "applied") {
       report.resumed.push({ key, reason: "retomada autorizada executada (consumo de uso único na abertura)" });
     } else {
@@ -1183,7 +1219,7 @@ export class AssistedAttendance implements AssistOperator {
   // attempt recorded aborts WITHOUT launching, so concurrent cycles or retries never start
   // two executions of the same authorization (the single-drain discipline of #54/#56 holds;
   // this reread is the mechanism that survives them).
-  private async resumeExec(current: AssistSession, prepared: PreparedOpening, command: string): Promise<AssistOperatorResult> {
+  private async resumeExec(current: AssistSession, prepared: PreparedOpening, command: string, focus: boolean): Promise<AssistOperatorResult> {
     const key = current.key;
     const herdr = this.deps.ports.herdr;
     // The freshest record of this attempt: failures after the consumption was persisted must
@@ -1223,11 +1259,12 @@ export class AssistedAttendance implements AssistOperator {
         }
       }
       const workspace = await herdr.currentWorkspace();
-      const tab = await herdr.createTab({ workspace, cwd: current.cloneDir, label });
+      const tab = await herdr.createTab({ workspace, cwd: current.cloneDir, label, focus });
       // The new identity is persisted before anything else changes, like the first opening.
       opening = { ...opening, tabId: tab.tab.tabId, paneId: tab.tab.paneId };
       await this.deps.sessions.save(opening);
-      this.emit(key, "atendimento-admitido", "sessão assistida retomada (aba própria, sem roubar foco; mesma sessão e área)", {
+      this.emit(key, "atendimento-admitido", `sessão assistida retomada (${focus
+        ? "aba própria com foco, a pedido do operador" : "aba própria, sem roubar foco"}; mesma sessão e área)`, {
         aba: label, "aba id": tab.tab.tabId, pane: tab.tab.paneId, clone: current.cloneDir, container: containerName,
       }, "atenção", { highlight: true });
       const commandLine = assistExecCommand({
@@ -1243,7 +1280,8 @@ export class AssistedAttendance implements AssistOperator {
       await herdr.paneRun(tab.tab.paneId, commandLine);
       const opened = toOpen(appendSessionLog(opening, `exec retomado na pane ${tab.tab.paneId} (container ${containerName})`));
       await this.deps.sessions.save(opened);
-      this.emit(key, "atendimento-aberto", "sessão assistida retomada e aberta (pi -c na mesma sessão, sem roubar foco)", {
+      this.emit(key, "atendimento-aberto", `sessão assistida retomada e aberta (pi -c na mesma sessão, ${focus
+        ? "com foco a pedido do operador" : "sem roubar foco"})`, {
         modelo: opened.model, container: containerName, aba: opened.tabId, sessão: opened.sessionsDir,
         espera: "aguardando o operador",
       }, "atenção");
@@ -1555,7 +1593,7 @@ export class AssistedAttendance implements AssistOperator {
       const herdr = this.deps.ports.herdr;
       const workspace = await herdr.currentWorkspace();
       const label = `msf-assist-${encodeRefPart(key).toLowerCase().replace(/[^a-z0-9-]+/g, "-")}`.slice(0, 64);
-      const opening = await herdr.createTab({ workspace, cwd: cloneDir, label });
+      const opening = await herdr.createTab({ workspace, cwd: cloneDir, label, focus: false });
       // The tab/pane identity is persisted before anything else changes: an opening is visible
       // even when the exec launch itself fails (never a claim without a visible record).
       session = { ...session, label, tabId: opening.tab.tabId, paneId: opening.tab.paneId };

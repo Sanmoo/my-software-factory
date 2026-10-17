@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildOperatorView, nextStepHint, type EstadoVivo, type Fluxo, type OperatorView, type OperatorWork } from "../src/core/operator-view.js";
 import type { InstanceConfig } from "../src/config/types.js";
-import { newJob, transitionJob } from "../src/core/job.js";
+import { encodeRefPart, newJob, transitionJob } from "../src/core/job.js";
+import { assistExitRecordPath } from "../src/runtime/assist-exec.js";
 import type { AssistSession } from "../src/core/assist-session.js";
 import { AttentionKeeper, digestOf, helpPending, pendingId, sessionOpenPending } from "../src/core/attention.js";
 import { refKey, type IssueRef, type TrackerPort } from "../src/tracker/port.js";
@@ -195,6 +196,79 @@ test("sessão concluding é atendimento-concluido", async () => {
   const fx = await fixture();
   await fx.saveSession(sessionOf("1", "concluding", { approval: { at: "2026-10-14T12:05:00.000Z", command: "c1" } }));
   assert.deepEqual(statesOf(await viewFor(fx)), ["atendimento-concluido"]);
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+// ── #77 — o registro de fim de execução por sessão assistida ──────────────────────────────────
+// A pré-checagem da TUI precisa aceitar a retomada mesmo quando o estado GRAVADO ainda diz
+// sessão aberta: o canal de fim (`msf-exit.json` no diretório de estado da execução) é lido
+// pelo mesmo dono de fs do fluxo e exposto por sessão em três valores — presente, ausente,
+// ilegível. A leitura só é significativa em opening/open (os únicos estados com execução
+// viva); o builder continua puro leitor.
+
+// O diretório de estado da execução de uma sessão, como o fluxo o grava.
+const execStateDirOf = (stateDir: string, key: string): string => join(stateDir, "assist", encodeRefPart(key), "state");
+
+// Semeia o canal de fim com o texto dado (registro real ou lixo, para o veredito ilegível).
+const seedExitRecord = async (stateDir: string, key: string, text: string): Promise<void> => {
+  const execStateDir = execStateDirOf(stateDir, key);
+  await mkdir(execStateDir, { recursive: true });
+  await writeFile(assistExitRecordPath(execStateDir), text);
+};
+
+test("sessão aberta com o registro de fim no canal expõe registroDeFim presente", async () => {
+  const fx = await fixture();
+  const session = sessionOf("1", "open", { execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("1"))) });
+  await fx.saveSession(session);
+  await seedExitRecord(fx.stateDir, session.key, '{"exitCode":130,"at":"2026-10-14T12:05:00.000Z"}');
+  const view = await viewFor(fx);
+  assert.equal(view.works[0]?.estadoVivo, "sessao-aberta");
+  assert.equal(view.works[0]?.registroDeFim, "presente");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("sessão aberta sem registro no canal (ou sem diretório registrado) expõe registroDeFim ausente", async () => {
+  const fx = await fixture();
+  await fx.saveSession(sessionOf("1", "open", { execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("1"))) }));
+  await fx.saveSession(sessionOf("2", "opening"));
+  const view = await viewFor(fx);
+  assert.deepEqual(view.works.map((work) => work.registroDeFim), ["ausente", "ausente"]);
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("registro de fim ilegível é ilegível, nunca ausente nem terminado", async () => {
+  const fx = await fixture();
+  const session = sessionOf("1", "open", { execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("1"))) });
+  await fx.saveSession(session);
+  await seedExitRecord(fx.stateDir, session.key, "não é json");
+  const view = await viewFor(fx);
+  assert.equal(view.works[0]?.registroDeFim, "ilegível");
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("o registro de fim só é lido em opening/open: nos demais estados é ausente", async () => {
+  const fx = await fixture();
+  await fx.saveSession(sessionOf("1", "pending", { execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("1"))) }));
+  await fx.saveSession(sessionOf("2", "proposed", { result: { summary: "s" } as never, execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("2"))) }));
+  await fx.saveSession(sessionOf("3", "concluding", { approval: { at: "t", command: "c" }, execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("3"))) }));
+  for (const session of ["1", "2", "3"]) {
+    await seedExitRecord(fx.stateDir, refKey(refOf(session)), '{"exitCode":0,"at":"2026-10-14T12:05:00.000Z"}');
+  }
+  await fx.saveJob(jobOf("4"));
+  const view = await viewFor(fx);
+  assert.deepEqual(view.works.map((work) => work.registroDeFim), ["ausente", "ausente", "ausente", "ausente"]);
+  await rm(fx.root, { recursive: true, force: true });
+});
+
+test("ler o registro de fim não escreve em store nenhum", async () => {
+  const fx = await fixture();
+  const session = sessionOf("1", "open", { execStateDir: execStateDirOf(fx.stateDir, refKey(refOf("1"))) });
+  await fx.saveSession(session);
+  await seedExitRecord(fx.stateDir, session.key, '{"exitCode":0,"at":"2026-10-14T12:05:00.000Z"}');
+  const before = await fx.readRaw();
+  assert.equal((await viewFor(fx)).works[0]?.registroDeFim, "presente");
+  const after = await fx.readRaw();
+  assert.deepEqual(after, before);
   await rm(fx.root, { recursive: true, force: true });
 });
 
@@ -481,7 +555,7 @@ test("agente retoma e o ponto se encerra: resolve(key) remove a pendência e a l
 // ── #62 — dica do próximo passo por estado vivo × fluxo (pura, sem store nem renderização) ───
 
 const trabalho = (estadoVivo: EstadoVivo, fluxo: Fluxo = "implementacao-autonoma"): OperatorWork => ({
-  key: refKey(refOf("3")), repository: "acme/app", fluxo, estadoVivo,
+  key: refKey(refOf("3")), repository: "acme/app", fluxo, estadoVivo, registroDeFim: "ausente",
   issueRef: "acme/app#3", ref: refOf("3"), ocupaVaga: false, issue: { status: "in-progress" },
 });
 

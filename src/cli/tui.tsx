@@ -19,15 +19,17 @@ import type { TrackerPort } from "../tracker/port.js";
 import { createFileCommandQueue } from "../state/command-queue.js";
 
 // The operator's TUI (issue #61, spec #60; pontos de atenção + dica are #62; operator actions
-// are #63; atender is #64): one screen, one instance. It renders the reading model
-// (buildOperatorView) and ACTS only through the instance's local command queue — the same
-// surface the supervision CLI writes, which the instance applies in order on its next poll
-// (ADR 0001: the core grades the effect; the TUI never touches tracker, processes, sessions or
-// any store). Keys: ↑/↓ move the focus over the works list, r responds to a help request
+// are #63; atender is #64; `t` also resumes are #77): one screen, one instance. It renders the
+// reading model (buildOperatorView) and ACTS only through the instance's local command queue —
+// the same surface the supervision CLI writes, which the instance applies in order on its next
+// poll (ADR 0001: the core grades the effect; the TUI never touches tracker, processes, sessions
+// or any store). Keys: ↑/↓ move the focus over the works list, r responds to a help request
 // (inline text input), a approves the proposed result, e authorizes the resume, l releases —
 // each pre-validated by the pure action map, so a refusal shows its reason on screen and
-// enqueues NOTHING — t opens the atender block (the copyable context of the focused work, a
-// DISPLAY ONLY block: copying is the terminal's own selection, nothing is executed, nothing
+// enqueues NOTHING — t RESUMES the focused assisted attendance when the core's own pre-check
+// accepts it (`retomar`: interrupted, or an open session whose exec end record already exists,
+// #77) and otherwise keeps opening the atender block (the copyable context of the focused work,
+// a DISPLAY ONLY block: copying is the terminal's own selection, nothing is executed, nothing
 // enters the queue, no pending is resolved; Esc closes) — and q / Ctrl+C quits.
 
 export interface TuiOptions {
@@ -181,6 +183,7 @@ const ACTION_LABELS: Record<OperatorAction, string> = {
   responder: "resposta",
   "aprovar-resultado": "aprovação",
   "autorizar-retomada": "autorização de retomada",
+  retomar: "retomada manual",
   liberar: "liberação",
 };
 
@@ -208,6 +211,39 @@ export async function applyOperatorAction(
     text: `${ACTION_LABELS[action]} para ${work.issueRef}: enfileirado na fila da instância ${instanceName}; `
       + `comando=${id}; será aplicado no próximo ciclo — aguarde o scanner da instância`,
   };
+}
+
+// The decision of one `t` press (#77): either the manual resume was ENQUEUED (the confirmation
+// notice, exactly like every other action), or the press opens today's display-only block.
+export type AtenderDecisao = { kind: "retomada"; notice: TuiNotice } | { kind: "exibicao" };
+
+// The `t` key of the focused work (issue #77, spec #74). The reading model is reread AT KEY TIME
+// — a fresh `buildOperatorView`, never the possibly stale screen state — because the decision on
+// disk right after Ctrl-C (the end record existing before the supervision pass parks the session)
+// is exactly what the stored state may not show yet. The manual resume goes through the core's own
+// pre-check map (`retomar`) and the same injected queue as every other action; a refusal enqueues
+// NOTHING and keeps `t` as the copyable-context key of #64 (the display block). Nothing else is
+// written anywhere.
+export async function atenderFoco(
+  focusedKey: string | undefined,
+  deps: {
+    stateDir: string;
+    instance: InstanceConfig;
+    tracker?: TrackerPort;
+    queue: CommandQueue;
+    instanceName: string;
+  },
+): Promise<AtenderDecisao> {
+  if (focusedKey === undefined) return { kind: "exibicao" };
+  const view = await buildOperatorView({
+    stateDir: deps.stateDir, instance: deps.instance,
+    ...(deps.tracker === undefined ? {} : { tracker: deps.tracker }),
+  });
+  const work = view.works.find((candidate) => candidate.key === focusedKey);
+  // A key that left the model between the last rebuild and the key press: nothing to resume.
+  if (work === undefined) return { kind: "exibicao" };
+  if (operatorCommand("retomar", work, view).ok === false) return { kind: "exibicao" };
+  return { kind: "retomada", notice: await applyOperatorAction("retomar", work, view, deps.queue, deps.instanceName) };
 }
 
 // The screen itself, exported for the scenario rounds the acceptance asks for (spec #60:
@@ -280,9 +316,10 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
     if (input === "a") { act("aprovar-resultado"); return; }
     if (input === "e") { act("autorizar-retomada"); return; }
     if (input === "l") { act("liberar"); return; }
-    // atender (issue #64): opens the display-only context block; Esc closes it. Nothing here
-    // writes, executes or enqueues — the block is text on screen; copying is the terminal's own.
-    if (input === "t") { setAttending(true); return; }
+    // atender/retomar (issues #64 and #77): the manual resume when the core's pre-check accepts
+    // it (enqueue + green banner), otherwise the display-only context block of #64; Esc closes.
+    // The decision is reread from disk at key time inside `atender`.
+    if (input === "t") { atender(); return; }
     if (key.escape === true) { setAttending(false); return; }
   }, { isActive: isRawModeSupported });
 
@@ -297,6 +334,24 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
       setNotice(result);
       if (result.kind === "ok") rebuild();
     });
+  }
+
+  // `t` (#77): the reading model is reread AT KEY TIME (never the screen state, which may be up
+  // to `refreshMs` old — and, right after Ctrl-C, wrong by construction). An accepted manual
+  // resume enqueues through the same queue and shows the confirmation; a refusal enqueues
+  // NOTHING and opens today's display-only context block (#64), which is what keeps `t` the
+  // copyable-context key for everything else.
+  function atender(): void {
+    const current = view;
+    if (current === null) return;
+    const index = Math.min(focus, current.works.length - 1);
+    const focusedKey = index >= 0 ? current.works[index]?.key : undefined;
+    atenderFoco(focusedKey, {
+      stateDir, instance, ...(tracker === undefined ? {} : { tracker }), queue, instanceName: instance.name,
+    }).then((decision) => {
+      if (decision.kind === "retomada") { setAttending(false); setNotice(decision.notice); rebuild(); return; }
+      setAttending(true);
+    }).catch((caught: unknown) => { setError(caught instanceof Error ? caught.message : String(caught)); });
   }
 
   if (error !== null) return <Text color="red">leitura falhou: {error}</Text>;
@@ -365,11 +420,13 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
       )}
       {attending && focused !== undefined && atendido !== null && (
         <Box marginTop={0} marginBottom={1} flexDirection="column">
-          {/* atender (#64): o comando copiável do trabalho em foco — SÓ exibição: copiar é a
+          {/* atender (#64): o contexto copiável do trabalho em foco — SÓ exibição: copiar é a
               seleção nativa do terminal; nada é executado, nada entra na fila, nenhuma
-              pendência é resolvida. Em fluxo assistido o bloco mostra a identidade da área no
-              Herdr (não existe comando de Herdr a executar); sem contexto derivável, o bloco
-              nem aparece (nada é inventado). Esc fecha. */}
+              pendência é resolvida. Para o assistido sem retomada possível (`t` recusado pela
+              pré-checagem, #77) o bloco mostra a identidade da área no Herdr; o autônomo mostra
+              os comandos de leitura. Sem contexto derivável, o bloco nem aparece (nada é
+              inventado). Esc fecha. A retomada possível NÃO passa por aqui: ela enfileira e
+              confirma no banner. */}
           <Text bold wrap="truncate">atender [{focused.issueRef}]:</Text>
           {atenderLinhas.map((linha) => <Text key={linha} color="cyan" wrap="truncate">  {linha}</Text>)}
           <Text dimColor wrap="truncate">
@@ -407,7 +464,7 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
           {" "}Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} ·
           {" "}Comandos pendentes: {footer.pendingCommands}
         </Text>
-        <Text dimColor>{" "}↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t atende (comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
+        <Text dimColor>{" "}↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t retoma o atendimento assistido (ou atende: comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
       </Box>
     </Box>
   );

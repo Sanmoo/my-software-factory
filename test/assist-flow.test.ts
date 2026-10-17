@@ -46,7 +46,7 @@ const memoryTracker = async (): Promise<MemoryTracker> =>
 
 interface HerdrCalls {
   workspace: number;
-  tabs: Array<{ workspace: string; cwd: string; label: string }>;
+  tabs: Array<{ workspace: string; cwd: string; label: string; focus?: boolean }>;
   panes: Array<{ paneId: string; command: string }>;
 }
 
@@ -76,10 +76,14 @@ const herdrOf = (options: {
       calls.tabs.push(input);
       seq += 1;
       openTabs.add(`tab-${seq}`);
+      // The boundary's real behavior: without `focus` the tab is born unfocused (and the no-steal
+      // assertion holds); with `focus: true` (the operator's manual resume, #77) the new tab is
+      // the one focused.
+      const focused = options.stealFocus === true || input.focus === true;
       return {
         tab: { tabId: `tab-${seq}`, paneId: `pane-${seq}` },
         focusedBefore: options.stealFocus === true ? "outro" : "ws-operador",
-        focusedAfter: options.stealFocus === true ? `tab-${seq}` : "ws-operador",
+        focusedAfter: focused ? `tab-${seq}` : "ws-operador",
         label: input.label,
         cwd: input.cwd,
       };
@@ -296,6 +300,7 @@ test("the eligible issue is admitted, claimed and opened end to end without stea
   assert.equal(setup.herdrCalls.tabs.length, 1);
   assert.equal(setup.herdrCalls.tabs[0]!.workspace, "ws-operador");
   assert.equal(setup.herdrCalls.tabs[0]!.cwd, session.cloneDir);
+  assert.equal(setup.herdrCalls.tabs[0]!.focus, false, "a primeira abertura não rouba foco");
   assert.match(setup.herdrCalls.tabs[0]!.label, /^msf-assist-/);
 
   // Exec: pi inside the container, explicit assist model, prompt proper to the human state.
@@ -534,7 +539,7 @@ test("an interruption persists the continuity decision; a reply records the answ
   assert.deepEqual(released, { status: "applied" });
 });
 
-test("the manual resume opens the same session and area: pi -c, new tab without focus, old exit record removed first", async (context) => {
+test("the manual resume opens the same session and area: pi -c, new tab WITH focus, old exit record removed first", async (context) => {
   const setup = await pendingOf(context);
   const parked = await sessionOf(setup, pendingKey);
   // The pi session file of the preserved area: what makes the resume a continuation.
@@ -549,6 +554,8 @@ test("the manual resume opens the same session and area: pi -c, new tab without 
   assert.notEqual(opened.tabId, parked.tabId, "a retomada abre nova aba; a antiga segue com o histórico");
   assert.equal(opened.sessionsDir, parked.sessionsDir, "a mesma sessão de pi é continuada");
   assert.equal(opened.cloneDir, parked.cloneDir, "o mesmo clone do operador é remontado");
+  // A aba reaberta a pedido do operador vem COM foco (#77); o núcleo pede isso à fronteira.
+  assert.equal(setup.herdrCalls.tabs[1]!.focus, true, "a retomada manual vem com foco");
 
   // The runtime: dockern client on the new pane, pi -c on the same session dir, no new prompt.
   assert.equal(setup.herdrCalls.panes.length, 2);
@@ -569,13 +576,98 @@ test("the manual resume opens the same session and area: pi -c, new tab without 
   assert.equal(setup.herdrCalls.tabs.length, 2, "pi encerrado não fecha a aba antiga nem é reaberto em duas abas");
 });
 
+test("a manual resume of a session still recorded open parks and reopens in the SAME cycle when the end record exists (#77)", async (context) => {
+  const setup = await arrange(context, { only: ["1"] });
+  assert.deepEqual((await setup.flow().poll()).opened, [pendingKey]);
+  const live = await sessionOf(setup, pendingKey);
+  assert.equal(live.state, "open");
+  // The conversation the container wrote: what makes `pi -c` a continuation, not a new one.
+  await writeFile(`${live.sessionsDir!}/pi-msf.jsonl`, '{"type":"message"}\n');
+  // The container's own end record lands while the persisted state still says open — the exact
+  // millisecond window between Ctrl-C and the next supervision pass. One press must be enough.
+  await writeFile(assistExitRecordPath(live.execStateDir!), '{"exitCode":130,"at":"2026-10-14T12:10:00.000Z"}');
+
+  const resumed = await setup.flow().resume(pendingKey, "cmd-t");
+  assert.deepEqual(resumed, { status: "applied" });
+  const reopened = await sessionOf(setup, pendingKey);
+  assert.equal(reopened.state, "open");
+  assert.equal(reopened.resumes, 1);
+  assert.equal(reopened.sessionsDir, live.sessionsDir, "a mesma conversa é continuada");
+  assert.equal(reopened.cloneDir, live.cloneDir, "a mesma área é remontada");
+  assert.notEqual(reopened.tabId, live.tabId, "em aba nova");
+  assert.equal(setup.herdrCalls.tabs.length, 2);
+  assert.equal(setup.herdrCalls.tabs[1]!.focus, true, "a aba reaberta a pedido do operador vem com foco");
+  assert.equal(setup.herdrCalls.panes.length, 2);
+  assert.match(setup.herdrCalls.panes[1]!.command, / --tui-mode regular -c;/);
+  assert.ok(reopened.log.some((line) => line.includes("fim da execução registrado (exit 130)")),
+    "o estacionamento do mesmo ciclo fica registrado");
+  // The old record leaves before the relaunch, and no cycle after opens a second execution.
+  await assert.rejects(() => readFile(assistExitRecordPath(reopened.execStateDir!)), /ENOENT/);
+  assert.deepEqual((await setup.flow().poll()).resumed, []);
+  assert.equal(setup.herdrCalls.panes.length, 2, "nenhuma segunda execução da mesma sessão");
+});
+
+test("a manual resume of an open session without the end record is refused honestly and stores no intent (#77)", async (context) => {
+  const setup = await arrange(context, { only: ["1"] });
+  assert.deepEqual((await setup.flow().poll()).opened, [pendingKey]);
+  const live = await sessionOf(setup, pendingKey);
+  await writeFile(`${live.sessionsDir!}/pi-msf.jsonl`, '{"type":"message"}\n');
+
+  const outcome = await setup.flow().resume(pendingKey, "cmd-t");
+  assert.ok(outcome.status === "rejected", outcome.status === "rejected" ? outcome.reason : outcome.status);
+  assert.match(outcome.reason, /fim da execução ainda não confirmado/);
+  const kept = await sessionOf(setup, pendingKey);
+  assert.equal(kept.state, "open", "a sessão continua aberta e supervisionada");
+  assert.equal(kept.resumes, undefined, "nenhuma tentativa de abertura foi registrada");
+  assert.equal(kept.scheduledResume, undefined, "nenhuma intenção de retomada fica guardada");
+  assert.equal(setup.herdrCalls.tabs.length, 1, "nada é reaberto sem o fim confirmado");
+  assert.equal(setup.herdrCalls.panes.length, 1);
+  // The supervision keeps ruling the session: the record landing later parks it as always.
+  await writeFile(assistExitRecordPath(live.execStateDir!), '{"exitCode":130,"at":"2026-10-14T12:10:00.000Z"}');
+  const ended = await setup.flow().poll();
+  assert.deepEqual(ended.pending.map((entry) => entry.key), [pendingKey]);
+  assert.equal((await sessionOf(setup, pendingKey)).state, "pending");
+});
+
+test("a manual resume of an open session with an illegible end record is refused naming the record (#77)", async (context) => {
+  const setup = await arrange(context, { only: ["1"] });
+  await setup.flow().poll();
+  const live = await sessionOf(setup, pendingKey);
+  await writeFile(assistExitRecordPath(live.execStateDir!), "não é json");
+  const outcome = await setup.flow().resume(pendingKey, "cmd-t");
+  assert.ok(outcome.status === "rejected", outcome.status === "rejected" ? outcome.reason : outcome.status);
+  assert.match(outcome.reason, /registro de fim ilegível/);
+  assert.equal((await sessionOf(setup, pendingKey)).state, "open");
+  assert.equal(setup.herdrCalls.panes.length, 1);
+});
+
+test("a manual resume of an open session with a recognized result is refused naming approve (#77)", async (context) => {
+  const setup = await arrange(context, { only: ["1"] });
+  await setup.flow().poll();
+  const live = await sessionOf(setup, pendingKey);
+  await writeFile(assistExitRecordPath(live.execStateDir!), '{"exitCode":0,"at":"2026-10-14T12:10:00.000Z"}');
+  const text = `<msf-result>${JSON.stringify({ status: "concluded", summary: "triagem feita" })}</msf-result>\n<promise>MSF-RESULT</promise>`;
+  await writeFile(`${live.sessionsDir!}/pi-msf.jsonl`,
+    `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text }] } })}\n`);
+
+  const outcome = await setup.flow().resume(pendingKey, "cmd-t");
+  assert.ok(outcome.status === "rejected", outcome.status === "rejected" ? outcome.reason : outcome.status);
+  assert.match(outcome.reason, /aprove o resultado \(approve\)/);
+  assert.equal((await sessionOf(setup, pendingKey)).state, "open",
+    "resultado proposto decide pela aprovação, não pela retomada");
+  assert.equal(setup.herdrCalls.panes.length, 1);
+});
+
 test("a second resume after the opening is refused: commands do not open two invocations", async (context) => {
   const setup = await pendingOf(context);
   const parked = await sessionOf(setup, pendingKey);
   await writeFile(`${parked.sessionsDir!}/pi-msf.jsonl`, "{}\n");
   assert.deepEqual(await setup.flow().resume(pendingKey, "cmd-1"), { status: "applied" });
   const outcome = await setup.flow().resume(pendingKey, "cmd-2");
-  assert.ok(outcome.status === "rejected" && outcome.reason.includes("não se aplica"), outcome.status === "rejected" ? outcome.reason : outcome.status);
+  // The session is open again and the resumed exec's end record does not exist yet: the reread at
+  // this cycle refuses saying exactly that (#77) — never a second invocation of the same session.
+  assert.ok(outcome.status === "rejected" && /fim da execução ainda não confirmado/.test(outcome.reason),
+    outcome.status === "rejected" ? outcome.reason : outcome.status);
   assert.equal(setup.herdrCalls.panes.length, 2, "nenhuma segunda invocação da mesma sessão");
 });
 
@@ -848,6 +940,7 @@ test("the affirmative reply schedules a one-time resume with priority over new a
     "o consumo persiste a identidade da tentativa de abertura");
 
   assert.equal(setup.herdrCalls.panes.length, 2, "só a retomada abriu execução neste ciclo");
+  assert.equal(setup.herdrCalls.tabs[1]!.focus, false, "a retomada agendada de uso único continua abrindo sem roubar foco");
   assert.match(setup.herdrCalls.panes[1]!.command, / --tui-mode regular -c;/, "pi -c na mesma sessão");
   await assert.rejects(() => readFile(assistExitRecordPath(opened.execStateDir!)), /ENOENT/,
     "o registro de fim antigo sai antes do relançamento");

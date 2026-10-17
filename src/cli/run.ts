@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfigFile } from "../config/load.js";
 import { Admission, type PollReport } from "../core/admission.js";
 import { createMainLog, terminalMode, type MainLog } from "../core/main-log.js";
@@ -12,6 +11,7 @@ import type { GitHubBoundary } from "../tracker/github.js";
 import { checkInstance } from "./check.js";
 import { composeInstance } from "./compose.js";
 import { loadLocalSettings } from "./local-settings.js";
+import { createExitRecordWake, type WakeSource } from "./wake.js";
 
 // `run`: the instance's coordinator loop. It polls the trackers at the configured
 // interval and keeps the jobs the admission dispatches running in the background. The operator
@@ -40,6 +40,11 @@ export interface RunOptions {
   // Boundaries are injectable for tests; the defaults are the real ones.
   sandbox?: SandboxBoundary;
   github?: GitHubBoundary;
+  // The wait between cycles (issue #77): the default watches the assisted execution's end-record
+  // channel under `<stateDir>/assist`, so the real end of an exec wakes the loop in milliseconds
+  // instead of at the next scan. Injectable for tests; a watcher that cannot be installed
+  // degrades to the plain interval (the periodic scan is the net).
+  wake?: WakeSource;
 }
 
 function describe(report: PollReport, log: MainLog): void {
@@ -121,22 +126,40 @@ export async function runInstance(options: RunOptions): Promise<number> {
     stop.abort();
   });
 
-  while (!stop.signal.aborted) {
-    try {
-      describe(await admission.poll(), mainLog);
-    } catch (error) {
-      mainLog.failures([{ key: "ciclo", message: messageOf(error) }], { cycleFailed: true });
+  // The wait of the loop (#77): the timer is the net, the end-record watch is what makes the end
+  // of an assisted execution perceived in milliseconds. Built once, closed on the way out; a
+  // degradation is said in the main log and only costs the early wake.
+  const wakeProblems: string[] = [];
+  const wake = options.wake ?? await createExitRecordWake({
+    stateDir: options.stateDir,
+    onError: (reason) => { wakeProblems.push(reason); },
+  });
+  for (const problem of wakeProblems) {
+    mainLog.note("atenção", `watch do registro de fim de execução indisponível: ${problem}; a varredura periódica segue como rede`);
+  }
+
+  try {
+    while (!stop.signal.aborted) {
+      try {
+        describe(await admission.poll(), mainLog);
+      } catch (error) {
+        mainLog.failures([{ key: "ciclo", message: messageOf(error) }], { cycleFailed: true });
+      }
+      const assistReport = await deps.assist.poll();
+      for (const key of assistReport.opened) mainLog.note("atenção", `sessão assistida aberta: ${key}`);
+      for (const resumed of assistReport.resumed) mainLog.note("atenção", `retomada autorizada executada ${resumed.key}: ${resumed.reason}`);
+      for (const concluded of assistReport.concluded) mainLog.note("info", `atendimento concluído ${concluded.key}: ${concluded.reason}`);
+      for (const rejected of assistReport.rejected) mainLog.note("atenção", `aprovação recusada ${rejected.key}: ${rejected.reason}`);
+      for (const pending of assistReport.pending) mainLog.note("atenção", `atendimento pendente ${pending.key}: ${pending.reason}`);
+      for (const skip of assistReport.skipped) mainLog.note("info", `atendimento adiado ${skip.key}: ${skip.reason}`);
+      mainLog.failures(assistReport.errors.map((error) => ({ key: error.key, message: error.message })));
+      if (options.once) break;
+      // The wait resolves early when an exec ends, and on the abort of the loop's own signal
+      // (which is checked at the top of the next turn); it never throws.
+      await wake.wait(instance.pollIntervalSeconds * 1000, stop.signal);
     }
-    const assistReport = await deps.assist.poll();
-    for (const key of assistReport.opened) mainLog.note("atenção", `sessão assistida aberta: ${key}`);
-    for (const resumed of assistReport.resumed) mainLog.note("atenção", `retomada autorizada executada ${resumed.key}: ${resumed.reason}`);
-    for (const concluded of assistReport.concluded) mainLog.note("info", `atendimento concluído ${concluded.key}: ${concluded.reason}`);
-    for (const rejected of assistReport.rejected) mainLog.note("atenção", `aprovação recusada ${rejected.key}: ${rejected.reason}`);
-    for (const pending of assistReport.pending) mainLog.note("atenção", `atendimento pendente ${pending.key}: ${pending.reason}`);
-    for (const skip of assistReport.skipped) mainLog.note("info", `atendimento adiado ${skip.key}: ${skip.reason}`);
-    mainLog.failures(assistReport.errors.map((error) => ({ key: error.key, message: error.message })));
-    if (options.once) break;
-    await sleep(instance.pollIntervalSeconds * 1000, undefined, { signal: stop.signal }).catch(() => undefined);
+  } finally {
+    wake.close();
   }
   const errors = await admission.settle();
   for (const error of errors) mainLog.note("erro", `de persistência: ${messageOf(error)}`);

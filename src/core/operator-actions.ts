@@ -1,15 +1,16 @@
 import type { CommandBody } from "./commands.js";
 import type { OperatorView, OperatorWork } from "./operator-view.js";
 
-// The four operator actions the TUI offers (issue #63, spec #60), mapped to the REAL command
-// bodies the supervision CLI enqueues. The map is pure and derives every decision from the
-// reading model (fluxo + estado vivo + the core's own capacity semantics, already computed as
-// `ocupaVaga`): it is a CLIENT-side pre-check so nothing wrong enters the queue — the core
-// still revalidates every command at APPLY time (the deliberate asymmetry of ticket #63:
-// `msf` keeps enqueueing without these pre-checks, and the refusal reasons here reuse the
-// core's own PT wording where the core has one).
+// The five operator actions the TUI offers (issue #63, spec #60; `retomar` is #77), mapped to
+// the REAL command bodies the supervision CLI enqueues. The map is pure and derives every
+// decision from the reading model (fluxo + estado vivo + the core's own capacity semantics,
+// already computed as `ocupaVaga`, plus the end-record flag of #77 for the manual resume): it is
+// a CLIENT-side pre-check so nothing wrong enters the queue — the core still revalidates every
+// command at APPLY time (the deliberate asymmetry of ticket #63: `msf` keeps enqueueing without
+// these pre-checks, and the refusal reasons here reuse the core's own PT wording where the core
+// has one).
 
-export type OperatorAction = "responder" | "aprovar-resultado" | "autorizar-retomada" | "liberar";
+export type OperatorAction = "responder" | "aprovar-resultado" | "autorizar-retomada" | "retomar" | "liberar";
 
 export type OperatorCommandOutcome =
   | { ok: true; command: CommandBody }
@@ -59,6 +60,37 @@ export function operatorCommand(
         };
       }
       return { ok: true, command: { type: "resume", job: work.key } };
+    }
+    case "retomar": {
+      // Manual resume (ticket #77): the operator's explicit request to continue the SAME
+      // conversation and area. The pre-check offers it exactly where the core accepts a resume:
+      // an interrupted assisted attendance, or one whose exec end record already exists even
+      // though the persisted state still says the session is open (the millisecond window right
+      // after Ctrl-C). Every other state keeps `t` as the display-only context block — nothing
+      // enters the queue. `autorizar-retomada` (the single-use scheduling, `e`) is a different
+      // decision and stays where it was.
+      if (work.fluxo !== "humano-assistido") {
+        return { ok: false, reason: "retomada manual se aplica apenas a atendimento assistido" };
+      }
+      if (work.estadoVivo === "sessao-aberta") {
+        // The honest refusal survives only for the instant the end record does not exist yet:
+        // an illegible record is named as such, never read as an end (the flow's own rule).
+        if (work.registroDeFim === "presente") return { ok: true, command: { type: "resume", job: work.key } };
+        return {
+          ok: false,
+          reason: work.registroDeFim === "ilegível"
+            ? "registro de fim de execução ilegível; o fim ainda não foi confirmado"
+            : "fim da execução ainda não confirmado; o registro de fim e o próximo ciclo liberam a retomada",
+        };
+      }
+      if (work.estadoVivo === "interrompido") {
+        return { ok: true, command: { type: "resume", job: work.key } };
+      }
+      if (work.estadoVivo === "retomada-autorizada") return { ok: false, reason: "retomada já autorizada" };
+      if (work.estadoVivo === "aguardando-aprovacao") {
+        return { ok: false, reason: "resultado proposto aguardando sua decisão: aprove o resultado (approve)" };
+      }
+      return { ok: false, reason: "atendimento em conclusão: nada a retomar" };
     }
     case "liberar": {
       // "Liberação só quando parado": neither an invocation (autonomous, `holdsSlot`) nor an
