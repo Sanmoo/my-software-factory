@@ -84,21 +84,26 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
         await git(options.reposDir, ["clone", remoteUrl(ref.repo), repoDir]);
       }
 
+      // The default branch, revealed by the clone itself — no API call.
+      const baseBranch = await detectDefaultBranch(repoDir);
+
       const branch = workBranchName(ref.number);
       let branchCreated = false;
       if (!(await localBranchExists(repoDir, branch))) {
-        // Born from the default the clone revealed; relaunches reuse it.
-        const baseBranch = await detectDefaultBranch(repoDir);
+        // Born from the default; relaunches reuse it untouched.
         await git(repoDir, ["branch", branch, `refs/remotes/origin/${baseBranch}`]);
         branchCreated = true;
       }
-      const baseBranch = await detectDefaultBranch(repoDir);
 
       return { repoDir, branch, baseBranch, branchCreated };
     },
 
     async cleanupDoneWork(ref: IssueRef): Promise<void> {
       const repoDir = repoCloneDir(options.reposDir, ref.repo);
+
+      // No clone ever created: there is nothing to clean.
+      if (!existsSync(join(repoDir, ".git"))) return;
+
       const branch = workBranchName(ref.number);
 
       // Remote branch — the human's merge may have auto-deleted it already.

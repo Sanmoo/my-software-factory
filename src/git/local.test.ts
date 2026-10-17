@@ -69,11 +69,7 @@ describe("git host — one clone per target repo", () => {
     await git.prepareWork({ repo: "Sanmoo/trunk-repo", number: 3 });
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/trunk-repo");
-    const branchBase = await execFile(
-      "git",
-      ["rev-parse", `${workBranchName(3)}~0`],
-      { cwd: cloneDir },
-    );
+    const branchBase = await execFile("git", ["rev-parse", workBranchName(3)], { cwd: cloneDir });
     const originDefault = await execFile("git", ["rev-parse", "origin/trunk"], { cwd: cloneDir });
     assert.equal(branchBase.stdout.trim(), originDefault.stdout.trim());
   });
@@ -210,6 +206,14 @@ describe("git host — cleanup only on done", () => {
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     const localAfter = await execFile("git", ["for-each-ref", "refs/heads"], { cwd: cloneDir });
     assert.ok(!localAfter.stdout.includes(workBranchName(7)), "local branch deleted");
+  });
+
+  test("cleanup on a repo that was never cloned is a no-op — nothing created, no error", async () => {
+    const git = gitWork();
+
+    await git.cleanupDoneWork({ repo: "Sanmoo/never-touched", number: 7 });
+
+    assert.ok(!existsSync(repoCloneDir(reposDir, "Sanmoo/never-touched")));
   });
 
   test("cleanup never touches other works' branches", async () => {
