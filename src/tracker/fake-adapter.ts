@@ -185,7 +185,7 @@ export class FakeTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  async releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome> {
+  async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
     if (issue.labels.delete("agent-claimed")) {
@@ -194,6 +194,24 @@ export class FakeTrackerAdapter implements TrackerPort {
     if (issue.assignees.delete(account)) {
       performed.push(`unassignee ${account}`);
     }
+    // The ruler's 1st fall releases the work BACK to the pool: the ready
+    // label returns — same composite shape as the claim's swap, mirrored in
+    // the reverse direction.
+    if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
+      issue.labels.add(readyLabel);
+      performed.push(`label+${readyLabel} on ${ref.repo}#${ref.number}`);
+    }
+    return { performed };
+  }
+
+  async blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome> {
+    const issue = this.mustGet(ref);
+    const performed: string[] = [];
+    if (issue.labels.delete(claimedLabel)) {
+      performed.push(`label-${claimedLabel} on ${ref.repo}#${ref.number}`);
+    }
+    issue.labels.add(blockedLabel);
+    performed.push(`label+${blockedLabel} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 

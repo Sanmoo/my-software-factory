@@ -224,4 +224,64 @@ describe("fake tracker adapter — the 9 operations + rank", () => {
     assert.ok(Array.isArray(outcome.performed));
     assert.ok(outcome.performed.length > 0);
   });
+
+  // ---- ticket 13: the ruler's decided transitions need two label swaps ----
+
+  describe("ticket 13 — release back to the pool and block the claim", () => {
+    test("releaseClaim with a ready label swaps claimed→ready (the work re-enters the pool)", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [] });
+      await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
+
+      const outcome = await adapter.releaseClaim(
+        { repo: "Sanmoo/a", number: 1 },
+        "bot-do-samuca",
+        "ready-for-agent",
+      );
+
+      assert.ok(outcome.performed.length > 0);
+      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
+      assert.ok(issue.known);
+      assert.ok(issue.value.labels.includes("ready-for-agent"), "the ready label is back");
+      assert.ok(!issue.value.labels.includes("agent-claimed"), "the claim is gone");
+      assert.deepEqual(issue.value.assignees, [], "the assignee is gone");
+    });
+
+    test("releaseClaim without a ready label keeps its old shape (remove only the claim mark)", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 2 });
+      await adapter.claim({ repo: "Sanmoo/a", number: 2 }, "bot-do-samuca");
+
+      await adapter.releaseClaim({ repo: "Sanmoo/a", number: 2 }, "bot-do-samuca");
+
+      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 2 });
+      assert.ok(issue.known);
+      assert.ok(!issue.value.labels.includes("agent-claimed"));
+    });
+
+    test("blockClaim swaps claimed→blocked, the claim held until the terminal state", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 3 });
+      await adapter.claim({ repo: "Sanmoo/a", number: 3 }, "bot-do-samuca");
+
+      await adapter.blockClaim(
+        { repo: "Sanmoo/a", number: 3 },
+        "agent-claimed",
+        "agent-blocked",
+      );
+
+      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 3 });
+      assert.ok(issue.known);
+      assert.ok(!issue.value.labels.includes("agent-claimed"), "claimed swapped away");
+      assert.ok(issue.value.labels.includes("agent-blocked"), "the blocked label on");
+      assert.deepEqual(issue.value.assignees, ["bot-do-samuca"], "the claim stays held");
+    });
+
+    test("blockClaim is tolerant when the claimed label is already gone", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 4 });
+      const outcome = await adapter.blockClaim(
+        { repo: "Sanmoo/a", number: 4 },
+        "agent-claimed",
+        "agent-blocked",
+      );
+      assert.ok(Array.isArray(outcome.performed));
+    });
+  });
 });

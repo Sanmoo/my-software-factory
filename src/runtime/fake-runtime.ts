@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
@@ -42,9 +42,23 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     const index = this.launched.push(request) - 1;
     const hold = this.hold ?? this.options.hold;
     if (hold) await hold(request, index);
+    this.startSession(request);
     const outcome = this.next();
     await this.apply(outcome, request);
     return { request, outcome };
+  }
+
+  /** The attempt begins: the runtime writes the session dir and the
+   * attempt's event log the moment the session is up (ticket 13). An attempt
+   * that dies abruptly leaves exactly this — a start line and no end. */
+  private startSession(request: WorkRequest): void {
+    mkdirSync(join(request.workDir, "sessao"), { recursive: true });
+    this.event(request, "session-start");
+  }
+
+  private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
+    const line = JSON.stringify({ event, attempt: request.attempt, ...extra });
+    appendFileSync(join(request.workDir, `log-${request.attempt}.jsonl`), `${line}\n`, "utf8");
   }
 
   private next(): ScriptedOutcome {
@@ -55,7 +69,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   private async apply(outcome: ScriptedOutcome, request: WorkRequest): Promise<void> {
-    if (outcome === "abrupt-death") return;
+    if (outcome === "abrupt-death") return; // the process died mid-flight: nothing further is written
 
     let pr: OutcomeRecord["pr"];
     if (outcome === "pr-open") {
@@ -78,5 +92,6 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     };
     mkdirSync(request.workDir, { recursive: true });
     writeFileSync(join(request.workDir, DESFECHO_FILENAME), JSON.stringify(record, null, 2), "utf8");
+    this.event(request, "session-end", { outcome });
   }
 }
