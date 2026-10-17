@@ -1,6 +1,16 @@
-import { Box, Text, render, useApp, useInput } from "ink";
+import { Box, Text, render, useApp, useInput, useStdin, useStdout } from "ink";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { buildOperatorView, comandoAtender, nextStepHint, type AtenderContext, type HintColor, type OperatorWork, type OperatorView } from "../core/operator-view.js";
+import {
+  COR_DA_BORDA,
+  corHabilitada,
+  estiloDaNotaDeEntrega,
+  estiloDaLinha,
+  estiloDoAviso,
+  estiloDoCabecalho,
+  estiloDoFoco,
+  estiloDoPonto,
+} from "../core/tui-style.js";
 import { operatorCommand, type OperatorAction } from "../core/operator-actions.js";
 import { jobCommands, type CliHints, type JobCommands } from "../core/observability.js";
 import type { CommandQueue } from "../core/commands.js";
@@ -37,6 +47,68 @@ export interface TuiOptions {
   // queue under `stateDir`). Injected so the write-path tests record every enqueue without a
   // terminal — and so they can prove nothing else is written.
   queue?: CommandQueue;
+  // Test seam: the environment the color capability is read from (default: process.env).
+  env?: Record<string, string | undefined>;
+  // Test seam: whether stdout is a terminal (default: process.stdout.isTTY === true). Gates the
+  // alternate screen and the total clears; without a TTY both stay off and the screen is a plain,
+  // colorless dump (spec #74: the TUI stays legible without color).
+  isTTY?: boolean;
+}
+
+// ── Tela (issue #78, spec #74) ────────────────────────────────────────────────────────────────
+// A TUI roda na tela alternativa do Ink (opção `alternateScreen`: `ESC[?1049h` no mount,
+// `ESC[?1049l` ao sair, restaurando o buffer primário) e limpa a tela inteira no mount e em
+// QUALQUER resize — o Ink só limpa quando o terminal encolhe. Sem TTY, nada de tela alternativa
+// nem de escape ANSI: a tela continua legível sem cor. A derivação cor/estilo é do módulo puro
+// `../core/tui-style.js`; aqui só se consome.
+
+// A limpeza total: apaga a tela visível (`2J`), o histórico (`3J`) e volta o cursor ao topo (`H`).
+// É a mesma sequência do protótipo da #49.
+export const FULL_CLEAR = "\x1B[2J\x1B[3J\x1B[H";
+
+// O mínimo que a costura de resize usa de um stdout: o evento `resize` e o `write`.
+export interface ResizeWritable {
+  on(event: "resize", listener: () => void): unknown;
+  off(event: "resize", listener: () => void): unknown;
+  write(data: string): unknown;
+}
+
+export interface ResizeClearOptions {
+  // O stream cujo evento `resize` dispara a limpeza (o stdout do Ink, por padrão process.stdout).
+  stdout: ResizeWritable;
+  // Capacidade: um stdout não interativo não tem tela para limpar e não ganha ouvinte.
+  interactive: boolean;
+  // Como a limpeza é escrita. Em produção vai o `useStdout().write` do Ink, que também zera a
+  // contabilidade de quadro do Ink e REPINTA o quadro (um resize nunca deixa a tela em branco);
+  // ausente ⇒ `stdout.write` cru, o padrão fora do Ink.
+  write?: (data: string) => void;
+}
+
+// Instala a limpeza de resize e devolve o descarte (chamar no desmonte). O Ink limpa a tela só
+// quando o terminal ENCOLHE; um crescimento reflui o quadro e pode deixar resto, então TODO resize
+// recebe a limpeza total (spec #74 história 31: nenhum resto de quadro em resize algum).
+export function installResizeClear({ stdout, interactive, write }: ResizeClearOptions): () => void {
+  if (!interactive) return () => {};
+  const onResize = (): void => {
+    if (write !== undefined) { write(FULL_CLEAR); return; }
+    stdout.write(FULL_CLEAR);
+  };
+  stdout.on("resize", onResize);
+  return () => { stdout.off("resize", onResize); };
+}
+
+// A capacidade do terminal que a TUI vai assumir: um TTY ganha a tela alternativa e as cores (a
+// não ser que NO_COLOR/FORCE_COLOR digam outra coisa); sem ele, as duas ficam desligadas.
+const capacidadeDoTerminal = (options: Pick<TuiOptions, "env" | "isTTY">): { terminal: boolean; color: boolean } => {
+  const terminal = options.isTTY ?? process.stdout.isTTY === true;
+  return { terminal, color: corHabilitada(options.env ?? process.env, terminal) };
+};
+
+// O efeito de tela dentro do app: cada resize limpa pela `write` do próprio stdout do Ink (que
+// zera a contabilidade de quadro e repinta), e o desmonte remove o ouvinte.
+function useResizeClear(interactive: boolean): void {
+  const { stdout, write } = useStdout();
+  useEffect(() => installResizeClear({ stdout, interactive, write }), [stdout, interactive, write]);
 }
 
 // PT-BR labels for the estados vivos, including the two derived states registered as deviations
@@ -141,8 +213,15 @@ export async function applyOperatorAction(
 // The screen itself, exported for the scenario rounds the acceptance asks for (spec #60:
 // "a aceitação é uma rodada de cenários com dados semeados") and for the later tickets that
 // grow it. `runTui` is the only place that renders it in production.
-export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 5_000, queue: queueOption }: TuiOptions): ReactElement {
+export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 5_000, queue: queueOption, env, isTTY }: TuiOptions): ReactElement {
   const { exit } = useApp();
+  // Sem um stdin em modo cru (stdout sem TTY), o Ink recusa `setRawMode` e a tecla não existe: o
+  // `useInput` fica inativo e a tela continua sendo desenhada e legível sem cor (spec #74).
+  const { isRawModeSupported } = useStdin();
+  // A linguagem visual: a capacidade do terminal (TTY e cores) e o efeito de limpeza em cada
+  // resize. `color: false` desliga as cores e deixa a tela legível sem elas (spec #74).
+  const { terminal, color } = capacidadeDoTerminal({ env, isTTY });
+  useResizeClear(terminal);
   const [view, setView] = useState<OperatorView | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Keyboard focus over the works list (a position, not an id: a rebuild keeps #61's order and
@@ -205,7 +284,7 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
     // writes, executes or enqueues — the block is text on screen; copying is the terminal's own.
     if (input === "t") { setAttending(true); return; }
     if (key.escape === true) { setAttending(false); return; }
-  });
+  }, { isActive: isRawModeSupported });
 
   // One action of the operator on the focused work: pre-validated by the pure map, enqueued
   // through the queue (an ok also rebuilds so the pending-commands count stays honest), or
@@ -233,11 +312,18 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
   // recomputed on every render, so the open block follows the focus; null shows nothing.
   const atendido = focused !== undefined ? comandoAtender(focused, atenderContextFor(focused, view, cli)) : null;
   const atenderLinhas = atendido === null ? [] : atendido.split("\n");
+  // A linguagem visual do protótipo (#49), consumida do módulo puro: cabeçalho ciano, aviso dos
+  // pontos de atenção colorido pela contagem e o amarelo da linha de cada ponto.
+  const cabecalho = estiloDoCabecalho({ color });
+  const aviso = estiloDoAviso(view.pendings.length, { color });
+  const ponto = estiloDoPonto({ color });
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingX={1} width="100%">
       <Box flexDirection="column" marginBottom={1}>
-        {/* O estado vivo aparece sempre separado do status da issue; cabeçalho nomeia a instância. */}
-        <Text>Instância {instance.name}{footer.pause.paused ? " — admissões pausadas" : ""}</Text>
+        {/* O estado vivo aparece sempre separado do status da issue; o cabeçalho nomeia a instância. */}
+        <Text color={cabecalho.color} bold={cabecalho.bold}>
+          ■ Factory — gestão local · {instance.name}{footer.pause.paused ? " — admissões pausadas" : ""}
+        </Text>
         <Text>
           impl. autônoma {meterText(meters.implementation.used, meters.implementation.limit)} ·
           {" "}sessões assistidas {meterText(meters.assisted.used, meters.assisted.limit)}
@@ -246,13 +332,22 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
         </Text>
       </Box>
 
-      <Text>Trabalhos ({view.works.length}):</Text>
-      {view.works.map((work, index) => (
-        <Text key={`${work.fluxo}:${work.key}`} wrap="truncate" bold={index === focusedIndex}>
-          {index === focusedIndex ? "> " : "  "}
-          [{FLUXO_LABELS[work.fluxo]}] {work.issueRef} — {ESTADO_LABELS[work.estadoVivo]} · issue: {work.issue.status}
-        </Text>
-      ))}
+      <Text bold underline>Trabalhos ({view.works.length}):</Text>
+      {view.works.map((work, index) => {
+        // Foco: o marcador do protótipo no trabalho em foco (a linha em foco também fica em
+        // negrito, para o destaque sobreviver sem cor); a tag de fluxo e o rótulo do estado vivo
+        // levam cada um a sua cor.
+        const foco = estiloDoFoco(index === focusedIndex, { color });
+        const linha = estiloDaLinha(work, { color });
+        return (
+          <Text key={`${work.fluxo}:${work.key}`} wrap="truncate" bold={index === focusedIndex}>
+            <Text color={foco.color}>{foco.marcador}</Text>
+            {" "}
+            <Text color={linha.fluxo.color} bold={linha.fluxo.bold}>[{FLUXO_LABELS[work.fluxo]}]</Text>
+            {" "}{work.issueRef} — <Text color={linha.estado.color} bold={linha.estado.bold}>{ESTADO_LABELS[work.estadoVivo]}</Text> · issue: {work.issue.status}
+          </Text>
+        );
+      })}
       {/* Banner de confirmação/recusa: acima da dica; uma recusa nunca enfileirou nada. */}
       {notice !== null && (
         <Text color={notice.kind === "ok" ? "green" : "red"} wrap="truncate">
@@ -285,25 +380,34 @@ export function OperatorScreen({ instance, stateDir, home, tracker, refreshMs = 
         </Box>
       )}
 
-      {/* Pontos de atenção persistentes: a fila como o store a devolve, com a idade derivada. */}
+      {/* Pontos de atenção persistentes: a fila como o store a devolve, com a idade derivada.
+          O aviso colore pela contagem e cada ponto é amarelo; a proveniência de uma entrega que
+          falhou marca em vermelho. */}
       <Box flexDirection="column" marginBottom={1}>
-        <Text>Pontos de atenção ({view.pendings.length}):</Text>
-        {view.pendings.length === 0 && <Text dimColor>nenhum ponto de atenção</Text>}
-        {view.pendings.map((pending) => (
-          <Box key={pending.id} flexDirection="column">
-            <Text wrap="truncate">{" "}{pending.kind} {pending.key} · {pending.what} · {pending.idade}</Text>
-            {/* Falha de entrega marca a linha; nunca remove nem esconde o ponto. */}
-            {notaDeEntrega(pending) !== undefined && <Text dimColor wrap="truncate">  {notaDeEntrega(pending)}</Text>}
-          </Box>
-        ))}
+        <Text color={aviso.color} bold={aviso.bold}>⚠ Pontos de atenção ({view.pendings.length})</Text>
+        {view.pendings.length === 0 && <Text dimColor>· nenhum ponto de atenção</Text>}
+        {view.pendings.map((pending) => {
+          const nota = notaDeEntrega(pending);
+          const entrega = pending.notification === undefined ? undefined : estiloDaNotaDeEntrega(pending.notification.ok, { color });
+          return (
+            <Box key={pending.id} flexDirection="column">
+              <Text color={ponto.color} bold={ponto.bold} wrap="truncate">· {pending.kind} {pending.key} · {pending.what} · {pending.idade}</Text>
+              {/* Falha de entrega marca a linha; nunca remove nem esconde o ponto. */}
+              {nota !== undefined && (
+                <Text color={entrega?.color} dimColor={entrega?.dim} wrap="truncate">  {nota}</Text>
+              )}
+            </Box>
+          );
+        })}
       </Box>
 
-      <Box flexDirection="column" marginTop={1}>
+      {/* Rodapé com borda e largura total, como a legenda do protótipo. */}
+      <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={COR_DA_BORDA} width="100%">
         <Text>
-          Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} ·
+          {" "}Concluídos: {footer.jobsDone} · Liberados: {footer.jobsReleased} ·
           {" "}Comandos pendentes: {footer.pendingCommands}
         </Text>
-        <Text dimColor>↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t atende (comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
+        <Text dimColor>{" "}↑/↓ movem o foco · r responde · a aprova resultado · e autoriza retomada · l libera · t atende (comando copiável) · Esc fecha · q / Ctrl+C sai — escritas só na fila de comandos</Text>
       </Box>
     </Box>
   );
@@ -315,6 +419,10 @@ export type TuiRunner = (options: TuiOptions) => void;
 
 export const runTui: TuiRunner = (options: TuiOptions): void => {
   const { instance, stateDir, home, tracker, refreshMs, queue } = options;
+  const { terminal } = capacidadeDoTerminal(options);
+  // Limpeza total antes de montar: a tela alternativa já nasce vazia, mas a limpeza explícita
+  // cobre também o caso sem tela alternativa. Só um terminal interativo recebe escapes ANSI.
+  if (terminal) process.stdout.write(FULL_CLEAR);
   render(
     <OperatorScreen
       instance={instance}
@@ -323,7 +431,17 @@ export const runTui: TuiRunner = (options: TuiOptions): void => {
       {...(tracker === undefined ? {} : { tracker })}
       {...(refreshMs === undefined ? {} : { refreshMs })}
       {...(queue === undefined ? {} : { queue })}
+      {...(options.env === undefined ? {} : { env: options.env })}
+      {...(options.isTTY === undefined ? {} : { isTTY: options.isTTY })}
     />,
+    {
+      stdout: process.stdout,
+      // O Ink é dono da tela alternativa: entra no mount (`ESC[?1049h`) e restaura o buffer
+      // primário ao sair, deixando o histórico do terminal como estava (spec #74 história 32).
+      // Sem TTY, as duas ficam desligadas e a tela é um despejo comum, sem cor.
+      alternateScreen: terminal,
+      interactive: terminal,
+    },
   );
   // Ink owns the terminal from here; the renderer keeps the process alive like any interactive app.
 };
