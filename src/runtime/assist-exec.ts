@@ -66,27 +66,41 @@ export interface AssistExecCommandInput {
   stateHostDir: string; // host state of the exec: the exit-record channel
   snapshotHostDir: string; // profile snapshot, real files only (ADR 0002), read-only
   runtimeHostDir: string; // src/runtime/docker-image, the host-authored scripts, read-only
+  // The profile's persistent toolchain (ADR 0004): the Pi package tree and the mise data dir, mounted
+  // read-write so the convergence installs once and the next exec installs nothing.
+  npmHostDir: string;
+  miseHostDir: string;
+  // What the convergence must confirm before the agent gets its prompt; a failure stops the exec with
+  // its reason (the strict contract of ADR 0004).
+  requiredPackages: readonly string[];
+  requiredTools: readonly string[];
   prompt?: string;
   resume?: boolean;
 }
 
 // One command line, exactly what the flow gives `herdr pane run`: the docker CLI is the host
-// client; the container prepares the snapshot per ADR 0002, confirms its checks, and runs
-// interactive pi. On the real end of the exec the wrapper writes the JSON exit record itself:
-// Ctrl+C is delivered to the container's whole foreground group, so without the INT trap the
-// wrapper shell dies with pi and the record is never written (observed in the #52 proof).
+// client; the container prepares the snapshot per ADR 0002, converges the toolchain once (ADR 0004),
+// confirms the required packages and tools, and runs interactive pi. The preparation steps are chained
+// with `&&`: a convergence failure stops the invocation with its reason instead of starting the agent
+// without what the profile declared. On the real end of the exec the wrapper writes the JSON exit
+// record itself: Ctrl+C is delivered to the container's whole foreground group, so without the INT
+// trap the wrapper shell dies with pi and the record is never written (observed in the #52 proof).
 export function assistExecCommand(input: AssistExecCommandInput): string {
   const piArgs = assistPiArgs({
     model: input.model, sessionDir: "/msf-sessions", name: `msf-${input.name.slice("msf-assist-".length)}`,
     prompt: input.prompt, resume: input.resume,
   });
   const exitFormat = `{"exitCode":%s,"at":"${input.startedAt}"}`;
+  // The first failing step decides the recorded exit code; pi only runs when all of them passed.
+  const preparation = [
+    "sh /msf-runtime/prepare-profile.sh /msf-profile",
+    ["sh", "/msf-runtime/converge-profile.sh", "/msf-profile", ...input.requiredTools.map(shellQuote)].join(" "),
+    ["sh", "/msf-runtime/check-profile.sh", ...input.requiredPackages.map(shellQuote)].join(" "),
+    "pi " + piArgs.map(shellQuote).join(" "),
+  ].join(" && ");
   const script = [
     "trap '' INT",
-    "sh /msf-runtime/prepare-profile.sh /msf-profile",
-    "sh /msf-runtime/check-profile.sh",
-    "pi " + piArgs.map(shellQuote).join(" "),
-    "code=$?",
+    `${preparation}; code=$?`,
     `printf ${shellQuote(exitFormat)} "$code" > /msf-state/msf-exit.json`,
     `echo "MSF_ASSIST_ENDED code=$code"`,
   ].join("; ");
@@ -99,6 +113,8 @@ export function assistExecCommand(input: AssistExecCommandInput): string {
     `-v ${input.stateHostDir}:/msf-state`,
     `-v ${input.snapshotHostDir}:/msf-profile:ro`,
     `-v ${input.runtimeHostDir}:/msf-runtime:ro`,
+    `-v ${input.npmHostDir}:/home/agent/.pi/agent/npm`,
+    `-v ${input.miseHostDir}:/home/agent/.local/share/mise`,
     input.image, "-c", shellQuote(script),
   ].join(" ");
 }

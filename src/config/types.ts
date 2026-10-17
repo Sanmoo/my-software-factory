@@ -70,6 +70,7 @@ export interface RuntimeProfileConfig {
     packages: string[]; // Pi package sources the profile's settings.json must list, e.g. npm:pi-subagents
     skills: string[]; // skills/<name>/SKILL.md
     agents: string[]; // agents/<name>.md
+    tools: string[]; // tool names the operator declares in mise and the container must find on PATH, e.g. rtk
   };
   // Package sources dropped from the container's copy of settings.json (never from the host's).
   excludePackages: string[];

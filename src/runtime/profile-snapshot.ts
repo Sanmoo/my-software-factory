@@ -11,6 +11,10 @@ import { isObject, messageOf } from "../core/values.js";
 export interface ProfileSource {
   dir: string; // the profile directory (it may itself be a link)
   allowedRoots: readonly string[]; // where links may lead, besides the profile directory itself
+  // The operator's mise declaration on this host, when local.json declares one for the profile. It is
+  // carried into the snapshot as a real file (ADR 0002, ADR 0004); the tools the container converges
+  // come from it, never from a host binary mounted inside.
+  mise?: string;
 }
 
 export interface SnapshotItem {
@@ -37,11 +41,18 @@ export interface SnapshotPlan {
 // Entries at the root of the profile that are carried when present, besides the required files.
 const ROOT_FILES = ["settings.json", "auth.json", "keybindings.json", "AGENTS.md", "models-store.json"];
 const DIRECTORIES = ["skills", "extensions", "agents"];
+// The Pi package tree is converged inside the container from the operator's lock (ADR 0004): only the
+// declaration and its lock are carried, never node_modules, which holds the host's platform bindings.
+const NPM_DIR = "npm";
+const NPM_FILES = ["package.json", "package-lock.json"];
+// Fixed snapshot-relative path of the operator's mise declaration inside the snapshot.
+const MISE_DECLARATION = "mise/config.toml";
 const MAX_HOPS = 40;
 
 interface Context {
   profile: string; // real path of the profile directory
   roots: string[]; // real paths of the allowed roots, the profile included
+  mise?: string; // the declared mise declaration, as given by local.json
 }
 
 const within = (path: string, roots: readonly string[]): boolean =>
@@ -56,7 +67,11 @@ async function contextOf(source: ProfileSource): Promise<Context | string> {
   }
   const roots = [profile];
   for (const root of source.allowedRoots) roots.push(await realpath(root).catch(() => resolve(root)));
-  return { profile, roots };
+  // The declared mise declaration is authoritative (its path is machine-local, ADR 0002): its real file
+  // is allowed wherever it lives, and a link it carries is resolved by the same rule as everything else.
+  const declared = source.mise;
+  if (declared !== undefined) roots.push(await realpath(declared).catch(() => resolve(declared)));
+  return { profile, roots, ...(declared === undefined ? {} : { mise: declared }) };
 }
 
 // The chain of links a failing link leads through, as `a -> b -> c`, and whether it ends in a cycle.
@@ -141,6 +156,19 @@ async function readSettings(ctx: Context, exclude: readonly string[]): Promise<{
   return { settings: { text, excluded }, packages: kept.flatMap((entry) => sourceOf(entry) ?? []) };
 }
 
+// The operator's mise declaration as a real file of the snapshot, or why it is not one.
+async function resolveMise(ctx: Context): Promise<{ ok: true; item: SnapshotItem } | { ok: false; reason: string }> {
+  if (ctx.mise === undefined) {
+    return { ok: false, reason: "declaração de mise do operador não declarada em local.json para este perfil" };
+  }
+  const resolved = await resolveItem(ctx.mise, ctx);
+  if (!resolved.ok) return { ok: false, reason: `declaração de mise ${ctx.mise}: ${resolved.reason}` };
+  if (!(await stat(resolved.real)).isFile()) {
+    return { ok: false, reason: `declaração de mise ${ctx.mise}: não é arquivo (${resolved.real})` };
+  }
+  return { ok: true, item: { path: MISE_DECLARATION, source: resolved.real } };
+}
+
 // The required items must resolve; the packages must be listed in the container's settings.json.
 async function requiredBlockers(ctx: Context, config: RuntimeProfileConfig): Promise<{ blockers: string[]; settings?: Settings }> {
   const { required } = config;
@@ -166,6 +194,11 @@ async function requiredBlockers(ctx: Context, config: RuntimeProfileConfig): Pro
     }
   } else if (problem === undefined && required.packages.length > 0 && !items.includes("settings.json")) {
     blockers.push("pacotes obrigatórios exigem settings.json do perfil, que não resolve");
+  }
+  // A required tool comes from the operator's mise declaration: without it there is nothing to converge.
+  if (required.tools.length > 0) {
+    const mise = await resolveMise(ctx);
+    if (!mise.ok) blockers.push(`ferramentas obrigatórias (${required.tools.join(", ")}): ${mise.reason}`);
   }
   return { blockers, ...(settings === undefined ? {} : { settings }) };
 }
@@ -228,9 +261,37 @@ export async function planSnapshot(source: ProfileSource, config: RuntimeProfile
     }
   };
 
+  // One directory of the profile whose only carried entries are the named files: the directory link is
+  // resolved first (ADR 0002), so node_modules is never walked and a foreign destination is not followed.
+  const visitNested = async (dirName: string, names: readonly string[], ancestors: ReadonlySet<string>): Promise<void> => {
+    const abs = join(ctx.profile, dirName);
+    const info = await lstat(abs).catch(() => undefined);
+    if (info === undefined) return;
+    let real = abs;
+    if (info.isSymbolicLink()) {
+      const resolved = await resolveItem(abs, ctx);
+      if (!resolved.ok) {
+        skipped.push({ path: dirName, reason: resolved.reason });
+        return;
+      }
+      real = resolved.real;
+    }
+    if (!(await stat(real)).isDirectory()) return;
+    for (const name of names) await visit(join(real, name), `${dirName}/${name}`, ancestors);
+  };
+
   const top = new Set([ctx.profile]);
   for (const name of new Set([...ROOT_FILES, ...config.required.files])) await visit(join(ctx.profile, name), name, top);
   for (const name of DIRECTORIES) await visit(join(ctx.profile, name), name, top);
+  // The lock that pins the Pi packages: only the two declaring files are carried, never node_modules.
+  await visitNested(NPM_DIR, NPM_FILES, top);
+  // The operator's mise declaration, at its fixed snapshot path. A profile that declares none has
+  // nothing to carry: absence is only reported when the job actually needed it (required tools).
+  if (ctx.mise !== undefined) {
+    const mise = await resolveMise(ctx);
+    if (mise.ok) included.push(mise.item);
+    else if (config.required.tools.length === 0) skipped.push({ path: MISE_DECLARATION, reason: mise.reason });
+  }
   return {
     included, skipped, blockers,
     excluded: settings?.excluded ?? [],

@@ -15,7 +15,8 @@ import { installConsoleFilter, SandcastleLineFilter } from "./sandcastle-console
 
 const execFileAsync = promisify(execFile);
 const IMAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), "docker-image");
-// Installing the packages of the profile is a cold start (about 100 s); the default hook limit is 60 s.
+// Converging the profile's toolchain is a cold start on the first invocation of a profile (the Pi
+// packages plus the declared mise tools); every later invocation probes and finds it converged.
 const PROFILE_SETUP_TIMEOUT_MS = 10 * 60 * 1000;
 const sandcastleLines = new SandcastleLineFilter();
 
@@ -97,8 +98,7 @@ export function sandcastleBoundary(): SandboxBoundary {
           sandbox: docker({
             imageName: input.image,
             env: { GH_TOKEN: input.token },
-            mounts: sandboxMounts(input, IMAGE_DIR),
-          }),
+            mounts: sandboxMounts(input, IMAGE_DIR),          }),
           cwd: input.cwd,
           branchStrategy: { type: "head" },
           prompt: input.request.prompt,
@@ -108,7 +108,10 @@ export function sandcastleBoundary(): SandboxBoundary {
           idleTimeoutSeconds: input.idleTimeoutSeconds,
           hooks: {
             sandbox: {
-              onSandboxReady: [{ command: profileSetupCommand(input.requiredPackages), timeoutMs: PROFILE_SETUP_TIMEOUT_MS }],
+              onSandboxReady: [{
+                command: profileSetupCommand({ requiredPackages: input.requiredPackages, requiredTools: input.requiredTools }),
+                timeoutMs: PROFILE_SETUP_TIMEOUT_MS,
+              }],
             },
           },
           logging: {

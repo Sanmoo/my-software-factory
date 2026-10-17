@@ -14,6 +14,10 @@ export interface LocalSettings {
   // Where the links of each runtime profile may lead (besides the profile directory itself). A link whose
   // destination is elsewhere is not followed (ADR 0002). A profile without an entry has no declaration here.
   allowedRoots: Record<string, string[]>;
+  // The operator's mise declaration on this host, by runtime profile (ADR 0002, ADR 0004): the tools the
+  // container converges come from it, never from a host binary mounted inside. A `~/` is the operator's
+  // home. A profile without an entry has no declaration, so only its `required.tools` would fail.
+  mise: Record<string, string>;
   // Local checkout each job area is cloned from, by repository (owner/repo).
   checkouts: Record<string, string>;
   // The operator attention's desktop notification channel (ticket #59). Best-effort: the
@@ -38,6 +42,11 @@ function pathMap(raw: unknown, name: string): Record<string, string> | string {
 }
 
 // A leading ~/ is the operator's home directory; any other root must be absolute.
+function expandPath(root: unknown): string | undefined {
+  const path = typeof root === "string" && root.startsWith("~/") ? join(homedir(), root.slice(2)) : root;
+  return typeof path === "string" && isAbsolute(path) ? path : undefined;
+}
+
 function rootMap(raw: unknown): Record<string, string[]> | string {
   if (raw === undefined) return {};
   if (!isObject(raw)) return "allowedRoots deve ser um objeto";
@@ -46,11 +55,24 @@ function rootMap(raw: unknown): Record<string, string[]> | string {
     if (!Array.isArray(roots)) return `allowedRoots.${profile} deve ser uma lista de caminhos`;
     const expanded: string[] = [];
     for (const [index, root] of roots.entries()) {
-      const path = typeof root === "string" && root.startsWith("~/") ? join(homedir(), root.slice(2)) : root;
-      if (typeof path !== "string" || !isAbsolute(path)) return `allowedRoots.${profile}[${index}] deve ser um caminho absoluto (ou começar com ~/)`;
+      const path = expandPath(root);
+      if (path === undefined) return `allowedRoots.${profile}[${index}] deve ser um caminho absoluto (ou começar com ~/)`;
       expanded.push(path);
     }
     result[profile] = expanded;
+  }
+  return result;
+}
+
+// The same rule for the operator's mise declaration: one path per runtime profile, ~/ allowed.
+function miseMap(raw: unknown): Record<string, string> | string {
+  if (raw === undefined) return {};
+  if (!isObject(raw)) return "mise deve ser um objeto de caminho por perfil";
+  const result: Record<string, string> = {};
+  for (const [profile, value] of Object.entries(raw)) {
+    const path = expandPath(value);
+    if (path === undefined) return `mise.${profile} deve ser um caminho absoluto (ou começar com ~/)`;
+    result[profile] = path;
   }
   return result;
 }
@@ -63,6 +85,8 @@ export function parseLocalSettings(raw: unknown): LocalSettings | string {
   if (typeof checkouts === "string") return checkouts;
   const allowedRoots = rootMap(raw.allowedRoots);
   if (typeof allowedRoots === "string") return allowedRoots;
+  const mise = miseMap(raw.mise);
+  if (typeof mise === "string") return mise;
   if (raw.image !== undefined && (typeof raw.image !== "string" || raw.image.trim() === "")) {
     return "image deve ser texto não vazio";
   }
@@ -79,7 +103,7 @@ export function parseLocalSettings(raw: unknown): LocalSettings | string {
   }
   return {
     image: (raw.image as string | undefined) ?? DEFAULT_IMAGE,
-    profiles, allowedRoots, checkouts,
+    profiles, allowedRoots, mise, checkouts,
     ...(notificationsBlock === undefined ? {}
       : { notifications: {
         enabled: (notificationsBlock as { enabled?: unknown }).enabled !== false,

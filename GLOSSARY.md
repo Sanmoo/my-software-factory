@@ -17,9 +17,12 @@ pessoal. Limites, estado e comandos não são compartilhados entre instâncias.
 _Avoid_: ambiente, perfil
 
 **Perfil de runtime**:
-Configuração do agente do operador (autenticação, pacotes, skills, extensões e agents)
-que um trabalho reproduz ao rodar fora do host. Delimitado pelas origens permitidas e
-por itens obrigatórios: sem um obrigatório, o trabalho não é admitido.
+Configuração do agente do operador (autenticação, pacotes, skills, extensões, agents e as
+ferramentas que ele declara no mise) que um trabalho reproduz ao rodar fora do host.
+Delimitado pelas origens permitidas e por itens obrigatórios: sem um obrigatório, o
+trabalho não é admitido. Os pacotes e as ferramentas convergem uma vez, num diretório
+persistente por perfil sob o `--home`; o retrato do perfil carrega o lock e a declaração
+de mise de onde eles vêm (ADR 0004).
 _Avoid_: instância, ambiente, perfil global do operador como sinônimo
 
 **Roteamento**:

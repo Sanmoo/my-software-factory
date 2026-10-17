@@ -53,7 +53,7 @@ const IMAGE = "msf-docker-runner:local";
 const PROFILE_SOURCE = join(homedir(), ".pi", "agent");
 const ALLOWED_ROOTS = [join(homedir(), ".agents"), join(homedir(), "dev")];
 const PROFILE_DECLARATION: RuntimeProfileConfig = {
-  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [] },
+  required: { files: ["settings.json", "auth.json"], packages: [], skills: [], agents: [], tools: [] },
   excludePackages: ["npm:pi-lens"],
 };
 // The model's first turn is the long pole (~100 s of cold pi + provider); a slow provider is a
@@ -206,6 +206,8 @@ async function main(): Promise<void> {
     startedAt,
     cloneHostDir: cloneDir, sessionsHostDir: liveSessionsDir, stateHostDir: liveExecStateDir,
     snapshotHostDir: liveProfileDir, runtimeHostDir: runtimeImageDirOf(),
+    npmHostDir: join(demoDir, "toolchains", "npm"), miseHostDir: join(demoDir, "toolchains", "mise"),
+    requiredPackages: PROFILE_DECLARATION.required.packages, requiredTools: PROFILE_DECLARATION.required.tools,
     prompt: `${assistPrompt({ kind: "needs-triage", ref: liveRef, title: `demonstração de reconciliação ${slug}` })}\n\n`
       + `Primeira mensagem do operador (demonstração ${slug}): registre os passos desta triagem, `
       + `mencione o token ${token} e termine com a linha <promise>MSF-RESULT</promise>.`,
@@ -229,7 +231,7 @@ async function main(): Promise<void> {
   // The production pieces of a restarted orchestrator, with a knob: `daemonProbe` simulates a
   // Docker the reconciliation cannot ask (unknown is reserved, never a guess).
   const local: LocalSettings = {
-    image: IMAGE, profiles: { "docker-default": liveProfileDir }, allowedRoots: {}, checkouts: { "demo/app": cloneDir },
+    image: IMAGE, profiles: { "docker-default": liveProfileDir }, allowedRoots: {}, mise: {}, checkouts: { "demo/app": cloneDir },
   };
   const instanceConfig = {
     name: "reconcile-demo", maxConcurrent: 1, maxAssisted: 3, assistModel: MODEL,
@@ -288,6 +290,7 @@ async function main(): Promise<void> {
       eligibility: (project) => projectEligibility(instanceConfig, project),
       ports: { sandbox: { preflight: async (input) => ({ token: `token-de-${input.account}` }) }, herdr: herdrBoundaryForDemo, exec: daemonProbe },
       runtimeImageDir: runtimeImageDirOf(),
+      toolchainsDir: join(demoDir, "toolchains"),
       stateDir: orchestrationDir,
       attention: new AttentionKeeper({ store: createFileAttentionStore(join(orchestrationDir, "pendencias")) }),
     });

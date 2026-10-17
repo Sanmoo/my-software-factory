@@ -34,7 +34,7 @@ function build(projects: unknown[], over: { env?: NodeJS.ProcessEnv; checkouts?:
   const checkouts = over.checkouts ?? Object.fromEntries(instance.projects.map((p) => [p.repository, `/src/${p.repository}`]));
   const local = parseLocalSettings({ profiles: { work: "/home/op/.pi/agent" }, allowedRoots: { work: ["/home/op/.agents"] }, checkouts });
   assert.ok(typeof local !== "string", String(local));
-  return () => composeInstance({ config: parsed.config, instance, local, stateDir: "/tmp/msf-compose-test", env: over.env ?? env, github, sandbox });
+  return () => composeInstance({ config: parsed.config, instance, local, stateDir: "/tmp/msf-compose-test", toolchainsDir: "/tmp/msf-compose-test/toolchains", env: over.env ?? env, github, sandbox });
 }
 
 const ghProject = { ...common, name: "dora", adapter: "github", repository: "acme/dora" };
@@ -71,6 +71,8 @@ test("local settings carry the allowed roots of each runtime profile, with ~ exp
   assert.ok(typeof parsed !== "string", String(parsed));
   assert.deepEqual(parsed.allowedRoots, { work: [join(homedir(), ".agents"), "/srv/dotfiles"] });
   assert.deepEqual((parseLocalSettings({ profiles: {}, checkouts: {} }) as { allowedRoots: unknown }).allowedRoots, {});
+  assert.deepEqual((parseLocalSettings({ profiles: {}, checkouts: {} }) as { mise: unknown }).mise, {});
   assert.match(String(parseLocalSettings({ profiles: {}, checkouts: {}, allowedRoots: { work: ["rel/dir"] } })), /allowedRoots\.work\[0\] .* absoluto/);
+  assert.match(String(parseLocalSettings({ profiles: {}, checkouts: {}, mise: { work: "rel/dir" } })), /mise\.work .* absoluto/);
   assert.match(String(parseLocalSettings({ profiles: {}, checkouts: {}, allowedRoots: { work: "/x" } })), /allowedRoots\.work deve ser uma lista/);
 });

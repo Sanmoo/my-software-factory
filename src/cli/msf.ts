@@ -248,6 +248,9 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
   const homeDir = request.home === undefined ? defaultHome : resolve(deps.root, request.home);
   const configPath = join(homeDir, "config.json");
   const stateDir = join(homeDir, "state", request.instance);
+  // The persistent toolchains of the runtime profiles live under the factory home, shared by every
+  // instance (ADR 0004): keyed by profile name, never by instance state.
+  const toolchainsDir = join(homeDir, "toolchains");
 
   if (!(await exists(configPath))) {
     return failure(1, `config.json não encontrado em ${configPath} (diretório base: ${homeDir}; use --home para indicar outro)`);
@@ -255,7 +258,7 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
   const loaded = await loadInstance(configPath, request.instance);
   if (!loaded.ok) return loaded.run;
 
-  if (request.command === "run") return runCommand(request, { deps, homeDir, defaultHome, configPath, stateDir });
+  if (request.command === "run") return runCommand(request, { deps, homeDir, defaultHome, configPath, stateDir, toolchainsDir });
 
   if (request.command === "assist") {
     const localPath = join(homeDir, "local.json");
@@ -356,7 +359,7 @@ export async function runMsf(argv: readonly string[], deps: MsfDeps): Promise<Cl
 
 async function runCommand(
   request: Request,
-  where: { deps: MsfDeps; homeDir: string; defaultHome: string; configPath: string; stateDir: string },
+  where: { deps: MsfDeps; homeDir: string; defaultHome: string; configPath: string; stateDir: string; toolchainsDir: string },
 ): Promise<CliRun> {
   const { deps, homeDir } = where;
   const localPath = join(homeDir, "local.json");
@@ -376,6 +379,7 @@ async function runCommand(
     configPath: where.configPath,
     instanceName: request.instance,
     stateDir: where.stateDir,
+    toolchainsDir: where.toolchainsDir,
     localPath,
     ...(homeDir === where.defaultHome ? {} : { home: homeDir }),
     check: request.check,
