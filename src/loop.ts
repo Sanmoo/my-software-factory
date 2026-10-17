@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { TrackerPort } from "./tracker/port.js";
+import type { TrackerPort, IssueRef } from "./tracker/port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, type PoolEntry } from "./state/derive.js";
@@ -24,15 +24,33 @@ export interface LoopDeps {
   log?: (message: string) => void;
 }
 
+export interface CollectedWork {
+  entry: PoolEntry;
+  result: SessionResult;
+  /** The PR of the work confirmed open through the port at collection time. */
+  prConfirmed: boolean;
+}
+
 export interface SweepResult {
   pool: PoolEntry[];
   launched: SessionResult[];
+  collected: CollectedWork[];
 }
+
+export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
+
+export const branchOf = (number: number): string => `agent-issue-${number}`;
 
 /**
  * One sweep with the --once boundary: derive the pool through the port,
- * claim and launch up to `y` workers, wait for every one, exit.
+ * claim and launch up to `y` workers concurrently, collect each one at the
+ * act of its end and wait for every launched worker before returning.
  * With an empty pool: no worker is launched and the process ends clean.
+ *
+ * No barrier in the path of the works (ticket 12): the freed slot is
+ * replenished in the same cycle, from the cached pool of the latest
+ * derivation — a slow worker never holds the others back. The only
+ * wait-for-all is the --once boundary itself.
  */
 export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
   const { config, tracker, runtime, workspace } = deps;
@@ -43,37 +61,76 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
   log(`derived pool: ${pool.length} eligible work(s)`);
   if (pool.length === 0) {
     log("idle: empty pool — no worker launched");
-    return { pool: [], launched: [] };
+    return { pool: [], launched: [], collected: [] };
   }
 
-  // Launches — claims by age, up to the y slots.
+  // The cached pool of the latest derivation: replenishment draws from it;
+  // a cache drained empty waits for the next tick (ticket 14).
+  const cache = [...pool];
   const slots = new Slots(config.concurrency);
   const launched: SessionResult[] = [];
-  for (const entry of pool) {
-    if (slots.full) break;
-    const key = `${entry.ref.repo}#${entry.ref.number}`;
-    if (!slots.tryAcquire(key)) continue;
-    log(`claiming ${key}`);
-    await tracker.claim(entry.ref, config.workerGhAccount);
-    log(`launching worker for ${key} (branch ${`agent-issue-${entry.ref.number}`})`);
+  const collected: CollectedWork[] = [];
+
+  /** Claim, launch and collect one work; replenish in the same cycle. */
+  const launchAndCollect = async (entry: PoolEntry): Promise<void> => {
+    const key = workKey(entry.ref);
+    log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
+    // The reservation lands BEFORE the launch: the ready label is swapped
+    // away, so a concurrent sweep never picks the same work.
+    await tracker.claim(entry.ref, config.workerGhAccount, config.labels.ready);
+
+    log(`launching worker for ${key} (branch ${branchOf(entry.ref.number)})`);
     const result = await runtime.launch({
       ref: entry.ref,
       workDir: workDir(workspace, entry.ref.repo, entry.ref.number),
-      branch: `agent-issue-${entry.ref.number}`,
+      branch: branchOf(entry.ref.number),
       attempt: 1,
     });
     launched.push(result);
-    slots.release(key);
-    log(`collected ${key}: outcome ${result.outcome}`);
-  }
 
-  return { pool, launched };
+    // Collection at the act: confirm the PR through the port — a structured
+    // fact, never prose. With PR: the work stays reserved for the human.
+    // Without PR: any end is a fall — the 1st fall releases the claim (the
+    // full ruler, double fall → blocked, is ticket 13).
+    const feedback = await tracker.readPrFeedback(entry.ref);
+    const prConfirmed = feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open";
+    if (prConfirmed) {
+      log(`collected ${key}: PR open — stays reserved, waiting for the human`);
+    } else {
+      log(`collected ${key}: outcome ${result.outcome} without PR — releasing the claim`);
+      await tracker.releaseClaim(entry.ref, config.workerGhAccount);
+    }
+    slots.release(key);
+    collected.push({ entry, result, prConfirmed });
+
+    // Replenish the freed slot in the same cycle — the act of collection
+    // triggers the next claims; no barrier waits for the slowest.
+    await launchNext();
+  };
+
+  /** Take every free slot from the cached pool, oldest first. */
+  const launchNext = async (): Promise<void> => {
+    const batch: Promise<void>[] = [];
+    while (!slots.full) {
+      const entry = cache.shift();
+      if (entry === undefined) break;
+      if (!slots.tryAcquire(workKey(entry.ref))) continue; // already in flight
+      batch.push(launchAndCollect(entry));
+    }
+    // The --once boundary: waiting for everything launched, transitively —
+    // the sweep ends only when every worker it (re)filled has ended.
+    await Promise.all(batch);
+  };
+
+  await launchNext();
+  return { pool, launched, collected };
 }
 
 /**
  * The continuous run: the idle factory keeps sweeping on the fixed tick
  * forever — ending it is a human act (Ctrl-C). Thin on purpose: the same
- * one-sweep body, woken again by the clock.
+ * one-sweep body, woken again by the clock. (Ticket 14 replaces the fixed
+ * sleep with the event wake: end of worker vs tick.)
  */
 export async function runForever(deps: LoopDeps): Promise<never> {
   const log = deps.log ?? (() => {});
