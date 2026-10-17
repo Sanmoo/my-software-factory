@@ -154,11 +154,12 @@ uma confirmada por releitura; nada é escrito no tracker antes dela
 _Avoid_: fim da sessão como aprovação, aprovação implícita pela inação
 
 **Retomada agendada de uso único**:
-Autorização explícita, na resposta do operador à interrupção, de uma próxima
-abertura desta mesma sessão, tentada antes de novos atendimentos; uma nova
-interrupção exige nova decisão, e esperar capacidade ou reprovar pré-verificação
-não a consome (src/core/assist-flow.ts; especificação #48, item 5).
-_Avoid_: preservação de sessão como autorização, autorização reutilizável
+A forma PERSISTIDA da retomada autorizada: a autorização fica gravada no registro
+da sessão e é tentada antes de novos atendimentos; uma nova interrupção exige nova
+decisão, e esperar capacidade ou reprovar pré-verificação não a consome
+(src/core/assist-flow.ts; especificação #48, item 5).
+_Avoid_: preservação de sessão como autorização, autorização reutilizável,
+retomada manual como agendamento
 
 **Reconciliação**:
 Ao reiniciar uma instância, decisão sobre cada identidade de trabalho
@@ -221,15 +222,22 @@ ou uma liberação; não é reexecutado sem autorização.
 _Avoid_: pedido de ajuda, intervenção necessária, falha como conclusão
 
 **Retomada manual**:
-Continuidade de um trabalho solicitada explicitamente pelo operador a partir
-da sessão anterior e da área preservada.
-_Avoid_: recuperação automática, nova implementação para contornar uma falha
+Continuidade de um trabalho solicitada EXPLICITAMENTE pelo operador, a partir da
+sessão anterior e da área preservada, nos DOIS fluxos (autônomo e humano
+assistido): o comando local, ou a tecla `t` no atendimento assistido, vale para a
+tentativa daquele momento e não autoriza nenhuma abertura futura
+(src/core/assist-flow.ts `resume`; src/core/operator-actions.ts `retomar`).
+_Avoid_: recuperação automática, pedido de agora como autorização permanente,
+nova implementação para contornar uma falha
 
 **Retomada autorizada**:
-Uma próxima continuidade de um trabalho humano assistido interrompido que o
-operador autorizou explicitamente. Preservar a sessão não autoriza, por si só,
-sua retomada.
-_Avoid_: replay automático, sessão preservada como autorização
+Autorização explícita do operador, dada na resposta afirmativa à pergunta de
+continuidade de um trabalho humano assistido interrompido, para UMA próxima
+abertura desta mesma sessão, tentada antes de novos atendimentos: é de uso único e
+distinta do pedido manual, que vale só para o momento em que é feito. Preservar a
+sessão não autoriza, por si só, sua retomada (spec #48, item 5; #57).
+_Avoid_: replay automático, sessão preservada como autorização, pedido manual como
+autorização permanente
 
 **Conclusão**:
 Reconhecimento do merge externo do PR vinculado a um trabalho de implementação

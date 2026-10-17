@@ -8,6 +8,9 @@ import { readFailures, type RecordedFailure } from "../state/history.js";
 import { holdsSlot, type Job, type JobState } from "./job.js";
 import type { JobCommands } from "./observability.js";
 import { holdsCapacity, unconsumedResume, type AssistSession } from "./assist-session.js";
+import type { AssistAreaFs, ExitRecordVerdict } from "./assist-flow.js";
+import { createFileAssistAreaFs } from "../state/file-assist-area-fs.js";
+import { assistExitRecordPath } from "../runtime/assist-exec.js";
 import type { AttentionPending } from "./attention.js";
 import type { IssueRef, TrackerPort } from "../tracker/port.js";
 import type { InstanceConfig } from "../config/types.js";
@@ -43,10 +46,13 @@ import type { OperatorCommand } from "./commands.js";
 // trata; a sessão assistida concluída some do store no momento da conclusão confirmada.
 //
 // ── Decisões de glossário registradas (revisão de padrões da spec #60) ──────────────────────
-// retomada-autorizada: o GLOSSARY.md define "Retomada autorizada" apenas para o trabalho humano
-// assistido ("Retomada manual" é o análogo autônomo), mas as histórias 16–17 da spec #60 aplicam
-// o termo aos DOIS fluxos (autorizar a retomada do trabalho interrompido, com continuidade única
-// consumida na primeira oportunidade); aqui o termo do glossário é lido no sentido amplo da spec.
+// retomada-autorizada: o GLOSSARY.md precisa "Retomada manual" (pedido explícito do operador,
+// nos DOIS fluxos) e "Retomada autorizada" (de uso único, agendada pela resposta à pergunta de
+// continuidade do trabalho humano assistido — ticket #77); as histórias 16–17 da spec #60 aplicam
+// o estado "retomada autorizada" aos DOIS fluxos (job.pending === "resume" no autônomo, a
+// autorização de uso único no assistido), então aqui o estado vivo é lido no sentido amplo da
+// spec — a diferença entre o que o operador pediu agora (manual) e o que ficou agendado segue
+// sem ambiguidade nos termos do glossário.
 // interrompido: o glossário trata "intervenção" como termo separado; o merge apaga essa
 // separação DE PROPÓSITO — para o operador, intervention-required e interrompido são o mesmo
 // balde ("execução parou sem desfecho válido — decisão pendente": mesmos conjuntos
@@ -93,12 +99,27 @@ export function idadeDe(at: string, now: Date): string {
   return `há ${days} ${days === 1 ? "dia" : "dias"}`;
 }
 
+// ── #77 — the end-of-execution record, per assisted session ─────────────────────────────────
+// The reading model exposes whether the exec's end record (`msf-exit.json`, written by the
+// container wrapper) already exists, WITHOUT re-deriving the verdict: it is the fs authority's
+// own `readExitRecord` over `assistExitRecordPath(execStateDir)`. That is what lets the TUI
+// pre-check accept a manual resume while the persisted state still says `open`: the record
+// exists ⇔ the execution really ended. Three values, never a boolean: an unreadable/invalid
+// record is `ilegível` (unknown), which is NOT the same as absent (a live exec) — the same
+// distinction the flow itself makes. Read only for `opening`/`open` sessions, the only ones
+// with an exec whose end can appear; every other work reports `ausente` (no channel to judge).
+export type RegistroDeFim = "presente" | "ausente" | "ilegível";
+
 export interface OperatorWork {
   // The full key (same key space as the flows); the TUI shortens autonomous refs like `status` does.
   key: string;
   repository: string;
   fluxo: Fluxo;
   estadoVivo: EstadoVivo;
+  // Whether the exec's end record already exists (#77). `presente` on an `open` session means
+  // the execution really stopped and the next supervision pass parks it; the manual resume
+  // (`retomar`) is offered from this reading too, without a second key press.
+  registroDeFim: RegistroDeFim;
   // Display reference: `project#id` for autonomous jobs (status's short form), full key for
   // assisted sessions (their keys never shorten, mirroring the approve command).
   issueRef: string;
@@ -209,6 +230,19 @@ const estadoVivoOfSession = (session: AssistSession): EstadoVivo => {
   return "atendimento-concluido";
 };
 
+// The end-record verdict of one session, through the same fs authority the flow uses. Pure read
+// (no save/remove): a live exec (ENOENT) is `ausente`, a real record is `presente`, an
+// unreadable or invalid file is `ilegível`.
+const registroDeFimOf = async (
+  session: AssistSession, areaFs: Pick<AssistAreaFs, "readExitRecord">,
+): Promise<RegistroDeFim> => {
+  if (session.state !== "opening" && session.state !== "open") return "ausente";
+  if (session.execStateDir === undefined) return "ausente";
+  const verdict: ExitRecordVerdict = await areaFs.readExitRecord(assistExitRecordPath(session.execStateDir));
+  if (verdict.kind === "ended") return "presente";
+  return verdict.kind === "unknown" ? "ilegível" : "ausente";
+};
+
 const trackerStatus = async (tracker: TrackerPort | undefined, ref: IssueRef): Promise<IssueStatusView> => {
   if (tracker === undefined) return { status: "indisponível" };
   try {
@@ -271,6 +305,10 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
   // asks for one key and gets the same record `status` would have shown.
   const loaded = new Map(jobs.jobs.map((job) => [job.key, job]));
 
+  // The end-record channel of the assisted sessions (#77): the same fs authority the flow owns,
+  // built once per reading.
+  const areaFs = createFileAssistAreaFs();
+
   const autonomous = jobs.jobs
     .filter((job): job is TrackedJob => job.state !== "done" && job.state !== "released")
     .map((job): OperatorWork => ({
@@ -278,22 +316,25 @@ export async function buildOperatorView(deps: OperatorViewDeps): Promise<Operato
       repository: job.repository,
       fluxo: "implementacao-autonoma",
       estadoVivo: estadoVivoOfJob(job),
+      // An autonomous job has no assisted exec channel: there is no end record to judge.
+      registroDeFim: "ausente",
       issueRef: `${job.ref.project}#${job.ref.id}`,
       ref: job.ref,
       ocupaVaga: holdsSlot(job.state),
       issue: { status: "" },
     }));
-  const assisted = sessions.sessions.map((session): OperatorWork => ({
+  const assisted = await Promise.all(sessions.sessions.map(async (session): Promise<OperatorWork> => ({
     key: session.key,
     repository: session.repository,
     fluxo: "humano-assistido",
     estadoVivo: estadoVivoOfSession(session),
+    registroDeFim: await registroDeFimOf(session, areaFs),
     // A session key never shortens (mirrors approve/assist, which print the full key).
     issueRef: session.key,
     ref: session.ref,
     ocupaVaga: holdsCapacity(session),
     issue: { status: "" },
-  }));
+  })));
   const works = [...autonomous, ...assisted];
 
   // The issue status is the only per-work tracker read, and it is optional: with no port (the

@@ -3,7 +3,9 @@ import { promisify } from "node:util";
 
 // The Herdr boundary of the assisted attendance (spec #48, ticket #54): own tab with the exec
 // pane inside the caller's workspace, created without stealing focus (`--no-focus`, ticket #52,
-// where focusedBefore == focusedAfter was proven); the exec runs via `herdr pane run`, so the
+// where focusedBefore == focusedAfter was proven) unless the OPERATOR asked for the reopening
+// (`focus: true`, the manual resume of #77: the operator must see where they continued, so
+// stealing focus is the intent, not a failure). The exec runs via `herdr pane run`, so the
 // pane's foreground process is the host docker client while pi runs in the container. The
 // boundary only hosts: supervision goes by container identity from the record, never by pane
 // presence (ticket #52: closing the tab does not stop the exec — proving the tab gone is what
@@ -19,12 +21,23 @@ export interface HerdrTabRef {
 
 export interface HerdrTabOpening {
   tab: HerdrTabRef;
-  // The focused tab id before and after the creation, kept as evidence the opening
-  // did not steal focus.
+  // The focused tab id before and after the creation, kept as evidence: without focus (the
+  // first opening and the single-use scheduled resume) they must be equal; with `focus: true`
+  // (the operator's manual resume, #77) the new tab is the one focused.
   focusedBefore: string;
   focusedAfter: string;
   label: string;
   cwd: string;
+}
+
+export interface HerdrTabInput {
+  workspace: string;
+  cwd: string;
+  label: string;
+  // Whether the operator ASKED for this reopening (#77): `true` focuses the new tab; absent or
+  // `false` keeps `--no-focus` and the no-steal guarantee of #52 (the first opening and the
+  // single-use scheduled resume).
+  focus?: boolean;
 }
 
 export interface HerdrBoundary {
@@ -32,9 +45,10 @@ export interface HerdrBoundary {
   available(): Promise<void>;
   // The workspace of the caller's own pane: where the assisted tab is opened (never host-wide).
   currentWorkspace(): Promise<string>;
-  // Own tab without focus inside the workspace. Throws when the tab is born focused or when the
-  // focused tab id changes: stealing focus is a failure, not an inconvenience.
-  createTab(input: { workspace: string; cwd: string; label: string }): Promise<HerdrTabOpening>;
+  // Own tab inside the workspace. Without `focus`, the tab is created without focus and steering
+  // focus is a failure, not an inconvenience (the #52 guarantee); with `focus: true` (the
+  // operator's manual resume) the new tab is the one focused on purpose.
+  createTab(input: HerdrTabInput): Promise<HerdrTabOpening>;
   // Types one command into the pane (`herdr pane run`); its exit proves nothing beyond delivery.
   paneRun(paneId: string, command: string): Promise<void>;
   // The tab ids the server currently hosts: how supervision proves a session's tab is gone
@@ -90,10 +104,11 @@ export function herdrBoundary(): HerdrBoundary {
       return workspace;
     },
     async createTab(input) {
+      const requestedFocus = input.focus === true;
       const tabsBefore = await herdrJson(["tab", "list"]);
       const created = await herdrJson([
         "tab", "create", "--workspace", input.workspace, "--cwd", input.cwd,
-        "--label", input.label, "--no-focus",
+        "--label", input.label, ...(requestedFocus ? [] : ["--no-focus"]),
       ]);
       const identity = tabOf(created);
       const tabsAfter = await herdrJson(["tab", "list"]);
@@ -104,7 +119,10 @@ export function herdrBoundary(): HerdrBoundary {
         label: input.label,
         cwd: input.cwd,
       };
-      if (opening.focusedBefore !== opening.focusedAfter) {
+      // Only the NOT-asked opening carries the no-steal guarantee; when the operator asked for
+      // the reopening, focus landing on the new tab is the intended outcome (evidence kept in
+      // `focusedAfter`), never an error to refuse the operator's own request with.
+      if (!requestedFocus && opening.focusedBefore !== opening.focusedAfter) {
         throw new Error("abrir a aba assistida roubou o foco do operador; abertura recusada");
       }
       return opening;
