@@ -7,6 +7,7 @@ import { checkInstance, type CheckOptions } from "../src/cli/check.js";
 import type { AdmissionDeps } from "../src/core/admission.js";
 import { git } from "../src/runtime/docker-area.js";
 import { populateProfile } from "./support/runtime-profile.js";
+import { PROFILE_NPM_STAMP } from "../src/runtime/docker-invocation.js";
 import { parseConfig } from "../src/config/validate.js";
 import type { ProjectConfig } from "../src/config/types.js";
 import { projectEligibility } from "../src/config/project-eligibility.js";
@@ -176,7 +177,7 @@ test("the check reports the converged tree, the installed tools and the declared
   const miseConfig = join(dir, "mise", "config.toml");
   await mkdir(join(toolchainsDir, "personal", "npm"), { recursive: true });
   await mkdir(join(toolchainsDir, "personal", "mise", "shims"), { recursive: true });
-  await writeFile(join(toolchainsDir, "personal", "npm", ".msf-stamp"), "a1b2c3d4e5f6a7b8\n");
+  await writeFile(join(toolchainsDir, "personal", "npm", PROFILE_NPM_STAMP), "a1b2c3d4e5f6a7b8\n");
   await writeFile(join(toolchainsDir, "personal", "mise", "shims", "rtk"), "#!/bin/sh\n");
   await writeFile(join(toolchainsDir, "personal", "mise", "shims", "node"), "#!/bin/sh\n");
   await mkdir(dirname(miseConfig), { recursive: true });

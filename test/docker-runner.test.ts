@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { RunnerConfigError } from "../src/runtime/docker-config.js";
 import { createDockerRunner, type SandboxBoundary, type SandboxOutcome, type SandboxRun } from "../src/runtime/docker-runner.js";
 import { git, headOf, jobLayout } from "../src/runtime/docker-area.js";
 import { jobBranch } from "../src/core/job.js";
+import { dirname } from "node:path";
 import type { PiEvent } from "../src/runtime/pi-events.js";
 import type { RunnerContext } from "../src/runtime/runner.js";
 import { noopObserver, type OpsEvent, type Observer } from "../src/core/observability.js";
@@ -466,6 +467,19 @@ test("a failed check inside the container interrupts the invocation with its rea
   const output = await runnerFor(f, boundary).run(newContext());
   assert.equal(runs.length, 1);
   assert.match(interruptedReason(output) ?? "", /required package not installed: npm:pi-subagents/);
+});
+
+test("the runner creates the profile's persistent toolchain before the container and hands it to the boundary", async () => {
+  const f = await fixture();
+  const { boundary, runs } = fakeBoundary(async () => ({ sessionId: "session-1", completed: true, events: reply({ status: "needs_help", question: "q" }) }));
+  await runnerFor(f, boundary).run(newContext());
+  const run = runs[0]!;
+  // Created as the invoking user (Docker would create a missing bind target as root) and mounted by the
+  // boundary: the profile's package tree and the mise data directory, siblings under the profile dir.
+  for (const dir of [run.npmDir, run.miseDir]) assert.equal((await stat(dir)).isDirectory(), true, dir);
+  assert.equal(dirname(run.npmDir), dirname(run.miseDir), "both live under the profile's toolchain directory");
+  assert.deepEqual(run.requiredPackages, DECLARATION.required.packages);
+  assert.deepEqual(run.requiredTools, DECLARATION.required.tools);
 });
 
 test("the detailed log of the invocation lists what entered the snapshot and what stayed out, with the reason", async () => {
