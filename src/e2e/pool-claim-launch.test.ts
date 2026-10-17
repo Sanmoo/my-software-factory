@@ -8,7 +8,7 @@ import { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
-import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
+import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 
 /**
