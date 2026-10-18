@@ -9,7 +9,6 @@ import { runForever, runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
-import type { WorkNotification } from "../notify/port.js";
 import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "../runtime/port.js";
@@ -248,6 +247,29 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(notifier.notifications.length, 1);
     assert.equal(notifier.notifications[0]?.kind, "help");
     assert.equal(notifier.notifications[0]?.url, issueAddress(4));
+  });
+
+  test("a stale blocked-self-report record from a previous attempt does not re-notify on a recordless resume", async () => {
+    const config = makeConfig(1);
+    const { tracker, notifier, deps } = makeFactory(config, ["blocked-self-report", "abrupt-death"]);
+    seedIssue(tracker, { repo: REPO, number: 17, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    // Attempt 1 writes the blocked-self-report record — one help notice.
+    const first = await runOnce(deps);
+    assert.equal(first.collected[0]?.ruling.decision, "record-only");
+    assert.equal(notifier.notifications.length, 1);
+
+    // The worker also posted the blocked label; the human answers after the
+    // marker, so the next sweep resumes on the same branch.
+    await tracker.blockClaim({ repo: REPO, number: 17 }, { ...DEFAULT_LABELS });
+    tracker.addComment({ repo: REPO, number: 17 }, "humano", "try again");
+
+    // Attempt 2 dies abruptly (no new record). desfecho.json still holds the
+    // attempt-1 self-report; it must not be read as a help request NOW —
+    // a first fall after a resume is scheduled for automatic retry (silent).
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "the resume ran");
+    assert.equal(notifier.notifications.length, 1, "the stale record does not re-notify help");
   });
 
   test("a PR closed without merge blocks the factory's work and sends one help notice — never a repeat", async () => {
