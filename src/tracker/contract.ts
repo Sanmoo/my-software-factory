@@ -4,6 +4,7 @@ import { describe, test, beforeEach, after } from "node:test";
 import type { Labels } from "../config.js";
 import type {
   IssueRef,
+  ReadCost,
   TrackerPort,
 } from "./port.js";
 import { AGENT_MARKER } from "./port.js";
@@ -80,21 +81,6 @@ export interface ContractHarness {
 export interface ContractFaults {
   /** Make the NEXT removal of this label fail with a real error. */
   failRemovingLabel(label: string): void;
-}
-
-/** The read cost of a neutral open-issues read (issue 99), for the contract's
- *  budget pin. The real/sim harness derives it from the REST calls it already
- *  records; the in-memory fake counts the port reads it serves. A neutral read
- *  is exactly one `issueListings` and at most one `pullListings` (the linkage),
- *  and never a per-issue `issueReads`. */
-export interface ReadCost {
-  /** Whole-repo open-issues listings. */
-  issueListings: number;
-  /** Whole-repo open-PRs listings (the linkage read). The fake resolves the
-   *  linkage structurally, so it reports 0. */
-  pullListings: number;
-  /** Per-issue snapshot reads (`readIssue`) — a neutral read makes none. */
-  issueReads: number;
 }
 
 const ready = "ready-for-agent";

@@ -11,6 +11,7 @@ import {
   type PrFeedback,
   type PullRequest,
   type PushBranchInput,
+  type ReadCost,
   type TrackerPort,
   type WriteOutcome,
   known,
@@ -74,8 +75,9 @@ export class FakeTrackerAdapter implements TrackerPort {
   /** The reservation sequence: every claim's "<repo>#<n>", in order. */
   readonly claimedOrder: string[] = [];
   /** The read cost of the neutral read (issue 99): whole-repo listings and
-   *  per-issue snapshots, for the contract's budget pin. */
-  readonly readCounts = { issueListings: 0, pullListings: 0, issueReads: 0 };
+   *  per-issue snapshots, for the contract's budget pin. The fake resolves the
+   *  open-PR linkage structurally, so `pullListings` stays 0. */
+  private readonly readCounts: ReadCost = { issueListings: 0, pullListings: 0, issueReads: 0 };
 
   /** Test-only fault injection (the interruption rows of the swaps, issue 98):
    *  an armed key makes the NEXT matching step of a transition fail with a real
@@ -215,7 +217,7 @@ export class FakeTrackerAdapter implements TrackerPort {
   }
 
   /** The read cost since construction — the neutral read's budget pin. */
-  readCost(): { issueListings: number; pullListings: number; issueReads: number } {
+  readCost(): ReadCost {
     return { ...this.readCounts };
   }
 

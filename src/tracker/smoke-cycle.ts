@@ -16,7 +16,7 @@ import { DEFAULT_LABELS } from "../config.js";
  * issue — while DIRECT GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies
  * read) are immediately consistent. So the cycle proves eligibility via
  * DIRECT reads right after seeding (ops 1+2 and 1+3) with NO settle wait,
- * and the LISTING's live proof becomes ONE non-blocking candidates()
+ * and the LISTING's live proof becomes ONE non-blocking open-issues()
  * re-check after the cycle's LAST operation — by then the listing has had
  * minutes to converge. A stale listing is explicitly reported, never a
  * failure: the FACTORY tolerates listing lag by design (the pool is
@@ -29,11 +29,11 @@ import { DEFAULT_LABELS } from "../config.js";
  *  Direct reads 2, claim 4+1 re-read, release 4+1, 2nd claim 2, blockClaim
  *  3+1, openPr 1, readPrFeedback 5 (timeline, pull, conversation, review
  *  submissions, inline comments), comment+readComments 2, derivation 2
- *  (candidates listing + the open-PRs linkage listing — ticket 12: the seeded
+ *  (open-issues listing + the open-PRs linkage listing — ticket 12: the seeded
  *  issue's OWN open PR (op9b, "Closes #N") links it, so the derivation
  *  excludes it from the pool in memory (issue 99: the neutral read flags
  *  hasOpenPr; no per-candidate readIssue), markDone+
- *  re-read 2, the late candidates() re-check 1 (its listing is EMPTY at that
+ *  re-read 2, the late open-issues re-check 1 (its listing is EMPTY at that
  *  point — both seeded issues closed — so no linkage listing) = 31. */
 export const CYCLE_ADAPTER_REST_CALLS = 31;
 
@@ -43,7 +43,7 @@ export interface Op1DirectProof {
   readBlockers: boolean;
 }
 
-/** op1's live listing proof: the late, non-blocking candidates() re-check. */
+/** op1's live listing proof: the late, non-blocking open-issues() re-check. */
 export interface Op1ListingProof {
   /** Whether the late re-check still listed the seeded issue. */
   sawIssue: boolean;
@@ -62,7 +62,7 @@ export interface SmokeCycleReport {
  *  The cycle ends with the seeded issue CLOSED (op6, markDone), so a
  *  CONVERGED open-issues read does not list it — its presence is stale-open
  *  lag. Either way this reports; it never throws. */
-export async function recheckLateCandidates(
+export async function recheckLateOpenIssues(
   adapter: TrackerPort,
   repo: string,
   ref: IssueRef,
@@ -71,13 +71,13 @@ export async function recheckLateCandidates(
   const sawIssue = issues.some((issue) => issue.ref.number === ref.number);
   const converged = !sawIssue;
   const note = sawIssue
-    ? `op1 verified via direct reads; open-issues() listing lag observed (environmental) — the late `
-      + `re-check still listed the seeded issue (closed in op6): the open-issues listing lagged the whole `
-      + `cycle. The factory tolerates this by design (the pool re-derives every tick and self-heals) — `
-      + `not a failure.`
-    : `op1 FULLY PROVEN LIVE: the late open-issues() re-check is converged — the listing reflects the `
-      + `cycle's end (the seeded issue, closed in op6, is correctly out of the open listing); eligibility `
-      + `was proven by direct reads right after seeding.`;
+    ? `op1 verified via direct reads; open-issues() listing lag observed (environmental) — the late ` +
+      `re-check still listed the seeded issue (closed in op6): the open-issues listing lagged the whole ` +
+      `cycle. The factory tolerates this by design (the pool re-derives every tick and self-heals) — ` +
+      `not a failure.`
+    : `op1 FULLY PROVEN LIVE: the late open-issues() re-check is converged — the listing reflects the ` +
+      `cycle's end (the seeded issue, closed in op6, is correctly out of the open listing); eligibility ` +
+      `was proven by direct reads right after seeding.`;
   return { sawIssue, converged, note };
 }
 
@@ -226,11 +226,11 @@ export async function runSmokeCycle(
   console.log("rank EXECUTED+VERIFIED: known(null) — priority is age");
 
   // op1's LIVE listing proof — NON-BLOCKING: the cycle's last operation ran
-  // (rank); before reversion, re-check candidates() ONCE — by now the
+  // (rank); before reversion, re-check the open-issues listing ONCE — by now the
   // listing has had minutes to converge. The seeded issue closed in op6, so
   // a converged listing leaves it out; its presence is stale-open lag.
   // Either way the cycle stands: eligibility was proven by direct reads.
-  const op1ListingProof = await recheckLateCandidates(adapter, repo, issue.ref);
+  const op1ListingProof = await recheckLateOpenIssues(adapter, repo, issue.ref);
   console.log(op1ListingProof.note);
 
   return { op1DirectProof: { readIssue: true, readBlockers: true }, op1ListingProof };

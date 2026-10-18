@@ -61,6 +61,21 @@ export interface OpenIssue {
   hasOpenPr: boolean;
 }
 
+/**
+ * The read cost of the neutral open-issues read (issue 99), for the tracker
+ * contract's budget pin: a whole-repo read is exactly one issues listing, at
+ * most one open-PRs listing (the linkage), and never a per-issue snapshot.
+ * The adapters' test harnesses count it from the calls they record.
+ */
+export interface ReadCost {
+  /** Whole-repo open-issues listings. */
+  issueListings: number;
+  /** Whole-repo open-PRs listings (the linkage read). */
+  pullListings: number;
+  /** Per-issue snapshot reads (`readIssue`) — a neutral read makes none. */
+  issueReads: number;
+}
+
 export interface Blocker {
   ref: IssueRef;
   state: "open" | "closed";
