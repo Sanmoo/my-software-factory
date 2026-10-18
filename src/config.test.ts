@@ -42,6 +42,7 @@ describe("config", () => {
     assert.equal(config.concurrency, DEFAULT_CONCURRENCY);
     assert.equal(config.workspace, join(homedir(), ".local/share/msf"));
     assert.deepEqual(config.labels, DEFAULT_LABELS);
+    assert.equal(config.notifications, true, "local notifications are ON by default (issue 93)");
   });
 
   test("missing worker-model is an error", () => {
@@ -183,5 +184,26 @@ describe("config", () => {
   test("profile-skip-dangling-links must be a boolean when given", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
     assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
+  });
+
+  // ---- the notification key (issue 93) ----
+
+  test("notifications can be explicitly disabled — the factory then runs silently", () => {
+    const path = writeYaml(
+      dir,
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "notifications: false"].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.equal(config.notifications, false);
+  });
+
+  test("notifications must be a boolean when given", () => {
+    const path = writeYaml(
+      dir,
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "notifications: always"].join("\n"),
+    );
+    assert.throws(() => loadConfig(path), /notifications.*boolean/);
   });
 });

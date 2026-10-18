@@ -28,6 +28,7 @@ repos:
 #   - ~/.agents
 #   - ~/.local/share/omarchy
 # profile-skip-dangling-links: false  # stale profile links: fail closed
+# notifications: true             # local Linux desktop notices (see below)
 ```
 
 ## Usage
@@ -46,6 +47,29 @@ The worker model is required in `msf.yaml`; invocations do not select it.
 Move any model previously selected on the command line into `worker-model`.
 The live proof's exact script — commands, what the human does, the REST
 budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
+
+## Local desktop notifications
+
+A session ending is not the work concluding: an open PR leaves the work
+reserved for the human. `msf` therefore notifies locally when a NEW occurrence
+needs the operator — a PR ready for review (initial execution or a feedback
+round), a help request, a second consecutive fall, or a PR rejected without
+merge.
+
+Delivery is a passive Linux desktop notification through `notify-send`
+(libnotify), from the CLI on the HOST — the worker container needs no
+graphical access (ADR-0001). Notifications are **on by default**; set
+`notifications: false` in `msf.yaml` to run silently. They are punctual and
+best-effort: one per new occurrence, no reminders, no read receipts, no click
+actions, no focus stealing and no browser window. Review notices point at the
+PR; help/block notices point at the issue, where the continuity context
+lives. Only structured work facts ride the notice — never agent prose or
+logs. `msf status` is a read-only query and never notifies.
+
+If the backend or graphical session is unavailable, the sweep prints
+`local notification failed (...)`, keeps processing and keeps the work's
+outcome and the command's exit code. Prerequisites, the manual smoke test and
+the unavailable-backend behavior are in the [RUNBOOK](docs/RUNBOOK.md).
 
 ## Layout
 
@@ -74,6 +98,11 @@ src/
     ├── sandcastle.ts   # the REAL runtime: Sandcastle run(), Pi headless, container
     ├── prompt.ts       # the worker prompt: issue + PR + diff + the artifact contract
     └── fake-runtime.ts # scripted worker outcomes — the ruler's test seam
+
+notify/
+├── port.ts             # Notifier: structured notice (review | help) + GitHub addresses
+├── linux.ts            # the REAL backend: notify-send (libnotify), host-side
+└── fake-notifier.ts    # the recorder the tests inject (or a simulated failure)
 ```
 
 Two rulers, one contract: the worker's obligations live in its prompt; the

@@ -78,6 +78,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }

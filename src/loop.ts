@@ -2,6 +2,7 @@ import type { Config } from "./config.js";
 import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork } from "./git/port.js";
+import { issueUrl, pullUrl, type Notifier, type WorkNotification } from "./notify/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, deriveReserved, type PoolEntry, type ReservedDerivation } from "./state/derive.js";
 import {
@@ -38,6 +39,9 @@ export interface LoopDeps {
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
+  /** The host-side delivery of local desktop notifications (issue 93); the
+   * cli wires the Linux backend, tests inject a recorder. Absent = silent. */
+  notifier?: Notifier;
 }
 
 export interface CollectedWork {
@@ -116,7 +120,7 @@ export class SweepEngine {
    * cached pool (by age) are what the launches draw from.
    */
   async deriveAndAct(): Promise<ReservedDerivation[]> {
-    const { config, tracker, git, workspace } = this.deps;
+    const { config, tracker, workspace } = this.deps;
 
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
@@ -162,6 +166,7 @@ export class SweepEngine {
               "blocked with a comment pointing at the PR",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
+          await this.notify({ ref: decision.ref, kind: "help", url: issueUrl(decision.ref) });
           break;
         }
         case "fall": {
@@ -177,6 +182,9 @@ export class SweepEngine {
                 "blocked with the exact outcome on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
+            // A NEW block applied during recovery needs the human: notify it
+            // (a pre-existing block stays silent — see story 20).
+            await this.notify({ ref: decision.ref, kind: "help", url: issueUrl(decision.ref) });
           }
           break;
         }
@@ -397,15 +405,15 @@ export class SweepEngine {
     const key = workKey(ref);
 
     const feedback = await tracker.readPrFeedback(ref);
-    const prConfirmed =
-      feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open";
+    const pr = feedback.known ? feedback.value.pr : null;
+    const prConfirmed = pr !== null && pr.state === "open";
     const issue = await tracker.readIssue(ref);
+    const blockedLabelOnIssue = issue.known && issue.value.labels.includes(config.labels.blocked);
     const record = await readOutcomeRecord(dir);
     const ruling = classifyOutcome({
       record,
       prOpen: prConfirmed,
-      blockedLabelOnIssue:
-        issue.known && issue.value.labels.includes(config.labels.blocked),
+      blockedLabelOnIssue,
       consecutiveFall,
       attempt,
       issueClosed: issue.known && issue.value.state === "closed",
@@ -437,6 +445,26 @@ export class SweepEngine {
       prConfirmed,
       ruling: { decision: ruling.decision, because: ruling.because },
     });
+
+    // One notice per new occurrence of this act (issue 93). Help wins over
+    // review when the session both left a PR open and asked for help: the
+    // state keeps the ruler's precedence (PR open reserves), only the message
+    // points at the issue — a block is not a simple review request. Silence
+    // when the fall is already retrying automatically, when the work
+    // concluded, or when the ball is simply with the human. A review is
+    // triggered by the initial execution or a feedback round (the spec's
+    // triggers), never by merely finding a pre-existing PR or by a retomada
+    // the human already initiated.
+    if (ruling.decision !== "done") {
+      const needsHelp =
+        blockedLabelOnIssue || record?.class === "blocked-self-report" || ruling.decision === "block";
+      const reviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
+      if (needsHelp) {
+        await this.notify({ ref, kind: "help", url: issueUrl(ref) });
+      } else if (reviewLaunch && prConfirmed && pr !== null) {
+        await this.notify({ ref, kind: "review", url: pullUrl(ref, pr.number) });
+      }
+    }
   }
 
   /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,
@@ -463,6 +491,27 @@ export class SweepEngine {
   private async finishWork(ref: IssueRef): Promise<void> {
     await archiveDoneWork(this.deps.workspace, ref);
     await this.deps.git.cleanupDoneWork(ref);
+  }
+
+  /**
+   * Best-effort delivery of one occurrence notice (issue 93). The config
+   * switch turns the whole feature off; without a wired notifier (tests that
+   * do not care) nothing is sent. A delivery failure only logs on the
+   * terminal — processing, the work's outcome and the exit code stay
+   * untouched. One call per new occurrence: the caller decides the act.
+   */
+  private async notify(notification: WorkNotification): Promise<void> {
+    if (!this.deps.config.notifications) return;
+    const notifier = this.deps.notifier;
+    if (notifier === undefined) return;
+    try {
+      await notifier.notify(notification);
+    } catch (error) {
+      this.log(
+        `local notification failed (${notification.kind} ${workKey(notification.ref)}): ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** A collected work never stays launchable in this process's memory. */

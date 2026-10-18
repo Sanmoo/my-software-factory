@@ -89,6 +89,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }
