@@ -181,7 +181,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     seedIssue(adapter, { repo: REPO, number: 7, labels: [DEFAULT_LABELS.claimed] });
     adapter.seedPullRequest({ repo: REPO, number: 7, state: "open" });
     adapter.addPrComment({ repo: REPO, prNumber: 7 }, "humano", "change this");
-    adapter.addPrComment({ repo: REPO, prNumber: 7 }, "bot", "addressed — see the new commits");
+    adapter.addPrComment({ repo: REPO, prNumber: 7 }, "bot", "<!-- msf:agent --> addressed — see the new commits");
     const derived = await deriveOne(7);
     assert.equal(derived.state, "idle");
   });
@@ -191,6 +191,15 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     adapter.seedPullRequest({ repo: REPO, number: 8, state: "open" });
     const derived = await deriveOne(8);
     assert.equal(derived.state, "idle");
+  });
+
+  test("same account: an unmarked PR comment is feedback, a marked one parks", async () => {
+    seedIssue(adapter, { repo: REPO, number: 70, labels: [DEFAULT_LABELS.claimed] });
+    adapter.seedPullRequest({ repo: REPO, number: 70, state: "open" });
+    adapter.addPrComment({ repo: REPO, prNumber: 70 }, "bot", "please change this");
+    assert.equal((await deriveOne(70)).state, "feedback");
+    adapter.addPrComment({ repo: REPO, prNumber: 70 }, "bot", "<!-- msf:agent --> addressed");
+    assert.equal((await deriveOne(70)).state, "idle");
   });
 
   test("a review comment counts as PR feedback: the last comment spans comments + reviews", async () => {
@@ -207,6 +216,10 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     adapter.addComment(ref(10), "humano", "try again, token X is now valid");
     const derived = await deriveOne(10);
     assert.equal(derived.state, "resumable");
+    seedIssue(adapter, { repo: REPO, number: 71, labels: [DEFAULT_LABELS.blocked] });
+    await adapter.comment(ref(71), "worker blocked");
+    adapter.addComment(ref(71), "bot", "resume — same account, no marker");
+    assert.equal((await deriveOne(71)).state, "resumable");
     assert.equal(derived.createdAt, "2026-01-02T00:00:00Z");
   });
 

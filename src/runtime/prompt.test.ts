@@ -92,8 +92,9 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
     assert.match(prompt, /"pr".*"repo".*"number".*"branch"/s);
   });
 
-  test("obligation 2: every feedback round ends with a comment on the PR", () => {
+  test("obligation 2: every feedback round ends with a marked comment on the PR", () => {
     assert.match(prompt, /comment on the PR/i);
+    assert.match(prompt, new RegExp(`comment MUST start with[\\s\\S]*${AGENT_MARKER}`));
   });
 
   test("obligation 3: blocked self-report — marker + label + exit", () => {

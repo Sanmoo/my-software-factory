@@ -3,8 +3,11 @@
 The factory is wired end to end with only real components: the real GitHub
 adapter (`gh` keyring token at boot), the real Sandcastle runtime (Pi
 headless in a container, profile snapshot), the real git host. This is the
-exact script of the live proof: a real issue → worker → PR opened by the bot
-account → human feedback → merge.
+exact script of the live proof: a real issue → worker → PR opened by the
+configured account → human feedback → merge. In v0.1 that account is the
+operator's: GitHub hides `bot-do-samuca`, and the accepted risk is the
+operator PAT inside the unrestricted container. Factory speech is the
+`<!-- msf:agent -->` marker, not a different login.
 
 ## Before the first run (once)
 
@@ -14,13 +17,13 @@ npm run build:image
 
 # 2. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container)
-gh auth token --user bot-do-samuca   # must print a token
+gh auth token --user Sanmoo   # must print a token; v0.1 uses the operator account
 
 # 3. the config — a working directory with msf.yaml, e.g.:
 cat > msf.yaml <<'EOF'
-worker-gh-account: bot-do-samuca
+worker-gh-account: Sanmoo
 repos:
-  - Sanmoo/my-tasks        # the target repo(s) — the bot is a collaborator (write)
+  - Sanmoo/my-tasks        # the target repo(s) — this account must have write
 concurrency: 2
 workspace: ~/.local/share/msf
 # profile-snapshot wiring (ticket 18; the defaults are the ticket-17 proof's):

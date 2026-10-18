@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
+import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
@@ -89,7 +90,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
         tracker.addPrComment(
           { repo: request.ref.repo, prNumber: existing.number },
           tracker.workerAccount,
-          `addressed the feedback (attempt ${request.attempt}) — see the new commits on ${request.branch}`,
+          `${AGENT_MARKER} addressed the feedback (attempt ${request.attempt}) — see the new commits on ${request.branch}`,
         );
       } else {
         const opened = await tracker.openPr({

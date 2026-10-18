@@ -129,7 +129,7 @@ async function deriveReservedWork(
   port: TrackerPort,
   work: ReservedWorkInput,
   labels: Labels,
-  workerAccount: string,
+  _workerAccount: string,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -150,7 +150,7 @@ async function deriveReservedWork(
   // short-circuit also keeps a handled rejection from being re-derived forever.
   if (issue.value.labels.includes(labels.blocked)) {
     const comments = await port.readComments(ref);
-    if (comments.known && hasHumanCommentAfterLastMarker(comments.value, workerAccount)) {
+    if (comments.known && hasHumanCommentAfterLastMarker(comments.value)) {
       const feedback = await port.readPrFeedback(ref);
       const pr = feedback.known ? feedback.value.pr : null;
       return { ref, state: "resumable", pr, createdAt: issue.value.createdAt };
@@ -169,7 +169,9 @@ async function deriveReservedWork(
       return { ref, state: "rejected", pr, comment: rejectionComment(pr) };
     }
     const last = lastPrComment(feedback.known ? feedback.value : null);
-    if (last !== null && last.author !== workerAccount) {
+    // Speech, not login (v0.1): the worker account may be the operator's.
+    // A closing comment carries the marker; a comment without it is the human.
+    if (last !== null && !isAgentSpeech(last.body)) {
       return { ref, state: "feedback", pr, createdAt: issue.value.createdAt };
     }
     // The worker just opened the PR (or ended the round commenting on it):
@@ -234,9 +236,19 @@ async function deriveUnreconciledFall(
 }
 
 /**
+ * Agent speech carries the marker. The author is not the signal: v0.1 uses
+ * the operator account as the worker account (GitHub hides a fresh bot
+ * account), so the same login speaks on both sides.
+ */
+export function isAgentSpeech(body: string): boolean {
+  return body.includes(AGENT_MARKER);
+}
+
+/**
  * The last comment of the PR across both channels (conversation + reviews),
- * merged by createdAt — the feedback fact is "the LAST comment is not the
- * worker's", no local markers (ticket 07 Q3).
+ * merged by createdAt. Feedback is "the LAST comment does not carry the
+ * agent marker" (ticket 07 Q3, amended in 18) — login cannot separate the
+ * sides when they are the same account.
  */
 export function lastPrComment(feedback: PrFeedback | null): IssueComment | null {
   if (feedback === null) return null;
@@ -247,20 +259,16 @@ export function lastPrComment(feedback: PrFeedback | null): IssueComment | null 
 }
 
 /**
- * The rescue answer: a comment by a non-worker author AFTER the last comment
- * carrying the agent marker (ticket 04 Q6). Comment order is chronological.
+ * The rescue answer: a comment that is not itself agent speech AFTER the
+ * last comment carrying the marker (ticket 04 Q6, amended in 18). The author
+ * may be the worker account. Comment order is chronological.
  */
-export function hasHumanCommentAfterLastMarker(
-  comments: IssueComment[],
-  workerAccount: string,
-): boolean {
+export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
   let lastMarkerIndex = -1;
   for (const [index, comment] of comments.entries()) {
-    if (comment.body.includes(AGENT_MARKER)) lastMarkerIndex = index;
+    if (isAgentSpeech(comment.body)) lastMarkerIndex = index;
   }
-  return comments.some(
-    (comment, index) => index > lastMarkerIndex && comment.author !== workerAccount,
-  );
+  return comments.some((comment, index) => index > lastMarkerIndex && !isAgentSpeech(comment.body));
 }
 
 /** The fallback-done comment: short, by decision (ticket 04 Q11). */

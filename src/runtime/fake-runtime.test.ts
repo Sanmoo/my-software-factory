@@ -201,6 +201,7 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
       const last = comments.value.at(-1);
       assert.ok(last);
       assert.equal(last.author, "bot", "the worker commented on the PR");
+      assert.match(last.body, /<!-- msf:agent -->/, "the round-closing comment carries the marker");
     });
 
     test("the FIRST pr-open (no PR yet) opens a fresh one and posts no round comment", async () => {
