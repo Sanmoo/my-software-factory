@@ -1,0 +1,11 @@
+{
+  "skills": {
+    "repository": "https://github.com/mattpocock/skills.git",
+    "revision": "49dd158d1076134a641b33efb035946536778336",
+    "license": "See upstream LICENSE and individual skill notices; upstream contents are copied unchanged.",
+    "selected": ["implement", "tdd", "code-review", "pr", "codebase-design"]
+  },
+  "extensions": [
+    { "package": "pi-subagents", "version": "0.79.1" }
+  ]
+}
