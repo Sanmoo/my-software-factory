@@ -44,7 +44,8 @@ describe("e2e: strict CLI parsing and configured worker model", () => {
     config();
     const result = runCli(["run", "--runtime"]);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /--runtime requires/);
+    assert.match(result.stderr, /unknown flag "--runtime"/);
+    assert.match(result.stderr, /usage: msf run/);
     assert.equal(existsSync(join(dir, "ws")), false);
   });
 
