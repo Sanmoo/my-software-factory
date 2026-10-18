@@ -279,6 +279,25 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 }
 
+export async function workerToken(account: string): Promise<string> {
+  const env = { ...process.env };
+  delete env.GH_TOKEN;
+  delete env.GITHUB_TOKEN;
+  let stdout: string;
+  try {
+    ({ stdout } = await execFile("gh", ["auth", "token", "--user", account], { encoding: "utf8", env }));
+  } catch {
+    throw new Error(
+      `gh has no token for account ${account}; the factory's worker account is the only source — no fallback to another account.`,
+    );
+  }
+  const token = stdout.trim();
+  if (token === "") {
+    throw new Error(`gh returned an empty token for account ${account}; the factory's worker account is the only source.`);
+  }
+  return token;
+}
+
 // ---- the launch preconditions ----
 
 export interface PreflightDeps {
