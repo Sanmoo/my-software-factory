@@ -72,7 +72,7 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
  * becoming a class, so its removal is visible to the same observation (and
  * the action that explains it suppresses the summary).
  */
-const classOf = (state: ReservedDerivation["state"]): OperationalClass | null => {
+const operationalClassOf = (state: ReservedDerivation["state"]): OperationalClass | null => {
   switch (state) {
     case "done":
     case "done-fallback":
@@ -101,7 +101,7 @@ function operationalState(
   for (const entry of pool) state.set(workKey(entry.ref), "eligible");
   for (const decision of reserved) {
     const key = workKey(decision.ref);
-    const operationalClass = classOf(decision.state);
+    const operationalClass = operationalClassOf(decision.state);
     if (operationalClass !== null && !state.has(key)) state.set(key, operationalClass);
   }
   for (const key of inFlight) if (!state.has(key)) state.set(key, "reserved");
@@ -191,8 +191,12 @@ export class SweepEngine {
   private readonly endedWaiters: Array<{ fire: (event: WakeEvent) => void }> = [];
   /** The last observed operational state (issue 91) — process-local, never persisted. */
   private lastState: Map<string, OperationalClass> | null = null;
-  /** Works whose transition an action/event already announced since that observation. */
-  private readonly announced = new Set<string>();
+  /**
+   * The class each action/event already announced this interval, per work
+   * (`null` = the work leaves the state). The observation suppresses a change
+   * only when it lands the work exactly where the event said.
+   */
+  private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
 
@@ -202,15 +206,11 @@ export class SweepEngine {
   // the launches themselves run concurrently).
   private readonly preparing = new Map<string, Promise<void>>();
 
-  private readonly logger: (message: string) => void;
+  private readonly log: (message: string) => void;
 
   constructor(private readonly deps: LoopDeps) {
     this.slots = new Slots(deps.config.concurrency);
-    this.logger = operationalLog(deps.log);
-  }
-
-  private get log(): (message: string) => void {
-    return this.logger;
+    this.log = operationalLog(deps.log);
   }
 
   /**
@@ -246,14 +246,14 @@ export class SweepEngine {
     // The actions state/ decided — executed here, in the loop's IO duty. The
     // works they touch are announced to the observation below (issue 91):
     // the action already says what changed, so the summary need not repeat it.
-    const acted: string[] = [];
+    const acted: Array<{ key: string; resulting: OperationalClass | null }> = [];
     const parked: Launchable[] = [];
     for (const decision of derived) {
       switch (decision.state) {
         case "done": {
           this.log(`derived ${workKey(decision.ref)}: issue closed — done; archiving artifacts, cleaning branches`);
           await this.finishWork(decision.ref);
-          acted.push(workKey(decision.ref));
+          acted.push({ key: workKey(decision.ref), resulting: null });
           break;
         }
         case "done-fallback": {
@@ -264,7 +264,7 @@ export class SweepEngine {
           await tracker.markDone(decision.ref);
           await tracker.comment(decision.ref, decision.comment);
           await this.finishWork(decision.ref);
-          acted.push(workKey(decision.ref));
+          acted.push({ key: workKey(decision.ref), resulting: null });
           break;
         }
         case "rejected": {
@@ -273,7 +273,7 @@ export class SweepEngine {
               "blocked with a comment pointing at the PR",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
-          acted.push(workKey(decision.ref));
+          acted.push({ key: workKey(decision.ref), resulting: "reserved" });
           break;
         }
         case "fall": {
@@ -283,14 +283,15 @@ export class SweepEngine {
                 "release (claimed→ready back; the branch stays)",
             );
             await this.applyRelease(decision.ref);
+            acted.push({ key: workKey(decision.ref), resulting: "eligible" });
           } else {
             this.log(
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
+            acted.push({ key: workKey(decision.ref), resulting: "reserved" });
           }
-          acted.push(workKey(decision.ref));
           break;
         }
         case "feedback":
@@ -318,7 +319,7 @@ export class SweepEngine {
     this.cache = [...this.lastPool];
     // Added BEFORE the observation: the action line explains this very change,
     // so the observation consumes the announcement and stays silent about it.
-    for (const key of acted) this.announced.add(key);
+    for (const { key, resulting } of acted) this.announced.set(key, resulting);
     this.observeOperationalState(this.lastPool, derived, inFlight);
     return derived;
   }
@@ -339,7 +340,9 @@ export class SweepEngine {
     const next = operationalState(pool, reserved, inFlight);
     const changed = changedWorkKeys(this.lastState, next);
     const firstObservation = this.lastState === null;
-    const explainedByEvents = changed.length > 0 && changed.every((key) => this.announced.has(key));
+    const explainedByEvents =
+      changed.length > 0 &&
+      changed.every((key) => this.announced.get(key) === (next.get(key) ?? null));
     if (firstObservation || (changed.length > 0 && !explainedByEvents)) {
       this.log(renderPoolSummary(next, this.lastState, changed));
     }
@@ -347,9 +350,14 @@ export class SweepEngine {
     this.announced.clear();
   }
 
-  /** A transition this action/event already reports — the summary may stay silent about it. */
-  private announce(ref: IssueRef): void {
-    this.announced.add(workKey(ref));
+  /**
+   * A transition this action/event already reports, with the class it lands
+   * the work in (`null` = removed). The summary stays silent about a change
+   * only when the observation lands the work exactly there — an event about a
+   * different transition on the same work never hides the new one.
+   */
+  private announce(ref: IssueRef, resulting: OperationalClass | null): void {
+    this.announced.set(workKey(ref), resulting);
   }
 
   /**
@@ -450,7 +458,7 @@ export class SweepEngine {
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      this.announce(ref);
+      this.announce(ref, "reserved");
       // The reservation on disk comes FIRST (issue 98): a claim whose tracker
       // write fails then leaves a directory the next sweep re-claims and
       // reuses — never a mark with no footprint, which is the limbo issues
@@ -461,7 +469,7 @@ export class SweepEngine {
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
-      this.announce(ref);
+      this.announce(ref, "reserved");
       await tracker.resumeClaim(ref, config.labels);
       // The rejection's retomada: the SAME PR is reopened, never a new one.
       if (launchable.pr !== null && launchable.pr.state === "closed") {
@@ -469,7 +477,7 @@ export class SweepEngine {
       }
     } else {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
-      this.announce(ref);
+      this.announce(ref, "reserved");
     }
 
     // Git host (ticket 15): clone once + delta fetch + work branch born from
@@ -540,7 +548,6 @@ export class SweepEngine {
     const { config, tracker } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
-    this.announce(ref);
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -557,26 +564,33 @@ export class SweepEngine {
       issueClosed: issue.known && issue.value.state === "closed",
     });
 
+    let resulting: OperationalClass | null;
     if (ruling.decision === "done") {
       // The terminal state was reached while this claim was held (the
       // human's merge closed the issue mid-flight — ticket 14): archive the
       // artifacts and clean the branches, nothing is released or recorded.
       this.log(`collected ${key}: issue closed — done; artifacts archived, branches cleaned`);
       await this.finishWork(ref);
+      resulting = null;
     } else if (ruling.decision === "reserve") {
       this.log(`collected ${key}: PR open — stays reserved, waiting for the human`);
+      resulting = "reserved";
     } else if (ruling.decision === "record-only") {
       this.log(`collected ${key}: blocked self-report — the factory only records the outcome`);
+      resulting = "reserved";
     } else if (ruling.decision === "release") {
       this.log(
         `collected ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
       await this.applyRelease(ref);
+      resulting = "eligible";
     } else {
       this.log(`collected ${key}: 2nd consecutive fall — blocked, the exact outcome goes to the issue`);
       await this.applyBlockWithComment(ref, ruling.comment);
+      resulting = "reserved";
     }
+    this.announce(ref, resulting);
     this.collected.push({
       ref,
       result,
