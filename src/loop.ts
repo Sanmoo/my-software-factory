@@ -194,6 +194,7 @@ export class SweepEngine {
   private cache: PoolEntry[] = [];
   private parkedQueue: Launchable[] = [];
   private readonly pending = new Set<Promise<void>>();
+  private stopping = false;
   private readonly endedWaiters: Array<{ fire: (event: WakeEvent) => void }> = [];
   /** The previous observation only — process-local, never persisted. */
   private lastState: Map<string, OperationalClass> | null = null;
@@ -425,6 +426,7 @@ export class SweepEngine {
   fillSlots(): Promise<void>[] {
     const started: Promise<void>[] = [];
     while (!this.slots.full) {
+      if (this.stopping) break;
       const launchable = this.takeNextLaunchable();
       if (launchable === undefined) break;
       if (!this.slots.tryAcquire(workKey(launchable.ref))) continue; // already in flight
@@ -454,7 +456,8 @@ export class SweepEngine {
 
   /** The --once boundary: wait for every launched worker, transitively —
    * each collection replenishes the slot within the same cycle. */
-  async awaitAllLaunched(): Promise<void> {
+  async awaitAllLaunched(stopAdmissions = false): Promise<void> {
+    if (stopAdmissions) this.stopping = true;
     while (this.pending.size > 0) {
       await Promise.all([...this.pending]);
     }
@@ -826,7 +829,12 @@ export async function runForever(
 
   for (;;) {
     const event = await engine.waitForWake(tickMs, signal);
-    if (event === "abort" || signal?.aborted) break;
+    if (event === "abort" || signal?.aborted) {
+      // Stop admissions immediately, but retain ownership until every admitted
+      // launch has completed collection and result registration.
+      await engine.awaitAllLaunched(true);
+      break;
+    }
     if (event === "worker-end") {
       // The collection happened at the act; nothing to re-derive — the
       // human changes wait for the tick (staleness bounded by the interval).
