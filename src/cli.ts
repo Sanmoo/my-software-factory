@@ -129,7 +129,11 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const workspace = ensureWorkspace(config.workspace);
 
   if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
-    console.error(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`);
+    // A direct CLI error record emitted during the run: it carries the same
+    // UTC prefix as every other operational record (issue 91).
+    console.error(
+      utcStamp(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`),
+    );
     process.exit(1);
   }
   const deps: LoopDeps = await wireRunDeps(config, workspace, {

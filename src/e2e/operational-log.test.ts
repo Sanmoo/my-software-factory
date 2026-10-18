@@ -343,6 +343,31 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     assert.match(summaries(logs).at(-1)!, /Sanmoo\/a#1 \(eligible→feedback\)/);
   });
 
+  test("a tick that mixes an announced change and a silent one names only the silent one", async () => {
+    const tracker = new CountingTracker({ workerAccount: "bot" });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    seedParkedClaimed(tracker, { repo: REPO, number: 10 });
+    const { deps, logs } = makeFactory(tracker);
+    const engine = new SweepEngine(deps);
+
+    await engine.deriveAndAct(); // #1 eligible, #10 reserved
+    assert.equal(summaries(logs).length, 1);
+
+    // Same tick: #1 is claimed (the action announces eligible→reserved) while
+    // #10 receives a human review comment (zyg reserved→feedback) with no
+    // action line. The summary must carry only the change nothing explained.
+    await Promise.all(engine.fillSlots());
+    const feedback = await tracker.readPrFeedback({ repo: REPO, number: 10 });
+    assert.ok(feedback.known && feedback.value.pr !== null);
+    tracker.addPrComment({ repo: REPO, prNumber: feedback.value.pr.number }, "humano", "please change this");
+    await engine.deriveAndAct();
+
+    const line = summaries(logs).at(-1)!;
+    assert.equal(summaries(logs).length, 2);
+    assert.match(line, /~ Sanmoo\/a#10 \(reserved→feedback\)/, "the silent change is named");
+    assert.doesNotMatch(line, /Sanmoo\/a#1(?!\d)/, "the announced change is not restated");
+  });
+
   test("every fresh instance logs its own first observation (restart and independent runs)", async () => {
     const tracker = new CountingTracker({ workerAccount: "bot" });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -481,6 +506,34 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /0 eligible/, "the status output is the same contract");
     assert.doesNotMatch(status.stdout, STAMP, "status records never gain the operational stamp");
+  });
+
+  test("the CLI stamps its direct error records, including an unknown runtime", () => {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${join(dir, "ws")}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const cli = new URL("../cli.js", import.meta.url).pathname;
+
+    const before = Date.now();
+    // The runtime name is rejected before any boot (no keyring read, no
+    // network), so the direct CLI error is the only record to stamp.
+    const result = spawnSync(process.execPath, [cli, "run", "--once", "--runtime", "bogus"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    const after = Date.now();
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unknown runtime "bogus"/);
+    const instant = instantOf(result.stderr);
+    assert.ok(instant >= before - 1_500 && instant <= after + 1_500, "the direct CLI error is stamped");
   });
 
   test("a fatal CLI failure is an operational record too — stamped UTC error", () => {
