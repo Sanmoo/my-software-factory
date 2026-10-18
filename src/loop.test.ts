@@ -66,6 +66,7 @@ describe("loop wiring — the git host feeds every launch", () => {
     deps = {
       config: {
         workerGhAccount: "bot",
+        workerModel: "opencode-go/glm-5.3-flash",
         repos: ["Sanmoo/a"],
         concurrency: 2,
         workspace: root,

@@ -10,7 +10,7 @@ import { join } from "node:path";
  * keyring, `msf run` fails at boot with a clear message. The account used
  * here has no token in any keyring, so the failure is local — no network,
  * no credential needed. The runs pass `--runtime fake` (the tests-only
- * flag, ticket 18) so the boot check is reached without demanding --model.
+ * flag, ticket 18) so the configured model is irrelevant to this boot check.
  * The live boot (token present, real derivation) is
  * proven in the credential-gated smoke (`npm run smoke:github`).
  */
@@ -31,6 +31,7 @@ describe("e2e: msf run boots through the keyring check", () => {
       join(dir, "msf.yaml"),
       [
         `worker-gh-account: ${account ?? "bot-do-samuca"}`,
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos:",
         "  - Sanmoo/my-tasks",
         `workspace: ${join(dir, "ws")}`,
@@ -66,7 +67,7 @@ describe("e2e: msf run boots through the keyring check", () => {
     const ghost = "msf-boot-test-ghost-account-2";
     writeFileSync(
       other,
-      [`worker-gh-account: ${ghost}`, "repos:", "  - Sanmoo/other", `workspace: ${join(dir, "ws2")}`].join(
+      [`worker-gh-account: ${ghost}`, "worker-model: opencode-go/glm-5.3-flash", "repos:", "  - Sanmoo/other", `workspace: ${join(dir, "ws2")}`].join(
         "\n",
       ),
       "utf8",

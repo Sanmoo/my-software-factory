@@ -75,6 +75,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
   function makeConfig(concurrency: number): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency,
       workspace: layout.root,

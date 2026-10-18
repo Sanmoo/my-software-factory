@@ -34,6 +34,7 @@ describe("status — derivation on demand + local registry scan", () => {
   function makeConfig(): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency: 2,
       workspace: layout.root,

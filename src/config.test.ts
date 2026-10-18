@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_WORKSPACE } from "./config.js";
+import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS } from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -30,16 +30,28 @@ describe("config", () => {
   test("minimal config: only required fields, every optional gets its default", () => {
     const path = writeYaml(
       dir,
-      ["worker-gh-account: bot-do-samuca", "repos:", "  - Sanmoo/my-tasks"].join("\n"),
+      ["worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash", "repos:", "  - Sanmoo/my-tasks"].join("\n"),
     );
 
     const config = loadConfig(path);
 
     assert.equal(config.workerGhAccount, "bot-do-samuca");
+    assert.equal(config.workerModel, "opencode-go/glm-5.3-flash");
     assert.deepEqual(config.repos, ["Sanmoo/my-tasks"]);
     assert.equal(config.concurrency, DEFAULT_CONCURRENCY);
     assert.equal(config.workspace, join(homedir(), ".local/share/msf"));
     assert.deepEqual(config.labels, DEFAULT_LABELS);
+  });
+
+  test("missing worker-model is an error", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\n");
+    assert.throws(() => loadConfig(path), /worker-model.*required/);
+  });
+
+  test("worker-model must be provider/model-id", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: sem-barra\nrepos: [Sanmoo/a]\n");
+    assert.throws(() => loadConfig(path), /worker-model.*provider\/model-id/);
   });
 
   test("missing worker-gh-account is an error", () => {
@@ -48,7 +60,7 @@ describe("config", () => {
   });
 
   test("missing repos is an error", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot-do-samuca\n");
+    const path = writeYaml(dir, "worker-gh-account: bot-do-samuca\nworker-model: opencode-go/glm-5.3-flash\n");
     assert.throws(() => loadConfig(path), /repos/);
   });
 
@@ -66,6 +78,7 @@ describe("config", () => {
       dir,
       [
         "worker-gh-account: bot",
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos:",
         "  - Sanmoo/a",
         "  - Sanmoo/b",
@@ -92,7 +105,7 @@ describe("config", () => {
   test("a partially given labels map keeps defaults for the missing keys", () => {
     const path = writeYaml(
       dir,
-      ["worker-gh-account: bot", "repos: [Sanmoo/a]", "labels:", "  ready: pronto"].join("\n"),
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "labels:", "  ready: pronto"].join("\n"),
     );
 
     const config = loadConfig(path);
@@ -105,7 +118,7 @@ describe("config", () => {
   test("workspace `~` expands to the home directory", () => {
     const path = writeYaml(
       dir,
-      ["worker-gh-account: bot", "repos: [Sanmoo/a]", "workspace: ~/msf-ws"].join("\n"),
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "workspace: ~/msf-ws"].join("\n"),
     );
 
     const config = loadConfig(path);
@@ -117,20 +130,20 @@ describe("config", () => {
   test("non-positive concurrency is rejected", () => {
     const path = writeYaml(
       dir,
-      ["worker-gh-account: bot", "repos: [Sanmoo/a]", "concurrency: 0"].join("\n"),
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "concurrency: 0"].join("\n"),
     );
     assert.throws(() => loadConfig(path), /concurrency/);
   });
 
   test("repos must be a list of strings", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: 3\n");
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: 3\n");
     assert.throws(() => loadConfig(path), /repos/);
   });
 
   // ---- the profile-snapshot keys (ticket 18 wiring) ----
 
   test("profile-allowed-roots defaults to EMPTY — no operator-personal path in the product", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\n");
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
 
     const config = loadConfig(path);
 
@@ -147,6 +160,7 @@ describe("config", () => {
       dir,
       [
         "worker-gh-account: bot",
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos: [Sanmoo/a]",
         "profile-allowed-roots:",
         "  - ~/meus-dotfiles",
@@ -162,12 +176,12 @@ describe("config", () => {
   });
 
   test("profile-allowed-roots must be a list of strings when given", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\nprofile-allowed-roots: 3\n");
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-allowed-roots: 3\n");
     assert.throws(() => loadConfig(path), /profile-allowed-roots/);
   });
 
   test("profile-skip-dangling-links must be a boolean when given", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
     assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
   });
 });

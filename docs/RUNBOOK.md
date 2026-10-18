@@ -22,6 +22,7 @@ gh auth token --user Sanmoo   # must print a token; v0.1 uses the operator accou
 # 3. the config — a working directory with msf.yaml, e.g.:
 cat > msf.yaml <<'EOF'
 worker-gh-account: Sanmoo
+worker-model: opencode-go/glm-5.3-flash
 repos:
   - Sanmoo/my-tasks        # the target repo(s) — this account must have write
 concurrency: 2
@@ -83,19 +84,19 @@ declarations for mid-flight — that is the exception, not the design.
 Label a real issue with `ready-for-agent` on the target repo, then:
 
 ```sh
-msf run --once --model <provider/model-id>
+msf run --once
 ```
 
 The sweep derives the pool from the tracker, claims the issue
 (`ready-for-agent` → `agent-claimed` BEFORE any launch), clones the repo,
 creates the work branch `agent-issue-<n>` and launches ONE real worker (Pi,
-container, the model given). When the worker opens the PR from the bot
+container, using the configured `worker-model`). When the worker opens the PR from the bot
 account and writes `desfecho.json`, the sweep collects it and exits.
 
 ## (b) Continuous: the feedback rounds
 
 ```sh
-msf run --model <provider/model-id>
+msf run
 ```
 
 The factory sweeps on the fixed 60 s tick and wakes by event when a worker

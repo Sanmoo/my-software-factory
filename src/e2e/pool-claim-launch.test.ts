@@ -84,6 +84,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
   function makeConfig(concurrency: number): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency,
       workspace: layout.root,
