@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -212,18 +212,28 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
   });
 
   test("copies at distinct real paths are distinct configurations, identical content included", async () => {
-    const configA = writeConfig("a.yaml", join(dir, "ws-a"));
-    const configB = writeConfig("b.yaml", join(dir, "ws-b"));
-    assert.notEqual(realpathSync(configA), realpathSync(configB));
+    const sharedWorkspace = join(dir, "ws-shared");
+    const configA = writeConfig("a.yaml", sharedWorkspace);
+    // b.yaml is byte-identical to a.yaml (same content, same workspace): only
+    // the real path differs.
+    writeFileSync(join(dir, "b.yaml"), readFileSync(configA));
+    assert.notEqual(realpathSync(configA), realpathSync(join(dir, "b.yaml")));
 
-    // Two independent runs: distinct config files, distinct workspaces. A
-    // holds its own lock; B is admitted despite the identical content.
     await spawnHeldOwner(["run", "--runtime", "fake", "--config", "a.yaml"]);
     const readyB = join(dir, "ready-b");
     const ownerB = spawnOwner(["run", "--runtime", "fake", "--config", "b.yaml"], shim.env({ ready: readyB }));
-    await waitFor("the second, independent configuration to be admitted", () => existsSync(readyB));
-    assert.ok(existsSync(readyB), "distinct real paths are not blocked by this rule");
+    await waitFor("the byte-identical copy to be admitted", () => existsSync(readyB));
+    assert.ok(existsSync(readyB), "identical content at a distinct real path is not blocked");
     ownerB.kill("SIGKILL");
+
+    // An independent configuration with its own workspace is likewise not
+    // blocked by the first (the spec's independent-workspace scenario).
+    writeConfig("c.yaml", join(dir, "ws-c"));
+    const readyC = join(dir, "ready-c");
+    const ownerC = spawnOwner(["run", "--runtime", "fake", "--config", "c.yaml"], shim.env({ ready: readyC }));
+    await waitFor("the independent-workspace configuration to be admitted", () => existsSync(readyC));
+    assert.ok(existsSync(readyC), "independent workspaces are not blocked by this rule");
+    ownerC.kill("SIGKILL");
   });
 
   // ---- status and failure modes ----
