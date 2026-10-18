@@ -8,14 +8,13 @@ import {
   type ContractFaults,
   type ContractHarness,
   type ContractIssue,
-  type ReadCost,
 } from "./contract.js";
 import {
   CYCLE_ADAPTER_REST_CALLS,
-  recheckLateCandidates,
+  recheckLateOpenIssues,
   runSmokeCycle,
 } from "./smoke-cycle.js";
-import type { IssueRef, OpenIssue, TrackerPort } from "./port.js";
+import type { IssueRef, OpenIssue, ReadCost, TrackerPort } from "./port.js";
 
 /**
  * The ticket-16 proof the fake cannot give: the REAL GitHub adapter satisfying
@@ -171,7 +170,7 @@ runTrackerContractSuite(new SimulatedRepoHarness());
 // The REAL adapter runs the smoke's OWN flow (the full cycle) against the
 // simulated repo: eligibility proven by DIRECT reads right after seeding
 // (no settle wait — listings lag, direct GETs never do), and ONE non-blocking
-// candidates() re-check after the cycle's last operation (the listing's live
+// open-issues() re-check after the cycle's last operation (the listing's live
 // proof; by then it has had the whole cycle to converge). The smoke's REST
 // accounting is asserted here too: the adapter-side count is the sim-proof
 // of the planned-call breakdown the budget gate is built on.
@@ -235,7 +234,7 @@ describe("the smoke's full cycle (restructured op1) — the real adapter over th
     const staleListing = {
       listOpenIssues: async () => [seeded],
     } as unknown as TrackerPort;
-    const proof = await recheckLateCandidates(staleListing, harness.repo, seeded.ref);
+    const proof = await recheckLateOpenIssues(staleListing, harness.repo, seeded.ref);
     assert.equal(proof.sawIssue, true, "the stale listing still carries the (closed) issue");
     assert.equal(proof.converged, false);
     assert.match(proof.note, /verified via direct reads/);
@@ -247,7 +246,7 @@ describe("the smoke's full cycle (restructured op1) — the real adapter over th
     const emptyListing = {
       listOpenIssues: async () => [] as OpenIssue[],
     } as unknown as TrackerPort;
-    const proof = await recheckLateCandidates(emptyListing, harness.repo, ref);
+    const proof = await recheckLateOpenIssues(emptyListing, harness.repo, ref);
     assert.equal(proof.sawIssue, false);
     assert.equal(proof.converged, true);
     assert.match(proof.note, /FULLY PROVEN LIVE/);

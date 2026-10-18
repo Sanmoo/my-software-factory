@@ -84,7 +84,7 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *  The adapter-side 31 are sim-verified offline (CYCLE_ADAPTER_REST_CALLS,
  *  asserted in github-contract.test.ts). On top of the plan (environmental,
  *  not gated): foreign ready-labeled open issues the derivation reads
- *  (+2 each), the late candidates() re-check's open-PRs linkage listing
+ *  (+2 each), the late open-issues re-check's open-PRs linkage listing
  *  (+1 whenever its issues listing is non-empty — any open issue in the
  *  repo makes it fire; near-certain, covered by the margin) and repo labels
  *  this run creates (+1 delete +1 verify each).
@@ -551,8 +551,8 @@ async function main(): Promise<void> {
     console.log("smoke PASSED: all operations executed and verified; nothing left behind in the repo");
     console.log(
       cycle.op1ListingProof.converged
-        ? "op1: FULLY PROVEN LIVE — direct reads at seeding + the converged late candidates() re-check"
-        : "op1: verified via direct reads; the late candidates() re-check was stale (environmental listing lag — see the note above)",
+        ? "op1: FULLY PROVEN LIVE — direct reads at seeding + the converged late open-issues re-check"
+        : "op1: verified via direct reads; the late open-issues re-check was stale (environmental listing lag — see the note above)",
     );
   } catch (error) {
     console.log("\n== reversion (after a failure) ==");
