@@ -253,6 +253,36 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.deepEqual(git.cleaned, [{ repo: REPO, number: 5 }], "the git host cleaned the work's branches");
   });
 
+  // ---- checklist 2 (rejection branch): the rejected work's retomada reopens the SAME PR ----
+
+  test("a rejected work answered on the issue resumes from the existing branch and reopens the SAME PR", async () => {
+    const config = makeConfig(2);
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+
+    seedIssue(tracker, { repo: REPO, number: 6, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    await runOnce(deps);
+    const prNumber = await openPrOf(tracker, 6);
+    assert.ok(prNumber);
+
+    // The rejection: the human closes the PR without merging.
+    tracker.closePr({ repo: REPO, prNumber }, { merged: false });
+    await runOnce(deps); // derived rejected → blocked with the pointer comment
+    assert.ok((await labelsOf(tracker, 6)).includes(DEFAULT_LABELS.blocked));
+
+    // The human answers the issue AFTER the marker: the retomada swaps
+    // blocked→claimed and reopens the SAME PR (never a new one).
+    tracker.addComment({ repo: REPO, number: 6 }, "humano", "reopened by request — try again");
+    const resumed = await runOnce(deps);
+
+    assert.equal(resumed.launched.length, 1, "the retomada was launched");
+    assert.equal(resumed.launched[0]?.request.attempt, 2);
+    const labels = await labelsOf(tracker, 6);
+    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "blocked swapped away");
+    assert.ok(labels.includes(DEFAULT_LABELS.claimed), "the claim is held again");
+    assert.equal(await openPrOf(tracker, 6), prNumber, "the SAME PR reopened — no PR novo");
+  });
+
   // ---- checklist 5: parked reserved works launch BEFORE new claims, by age ----
 
   test("parked reserved works (feedback, retomada) launch before new claims, each group by creation age", async () => {
