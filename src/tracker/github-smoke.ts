@@ -10,7 +10,7 @@ import {
   type CommandRunner,
 } from "./github-adapter.js";
 import { type ContractHarness, type ContractIssue } from "./contract.js";
-import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
+import { AGENT_MARKER, type Candidate, type IssueRef, type TrackerPort } from "./port.js";
 import { derivePool } from "../state/derive.js";
 import { DEFAULT_LABELS } from "../config.js";
 
@@ -133,7 +133,7 @@ class RealGithubHarness implements ContractHarness {
     const created = (await this.rest(`repos/${this.repo}/issues`, {
       method: "POST",
       input: { title: input.title, body: SMOKE_BODY, labels: input.labels ?? [] },
-    })) as { number: number; id: number; created_at: string };
+    })) as { number: number; id: number; created_at: string; labels: { name: string }[] };
     const ref = { repo: this.repo, number: created.number };
     this.journal.issues.push(ref.number);
     this.issueIds.set(ref.number, created.id);
@@ -143,40 +143,35 @@ class RealGithubHarness implements ContractHarness {
         input: { state: "closed", state_reason: "completed" },
       });
     }
-    // a fresh issue (or its fresh label) can lag the label-filtered listing a
-    // few seconds: poll the listing until it reflects the issue's state
+    // label application on the issue itself is authoritative in the POST
+    // response (only the label-filtered LISTING lags — GitHub's index);
+    // settle on the issue's own labels, polling only when the response lags
     const firstLabel = (input.labels ?? [])[0];
     if (firstLabel !== undefined) {
-      if (input.closed) {
-        await this.settleOut(ref, firstLabel);
-      } else {
-        await this.settleIn(ref, firstLabel);
-      }
+      await this.settleLabelOnIssue(ref, firstLabel, created.labels?.map((l) => l.name));
     }
     return { ref, createdAt: created.created_at };
   }
 
-  private async settleIn(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
+  /** The label must be readable back on the issue itself (immediate); the
+   *  label-filtered listing may lag — fullCycle's op1 waits for that bounded. */
+  private async settleLabelOnIssue(
+    ref: IssueRef,
+    label: string,
+    knownLabels?: string[],
+    timeoutMs = 30_000,
+  ): Promise<void> {
+    if (knownLabels?.includes(label)) return;
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const numbers = await this.listingNumbers(label);
-      if (numbers.includes(ref.number)) return;
+      const view = (await this.rest(`repos/${this.repo}/issues/${ref.number}`)) as {
+        labels: { name: string }[];
+      };
+      if (view.labels.some((l) => l.name === label)) return;
       if (Date.now() > deadline) {
-        throw new Error(`issue ${this.repo}#${ref.number} did not appear in the "${label}" listing within 30s (listing lag)`);
+        throw new Error(`issue ${this.repo}#${ref.number} never carries "${label}" (label application lag)`);
       }
-      await sleep(2_000);
-    }
-  }
-
-  private async settleOut(ref: IssueRef, label: string, timeoutMs = 30_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const numbers = await this.listingNumbers(label);
-      if (!numbers.includes(ref.number)) return;
-      if (Date.now() > deadline) {
-        throw new Error(`issue ${this.repo}#${ref.number} is closed but still appears in the "${label}" open listing after 30s (listing lag)`);
-      }
-      await sleep(2_000);
+      await sleep(5_000);
     }
   }
 
@@ -274,6 +269,21 @@ class RealGithubHarness implements ContractHarness {
     return exists;
   }
 
+  /** The repo's label names — the pre/post inventory for adapter-created labels. */
+  async repoLabelNames(): Promise<Set<string>> {
+    const nodes = (await this.rest(`repos/${this.repo}/labels?per_page=100`)) as { name: string }[];
+    return new Set(nodes.map((n) => n.name));
+  }
+
+  /** Delete a repo label — the adapter's ensureLabelExists is OUTSIDE the
+   *  journal; the pre/post sweep reverts what IT created. */
+  async deleteRepoLabel(label: string): Promise<void> {
+    await this.rest(`repos/${this.repo}/labels/${label}`, {
+      method: "DELETE",
+      tolerate: (stderr) => stderr.includes("Not Found"),
+    });
+  }
+
   private async ensureRepoLabel(label: string): Promise<void> {
     // gh prints the 422 body to stdout, not stderr: an existing label answers
     // "Validation Failed (HTTP 422)" — tolerated as already-exists. Only a
@@ -329,28 +339,30 @@ class RealGithubHarness implements ContractHarness {
       }
     }
 
-    // comments: every comment on our issues/PRs (ours from seeding AND from the port) deleted
-    for (const container of containers) {
+    // comments: deleted straight from the journal (the ids were captured at
+    // creation — no listing round-trip; each DELETE's 204 is its own proof)
+    for (const { containerNumber, commentId } of this.journal.comments) {
       try {
-        const comments = (await this.restOrNull(`repos/${this.repo}/issues/${container}/comments`)) as { id: number }[] | null;
-        for (const comment of comments ?? []) {
-          await this.rest(`repos/${this.repo}/issues/comments/${comment.id}`, { method: "DELETE" });
-        }
+        await this.rest(`repos/${this.repo}/issues/comments/${commentId}`, { method: "DELETE" });
       } catch (error) {
-        failures.push(`comments of #${container}: ${(error as Error).message}`);
+        failures.push(`comment ${commentId} (on #${containerNumber}): ${(error as Error).message}`);
       }
     }
 
-    // issues: blockers unlinked, then labels + assignees cleared and closed in ONE patch
+    // issues: blockers unlinked (only where journaled), then labels +
+    // assignees cleared and closed in ONE patch
     for (const issue of this.journal.issues) {
       try {
-        const blockers = (await this.restOrNull(
-          `repos/${this.repo}/issues/${issue}/dependencies/blocked_by`,
-        )) as { id: number }[] | null;
-        for (const blocker of blockers ?? []) {
-          await this.rest(`repos/${this.repo}/issues/${issue}/dependencies/blocked_by/${blocker.id}`, {
-            method: "DELETE",
-          });
+        const hasBlockers = this.journal.blockers.some((b) => b.issueNumber === issue);
+        if (hasBlockers) {
+          const blockers = (await this.restOrNull(
+            `repos/${this.repo}/issues/${issue}/dependencies/blocked_by`,
+          )) as { id: number }[] | null;
+          for (const blocker of blockers ?? []) {
+            await this.rest(`repos/${this.repo}/issues/${issue}/dependencies/blocked_by/${blocker.id}`, {
+              method: "DELETE",
+            });
+          }
         }
         await this.rest(`repos/${this.repo}/issues/${issue}`, {
           method: "PATCH",
@@ -373,7 +385,8 @@ class RealGithubHarness implements ContractHarness {
       }
     }
 
-    // verification pass: nothing left behind
+    // verification pass: nothing left behind (state/labels/assignees/PR/branch
+    // re-reads; the comment deletions above are proven by their own 204s)
     for (const issue of this.journal.issues) {
       try {
         const view = (await this.rest(`repos/${this.repo}/issues/${issue}`)) as {
@@ -384,8 +397,6 @@ class RealGithubHarness implements ContractHarness {
         if (view.state !== "closed") failures.push(`issue #${issue} still open`);
         if (view.labels.length !== 0) failures.push(`issue #${issue} still has labels`);
         if (view.assignees.length !== 0) failures.push(`issue #${issue} still has assignees`);
-        const comments = (await this.restOrNull(`repos/${this.repo}/issues/${issue}/comments`)) as unknown[] | null;
-        if ((comments ?? []).length !== 0) failures.push(`issue #${issue} still has comments`);
       } catch (error) {
         failures.push(`issue #${issue} verification: ${(error as Error).message}`);
       }
@@ -432,10 +443,21 @@ async function fullCycle(harness: RealGithubHarness, adapter: TrackerPort): Prom
   await harness.addBlocker(issue.ref, blocker.ref);
   console.log(`seeded issue ${repo}#${issue.ref.number} with blocker #${blocker.ref.number} (closed)`);
 
-  // 1. candidates: the issue appears, with createdAt for age priority
-  const candidates = await adapter.listCandidates(repo, DEFAULT_LABELS.ready);
-  const candidate = candidates.find((c) => c.ref.number === issue.ref.number);
-  if (!candidate) throw new Error("op1: the seeded issue is not a candidate");
+  // 1. candidates: the issue appears, with createdAt for age priority.
+  // The label-filtered listing is GitHub's search index — a FRESH issue can
+  // lag minutes; bounded wait (30s interval), then an honest failure.
+  let candidate: Candidate | undefined;
+  const listingDeadline = Date.now() + 150_000;
+  for (;;) {
+    const candidates = await adapter.listCandidates(repo, DEFAULT_LABELS.ready);
+    candidate = candidates.find((c) => c.ref.number === issue.ref.number);
+    if (candidate) break;
+    if (Date.now() > listingDeadline) {
+      throw new Error("op1: the seeded issue never reached the ready-label listing within 150s (index lag)");
+    }
+    console.log("op1 waiting: the label-filtered listing lags for fresh issues (30s)…");
+    await sleep(30_000);
+  }
   console.log(`op1 EXECUTED+VERIFIED: listCandidates → ${repo}#${candidate.ref.number} createdAt ${candidate.createdAt}`);
 
   // 2. read the issue
@@ -452,22 +474,47 @@ async function fullCycle(harness: RealGithubHarness, adapter: TrackerPort): Prom
   }
   console.log("op3 EXECUTED+VERIFIED: readBlockers → native blocked_by, terminal (closed)");
 
-  // 4. claim
-  await adapter.claim(issue.ref, account);
+  // 4. claim — WITH the ready label this time: the reservation is the swap
+  // (ready→claimed), ticket 12's mirrored composite write on the real repo
+  await adapter.claim(issue.ref, account, DEFAULT_LABELS.ready);
   const claimed = await adapter.readIssue(issue.ref);
-  if (!claimed.known || !claimed.value.labels.includes(DEFAULT_LABELS.claimed) || claimed.value.assignees[0] !== account) {
-    throw new Error("op4: claim not visible in the re-read");
+  if (
+    !claimed.known ||
+    !claimed.value.labels.includes(DEFAULT_LABELS.claimed) ||
+    claimed.value.labels.includes(DEFAULT_LABELS.ready) ||
+    claimed.value.assignees[0] !== account
+  ) {
+    throw new Error("op4: claim swap not visible in the re-read");
   }
-  console.log(`op4 EXECUTED+VERIFIED: claim → label ${DEFAULT_LABELS.claimed} + assignee ${account}`);
+  console.log(`op4 EXECUTED+VERIFIED: claim → ready swapped away, label ${DEFAULT_LABELS.claimed} + assignee ${account}`);
 
-  // 5. release (then claim again for the cycle)
-  await adapter.releaseClaim(issue.ref, account);
+  // 5. release — with the ready label: the 1st-fall swap BACK (claimed→ready,
+  // ticket 13's mirrored composite write on the real repo)
+  await adapter.releaseClaim(issue.ref, account, DEFAULT_LABELS.ready);
   const released = await adapter.readIssue(issue.ref);
-  if (!released.known || released.value.labels.includes(DEFAULT_LABELS.claimed) || released.value.assignees.length !== 0) {
-    throw new Error("op5: release not visible in the re-read");
+  if (
+    !released.known ||
+    released.value.labels.includes(DEFAULT_LABELS.claimed) ||
+    !released.value.labels.includes(DEFAULT_LABELS.ready) ||
+    released.value.assignees.length !== 0
+  ) {
+    throw new Error("op5: release swap not visible in the re-read");
   }
-  console.log("op5 EXECUTED+VERIFIED: releaseClaim → only the claim mark removed");
+  console.log("op5 EXECUTED+VERIFIED: releaseClaim → claimed swapped away, the ready label back, assignee gone");
   await adapter.claim(issue.ref, account);
+
+  // 5b. block — the 2nd-consecutive-fall swap (claimed→blocked, the claim held)
+  await adapter.blockClaim(issue.ref, DEFAULT_LABELS.claimed, DEFAULT_LABELS.blocked);
+  const blockedState = await adapter.readIssue(issue.ref);
+  if (
+    !blockedState.known ||
+    blockedState.value.labels.includes(DEFAULT_LABELS.claimed) ||
+    !blockedState.value.labels.includes(DEFAULT_LABELS.blocked) ||
+    blockedState.value.assignees[0] !== account
+  ) {
+    throw new Error("op5b: block swap not visible in the re-read");
+  }
+  console.log(`op5b EXECUTED+VERIFIED: blockClaim → claimed swapped away, label ${DEFAULT_LABELS.blocked} on, claim held`);
 
   // 9c. push the work branch via git, credential helper baked into the clone
   const branch = `agent-issue-${issue.ref.number}`;
@@ -510,12 +557,14 @@ async function fullCycle(harness: RealGithubHarness, adapter: TrackerPort): Prom
   }
   console.log("op7+op8 EXECUTED+VERIFIED: comment → marker carried; readComments → both readable");
 
-  // derivation over the real adapter: the pool derivation of ticket 11
+  // derivation over the real adapter: the pool derivation of ticket 11 —
+  // the blocked claim holds the work out of the pool (the ready label came
+  // back in op5, but the claim's assignee is held until the terminal state)
   const pool = await derivePool(adapter, [repo], DEFAULT_LABELS);
   if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
-    throw new Error("derive: the claimed issue must NOT be eligible");
+    throw new Error("derive: the blocked claim must NOT be eligible");
   }
-  console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → claimed issue kept out of the pool");
+  console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → the blocked claim kept out of the pool");
 
   // 6. done
   await adapter.markDone(issue.ref);
@@ -564,6 +613,19 @@ async function main(): Promise<void> {
   const adapter = await createGitHubAdapter({ account, clonesDir });
   const harness = new RealGithubHarness(repo, account, DEFAULT_LABELS.claimed, adapter, token);
 
+  // the pre/post label inventory: the ADAPTER's ensureLabelExists creates repo
+  // labels outside the harness's journal — anything new in the smoke's label
+  // vocabulary is reverted here, whoever created it
+  const vocabulary = new Set([DEFAULT_LABELS.ready, DEFAULT_LABELS.claimed, DEFAULT_LABELS.blocked]);
+  let labelsBefore: Set<string>;
+  try {
+    labelsBefore = await harness.repoLabelNames();
+  } catch (error) {
+    console.error(`smoke FAILED: the label inventory read failed: ${(error as Error).message}`);
+    rmSync(clonesDir, { recursive: true, force: true });
+    process.exit(1);
+  }
+
   try {
     console.log("\n== full cycle: every operation executed, verified — reverted at the end ==");
     await fullCycle(harness, adapter);
@@ -580,6 +642,17 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
+    try {
+      const labelsAfter = await harness.repoLabelNames();
+      for (const label of labelsAfter) {
+        if (!labelsBefore.has(label) && vocabulary.has(label)) {
+          await harness.deleteRepoLabel(label);
+          console.log(`  ✔ reverted: repo label "${label}" (created by the adapter this run)`);
+        }
+      }
+    } catch (sweepError) {
+      console.error(`ADDITIONALLY, the adapter-created label sweep failed: ${(sweepError as Error).message}`);
+    }
     rmSync(clonesDir, { recursive: true, force: true });
   }
 }
