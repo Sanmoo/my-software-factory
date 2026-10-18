@@ -283,5 +283,60 @@ describe("fake tracker adapter — the 9 operations + rank", () => {
       );
       assert.ok(Array.isArray(outcome.performed));
     });
+
+    test("resumeClaim swaps blocked→claimed (the retomada's swap, ticket 14)", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 5 });
+      await adapter.claim({ repo: "Sanmoo/a", number: 5 }, "bot-do-samuca");
+      await adapter.blockClaim({ repo: "Sanmoo/a", number: 5 }, "agent-claimed", "agent-blocked");
+
+      await adapter.resumeClaim(
+        { repo: "Sanmoo/a", number: 5 },
+        "agent-blocked",
+        "agent-claimed",
+      );
+
+      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 5 });
+      assert.ok(issue.known);
+      assert.ok(!issue.value.labels.includes("agent-blocked"), "blocked swapped away");
+      assert.ok(issue.value.labels.includes("agent-claimed"), "the claim is held again");
+      assert.deepEqual(issue.value.assignees, ["bot-do-samuca"], "the assignee stays");
+    });
+
+    test("resumeClaim is tolerant when the blocked label is already gone", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 6 });
+      const outcome = await adapter.resumeClaim(
+        { repo: "Sanmoo/a", number: 6 },
+        "agent-blocked",
+        "agent-claimed",
+      );
+      assert.ok(Array.isArray(outcome.performed));
+    });
+
+    test("reopenPr puts a closed PR back to open — the rejection's retomada, no new PR (ticket 14)", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 7 });
+      const opened = await adapter.openPr({
+        repo: "Sanmoo/a",
+        issueNumber: 7,
+        headBranch: "agent-issue-7",
+        baseBranch: "main",
+        title: "work",
+      });
+      adapter.closePr({ repo: "Sanmoo/a", prNumber: opened.number }, { merged: false });
+
+      const outcome = await adapter.reopenPr({ repo: "Sanmoo/a", number: 7 });
+
+      const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 7 });
+      assert.ok(feedback.known && feedback.value.pr);
+      assert.equal(feedback.value.pr.number, opened.number, "the SAME PR, never a new one");
+      assert.equal(feedback.value.pr.state, "open");
+      assert.equal(feedback.value.pr.merged, false);
+      assert.ok(outcome.performed.length > 0);
+    });
+
+    test("reopenPr with no PR on the issue is tolerated, not an error", async () => {
+      seedIssue(adapter, { repo: "Sanmoo/a", number: 8 });
+      const outcome = await adapter.reopenPr({ repo: "Sanmoo/a", number: 8 });
+      assert.ok(Array.isArray(outcome.performed));
+    });
   });
 });

@@ -129,6 +129,22 @@ export class FakeTrackerAdapter implements TrackerPort {
     this.addComment(pr.issueRef, author, body);
   }
 
+  /** Test-side: close the issue's PR (a human act — rejection or merge). */
+  closePr(input: { repo: string; prNumber: number }, options: { merged: boolean }): void {
+    const found = this.findPrByNumber(input.repo, input.prNumber);
+    if (found === null) throw new Error(`no PR #${input.prNumber} in ${input.repo}`);
+    const issue = this.mustGet(found.issueRef);
+    issue.pr!.state = "closed";
+    issue.pr!.merged = options.merged;
+  }
+
+  /** Test-side: close the issue itself (a human act — linkage or not-planned). */
+  closeIssue(ref: IssueRef, stateReason: "completed" | "not-planned" = "completed"): void {
+    const issue = this.mustGet(ref);
+    issue.state = "closed";
+    issue.stateReason = stateReason;
+  }
+
   // ---- the port (9 operations + rank) ----
 
   async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
@@ -213,6 +229,24 @@ export class FakeTrackerAdapter implements TrackerPort {
     issue.labels.add(blockedLabel);
     performed.push(`label+${blockedLabel} on ${ref.repo}#${ref.number}`);
     return { performed };
+  }
+
+  async resumeClaim(ref: IssueRef, blockedLabel: string, claimedLabel: string): Promise<WriteOutcome> {
+    const issue = this.mustGet(ref);
+    const performed: string[] = [];
+    if (issue.labels.delete(blockedLabel)) {
+      performed.push(`label-${blockedLabel} on ${ref.repo}#${ref.number}`);
+    }
+    issue.labels.add(claimedLabel);
+    performed.push(`label+${claimedLabel} on ${ref.repo}#${ref.number}`);
+    return { performed };
+  }
+
+  async reopenPr(ref: IssueRef): Promise<WriteOutcome> {
+    const issue = this.mustGet(ref);
+    if (issue.pr === null) return { performed: [] }; // nothing to reopen — tolerated
+    issue.pr.state = "open";
+    return { performed: [`reopen PR #${issue.pr.number} of ${ref.repo}#${ref.number}`] };
   }
 
   async markDone(ref: IssueRef): Promise<WriteOutcome> {

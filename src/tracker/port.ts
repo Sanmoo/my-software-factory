@@ -134,6 +134,12 @@ export interface TrackerPort {
   /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of ticket 13) — the claim is held until the terminal state. */
   blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome>;
 
+  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14) — the claim is held again. */
+  resumeClaim(ref: IssueRef, blockedLabel: string, claimedLabel: string): Promise<WriteOutcome>;
+
+  /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one (ticket 04 Q9). Tolerated when no PR exists. */
+  reopenPr(ref: IssueRef): Promise<WriteOutcome>;
+
   /** 6. Done: close the issue as completed. */
   markDone(ref: IssueRef): Promise<WriteOutcome>;
 
