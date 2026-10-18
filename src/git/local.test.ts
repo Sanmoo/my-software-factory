@@ -216,6 +216,25 @@ describe("git host — cleanup only on done", () => {
     assert.ok(!existsSync(repoCloneDir(reposDir, "Sanmoo/never-touched")));
   });
 
+  test("diffWork returns the work branch's own changes against its base — the prompt's diff (ticket 17)", async () => {
+    const git = gitWork();
+    await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+
+    // The branch has no changes yet; the base advancing alone must not leak into the diff.
+    assert.equal(await git.diffWork({ repo: "Sanmoo/my-tasks", number: 7 }), "");
+
+    // The work's own commit shows up; a later base advance does not.
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    await execFile("git", ["checkout", "-q", "agent-issue-7"], { cwd: cloneDir });
+    await commitFileIn(cloneDir, "work.txt", "the work\n", "the work");
+    await remote.commitFile("main", "file.txt", "v2\n", "advance base");
+    await execFile("git", ["fetch", "-q", "origin"], { cwd: cloneDir });
+
+    const diff = await git.diffWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.match(diff, /the work/);
+    assert.doesNotMatch(diff, /v2/);
+  });
+
   test("cleanup never touches other works' branches", async () => {
     const git = gitWork();
     await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });

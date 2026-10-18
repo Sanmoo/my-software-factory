@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import type { TrackerPort, IssueRef } from "./tracker/port.js";
-import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
+import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork } from "./git/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, type PoolEntry } from "./state/derive.js";
@@ -118,6 +118,12 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
     // both are disk facts of this work, not process state (ticket 13).
     const dir = workDir(workspace, entry.ref.repo, entry.ref.number);
     const facts = await readLaunchFacts(dir);
+
+    // The launch material (ticket 17): the issue, the open PR with its
+    // conversation (a feedback round), the diff of the branch — every
+    // session starts from the whole context through the port + git host.
+    const material = await launchMaterial(tracker, git, entry.ref);
+
     const result = await runtime.launch({
       ref: entry.ref,
       workDir: dir,
@@ -125,6 +131,7 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
       repoDir: prepared.repoDir,
       baseBranch: prepared.baseBranch,
       attempt: facts.attempt,
+      material,
     });
     launched.push(result);
 
@@ -207,3 +214,30 @@ export async function runForever(deps: LoopDeps): Promise<never> {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Gather the launch material of a work from the port + git host (ticket 17):
+ * the issue (title/body), the open PR's conversation when one exists
+ * (feedback round), and the diff of the work branch. Unknown reads degrade
+ * to empty — the prompt still carries whatever is known, never a lie.
+ */
+async function launchMaterial(
+  tracker: TrackerPort,
+  git: GitWork,
+  ref: IssueRef,
+): Promise<WorkerMaterial> {
+  const issue = await tracker.readIssue(ref);
+  const feedback = await tracker.readPrFeedback(ref);
+  const diff = await git.diffWork(ref);
+
+  const pr =
+    feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open"
+      ? { number: feedback.value.pr.number, comments: feedback.value.comments }
+      : undefined;
+
+  return {
+    issue: issue.known ? { title: issue.value.title, body: issue.value.body } : { title: "", body: "" },
+    ...(pr === undefined ? {} : { pr }),
+    diff,
+  };
+}
