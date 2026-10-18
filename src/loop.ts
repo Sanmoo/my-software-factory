@@ -12,6 +12,7 @@ import {
 } from "./state/outcome.js";
 import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
 import { Slots } from "./pool/slots.js";
+import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
 
 /**
@@ -62,6 +63,101 @@ export interface SweepResult {
 
 export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
+/** The operational classes the periodic summary tracks (issue 91). */
+type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
+
+/**
+ * The class a reserved decision contributes to the observed state. A done
+ * work is archived by this tick's action — it LEAVES the state rather than
+ * becoming a class, so its removal is visible to the same observation (and
+ * the action that explains it suppresses the summary).
+ */
+const classOf = (state: ReservedDerivation["state"]): OperationalClass | null => {
+  switch (state) {
+    case "done":
+    case "done-fallback":
+      return null;
+    case "feedback":
+      return "feedback";
+    case "resumable":
+      return "resumable";
+    default:
+      return "reserved";
+  }
+};
+
+/**
+ * The relevant operational state of one observation: the identity of every
+ * work (repo#number, never just the count) and its class. Titles and order
+ * never enter — the pool's effective scheduling order stays untouched. Works
+ * in flight count as reserved so a launch is not mistaken for a disappearance.
+ */
+function operationalState(
+  pool: readonly PoolEntry[],
+  reserved: readonly ReservedDerivation[],
+  inFlight: ReadonlySet<string>,
+): Map<string, OperationalClass> {
+  const state = new Map<string, OperationalClass>();
+  for (const entry of pool) state.set(workKey(entry.ref), "eligible");
+  for (const decision of reserved) {
+    const key = workKey(decision.ref);
+    const operationalClass = classOf(decision.state);
+    if (operationalClass !== null && !state.has(key)) state.set(key, operationalClass);
+  }
+  for (const key of inFlight) if (!state.has(key)) state.set(key, "reserved");
+  return state;
+}
+
+/** The works whose class changed between two observations (added, removed, reclassified). */
+function changedWorkKeys(
+  previous: ReadonlyMap<string, OperationalClass> | null,
+  next: ReadonlyMap<string, OperationalClass>,
+): string[] {
+  if (previous === null) return [...next.keys()];
+  const changed: string[] = [];
+  for (const [key, operationalClass] of next) {
+    if (previous.get(key) !== operationalClass) changed.push(key);
+  }
+  for (const key of previous.keys()) if (!next.has(key)) changed.push(key);
+  return changed;
+}
+
+/**
+ * The periodic summary: the totals plus what changed since the previous
+ * observation — entered, left and reclassified works, each by its full
+ * reference. On the first observation the whole composition is shown (the
+ * execution's starting point). Titles and order never enter the text, so a
+ * swap with equal counts still names both works involved.
+ */
+function renderPoolSummary(
+  state: ReadonlyMap<string, OperationalClass>,
+  previous: ReadonlyMap<string, OperationalClass> | null,
+  changed: readonly string[],
+): string {
+  let eligible = 0;
+  for (const operationalClass of state.values()) if (operationalClass === "eligible") eligible += 1;
+  const reserved = state.size - eligible;
+  const head = `derived pool: ${eligible} eligible work(s), ${reserved} reserved work(s)`;
+
+  const detail =
+    previous === null
+      ? [...state.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, operationalClass]) => `${key} (${operationalClass})`)
+          .join(", ")
+      : [...changed]
+          .sort((a, b) => a.localeCompare(b))
+          .map((key) => {
+            const now = state.get(key);
+            const before = previous.get(key);
+            if (now !== undefined && before === undefined) return `+ ${key} (${now})`;
+            if (now === undefined) return `- ${key} (was ${before})`;
+            return `~ ${key} (${before}→${now})`;
+          })
+          .join(", ");
+  return detail === "" ? head : `${head} — ${detail}`;
+}
+
 /** What a launch starts as: a new claim, a parked feedback round or a retomada. */
 type LaunchKind = "claim" | "feedback" | "resume";
 
@@ -93,6 +189,10 @@ export class SweepEngine {
   private parkedQueue: Launchable[] = [];
   private readonly pending = new Set<Promise<void>>();
   private readonly endedWaiters: Array<{ fire: (event: WakeEvent) => void }> = [];
+  /** The last observed operational state (issue 91) — process-local, never persisted. */
+  private lastState: Map<string, OperationalClass> | null = null;
+  /** Works whose transition an action/event already announced since that observation. */
+  private readonly announced = new Set<string>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
 
@@ -102,12 +202,15 @@ export class SweepEngine {
   // the launches themselves run concurrently).
   private readonly preparing = new Map<string, Promise<void>>();
 
+  private readonly logger: (message: string) => void;
+
   constructor(private readonly deps: LoopDeps) {
     this.slots = new Slots(deps.config.concurrency);
+    this.logger = operationalLog(deps.log);
   }
 
   private get log(): (message: string) => void {
-    return this.deps.log ?? (() => {});
+    return this.logger;
   }
 
   /**
@@ -140,13 +243,17 @@ export class SweepEngine {
       inFlight,
     );
 
-    // The actions state/ decided — executed here, in the loop's IO duty.
+    // The actions state/ decided — executed here, in the loop's IO duty. The
+    // works they touch are announced to the observation below (issue 91):
+    // the action already says what changed, so the summary need not repeat it.
+    const acted: string[] = [];
     const parked: Launchable[] = [];
     for (const decision of derived) {
       switch (decision.state) {
         case "done": {
           this.log(`derived ${workKey(decision.ref)}: issue closed — done; archiving artifacts, cleaning branches`);
           await this.finishWork(decision.ref);
+          acted.push(workKey(decision.ref));
           break;
         }
         case "done-fallback": {
@@ -157,6 +264,7 @@ export class SweepEngine {
           await tracker.markDone(decision.ref);
           await tracker.comment(decision.ref, decision.comment);
           await this.finishWork(decision.ref);
+          acted.push(workKey(decision.ref));
           break;
         }
         case "rejected": {
@@ -165,6 +273,7 @@ export class SweepEngine {
               "blocked with a comment pointing at the PR",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
+          acted.push(workKey(decision.ref));
           break;
         }
         case "fall": {
@@ -181,6 +290,7 @@ export class SweepEngine {
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
           }
+          acted.push(workKey(decision.ref));
           break;
         }
         case "feedback":
@@ -206,11 +316,40 @@ export class SweepEngine {
     // draws from it; a cache drained empty waits for the next tick).
     this.lastPool = await derivePool(tracker, config.repos, config.labels);
     this.cache = [...this.lastPool];
-    this.log(
-      `derived pool: ${this.cache.length} eligible work(s), ` +
-        `${parked.length} parked reserved work(s)`,
-    );
+    // Added BEFORE the observation: the action line explains this very change,
+    // so the observation consumes the announcement and stays silent about it.
+    for (const key of acted) this.announced.add(key);
+    this.observeOperationalState(this.lastPool, derived, inFlight);
     return derived;
+  }
+
+  /**
+   * Issue 91: log the operational state on the first observation and then
+   * only when the composition or classification changes. A change every
+   * action/event already announced is not repeated as a summary; the first
+   * summary is always preserved, and a state that reappears after another is
+   * logged again (the memory is only the previous observation, never a set
+   * of all states ever seen).
+   */
+  private observeOperationalState(
+    pool: readonly PoolEntry[],
+    reserved: readonly ReservedDerivation[],
+    inFlight: ReadonlySet<string>,
+  ): void {
+    const next = operationalState(pool, reserved, inFlight);
+    const changed = changedWorkKeys(this.lastState, next);
+    const firstObservation = this.lastState === null;
+    const explainedByEvents = changed.length > 0 && changed.every((key) => this.announced.has(key));
+    if (firstObservation || (changed.length > 0 && !explainedByEvents)) {
+      this.log(renderPoolSummary(next, this.lastState, changed));
+    }
+    this.lastState = next;
+    this.announced.clear();
+  }
+
+  /** A transition this action/event already reports — the summary may stay silent about it. */
+  private announce(ref: IssueRef): void {
+    this.announced.add(workKey(ref));
   }
 
   /**
@@ -311,6 +450,7 @@ export class SweepEngine {
 
     if (kind === "claim") {
       logClaim(this.log, key);
+      this.announce(ref);
       // The reservation on disk comes FIRST (issue 98): a claim whose tracker
       // write fails then leaves a directory the next sweep re-claims and
       // reuses — never a mark with no footprint, which is the limbo issues
@@ -321,6 +461,7 @@ export class SweepEngine {
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
+      this.announce(ref);
       await tracker.resumeClaim(ref, config.labels);
       // The rejection's retomada: the SAME PR is reopened, never a new one.
       if (launchable.pr !== null && launchable.pr.state === "closed") {
@@ -328,6 +469,7 @@ export class SweepEngine {
       }
     } else {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
+      this.announce(ref);
     }
 
     // Git host (ticket 15): clone once + delta fetch + work branch born from
@@ -398,6 +540,7 @@ export class SweepEngine {
     const { config, tracker } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
+    this.announce(ref);
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -567,7 +710,7 @@ export async function runForever(
   options: { tickMs?: number; signal?: AbortSignal } = {},
 ): Promise<void> {
   const engine = new SweepEngine(deps);
-  const log = deps.log ?? (() => {});
+  const log = operationalLog(deps.log);
   const tickMs = options.tickMs ?? TICK_MS;
   const signal = options.signal;
 
