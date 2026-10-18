@@ -78,8 +78,11 @@ export class GitHubSim {
   /** The CommandRunner handed to the adapter (and to the test harness). */
   readonly runner: CommandRunner = async (file, args, options) => {
     try {
-      if (file === "gh") return this.gh(args, options.input);
-      if (file === "git") return this.git(args);
+      // await inside the try: a REJECTED gh promise must reach this catch and
+      // be wrapped gh-shaped (it wasn't — raw SimHttpError came out, without a
+      // stderr, and the adapter's tolerances — which read stderr — broke)
+      if (file === "gh") return await this.gh(args, options.input);
+      if (file === "git") return await this.git(args);
       throw new SimHttpError(0, `sim: unexpected command ${file}`);
     } catch (error) {
       // gh-shaped failures: the message goes to stderr, exit non-zero

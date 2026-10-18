@@ -83,6 +83,9 @@ function makeHarness(): ContractHarness {
     async branchExists(branch) {
       return adapter.pushedBranches.some((p) => p.branch === branch);
     },
+    async defaultBranch() {
+      return "main";
+    },
     async closePullRequest(_issue, prNumber) {
       adapter.closePr({ repo: "Sanmoo/fake-target", prNumber }, { merged: false });
     },

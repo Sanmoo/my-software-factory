@@ -56,6 +56,9 @@ export interface ContractHarness {
   closePullRequest(issue: IssueRef, prNumber: number): Promise<void>;
   /** Whether the branch exists on the remote (real) or was pushed (fake). */
   branchExists(branch: string): Promise<boolean>;
+  /** The PR base branch: the repo's default (the real harness resolves it,
+   *  the in-memory harnesses know theirs). */
+  defaultBranch(): Promise<string>;
   /** Full reversion of every artifact the harness created (idempotent). */
   cleanup(): Promise<void>;
 }
