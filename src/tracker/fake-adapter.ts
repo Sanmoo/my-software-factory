@@ -58,6 +58,7 @@ interface FakeIssue {
   assignees: Set<string>;
   createdAt: string;
   comments: FakeComment[];
+  reviews: FakeComment[];
   blockers: IssueRef[];
   pr: FakePr | null;
 }
@@ -86,18 +87,24 @@ export class FakeTrackerAdapter implements TrackerPort {
       assignees: new Set(),
       createdAt: input.createdAt ?? "2026-01-01T00:00:00Z",
       comments: [],
+      reviews: [],
       blockers: [],
       pr: null,
     });
   }
 
   seedPullRequest(input: FakePullRequestInput): void {
-    this.seedIssue({
-      repo: input.repo,
-      number: input.number,
-      ...(input.labels === undefined ? {} : { labels: input.labels }),
-    });
-    const issue = this.mustGet({ repo: input.repo, number: input.number });
+    const ref: IssueRef = { repo: input.repo, number: input.number };
+    // The PR attaches to the issue already seeded (labels/comments kept) —
+    // only a never-seeded issue gets a fresh one.
+    if (!this.issues.has(this.key(ref))) {
+      this.seedIssue({
+        repo: input.repo,
+        number: input.number,
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+      });
+    }
+    const issue = this.mustGet(ref);
     issue.pr = {
       number: input.number,
       state: input.state ?? "open",
@@ -127,6 +134,19 @@ export class FakeTrackerAdapter implements TrackerPort {
     const pr = this.findPrByNumber(input.repo, input.prNumber);
     if (pr === null) throw new Error(`no PR #${input.prNumber} in ${input.repo}`);
     this.addComment(pr.issueRef, author, body);
+  }
+
+  /** Human (or scripted) inline review comment on a PR. */
+  addReviewComment(input: { repo: string; prNumber: number }, author: string, body: string): void {
+    const pr = this.findPrByNumber(input.repo, input.prNumber);
+    if (pr === null) throw new Error(`no PR #${input.prNumber} in ${input.repo}`);
+    const issue = this.mustGet(pr.issueRef);
+    issue.reviews.push({
+      id: String(this.nextCommentId++),
+      author,
+      body,
+      createdAt: "2026-01-01T00:00:00Z",
+    });
   }
 
   /** Test-side: close the issue's PR (a human act — rejection or merge). */
@@ -280,7 +300,7 @@ export class FakeTrackerAdapter implements TrackerPort {
     return known({
       pr: issue.pr ? { ...issue.pr } : null,
       comments: issue.comments.map((comment) => ({ ...comment })),
-      reviews: [],
+      reviews: issue.reviews.map((review) => ({ ...review })),
     });
   }
 
