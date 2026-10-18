@@ -70,21 +70,20 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
  * The class a reserved decision contributes to the observed state. A done
  * work is archived by this tick's action — it LEAVES the state rather than
  * becoming a class, so its removal is visible to the same observation (and
- * the action that explains it suppresses the summary).
+ * the action that explains it suppresses the summary). The spec names four
+ * operational classes (eligible · reserved · feedback · resumable), so an
+ * idle, rejected or unknown work stays under the parked "reserved" umbrella.
  */
-const operationalClassOf = (state: ReservedDerivation["state"]): OperationalClass | null => {
-  switch (state) {
-    case "done":
-    case "done-fallback":
-      return null;
-    case "feedback":
-      return "feedback";
-    case "resumable":
-      return "resumable";
-    default:
-      return "reserved";
-  }
-};
+const RESERVED_OPERATIONAL_CLASS = {
+  done: null,
+  "done-fallback": null,
+  rejected: "reserved",
+  idle: "reserved",
+  fall: "reserved",
+  unknown: "reserved",
+  feedback: "feedback",
+  resumable: "resumable",
+} satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
 /**
  * The relevant operational state of one observation: the identity of every
@@ -101,7 +100,7 @@ function operationalState(
   for (const entry of pool) state.set(workKey(entry.ref), "eligible");
   for (const decision of reserved) {
     const key = workKey(decision.ref);
-    const operationalClass = operationalClassOf(decision.state);
+    const operationalClass = RESERVED_OPERATIONAL_CLASS[decision.state];
     if (operationalClass !== null && !state.has(key)) state.set(key, operationalClass);
   }
   for (const key of inFlight) if (!state.has(key)) state.set(key, "reserved");
@@ -110,10 +109,9 @@ function operationalState(
 
 /** The works whose class changed between two observations (added, removed, reclassified). */
 function changedWorkKeys(
-  previous: ReadonlyMap<string, OperationalClass> | null,
+  previous: ReadonlyMap<string, OperationalClass>,
   next: ReadonlyMap<string, OperationalClass>,
 ): string[] {
-  if (previous === null) return [...next.keys()];
   const changed: string[] = [];
   for (const [key, operationalClass] of next) {
     if (previous.get(key) !== operationalClass) changed.push(key);
@@ -121,6 +119,9 @@ function changedWorkKeys(
   for (const key of previous.keys()) if (!next.has(key)) changed.push(key);
   return changed;
 }
+
+/** The stable rendering order of a key set — presentation only, never the schedule. */
+const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
 /**
  * The periodic summary: the totals plus what changed since the previous
@@ -141,12 +142,10 @@ function renderPoolSummary(
 
   const detail =
     previous === null
-      ? [...state.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([key, operationalClass]) => `${key} (${operationalClass})`)
+      ? byKey(state.keys())
+          .map((key) => `${key} (${state.get(key)})`)
           .join(", ")
-      : [...changed]
-          .sort((a, b) => a.localeCompare(b))
+      : byKey(changed)
           .map((key) => {
             const now = state.get(key);
             const before = previous.get(key);
@@ -338,13 +337,19 @@ export class SweepEngine {
     inFlight: ReadonlySet<string>,
   ): void {
     const next = operationalState(pool, reserved, inFlight);
-    const changed = changedWorkKeys(this.lastState, next);
-    const firstObservation = this.lastState === null;
-    const explainedByEvents =
-      changed.length > 0 &&
-      changed.every((key) => this.announced.get(key) === (next.get(key) ?? null));
-    if (firstObservation || (changed.length > 0 && !explainedByEvents)) {
-      this.log(renderPoolSummary(next, this.lastState, changed));
+    if (this.lastState === null) {
+      // The execution's starting point is always a record, empty or not.
+      this.log(renderPoolSummary(next, null, []));
+    } else {
+      const changed = changedWorkKeys(this.lastState, next);
+      // Only the changes no action/event already announced reach the summary:
+      // a change an event explained in full is not restated (issue 91).
+      const unexplained = changed.filter(
+        (key) => this.announced.get(key) !== (next.get(key) ?? null),
+      );
+      if (unexplained.length > 0) {
+        this.log(renderPoolSummary(next, this.lastState, unexplained));
+      }
     }
     this.lastState = next;
     this.announced.clear();

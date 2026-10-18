@@ -10,7 +10,7 @@
  * format and that the instant sits between the observations around the act.
  */
 export function utcStamp(message: string): string {
-  return `[${utcTimestamp(new Date())}] ${message}`;
+  return `[${isoUtc(new Date())}] ${message}`;
 }
 
 /**
@@ -23,6 +23,6 @@ export function operationalLog(log?: (message: string) => void): (message: strin
 }
 
 /** ISO 8601 in UTC at second precision — `2026-07-17T13:05:00Z`, never an offset. */
-function utcTimestamp(date: Date): string {
+function isoUtc(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
