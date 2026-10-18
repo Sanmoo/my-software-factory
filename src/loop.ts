@@ -511,7 +511,12 @@ async function launchMaterial(
 
   const pr =
     feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open"
-      ? { number: feedback.value.pr.number, comments: feedback.value.comments }
+      ? {
+          number: feedback.value.pr.number,
+          comments: [...feedback.value.comments, ...feedback.value.reviews].sort(
+            (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+          ),
+        }
       : undefined;
 
   return {

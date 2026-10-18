@@ -229,6 +229,12 @@ interface RestReview {
   submitted_at: string | null;
 }
 
+/** GET /repos/{owner}/{repo}/pulls/{n}/comments — the inline review comment. */
+interface RestInlineComment extends RestComment {
+  path?: string;
+  line?: number | null;
+}
+
 /** GET /repos/{owner}/{repo}/issues/{n}/timeline (cross-referenced event) */
 interface RestTimelineEvent {
   event: string;
@@ -514,10 +520,11 @@ export class GitHubTrackerAdapter implements TrackerPort {
       if (!comments) return notKnown;
       return known({ pr: null, comments: comments.map(mapComment), reviews: [] });
     }
-    const [pull, comments, reviews] = await Promise.all([
+    const [pull, comments, reviews, inline] = await Promise.all([
       this.api<RestPull>(`repos/${ref.repo}/pulls/${prNumber}`),
       this.api<RestComment[]>(`repos/${ref.repo}/issues/${prNumber}/comments`),
       this.api<RestReview[]>(`repos/${ref.repo}/pulls/${prNumber}/reviews`),
+      this.api<RestInlineComment[]>(`repos/${ref.repo}/pulls/${prNumber}/comments`),
     ]);
     return known({
       pr: {
@@ -528,13 +535,21 @@ export class GitHubTrackerAdapter implements TrackerPort {
         baseBranch: pull.base.ref,
         author: pull.user.login,
       },
-      comments: comments.map(mapComment),
-      reviews: reviews.map((review) => ({
-        id: String(review.id),
-        author: review.user.login,
-        body: review.body,
-        createdAt: review.submitted_at ?? "",
-      })),
+      comments: (comments ?? []).map(mapComment),
+      reviews: [
+        ...(reviews ?? []).map((review) => ({
+          id: String(review.id),
+          author: review.user.login,
+          body: review.body,
+          createdAt: review.submitted_at ?? "",
+        })),
+        ...(inline ?? []).map((comment) => ({
+          id: String(comment.id),
+          author: comment.user.login,
+          body: inlineCommentBody(comment),
+          createdAt: comment.created_at,
+        })),
+      ],
     });
   }
 
@@ -684,4 +699,11 @@ function mapComment(comment: RestComment): IssueComment {
     body: comment.body,
     createdAt: comment.created_at,
   };
+}
+
+/** The inline comment, with the file it points at — the body alone hides where. */
+function inlineCommentBody(comment: RestInlineComment): string {
+  if (!comment.path) return comment.body;
+  const at = comment.line == null ? comment.path : `${comment.path}:${comment.line}`;
+  return `${comment.body}\n(${at})`;
 }

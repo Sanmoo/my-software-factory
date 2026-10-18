@@ -287,6 +287,20 @@ describe("the 9 operations over gh", () => {
           ]),
         };
       }
+      if (path?.includes("/pulls/3/comments")) {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 9,
+              user: { login: "samuca" },
+              body: "inline: too many comments",
+              created_at: "2026-01-03T00:00:00Z",
+              path: "internal/issuefiles/write.go",
+              line: 53,
+            },
+          ]),
+        };
+      }
       if (path?.endsWith("/pulls/3")) {
         return {
           stdout: JSON.stringify({
@@ -321,6 +335,8 @@ describe("the 9 operations over gh", () => {
     assert.equal(feedback.value.comments[0]?.author, "samuca");
     assert.equal(feedback.value.reviews[0]?.body, "review body");
     assert.equal(feedback.value.reviews[0]?.createdAt, "2026-01-02T00:00:00Z");
+    assert.equal(feedback.value.reviews[1]?.body, "inline: too many comments\n(internal/issuefiles/write.go:53)");
+    assert.equal(feedback.value.reviews[1]?.createdAt, "2026-01-03T00:00:00Z");
     const timeline = ghCall(calls, (c) => c.args.some((a) => a.includes("/timeline")));
     assert.ok(timeline.args.some((a) => a.includes("/issues/1/timeline")));
   });

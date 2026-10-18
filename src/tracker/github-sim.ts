@@ -371,6 +371,9 @@ export class GitHubSim {
           submitted_at: r.submittedAt,
         }));
       }
+      if (rest[2] === "comments" && method === "GET") {
+        return [];
+      }
     }
     if (rest[0] === "labels") {
       if (rest.length === 1 && method === "POST") {

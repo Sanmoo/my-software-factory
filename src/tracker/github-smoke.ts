@@ -56,7 +56,7 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        issue POST .................................. 1
  *        blocker POST + close PATCH ................... 2
  *        dependency POST .............................. 1
- *    - the cycle ......................................... 35
+ *    - the cycle ......................................... 36
  *        direct reads (op1+op2, op1+op3) .............. 2
  *        claim (swap: delete+ensure+label+assignee) ... 4   re-read 1
  *        release (the mirrored swap) .................. 4   re-read 1
@@ -64,7 +64,7 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        blockClaim (swap: delete+ensure+label) ....... 3   re-read 1
  *        branchExists + probe commit + defaultBranch .. 3   (pushBranch is git, not REST)
  *        openPr ....................................... 1
- *        PR comment + readPrFeedback (4 reads) ........ 5
+ *        PR comment + readPrFeedback (5 reads) ........ 6
  *        comment + human comment + readComments ....... 3
  *        derive (candidates + readIssue — isEligible early-returns
  *        on the blocked label, before readBlockers) ... 2
@@ -75,14 +75,14 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        PR read+close 2, branch delete 1, 3 comment deletes,
  *        issue A: blockers read+unlink+patch 3, issue B patch 1,
  *        verification re-reads 4 (A, B, PR, branch)
- *    = 56 planned
+ *    = 57 planned
  *
- *  The adapter-side 30 are sim-verified offline (CYCLE_ADAPTER_REST_CALLS,
+ *  The adapter-side 31 are sim-verified offline (CYCLE_ADAPTER_REST_CALLS,
  *  asserted in github-contract.test.ts). On top of the plan (environmental,
  *  not gated): foreign ready-labeled open issues the derivation reads
  *  (+2 each) and repo labels this run creates (+1 delete +1 verify each).
  */
-const PLANNED_REST_CALLS = 56;
+const PLANNED_REST_CALLS = 57;
 
 /** The gate's safety margin: the budget must host the plan PLUS this — the
  *  whole run (cleanup included) must fit the hour window, so the margin is

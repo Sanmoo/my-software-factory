@@ -27,10 +27,11 @@ import { DEFAULT_LABELS } from "../config.js";
 /** The cycle's adapter-side REST calls on the happy path — sim-verified
  *  offline (the recorder test); the smoke's full planned count builds on it.
  *  Direct reads 2, claim 4+1 re-read, release 4+1, 2nd claim 2, blockClaim
- *  3+1, openPr 1, readPrFeedback 4, comment+readComments 2, derivation 2
+ *  3+1, openPr 1, readPrFeedback 5 (timeline, pull, conversation, review
+ *  submissions, inline comments), comment+readComments 2, derivation 2
  *  (candidates + readIssue — isEligible early-returns on the blocked label),
- *  markDone+re-read 2, the late candidates() re-check 1 = 30. */
-export const CYCLE_ADAPTER_REST_CALLS = 30;
+ *  markDone+re-read 2, the late candidates() re-check 1 = 31. */
+export const CYCLE_ADAPTER_REST_CALLS = 31;
 
 /** op1's blocking proof: the direct reads right after seeding (immediate). */
 export interface Op1DirectProof {

@@ -136,6 +136,18 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(runtime.launched.length, 2, "no thrash between sweeps");
   });
 
+  test("an inline review comment reaches the worker prompt, not only the empty review shell", async () => {
+    const config = makeConfig(1);
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+    seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    await runOnce(deps);
+    tracker.addReviewComment({ repo: REPO, prNumber: 1 }, "humano", "seja mais sucinto");
+
+    const second = await runOnce(deps);
+    const comments = second.launched[0]?.request.material.pr?.comments ?? [];
+    assert.ok(comments.some((comment) => comment.body === "seja mais sucinto"));
+  });
+
   // ---- checklist 2: human comment on a blocked issue after the marker → retomada ----
 
   test("a human answer on the issue AFTER the marker resumes the work from the existing branch", async () => {
