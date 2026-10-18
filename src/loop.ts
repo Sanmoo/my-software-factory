@@ -224,7 +224,15 @@ export class SweepEngine {
       if (!this.slots.tryAcquire(workKey(launchable.ref))) continue; // already in flight
       const run = this.launchAndCollect(launchable);
       this.pending.add(run);
-      void run.finally(() => this.pending.delete(run));
+      // The pending set is bookkeeping ONLY: the rejection belongs to the
+      // caller (runOnce awaits it, runForever logs it). A discarded `.finally`
+      // derivative would be a second, unowned rejection — and an unowned
+      // rejection kills the process, which would take the factory down on the
+      // very failure the next tick is supposed to retry (issue 98).
+      void run.then(
+        () => this.pending.delete(run),
+        () => this.pending.delete(run),
+      );
       started.push(run);
     }
     return started;
@@ -270,21 +278,44 @@ export class SweepEngine {
     for (const waiter of this.endedWaiters.splice(0)) waiter.fire("worker-end");
   }
 
-  /** Claim (or resume), prepare, launch and collect one work; replenish in
-   * the same cycle. The reservation lands BEFORE the launch. */
+  /** One launch, start to finish, with the slot ALWAYS released: the claim (or
+   *  resume), the prepare, the session and the collection — a failure in any of
+   *  them must leave the slot free, or one failed launch would wedge the
+   *  factory for good and the work would never be retried (issue 98). The
+   *  rejection itself belongs to the caller (runOnce awaits it, runForever
+   *  logs it as a failed launch). */
   private async launchAndCollect(launchable: Launchable): Promise<void> {
+    const key = workKey(launchable.ref);
+    try {
+      await this.launchOnce(launchable);
+    } finally {
+      // Released even when the collection's transition fails: the work stays
+      // reconcilable by the next derivation (the claim or its swap is already
+      // on the tracker; a failed write leaves it auditable).
+      this.slots.release(key);
+      this.discardFromCacheAndParked(key);
+      this.fillSlots();
+      this.notifyWorkerEnded();
+    }
+  }
+
+  /** Claim (or resume), prepare, launch and collect one work; replenish in
+   * the same cycle. The reservation lands BEFORE any launch. */
+  private async launchOnce(launchable: Launchable): Promise<void> {
     const { config, tracker, runtime, git, workspace } = this.deps;
     const { ref, kind } = launchable;
     const key = workKey(ref);
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      // The swap ready→claimed is one composite write: removing the ready
-      // label is what keeps a concurrent sweep from ever seeing the work.
-      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
-      // The registry dir exists from the reservation on — a crash after the
-      // claim (before any worker) is still a visible, reconcilable fact.
+      // The reservation on disk comes FIRST (issue 98): a claim whose tracker
+      // write fails then leaves a directory the next sweep re-claims and
+      // reuses — never a mark with no footprint, which is the limbo issues
+      // 93/97/98 fell into. The swap itself lands the claim label (the
+      // padlock) before the pool label leaves, so the work is never in
+      // neither the pool nor the reserved set.
       mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
+      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
       await tracker.resumeClaim(ref, config.labels);
@@ -345,17 +376,7 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    try {
-      await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
-    } finally {
-      // The slot is released even when the collection's transition fails —
-      // the work stays reconcilable by the next derivation (the claim or its
-      // swap is already on the tracker; a failed write leaves it auditable).
-      this.slots.release(key);
-      this.discardFromCacheAndParked(key);
-      this.fillSlots();
-      this.notifyWorkerEnded();
-    }
+    await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
   }
 
   /**

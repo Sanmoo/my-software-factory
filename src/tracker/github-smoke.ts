@@ -58,10 +58,10 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        dependency POST .............................. 1
  *    - the cycle ......................................... 36
  *        direct reads (op1+op2, op1+op3) .............. 2
- *        claim (swap: delete+ensure+label+assignee) ... 4   re-read 1
+ *        claim (swap: ensure+label+assignee+delete) ... 4   re-read 1
  *        release (the mirrored swap) .................. 4   re-read 1
  *        2nd claim (ensure cached; label+assignee) .... 2
- *        blockClaim (swap: delete+ensure+label) ....... 3   re-read 1
+ *        blockClaim (swap: ensure+label+delete) ....... 3   re-read 1
  *        branchExists + probe commit + defaultBranch .. 3   (pushBranch is git, not REST)
  *        openPr ....................................... 1
  *        PR comment + readPrFeedback (5 reads) ........ 6

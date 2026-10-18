@@ -362,31 +362,33 @@ export class GitHubTrackerAdapter implements TrackerPort {
     );
   }
 
-  /** 4. Claim: swap ready→claimed (when the ready label is given) + assign the worker
-   *  account — the reservation lands on the tracker BEFORE any launch. The swap
-   *  is ordered: the ready label leaves first, so a concurrent sweep never sees
-   *  the work again; then the claimed label, then the assignee. */
+  /** 4. Claim (issue 98): the reservation's marker on the tracker. The ORDER is
+   *  the decision — the claim label (the padlock) lands FIRST and the pool
+   *  label leaves LAST, with the assignee in between as decoration. An
+   *  interruption in any point therefore leaves the work claimed, which the
+   *  next derivation releases on the 1st fall; the reverse order (pool label
+   *  first) left the work in neither the pool nor the reserved set — the limbo
+   *  issues 93/97/98 fell into. Only an ABSENT label is tolerated anywhere in
+   *  the swap: any other failure propagates as a failed launch, the work stays
+   *  in the pool and the next tick retries it. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
-    if (readyLabel !== undefined) {
-      // the absent ready label is a tolerated no-op (the fake tolerates it too)
-      await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${readyLabel}`, {
-        method: "DELETE",
-        tolerate: isAbsentLabel,
-      }).then(
-        () => performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`),
-        () => {},
-      );
-    }
-    await this.ensureLabelExists(ref.repo, this.claimedLabel);
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
-      method: "POST",
-      input: { labels: [this.claimedLabel] },
-    });
-    const labelDone = `label+${this.claimedLabel} on ${ref.repo}#${ref.number}`;
-    performed.push(labelDone);
+    const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
+    // ensureLabelExists, the label POST and the assignees POST all run before
+    // the pool label leaves, so the padlock is on before the work stops being
+    // visible to a neighbouring sweep.
     try {
-      await this.api(`repos/${ref.repo}/issues/${ref.number}/assignees`, {
+      await this.ensureLabelExists(ref.repo, this.claimedLabel);
+      await this.api(`${issuePath}/labels`, {
+        method: "POST",
+        input: { labels: [this.claimedLabel] },
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`label+${this.claimedLabel} on ${ref.repo}#${ref.number}`);
+    try {
+      await this.api(`${issuePath}/assignees`, {
         method: "POST",
         input: { assignees: [account] },
       });
@@ -394,39 +396,37 @@ export class GitHubTrackerAdapter implements TrackerPort {
       throw new PartialWriteError(performed, (error as Error).message);
     }
     performed.push(`assignee ${account}`);
+    if (readyLabel !== undefined) {
+      try {
+        // The absent ready label is a tolerated no-op (the fake tolerates it
+        // too); every other failure reaches the caller.
+        await this.api(`${issuePath}/labels/${readyLabel}`, {
+          method: "DELETE",
+          tolerate: isAbsentLabel,
+        });
+      } catch (error) {
+        throw new PartialWriteError(performed, (error as Error).message);
+      }
+      performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`);
+    }
     return { performed };
   }
 
   /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters
    *  the pool; the ready label is given) or remove only the claim mark when no ready
-   *  label is given. The swap mirrors the claim's composite write in reverse: the
-   *  ready label comes back last, so a half-written release never shows the work as
-   *  ready while the claim mark is still on. */
+   *  label is given. Mirrors the claim's discipline (issue 98): the pool label comes
+   *  back FIRST and the claim mark (the padlock) leaves LAST, so an interrupted
+   *  release leaves the work still claimed — the next derivation releases it again —
+   *  instead of showing it as ready while the claim mark lingers. */
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
-    // absent label (on the issue or in the repo) is a tolerated no-op
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${this.claimedLabel}`, {
-      method: "DELETE",
-      tolerate: isAbsentLabel,
-    }).then(
-      () => performed.push(`label-${this.claimedLabel} on ${ref.repo}#${ref.number}`),
-      () => {},
-    );
-    try {
-      await this.api(`repos/${ref.repo}/issues/${ref.number}/assignees`, {
-        method: "DELETE",
-        input: { assignees: [account] },
-      });
-    } catch (error) {
-      throw new PartialWriteError(performed, (error as Error).message);
-    }
-    performed.push(`unassignee ${account}`);
+    const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
     // The ruler's 1st fall releases the work BACK to the pool: the ready label
     // returns — same composite shape as the claim's swap, mirrored in reverse.
     if (readyLabel !== undefined) {
       try {
         await this.ensureLabelExists(ref.repo, readyLabel);
-        await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+        await this.api(`${issuePath}/labels`, {
           method: "POST",
           input: { labels: [readyLabel] },
         });
@@ -435,26 +435,38 @@ export class GitHubTrackerAdapter implements TrackerPort {
       }
       performed.push(`label+${readyLabel} on ${ref.repo}#${ref.number}`);
     }
+    try {
+      await this.api(`${issuePath}/assignees`, {
+        method: "DELETE",
+        input: { assignees: [account] },
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`unassignee ${account}`);
+    try {
+      // absent label (on the issue or in the repo) is a tolerated no-op
+      await this.api(`${issuePath}/labels/${this.claimedLabel}`, {
+        method: "DELETE",
+        tolerate: isAbsentLabel,
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`label-${this.claimedLabel} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
   /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of
    *  ticket 13) — the claim is held until the terminal state, so the assignee
-   *  stays. The blocked label replaces the claimed one, same ordered composite
-   *  write as the claim's swap. */
+   *  stays. Same discipline as the claim (issue 98): the blocked label lands
+   *  first, the claim mark (the padlock) leaves last. */
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
-    // absent label (on the issue or in the repo) is a tolerated no-op
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${labels.claimed}`, {
-      method: "DELETE",
-      tolerate: isAbsentLabel,
-    }).then(
-      () => performed.push(`label-${labels.claimed} on ${ref.repo}#${ref.number}`),
-      () => {},
-    );
+    const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
     try {
       await this.ensureLabelExists(ref.repo, labels.blocked);
-      await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+      await this.api(`${issuePath}/labels`, {
         method: "POST",
         input: { labels: [labels.blocked] },
       });
@@ -462,25 +474,29 @@ export class GitHubTrackerAdapter implements TrackerPort {
       throw new PartialWriteError(performed, (error as Error).message);
     }
     performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
+    try {
+      // absent label (on the issue or in the repo) is a tolerated no-op
+      await this.api(`${issuePath}/labels/${labels.claimed}`, {
+        method: "DELETE",
+        tolerate: isAbsentLabel,
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`label-${labels.claimed} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
   /** 5c. Resume (ticket 14): swap blocked→claimed on the retomada — a human
-   *  answered after the marker, the claim is held again. Mirrors blockClaim
-   *  in reverse: the blocked label leaves first (tolerated when absent), the
-   *  claimed label returns last, the assignee never left. */
+   *  answered after the marker, the claim is held again. Same discipline as the
+   *  claim (issue 98): the claim mark (the padlock) returns first, the blocked
+   *  mark leaves last (tolerated when absent), the assignee never left. */
   async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${labels.blocked}`, {
-      method: "DELETE",
-      tolerate: isAbsentLabel,
-    }).then(
-      () => performed.push(`label-${labels.blocked} on ${ref.repo}#${ref.number}`),
-      () => {},
-    );
+    const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
     try {
       await this.ensureLabelExists(ref.repo, labels.claimed);
-      await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+      await this.api(`${issuePath}/labels`, {
         method: "POST",
         input: { labels: [labels.claimed] },
       });
@@ -488,6 +504,16 @@ export class GitHubTrackerAdapter implements TrackerPort {
       throw new PartialWriteError(performed, (error as Error).message);
     }
     performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
+    try {
+      // absent label (on the issue or in the repo) is a tolerated no-op
+      await this.api(`${issuePath}/labels/${labels.blocked}`, {
+        method: "DELETE",
+        tolerate: isAbsentLabel,
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`label-${labels.blocked} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 

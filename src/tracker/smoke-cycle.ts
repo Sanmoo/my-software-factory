@@ -121,7 +121,8 @@ export async function runSmokeCycle(
   console.log("op1+op3 EXECUTED+VERIFIED: readBlockers → native blocked_by, terminal (closed) (direct read — immediate)");
 
   // 4. claim — WITH the ready label this time: the reservation is the swap
-  // (ready→claimed), ticket 12's mirrored composite write on the real repo
+  // (padlock first, pool label last — issue 98), ticket 12's mirrored write on
+  // the real repo
   await adapter.claim(issue.ref, account, DEFAULT_LABELS.ready);
   const claimed = await adapter.readIssue(issue.ref);
   if (
@@ -134,8 +135,8 @@ export async function runSmokeCycle(
   }
   console.log(`op4 EXECUTED+VERIFIED: claim → ready swapped away, label ${DEFAULT_LABELS.claimed} + assignee ${account}`);
 
-  // 5. release — with the ready label: the 1st-fall swap BACK (claimed→ready,
-  // ticket 13's mirrored composite write on the real repo)
+  // 5. release — with the ready label: the 1st-fall swap BACK (pool label
+  // first, padlock last — issue 98, ticket 13's mirrored write on the real repo)
   await adapter.releaseClaim(issue.ref, account, DEFAULT_LABELS.ready);
   const released = await adapter.readIssue(issue.ref);
   if (

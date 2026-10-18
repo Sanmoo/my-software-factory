@@ -37,7 +37,14 @@ function fakeRunner(routes: (call: Call) => { stdout?: string; stderr?: string; 
     const call: Call = { file, args, env: options.env, cwd: options.cwd, input: options.input };
     calls.push(call);
     const out = routes(call);
-    if (out.fail) throw new Error(`${out.fail}\nstderr:${out.stderr ?? ""}`);
+    if (out.fail) {
+      // gh-shaped, like the real runner and the simulator: the adapter reads the
+      // failure reason from `stderr`, and the tolerances (absent label, unknown
+      // issue) are decided on it — a failure without stderr is a real one.
+      const failure = new Error(`${out.fail}\nstderr:${out.stderr ?? ""}`);
+      Object.assign(failure, { stderr: out.stderr ?? out.fail });
+      throw failure;
+    }
     return { stdout: out.stdout ?? "", stderr: out.stderr ?? "" };
   };
   return { runner, calls };
@@ -251,6 +258,22 @@ describe("the 9 operations over gh", () => {
     assert.ok(posts.some((c) => c.args.some((a) => a.endsWith("/issues/1/assignees"))), "the account is assigned");
   });
 
+  test("4. claim: the claim mark lands before the pool label leaves (issue 98)", async () => {
+    const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
+    await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
+
+    const writes = calls
+      .filter((c) => c.file === "gh" && c.args[0] === "api" && c.args.includes("-X"))
+      .map((c) => `${c.args[c.args.indexOf("-X") + 1]} ${c.args.find((a) => a.startsWith("repos/")) ?? ""}`);
+    const claimLabel = writes.indexOf("POST repos/Sanmoo/a/issues/1/labels");
+    const assignee = writes.indexOf("POST repos/Sanmoo/a/issues/1/assignees");
+    const unlabel = writes.indexOf("DELETE repos/Sanmoo/a/issues/1/labels/ready-for-agent");
+
+    assert.ok(claimLabel >= 0, `the claim label is written: ${writes.join(" | ")}`);
+    assert.ok(assignee > claimLabel, `the assignee follows the claim mark: ${writes.join(" | ")}`);
+    assert.ok(unlabel > assignee, `the pool label leaves LAST: ${writes.join(" | ")}`);
+  });
+
   test("4. claim: label landing but assignee failing is a PartialWriteError", async () => {
     let postCalls = 0;
     const { adapter } = await makeAdapter((call) => {
@@ -285,11 +308,14 @@ describe("the 9 operations over gh", () => {
   });
 
   test("5. releaseClaim: removes label and assignee; 'not found' is tolerated", async () => {
-    let deletes = 0;
     const { adapter, calls } = await makeAdapter((call) => {
-      if (call.args.includes("-X") && call.args.includes("DELETE")) {
-        deletes += 1;
-        if (deletes === 1) return { fail: "gh: Not Found (HTTP 404)" }; // absent claim label
+      // The absent claim mark, wherever it sits in the swap: tolerated.
+      if (
+        call.args.includes("-X") &&
+        call.args.includes("DELETE") &&
+        call.args.some((a) => a.includes("/labels/agent-claimed"))
+      ) {
+        return { fail: "gh: Not Found (HTTP 404)" };
       }
       return { stdout: "" };
     });

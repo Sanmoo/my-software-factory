@@ -74,7 +74,25 @@ export class FakeTrackerAdapter implements TrackerPort {
   /** The reservation sequence: every claim's "<repo>#<n>", in order. */
   readonly claimedOrder: string[] = [];
 
+  /** Test-only fault injection (the interruption rows of the swaps, issue 98):
+   *  an armed key makes the NEXT matching step of a transition fail with a real
+   *  error — never the tolerated "label absent" case. Keys: "claim:label",
+   *  "claim:assignee", "release:relabel", "release:unassign", "block:label",
+   *  "resume:label" and "remove:<label>" for whichever removal of that label
+   *  happens next. One-shot: the key is consumed when it fires. */
+  readonly failAt = new Set<string>();
+
   constructor(private readonly options: { workerAccount: string }) {}
+
+  /** The injected failure of one step, when armed. */
+  private armed(key: string): void {
+    if (this.failAt.delete(key)) throw new Error(`fake: injected failure at ${key}`);
+  }
+
+  /** The injected failure of removing one label, when armed ("remove:<label>"). */
+  private armedRemoval(label: string): void {
+    this.armed(`remove:${label}`);
+  }
 
   /** The bot account this fake acts as (also used by the fake runtime). */
   get workerAccount(): string {
@@ -219,32 +237,43 @@ export class FakeTrackerAdapter implements TrackerPort {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
     this.claimedOrder.push(this.key(ref));
-    // The swap ready→claimed is one composite write: removing the ready label
-    // is what keeps a concurrent sweep from ever seeing the work again.
-    if (readyLabel !== undefined && issue.labels.delete(readyLabel)) {
-      performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`);
-    }
+    // The order is the decision (issue 98): the claim label is the padlock — it
+    // lands FIRST and the pool label leaves LAST, so an interruption leaves the
+    // work claimed with its reservation (the next tick releases it on the 1st
+    // fall) instead of in neither the pool nor the reserved set.
+    this.armed("claim:label");
     issue.labels.add("agent-claimed");
+    performed.push(`label+agent-claimed on ${ref.repo}#${ref.number}`);
+    this.armed("claim:assignee");
     issue.assignees.add(account);
-    performed.push(`label+agent-claimed on ${ref.repo}#${ref.number}`, `assignee ${account}`);
+    performed.push(`assignee ${account}`);
+    if (readyLabel !== undefined) {
+      this.armedRemoval(readyLabel);
+      if (issue.labels.delete(readyLabel)) {
+        performed.push(`label-${readyLabel} on ${ref.repo}#${ref.number}`);
+      }
+    }
     return { performed };
   }
 
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    if (issue.labels.delete("agent-claimed")) {
-      performed.push(`label-agent-claimed on ${ref.repo}#${ref.number}`);
+    // Mirrored discipline (issue 98): the pool label returns FIRST, the claim
+    // mark (the padlock) leaves LAST — an interrupted release keeps the work
+    // claimed, so the next derivation releases it again.
+    if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
+      this.armed("release:relabel");
+      issue.labels.add(readyLabel);
+      performed.push(`label+${readyLabel} on ${ref.repo}#${ref.number}`);
     }
+    this.armed("release:unassign");
     if (issue.assignees.delete(account)) {
       performed.push(`unassignee ${account}`);
     }
-    // The ruler's 1st fall releases the work BACK to the pool: the ready
-    // label returns — same composite shape as the claim's swap, mirrored in
-    // the reverse direction.
-    if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
-      issue.labels.add(readyLabel);
-      performed.push(`label+${readyLabel} on ${ref.repo}#${ref.number}`);
+    this.armedRemoval("agent-claimed");
+    if (issue.labels.delete("agent-claimed")) {
+      performed.push(`label-agent-claimed on ${ref.repo}#${ref.number}`);
     }
     return { performed };
   }
@@ -252,22 +281,29 @@ export class FakeTrackerAdapter implements TrackerPort {
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
+    // Same discipline as the claim (issue 98): the blocked label lands first,
+    // the claim mark (the padlock) leaves last.
+    this.armed("block:label");
+    issue.labels.add(labels.blocked);
+    performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
+    this.armedRemoval(labels.claimed);
     if (issue.labels.delete(labels.claimed)) {
       performed.push(`label-${labels.claimed} on ${ref.repo}#${ref.number}`);
     }
-    issue.labels.add(labels.blocked);
-    performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
   async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
+    // The claim mark (the padlock) returns first, the blocked mark leaves last.
+    this.armed("resume:label");
+    issue.labels.add(labels.claimed);
+    performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
+    this.armedRemoval(labels.blocked);
     if (issue.labels.delete(labels.blocked)) {
       performed.push(`label-${labels.blocked} on ${ref.repo}#${ref.number}`);
     }
-    issue.labels.add(labels.claimed);
-    performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 

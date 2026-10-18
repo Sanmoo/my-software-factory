@@ -5,6 +5,7 @@ import { createGitHubAdapter, type CommandRunner, type GitHubTrackerAdapter } fr
 import { GitHubSim, type SimIssue } from "./github-sim.js";
 import {
   runTrackerContractSuite,
+  type ContractFaults,
   type ContractHarness,
   type ContractIssue,
 } from "./contract.js";
@@ -31,8 +32,20 @@ class SimulatedRepoHarness implements ContractHarness {
   readonly claimedLabel = "agent-claimed";
   /** The adapter's gh api calls, recorded as "METHOD path" (budget accounting). */
   calls: string[] = [];
+  /** The next real failure to inject (issue 98's interruption rows), when armed. */
+  private armedFailure: { method: string; pathIncludes: string } | null = null;
   private sim: GitHubSim = new GitHubSim();
   private adapter: GitHubTrackerAdapter | undefined;
+
+  /** The real adapter can be made to hit a server failure the same way the fake
+   *  can — the seam is this harness's runner, never the live GitHub. */
+  faults(): ContractFaults {
+    return {
+      failRemovingLabel: (label: string) => {
+        this.armedFailure = { method: "DELETE", pathIncludes: `/labels/${label}` };
+      },
+    };
+  }
 
   getAdapter(): GitHubTrackerAdapter {
     if (!this.adapter) throw new Error("harness reset has not run yet");
@@ -42,6 +55,7 @@ class SimulatedRepoHarness implements ContractHarness {
   async reset(): Promise<void> {
     this.sim = new GitHubSim();
     this.calls = [];
+    this.armedFailure = null;
     // the boot check runs over the sim's keyring answer; every gh api call
     // goes through the recorder so the cycle's REST count is asserted offline
     const simRunner = this.sim.runner;
@@ -50,6 +64,15 @@ class SimulatedRepoHarness implements ContractHarness {
         const method = args[1] === "-X" ? args[2] ?? "GET" : "GET";
         const path = args.find((a) => a.startsWith("repos/"))?.split("?")[0] ?? "";
         this.calls.push(`${method} ${path}`);
+        const armed = this.armedFailure;
+        if (armed !== null && armed.method === method && path.includes(armed.pathIncludes)) {
+          this.armedFailure = null;
+          // gh-shaped: the adapter's tolerances read stderr, and this failure
+          // is deliberately NOT the tolerated absent-label case.
+          const injected = new Error("gh: injected server failure (HTTP 500)");
+          Object.assign(injected, { stderr: "gh: injected server failure (HTTP 500)" });
+          throw injected;
+        }
       }
       return simRunner(file, args, options);
     };

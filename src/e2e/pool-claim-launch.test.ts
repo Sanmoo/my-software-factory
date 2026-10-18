@@ -22,12 +22,12 @@ import { DEFAULT_LABELS, type Config } from "../config.js";
  *      cycle the moment a slot frees, with no barrier waiting for the slowest.
  *   2. An eligible with an open blocker stays out of the pool; with all
  *      closed it enters.
- *   3. The claim swaps the label on the tracker BEFORE the launch — the
- *      swap is one composite write, and the engine's own in-flight set
- *      keeps its launches out of its own re-derivations. A second,
- *      stateless sweep reading a zero-footprint claim cannot see the live
- *      launch: it treats the claim as an orphan and falls it (ticket 18,
- *      story 22) — the honest disk truth, never a freeze.
+ *   3. The claim lands on the tracker before the launch — and the reservation
+ *      on disk lands before the claim itself (issue 98) — while the engine's
+ *      own in-flight set keeps its launches out of its own re-derivations. A
+ *      second, stateless sweep reading a claim with ZERO attempt evidence
+ *      cannot see the live launch: it treats the claim as an orphan and falls
+ *      it (ticket 18, story 22) — the honest disk truth, never a freeze.
  *   4. --once only exits after every launched worker ended, with the final
  *      tracker state correct (claimed with an open PR).
  *   5. A long work never blocks the other slots.
@@ -300,11 +300,12 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       assert.ok(issue.known && issue.value.assignees.includes("bot-do-samuca"));
 
       // A second, stateless sweep derives the same tracker with an EMPTY
-      // in-flight set: the zero-footprint claim is an orphan to it (ticket
-      // 18, story 22) — it falls the work (1st fall → release) and picks it
-      // up itself. The disk truth is honest: no session ever started. The
-      // composite swap protects the pool within one derivation, never
-      // across processes — a freeze would hold the work forever.
+      // in-flight set: the claim has its reservation on disk but ZERO attempt
+      // evidence, which is an orphan to it (ticket 18, story 22) — it falls
+      // the work (1st fall → release) and picks it up itself. The disk truth
+      // is honest: no session ever started. The claim mark protects the pool
+      // within one derivation, never across processes — a freeze would hold
+      // the work forever.
       const secondRuntime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
       const secondSweep = await runOnce({
         config,
@@ -315,7 +316,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         log: () => {},
       });
       const orphan = secondSweep.reserved.find((decision) => decision.ref.number === 1);
-      assert.ok(orphan && orphan.state === "fall" && orphan.decision === "release", "the stateless second sweep falls the zero-footprint orphan");
+      assert.ok(orphan && orphan.state === "fall" && orphan.decision === "release", "the stateless second sweep falls the claim with no attempt evidence");
       assert.equal(secondRuntime.launched.length, 1, "the second sweep re-claims and launches the orphan");
       assert.equal(secondRuntime.launched[0]?.attempt, 1, "the registry honestly reports attempt 1 (zero evidence)");
 

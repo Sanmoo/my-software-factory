@@ -62,6 +62,19 @@ export interface ContractHarness {
   defaultBranch(): Promise<string>;
   /** Full reversion of every artifact the harness created (idempotent). */
   cleanup(): Promise<void>;
+  /** Optional fault injection: the harnesses that wrap the adapter in a seam
+   *  they control (the in-memory fake, the simulated REST repo) can make ONE
+   *  write fail with a REAL error — never the tolerated "label absent" case.
+   *  The live harness of the credential-gated smoke cannot force a server
+   *  failure and omits it; the interruption checks are skipped there. */
+  faults?(): ContractFaults;
+}
+
+/** What a fault-injecting harness can arm (issue 98: the swaps must never
+ *  half-apply silently). */
+export interface ContractFaults {
+  /** Make the NEXT removal of this label fail with a real error. */
+  failRemovingLabel(label: string): void;
 }
 
 const ready = "ready-for-agent";
@@ -293,6 +306,84 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
         const issue = await adapter().readIssue(a.ref);
         assert.ok(issue.known);
         assert.ok(issue.value.labels.includes(blocked), "the blocked label lands anyway");
+      },
+    },
+    {
+      name: "4. claim: a pool-label removal that fails for a REAL reason is never swallowed",
+      run: async () => {
+        // The interruption row that issue 93/97/98 fell into: the swap
+        // half-applied (claim mark on, pool label on) with no trace. The
+        // order is what makes the interruption recoverable — the claim mark
+        // must land BEFORE the pool label is removed, so a failure here leaves
+        // the work claimed WITH its reservation (the derivation releases it on
+        // the next tick) instead of in neither the pool nor the reserved set.
+        const faults = harness.faults?.();
+        if (!faults) return; // the live harness cannot inject; the offline ones can
+        const a = await harness.createIssue({ title: `interrupted claim ${harness.name}`, labels: [ready] });
+        faults.failRemovingLabel(ready);
+
+        await assert.rejects(
+          adapter().claim(a.ref, harness.workerAccount, ready),
+          "a real failure of the pool-label removal must propagate, never be discarded",
+        );
+
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(harness.claimedLabel), "the claim mark landed before the pool label left");
+        assert.deepEqual(issue.value.assignees, [harness.workerAccount]);
+        assert.ok(issue.value.labels.includes(ready), "the failed removal left the pool label — the work is never orphaned");
+      },
+    },
+    {
+      name: "5. releaseClaim: an interrupted release keeps the claim mark — the padlock leaves last",
+      run: async () => {
+        const faults = harness.faults?.();
+        if (!faults) return;
+        const a = await harness.createIssue({ title: `interrupted release ${harness.name}` });
+        await adapter().claim(a.ref, harness.workerAccount);
+        faults.failRemovingLabel(harness.claimedLabel);
+
+        await assert.rejects(adapter().releaseClaim(a.ref, harness.workerAccount, ready));
+
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(ready), "the pool label came back first");
+        assert.ok(issue.value.labels.includes(harness.claimedLabel), "the claim mark is still there — the work stays claimable-owned, never unclaimable");
+      },
+    },
+    {
+      name: "5b. blockClaim: an interrupted block keeps the claim mark — the padlock leaves last",
+      run: async () => {
+        const faults = harness.faults?.();
+        if (!faults) return;
+        const a = await harness.createIssue({ title: `interrupted block ${harness.name}` });
+        await adapter().claim(a.ref, harness.workerAccount);
+        faults.failRemovingLabel(labels.claimed);
+
+        await assert.rejects(adapter().blockClaim(a.ref, labels));
+
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(blocked), "the blocked label landed first");
+        assert.ok(issue.value.labels.includes(harness.claimedLabel), "the claim mark is still there");
+      },
+    },
+    {
+      name: "5c. resumeClaim: an interrupted resume keeps the blocked mark — the new claim lands first",
+      run: async () => {
+        const faults = harness.faults?.();
+        if (!faults) return;
+        const a = await harness.createIssue({ title: `interrupted resume ${harness.name}` });
+        await adapter().claim(a.ref, harness.workerAccount);
+        await adapter().blockClaim(a.ref, labels);
+        faults.failRemovingLabel(blocked);
+
+        await assert.rejects(adapter().resumeClaim(a.ref, labels));
+
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(harness.claimedLabel), "the claim is held again before the blocked mark left");
+        assert.ok(issue.value.labels.includes(blocked), "the blocked mark is still there — the retomada is retried, not lost");
       },
     },
     {

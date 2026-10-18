@@ -92,6 +92,13 @@ function makeHarness(): ContractHarness {
     async cleanup() {
       // in-memory: nothing to revert
     },
+    // The interruption rows: the fake can arm the real failure of one write
+    // (issue 98) — the shared contract checks the surviving state with it.
+    faults: () => ({
+      failRemovingLabel: (label: string) => {
+        adapter.failAt.add(`remove:${label}`);
+      },
+    }),
   };
 }
 
@@ -138,6 +145,21 @@ test("fake claim swaps the ready label away (the reservation is the swap, ticket
   assert.ok(!issue.value.labels.includes("ready-for-agent"), "ready label swapped away");
   assert.ok(issue.value.labels.includes("agent-claimed"));
   assert.ok(issue.value.labels.includes("triaged"), "unrelated labels are untouched");
+});
+
+test("fake claim writes the padlock first and removes the pool label last (issue 98)", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent"] });
+
+  const outcome = await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
+
+  // The fake's intent list IS its write order: the claim label lands first (the
+  // padlock), the pool label leaves last.
+  assert.deepEqual(outcome.performed, [
+    "label+agent-claimed on Sanmoo/a#1",
+    "assignee bot-do-samuca",
+    "label-ready-for-agent on Sanmoo/a#1",
+  ]);
 });
 
 test("fake claim: an absent ready label is tolerated, not an error", async () => {
