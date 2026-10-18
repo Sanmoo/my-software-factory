@@ -8,6 +8,7 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
+import { utcStamp } from "./log.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
@@ -137,9 +138,11 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   if (once) {
     const result = await runOnce(deps);
     console.log(
-      result.launched.length === 0
-        ? `sweep done: empty pool, 0 workers, exit 0`
-        : `sweep done: ${result.launched.length} worker(s) launched`,
+      utcStamp(
+        result.launched.length === 0
+          ? `sweep done: empty pool, 0 workers, exit 0`
+          : `sweep done: ${result.launched.length} worker(s) launched`,
+      ),
     );
     return;
   }
@@ -152,7 +155,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const controller = new AbortController();
   const onInterrupt = (): void => controller.abort();
   process.on("SIGINT", onInterrupt);
-  console.log("msf run: sweeping forever on the fixed tick (Ctrl-C to end)");
+  console.log(utcStamp("msf run: sweeping forever on the fixed tick (Ctrl-C to end)"));
   try {
     await runForever(deps, { signal: controller.signal });
   } finally {
