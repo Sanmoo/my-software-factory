@@ -28,7 +28,7 @@ repos:
 #   - ~/.agents
 #   - ~/.local/share/omarchy
 # profile-skip-dangling-links: false  # stale profile links: fail closed
-# notifications: true             # local Linux desktop notices: see the RUNBOOK
+# notifications: true
 ```
 
 ## Usage

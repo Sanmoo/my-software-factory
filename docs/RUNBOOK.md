@@ -123,22 +123,20 @@ in flight, last outcomes, archived dones. Works with the factory stopped.
 
 ## (d) Local desktop notifications (issue 93)
 
-`msf run` (continuous and `--once`) sends a passive Linux desktop notice
-(`notify-send`) when a new occurrence needs you, once per occurrence: an open
-PR after a session (review), a help request or a block (help). The notice
-names `<repo>#<n>`, gives the brief reason and shows the PR (review) or issue
-(help) address. It never steals focus, opens a window or repeats. `msf status`
-never notifies.
+`msf run` (continuous and `--once`) shows a Linux desktop notice when a new
+occurrence needs you: an open PR to review, a help request, or a block. One
+notice per occurrence — never a reminder — and `msf status` never notifies.
+Each notice names `<repo>#<n>`, the reason, and the PR (review) or issue
+(help) address.
 
-On by default; disable with `notifications: false` in `msf.yaml`. It needs a
-Linux desktop session with a notification daemon and `notify-send` (libnotify),
-started from a terminal inside the graphical session. If delivery fails the
-sweep prints `local notification failed (...)` and carries on; outcome, state
-and exit code are unchanged.
+On by default; disable with `notifications: false` in `msf.yaml`. Needs a
+Linux desktop session with a notification daemon, and the factory running
+inside it. If delivery is unavailable the sweep warns in the terminal and
+carries on: outcome, state and exit code unchanged.
 
-Smoke test: run a work that opens a PR → one `review` notice with the PR URL;
-comment the PR → a new notice; force a help/block → a `help` notice with the
-issue URL; restart → existing PRs and blocks stay silent.
+Smoke: a work that opens a PR → one review notice with the PR URL; comment
+the PR → a new notice; a help request or block → a help notice with the issue
+URL; restart → existing PRs and blocks stay silent.
 
 ## What the human does in the proof
 

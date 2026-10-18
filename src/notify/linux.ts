@@ -2,12 +2,9 @@ import { execFile } from "node:child_process";
 import type { Notifier, WorkNotification } from "./port.js";
 
 /**
- * Host-side Linux delivery via `notify-send` (libnotify): a passive notice,
- * no focus stealing or window. Needs a graphical session with a notification
- * daemon; a spawn failure is reported by the loop, never fatal.
+ * `notify-send` (libnotify): a passive notice, no focus steal or window. Needs
+ * a graphical session; a spawn failure rejects and the loop only reports it.
  */
-
-/** Runs the desktop command; injectable so tests need no desktop. */
 export type SendNotification = (command: string, args: string[]) => Promise<void>;
 
 export interface LinuxNotifierOptions {
@@ -24,7 +21,7 @@ export class LinuxNotifier implements Notifier {
   }
 }
 
-/** The notice text, composed from the structured kind — never agent prose. */
+/** Composed from the structured kind only — never agent prose. */
 export function renderNotification(notification: WorkNotification): { title: string; body: string } {
   const work = `${notification.ref.repo}#${notification.ref.number}`;
   if (notification.kind === "review") {
