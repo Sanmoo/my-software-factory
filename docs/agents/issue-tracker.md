@@ -11,6 +11,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
+- **Stage-relative scope notes**: a note like "implementation is out of scope at this stage" is true only for the current stage (e.g. spec writing) but persists in the issue body. When the stage changes, rewrite it to absolute state ("spec stage complete; implementation in scope") and remove it from Out of Scope — never leave a stale "at this stage" line that a worker will read as a permanent constraint.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
