@@ -191,7 +191,7 @@ export class GitHubSim {
   }
 
   /** One `gh api` call: ["api", "-X", METHOD, path, "--input", "-"] — the
-   *  path may carry a query string (the listing's state/labels). */
+   *  path may carry a query string (the listing's state). */
   private api(args: string[], input: string | undefined): string {
     const parsed = { method: "GET", path: "", query: new URLSearchParams(), body: undefined as unknown };
     for (let i = 1; i < args.length; i++) {
@@ -225,14 +225,14 @@ export class GitHubSim {
       return { name: "sim", default_branch: this.defaultBranch };
     }
     if (rest[0] === "issues" && rest.length === 1 && method === "GET") {
-      // the listing: GET /repos/{repo}/issues?state=…&labels=… — issues only,
-      // never PRs (the pull_request filter in the adapter is defensive)
+      // the listing: GET /repos/{repo}/issues?state=… — issues only, never PRs
+      // (the pull_request filter in the adapter is defensive). The `labels` query
+      // param is not spoken: the real adapter matches the ready label CLIENT-SIDE
+      // (the label-filtered listing lags on real GitHub), so it never sends it.
       const state = query.get("state") ?? "open";
-      const labels = (query.get("labels") ?? "").split(",").filter((l) => l !== "");
       return [...this.issues.values()]
         .filter((issue) => issue.pr === undefined)
         .filter((issue) => (state === "all" ? true : issue.state === state))
-        .filter((issue) => labels.every((label) => issue.labels.includes(label)))
         .map((issue) => this.restIssue(issue));
     }
     if (rest[0] === "issues") {

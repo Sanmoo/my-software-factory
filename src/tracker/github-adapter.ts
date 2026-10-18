@@ -147,12 +147,13 @@ export async function createGitHubAdapter(options: GitHubAdapterOptions): Promis
 
 // ---- REST JSON shapes (only the fields the adapter reads) ----
 
-/** GET /repos/{owner}/{repo}/issues?labels=… (the listing; PRs excluded defensively) */
+/** GET /repos/{owner}/{repo}/issues?state=open (the listing; PRs excluded defensively) */
 interface RestListedIssue {
   number: number;
   title: string;
   created_at: string;
   pull_request?: unknown;
+  labels: { name: string }[];
 }
 
 /** GET /repos/{owner}/{repo}/issues/{n} */
@@ -235,13 +236,22 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   // ---- the 9 operations + rank ----
 
-  /** 1. Open issues carrying the ready label — candidates and createdAt in the same listing. */
+  /** 1. Open issues carrying the ready label — candidates and createdAt in the same listing.
+   *
+   * The ready label is matched CLIENT-SIDE, not with the listing's `labels` query
+   * param: GitHub's label-filtered listing is search-index-backed and lags minutes
+   * behind a freshly applied label, while the plain open-issues listing is
+   * immediately consistent (a just-labeled issue appears at once). The client-side
+   * filter makes candidates see brand-new labeled issues in the same poll — the
+   * real-GitHub smoke failure that motivated this dialect (ticket 16).
+   */
   async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
     const nodes = await this.api<RestListedIssue[]>(
-      `repos/${repo}/issues?state=open&labels=${encodeURIComponent(readyLabel)}&per_page=500`,
+      `repos/${repo}/issues?state=open&per_page=500`,
     );
     return nodes
       .filter((issue) => !issue.pull_request) // PRs never appear in the issue listing
+      .filter((issue) => issue.labels.some((label) => label.name === readyLabel))
       .map((issue) => ({
         ref: { repo, number: issue.number },
         title: issue.title,

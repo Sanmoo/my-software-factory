@@ -93,11 +93,11 @@ describe("boot: credential from the gh keyring", () => {
 });
 
 describe("the 9 operations over gh", () => {
-  test("1. listCandidates: REST listing with state+labels query, mapped from JSON", async () => {
+  test("1. listCandidates: plain open-issues listing, ready label matched CLIENT-SIDE", async () => {
     const { adapter, calls } = await makeAdapter((call) => ({
       stdout:
         call.file === "gh"
-          ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z"},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{}}]`
+          ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z","labels":[{"name":"ready-for-agent"}]},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{},"labels":[{"name":"ready-for-agent"}]},{"number":9,"title":"unlabeled","created_at":"2026-01-04T00:00:00Z","labels":[]},{"number":10,"title":"other label","created_at":"2026-01-05T00:00:00Z","labels":[{"name":"other"}]}]`
           : "",
     }));
     const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
@@ -107,7 +107,10 @@ describe("the 9 operations over gh", () => {
     const gh = ghCall(calls, (c) => c.args[0] === "api");
     const path = gh.args.find((a) => a.startsWith("repos/"));
     assert.ok(path?.includes("state=open"));
-    assert.ok(path?.includes("labels=ready-for-agent"));
+    // the dialect (ticket 16 smoke fix): NO labels query param — GitHub's
+    // label-filtered listing is search-index-backed and lags minutes behind a
+    // fresh label; the filter happens in the adapter instead
+    assert.ok(!path?.includes("labels="), "the labels query param is never sent");
     assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
   });
 

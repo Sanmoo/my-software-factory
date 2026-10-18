@@ -144,7 +144,7 @@ class RealGithubHarness implements ContractHarness {
       });
     }
     // label application on the issue itself is authoritative in the POST
-    // response (only the label-filtered LISTING lags — GitHub's index);
+    // response (the POST body carries the labels — always immediate);
     // settle on the issue's own labels, polling only when the response lags
     const firstLabel = (input.labels ?? [])[0];
     if (firstLabel !== undefined) {
@@ -154,7 +154,8 @@ class RealGithubHarness implements ContractHarness {
   }
 
   /** The label must be readable back on the issue itself (immediate); the
-   *  label-filtered listing may lag — fullCycle's op1 waits for that bounded. */
+   *  listing sees it at once too (candidates match the ready label
+   *  CLIENT-SIDE on the unfiltered open-issues listing — no index lag). */
   private async settleLabelOnIssue(
     ref: IssueRef,
     label: string,
@@ -173,14 +174,6 @@ class RealGithubHarness implements ContractHarness {
       }
       await sleep(5_000);
     }
-  }
-
-  private async listingNumbers(label: string): Promise<number[]> {
-    // REST listing (gh issue list is GraphQL under the hood — never touched)
-    const nodes = (await this.rest(
-      `repos/${this.repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=500`,
-    )) as { number: number }[];
-    return nodes.map((item) => item.number);
   }
 
   async missingRef(): Promise<IssueRef> {
@@ -451,19 +444,21 @@ async function fullCycle(harness: RealGithubHarness, adapter: TrackerPort): Prom
   console.log(`seeded issue ${repo}#${issue.ref.number} with blocker #${blocker.ref.number} (closed)`);
 
   // 1. candidates: the issue appears, with createdAt for age priority.
-  // The label-filtered listing is GitHub's search index — a FRESH issue can
-  // lag minutes; bounded wait (30s interval), then an honest failure.
+  // The adapter matches the ready label CLIENT-SIDE on the plain open-issues
+  // listing — that listing is immediately consistent, unlike the old
+  // label-filtered one (search-index lagged minutes). A short settle loop
+  // stays for safety (3×10s), then an honest failure.
   let candidate: Candidate | undefined;
-  const listingDeadline = Date.now() + 150_000;
+  const listingDeadline = Date.now() + 30_000;
   for (;;) {
     const candidates = await adapter.listCandidates(repo, DEFAULT_LABELS.ready);
     candidate = candidates.find((c) => c.ref.number === issue.ref.number);
     if (candidate) break;
     if (Date.now() > listingDeadline) {
-      throw new Error("op1: the seeded issue never reached the ready-label listing within 150s (index lag)");
+      throw new Error("op1: the seeded issue never reached the (unfiltered) open-issues listing within 30s");
     }
-    console.log("op1 waiting: the label-filtered listing lags for fresh issues (30s)…");
-    await sleep(30_000);
+    console.log("op1 waiting: candidates settle (10s)…");
+    await sleep(10_000);
   }
   console.log(`op1 EXECUTED+VERIFIED: listCandidates → ${repo}#${candidate.ref.number} createdAt ${candidate.createdAt}`);
 

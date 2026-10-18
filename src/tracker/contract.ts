@@ -101,6 +101,20 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       },
     },
     {
+      name: "1. listCandidates: a JUST-created issue is a candidate on the first call — no settle",
+      run: async () => {
+        // The dialect proof (ticket 16 smoke fix): on real GitHub the old
+        // label-filtered listing lagged minutes behind a fresh label (search
+        // index); the unfiltered open-issues listing is immediate. The
+        // candidates read that follows the create must therefore need no
+        // bounded wait at all — one call, the issue is right there.
+        const seeded = await harness.createIssue({ title: `just labeled ${harness.name}`, labels: [ready] });
+        const candidates = await adapter().listCandidates(harness.repo, ready);
+        const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
+        assert.ok(candidate, "a just-created ready-labeled issue is returned by the FIRST candidates call (no settle needed)");
+      },
+    },
+    {
       name: "2. readIssue: full snapshot (title, state, labels, createdAt)",
       run: async () => {
         const seeded = await harness.createIssue({ title: `do the thing ${harness.name}`, labels: [ready] });
