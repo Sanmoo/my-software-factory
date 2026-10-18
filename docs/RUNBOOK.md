@@ -65,6 +65,13 @@ worker burned its run hunting a toolchain (`go: command not found`). With
 the layer in place, one launch installs; the factory's remaining launches
 inherit.
 
+The orchestrator converges BEFORE the prompt: a second sandbox-ready hook
+runs `mise install -y` (30 min ceiling) against the active configs — the
+snapshot's global config and the repo's `mise.toml`, when the repo declares
+one. The session NEVER hunts a declared tool: it is there or the launch
+fails fast. The worker still may run `mise install` for tools a work adds
+declarations for mid-flight — that is the exception, not the design.
+
 ## (a) One-shot: claim + launch a real worker
 
 Label a real issue with `ready-for-agent` on the target repo, then:

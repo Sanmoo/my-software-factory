@@ -68,6 +68,12 @@ export const TOOLCHAIN_SUBPATHS = {
 export const MISE_CONTAINER_DIR = "/home/agent/.local/share/mise";
 export const NPM_CONTAINER_DIR = `${AGENT_DIR}/npm`;
 
+/** The mise convergence hook's ceiling: a first install of many declared
+ *  tools (java, elixir, python…) is slow — the launch waits so the session
+ *  NEVER meets a missing declared tool; every later launch is a no-op hit
+ *  on the persisted volume. */
+export const TOOLCHAIN_SETUP_TIMEOUT_MS = 30 * 60 * 1000;
+
 /** Where the host profiles live by default. */
 export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
 
@@ -271,6 +277,16 @@ export class SandcastleRuntime implements WorkerRuntime {
                 `cp -R ${PROFILE_MOUNT}/. "$HOME/.pi/agent/" && ` +
                 `[ -f "$HOME/.pi/agent/auth.json" ] && chmod 600 "$HOME/.pi/agent/auth.json" || true`,
               timeoutMs: PROFILE_SETUP_TIMEOUT_MS,
+            },
+            {
+              // The toolchain convergence BEFORE the prompt (the declared
+              // tools are ready, never hunted mid-session): `mise install`
+              // reads the active configs (the snapshot's global config and
+              // the repo's mise.toml, when the repo declares one) and lands
+              // every declared tool + shim in the PERSISTENT volume. First
+              // launch of a toolchain pays; every later launch is a no-op.
+              command: "mise install -y",
+              timeoutMs: TOOLCHAIN_SETUP_TIMEOUT_MS,
             },
           ],
         },

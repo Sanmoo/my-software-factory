@@ -228,6 +228,17 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.match(hook.command, /auth\.json/);
   });
 
+  test("the toolchain converges BEFORE the prompt: mise install lands the declared tools in the persistent volume", async () => {
+    await runtime.launch(request);
+
+    const hooks = runOptions?.hooks?.sandbox?.onSandboxReady ?? [];
+    assert.equal(hooks.length, 2, "profile copy, then the toolchain convergence");
+    const mise = hooks[1];
+    assert.ok(mise, "the convergence hook exists");
+    assert.match(mise.command, /^mise install -y$/);
+    assert.ok((mise.timeoutMs ?? 0) >= 10 * 60 * 1000, "a first install of many tools is slow — the launch waits");
+  });
+
   test("the run is named after the work and the attempt", async () => {
     await runtime.launch(request);
     assert.equal(runOptions?.name, "work-42-attempt-1");
