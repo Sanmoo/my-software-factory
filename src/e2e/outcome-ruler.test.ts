@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -16,6 +16,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
+import { installGhShim } from "./cli-harness.js";
 
 /**
  * End-to-end of ticket 13: the ruler of outcomes applied at collection, the
@@ -389,9 +390,9 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
 
   function runStatus(): { stdout: string; stderr: string; status: number | null } {
     // `repos: []` keeps the pool listing OFFLINE (no REST call): the status
-    // command is wired to the REAL tracker adapter (ticket 18) — the keyring
-    // boot read is local, and with no repos there is nothing to list. The
-    // pool-over-real-repos path is derived with the fake in status.test.ts.
+    // command is wired to the REAL tracker adapter (ticket 18) — the boot
+    // read goes through the hermetic `gh` shim on PATH. The pool-over-real-
+    // repos path is derived with the fake in status.test.ts.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -402,14 +403,12 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
       ].join("\n"),
       "utf8",
     );
-    const ghBin = join(dir, "bin");
-    mkdirSync(ghBin, { recursive: true });
-    const gh = join(ghBin, "gh");
-    writeFileSync(gh, '#!/bin/sh\ncat >/dev/null\n[ "$1 $2 $3" = "auth token --user" ] && echo fake-token\n', "utf8");
-    chmodSync(gh, 0o755);
+    const shim = installGhShim(dir);
     const cli = new URL("../cli.js", import.meta.url).pathname;
     const result = spawnSync(process.execPath, [cli, "status"], {
-      cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${ghBin}:${process.env.PATH ?? ""}` },
+      cwd: dir,
+      encoding: "utf8",
+      env: shim.env(),
     });
     return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   }

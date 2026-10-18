@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,7 @@ import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js"
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
+import { installGhShim } from "./cli-harness.js";
 
 /**
  * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
@@ -246,10 +247,9 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
   });
 
   test("Ctrl-C on the spawned cli ends the process cleanly (exit 0)", async () => {
-    // The tests-only fake runtime (ticket 18) and an empty repo list: the
-    // sweep boots through the REAL tracker boot check (keyring) and runs
-    // idle forever — no tracker listing, no launch, no network — so the
-    // signal behavior is proven hermetically.
+    // The tests-only fake runtime (ticket 18), an empty repo list and a shim
+    // `gh` on PATH: the sweep boots hermetically (no keyring, no network) and
+    // runs idle forever, so the signal behavior is proven without GitHub.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -260,14 +260,11 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       ].join("\n"),
       "utf8",
     );
-    const ghBin = join(dir, "bin");
-    mkdirSync(ghBin);
-    const gh = join(ghBin, "gh");
-    writeFileSync(gh, '#!/bin/sh\ncat >/dev/null\n[ "$1 $2 $3" = "auth token --user" ] && echo fake-token\n', "utf8");
-    chmodSync(gh, 0o755);
+    const shim = installGhShim(dir);
     const cli = new URL("../cli.js", import.meta.url).pathname;
     const child = spawn(process.execPath, [cli, "run", "--runtime", "fake"], {
-      cwd: dir, env: { ...process.env, PATH: `${ghBin}:${process.env.PATH ?? ""}` },
+      cwd: dir,
+      env: shim.env(),
     });
 
     let stdout = "";
