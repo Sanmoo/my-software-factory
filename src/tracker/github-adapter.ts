@@ -7,11 +7,11 @@ import type { Labels } from "../config.js";
 import {
   AGENT_MARKER,
   type Blocker,
-  type Candidate,
   type IssueComment,
   type IssueRef,
   type IssueSnapshot,
   type Known,
+  type OpenIssue,
   type OpenPrInput,
   type PrFeedback,
   type PullRequest,
@@ -190,6 +190,7 @@ interface RestListedIssue {
   created_at: string;
   pull_request?: unknown;
   labels: { name: string }[];
+  assignees: { login: string }[];
 }
 
 /** GET /repos/{owner}/{repo}/issues/{n} */
@@ -284,40 +285,40 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   // ---- the 9 operations + rank ----
 
-  /** 1. Open issues carrying the ready label — candidates and createdAt in the same listing.
+  /** 1. The neutral read of the repo's open issues (issue 99): every open
+   *  issue with its labels, assignees and whether an OPEN PR links it, in one
+   *  issues listing + one open-PRs listing. Label semantics live in the
+   *  derivation; the adapter only resolves the linkage (the issue listing
+   *  cannot tell it).
    *
-   * The ready label is matched CLIENT-SIDE, not with the listing's `labels` query
-   * param: GitHub's label-filtered listing is search-index-backed and lags minutes
-   * behind a freshly applied label, while the plain open-issues listing is
-   * immediately consistent (a just-labeled issue appears at once). The client-side
-   * filter makes candidates see brand-new labeled issues in the same poll — the
-   * real-GitHub smoke failure that motivated this dialect (ticket 16).
+   * The listing is the PLAIN open-issues one, never label-filtered: GitHub's
+   * label-filtered listing is search-index-backed and lags minutes behind a
+   * freshly applied label, while the plain listing is immediately consistent
+   * (a just-labeled issue appears at once — ticket 16).
    *
-   * Ticket 12 (spec: only issues WITHOUT a PR enter the pool): the issue listing
-   * cannot tell PR linkage, so ONE open-PRs listing is read and every issue whose
-   * number a PR body links (Closes/Fixes/Resolves #N) is excluded. LIMITATION,
+   * Linkage is read from the OPEN PRs' bodies (Closes/Fixes/Resolves #N). The
+   * issue listing cannot tell it; one PR listing serves every issue. LIMITATION,
    * accepted for budget: a human PR whose body carries no linkage keyword slips
-   * through — the honest alternative, a per-candidate timeline cross-ref, costs
-   * one REST call per candidate and was rejected (60/h shared budget). A slipped
-   * work is caught after its claim (the PR fact re-derives every tick), and only
-   * the first 100 open PRs are read (per_page=100, one call).
+   * through — the honest alternative, a per-issue timeline cross-ref, costs one
+   * REST call per issue and was rejected (60/h shared budget). A slipped work is
+   * caught after its claim (the PR fact re-derives every tick), and only the
+   * first 100 open PRs are read (per_page=100, one call).
    */
-  async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
+  async listOpenIssues(repo: string): Promise<OpenIssue[]> {
     const nodes = await this.api<RestListedIssue[]>(
       `repos/${repo}/issues?state=open&per_page=500`,
     );
-    const labeled = nodes
-      .filter((issue) => !issue.pull_request) // PRs never appear in the issue listing
-      .filter((issue) => issue.labels.some((label) => label.name === readyLabel));
-    if (nodes.length === 0) return []; // nothing listed — nothing to filter, no PR read
+    const issues = nodes.filter((issue) => !issue.pull_request); // PRs never appear
+    if (issues.length === 0) return []; // nothing to link — no PR listing
     const linked = await this.linkedIssueNumbers(repo);
-    return labeled
-      .filter((issue) => !linked.has(issue.number))
-      .map((issue) => ({
-        ref: { repo, number: issue.number },
-        title: issue.title,
-        createdAt: issue.created_at,
-      }));
+    return issues.map((issue) => ({
+      ref: { repo, number: issue.number },
+      title: issue.title,
+      createdAt: issue.created_at,
+      labels: issue.labels.map((label) => label.name),
+      assignees: issue.assignees.map((assignee) => assignee.login),
+      hasOpenPr: linked.has(issue.number),
+    }));
   }
 
   /** The issue numbers linked by OPEN PR bodies — one listing, one pass. */

@@ -30,6 +30,7 @@ function makeHarness(): ContractHarness {
     workerAccount: "bot-do-samuca",
     claimedLabel: "agent-claimed",
     getAdapter: () => adapter,
+    readCost: () => adapter.readCost(),
     reset: async () => {
       adapter = freshAdapter();
       nextNumber = 1;

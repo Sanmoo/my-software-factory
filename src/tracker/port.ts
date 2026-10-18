@@ -43,10 +43,22 @@ export interface IssueSnapshot {
   createdAt: string;
 }
 
-export interface Candidate {
+/**
+ * A neutral open issue (issue 99): the single whole-repo read the derivation
+ * filters. No label semantics live here — the adapter resolves the open-PR
+ * linkage and hands every open issue back; the derivation decides what is a
+ * candidate. Labels and assignees travel so eligibility never needs a
+ * per-candidate issue re-read; the blockers keep their own read.
+ */
+export interface OpenIssue {
   ref: IssueRef;
   title: string;
+  /** ISO 8601 creation date — age-based priority of the pool. */
   createdAt: string;
+  labels: string[];
+  assignees: string[];
+  /** Whether the issue is linked by an OPEN PR (Closes/Fixes/Resolves #N). */
+  hasOpenPr: boolean;
 }
 
 export interface Blocker {
@@ -112,14 +124,17 @@ export class PartialWriteError extends Error {
 /**
  * The 9 operations + rank (ticket 02, table 1), in port terms:
  *
- *   1. listCandidates   2. readIssue        3. readBlockers
+ *   1. listOpenIssues   2. readIssue        3. readBlockers
  *   4. claim            5. releaseClaim     6. markDone
  *   7. comment          8. readComments     9. readPrFeedback / openPr / pushBranch
  *   +. rank (honest null on GitHub)
  */
 export interface TrackerPort {
-  /** 1. Open issues carrying the ready label, excluding PRs. */
-  listCandidates(repo: string, readyLabel: string): Promise<Candidate[]>;
+  /** 1. The neutral read of a repo's open issues: ref, title, createdAt,
+   *  labels, assignees and whether an OPEN PR is linked. One issues listing
+   *  plus at most one open-PRs listing per repo; every label decision lives
+   *  in the derivation, never here. */
+  listOpenIssues(repo: string): Promise<OpenIssue[]>;
 
   /** 2. Snapshot of one issue. */
   readIssue(ref: IssueRef): Promise<Known<IssueSnapshot>>;

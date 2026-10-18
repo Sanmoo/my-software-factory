@@ -1,5 +1,5 @@
 import type { Labels } from "../config.js";
-import type { IssueComment, IssueRef, PrFeedback, PullRequest, TrackerPort } from "../tracker/port.js";
+import type { IssueComment, IssueRef, OpenIssue, PrFeedback, PullRequest, TrackerPort } from "../tracker/port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
@@ -20,9 +20,12 @@ export interface PoolEntry {
 }
 
 /**
- * Derive the pool: per target repo, candidates (ready label, open, no PR)
- * whose blockers are all closed — excluding works already claimed. Ordered
- * by createdAt, oldest first.
+ * Derive the pool: per target repo, the neutral open-issues read is filtered
+ * by the derivation's own label rules (ready in, claimed/blocked/assigned/PR-
+ * linked out) and by the blockers read. Ordered by createdAt, oldest first.
+ *
+ * Issue 99: the read is ONE whole-repo listing per repo (plus its open-PRs
+ * linkage read); eligibility no longer re-reads each candidate's issue.
  */
 export async function derivePool(
   port: TrackerPort,
@@ -45,30 +48,33 @@ async function deriveRepoPool(
   repo: string,
   labels: Labels,
 ): Promise<PoolEntry[]> {
-  const candidates = await port.listCandidates(repo, labels.ready);
+  const issues = await port.listOpenIssues(repo);
   const entries: PoolEntry[] = [];
 
-  for (const candidate of candidates) {
-    if (!(await isEligible(port, candidate.ref, labels))) continue;
-    entries.push({ ref: candidate.ref, title: candidate.title, createdAt: candidate.createdAt });
+  for (const issue of issues) {
+    if (!isEligible(issue, labels)) continue;
+    if (!(await hasNoOpenBlocker(port, issue.ref))) continue;
+    entries.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
   }
   return entries;
 }
 
-async function isEligible(
-  port: TrackerPort,
-  ref: IssueRef,
-  labels: Labels,
-): Promise<boolean> {
-  // Already claimed: the work is in the factory's possession, not in the pool.
-  const issue = await port.readIssue(ref);
-  if (!issue.known) return false;
-  if (issue.value.labels.includes(labels.claimed)) return false;
+/** The label rules of the pool live HERE, over the neutral read — never in the
+ *  adapter. Already-claimed and blocked works are the factory's; an assigned
+ *  issue is claimed by decoration; an issue with an open PR is already in the
+ *  PR channel (ticket 12: only sem-PR issues enter the pool). */
+function isEligible(issue: OpenIssue, labels: Labels): boolean {
+  if (!issue.labels.includes(labels.ready)) return false;
+  if (issue.labels.includes(labels.claimed)) return false;
   // Blocked works listen to the issue channel, never to the pool (ticket 14).
-  if (issue.value.labels.includes(labels.blocked)) return false;
-  if (issue.value.assignees.length > 0) return false;
+  if (issue.labels.includes(labels.blocked)) return false;
+  if (issue.assignees.length > 0) return false;
+  if (issue.hasOpenPr) return false;
+  return true;
+}
 
-  // Native blockers must all be terminal — unknown is never "without impediment".
+/** Native blockers must all be terminal — unknown is never "without impediment". */
+async function hasNoOpenBlocker(port: TrackerPort, ref: IssueRef): Promise<boolean> {
   const blockers = await port.readBlockers(ref);
   if (!blockers.known) return false;
   return blockers.value.every((blocker) => blocker.state === "closed");

@@ -8,13 +8,14 @@ import {
   type ContractFaults,
   type ContractHarness,
   type ContractIssue,
+  type ReadCost,
 } from "./contract.js";
 import {
   CYCLE_ADAPTER_REST_CALLS,
   recheckLateCandidates,
   runSmokeCycle,
 } from "./smoke-cycle.js";
-import type { Candidate, IssueRef, TrackerPort } from "./port.js";
+import type { IssueRef, OpenIssue, TrackerPort } from "./port.js";
 
 /**
  * The ticket-16 proof the fake cannot give: the REAL GitHub adapter satisfying
@@ -44,6 +45,20 @@ class SimulatedRepoHarness implements ContractHarness {
       failRemovingLabel: (label: string) => {
         this.armedFailure = { method: "DELETE", pathIncludes: `/labels/${label}` };
       },
+    };
+  }
+
+  /** The REST-based read cost: the sim records every `gh api` call, so the
+   *  whole-repo listings and per-issue reads are counted from it. */
+  readCost(): ReadCost {
+    const getPaths = this.calls
+      .filter((call) => call.startsWith("GET "))
+      .map((call) => call.slice("GET ".length));
+    const count = (pattern: RegExp): number => getPaths.filter((path) => pattern.test(path)).length;
+    return {
+      issueListings: count(/\/issues$/),
+      pullListings: count(/\/pulls$/),
+      issueReads: count(/\/issues\/\d+$/),
     };
   }
 
@@ -209,13 +224,16 @@ describe("the smoke's full cycle (restructured op1) — the real adapter over th
   });
 
   test("a stale late listing is reported as environmental lag, never a failure", async () => {
-    const seeded: Candidate = {
+    const seeded: OpenIssue = {
       ref: { repo: harness.repo, number: 100 },
       title: "msf t16 smoke: full cycle",
       createdAt: new Date().toISOString(),
+      labels: [],
+      assignees: [],
+      hasOpenPr: false,
     };
     const staleListing = {
-      listCandidates: async () => [seeded],
+      listOpenIssues: async () => [seeded],
     } as unknown as TrackerPort;
     const proof = await recheckLateCandidates(staleListing, harness.repo, seeded.ref);
     assert.equal(proof.sawIssue, true, "the stale listing still carries the (closed) issue");
@@ -227,7 +245,7 @@ describe("the smoke's full cycle (restructured op1) — the real adapter over th
   test("the converged note names the live proof explicitly", async () => {
     const ref: IssueRef = { repo: harness.repo, number: 100 };
     const emptyListing = {
-      listCandidates: async () => [] as Candidate[],
+      listOpenIssues: async () => [] as OpenIssue[],
     } as unknown as TrackerPort;
     const proof = await recheckLateCandidates(emptyListing, harness.repo, ref);
     assert.equal(proof.sawIssue, false);

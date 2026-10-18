@@ -68,6 +68,11 @@ export interface ContractHarness {
    *  The live harness of the credential-gated smoke cannot force a server
    *  failure and omits it; the interruption checks are skipped there. */
   faults?(): ContractFaults;
+  /** Optional read-cost surface (issue 99): the whole-repo listings and
+   *  per-issue reads served since reset. The real/sim harness derives it from
+   *  the `gh api` calls it records; the in-memory fake counts the port reads
+   *  it serves. A harness that cannot count omits it; the cost check skips. */
+  readCost?(): ReadCost;
 }
 
 /** What a fault-injecting harness can arm (issue 98: the swaps must never
@@ -75,6 +80,21 @@ export interface ContractHarness {
 export interface ContractFaults {
   /** Make the NEXT removal of this label fail with a real error. */
   failRemovingLabel(label: string): void;
+}
+
+/** The read cost of a neutral open-issues read (issue 99), for the contract's
+ *  budget pin. The real/sim harness derives it from the REST calls it already
+ *  records; the in-memory fake counts the port reads it serves. A neutral read
+ *  is exactly one `issueListings` and at most one `pullListings` (the linkage),
+ *  and never a per-issue `issueReads`. */
+export interface ReadCost {
+  /** Whole-repo open-issues listings. */
+  issueListings: number;
+  /** Whole-repo open-PRs listings (the linkage read). The fake resolves the
+   *  linkage structurally, so it reports 0. */
+  pullListings: number;
+  /** Per-issue snapshot reads (`readIssue`) — a neutral read makes none. */
+  issueReads: number;
 }
 
 const ready = "ready-for-agent";
@@ -89,66 +109,100 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
   const labels: Labels = { ready, claimed: harness.claimedLabel, blocked };
   return [
     {
-      name: "1. listCandidates: open issues with the ready label, excluding closed ones",
+      name: "1. listOpenIssues: every open issue with its labels — closed out, PRs never listed",
       run: async () => {
-        const a = await harness.createIssue({ title: `ready one ${harness.name}`, labels: [ready] });
-        await harness.createIssue({ title: `wrong label ${harness.name}`, labels: [other] });
-        await harness.createIssue({ title: `closed ready ${harness.name}`, labels: [ready], closed: true });
+        const open = await harness.createIssue({ title: `open one ${harness.name}`, labels: [ready, other] });
+        const unlabeled = await harness.createIssue({ title: `open two ${harness.name}` });
+        await harness.createIssue({ title: `closed one ${harness.name}`, labels: [ready], closed: true });
+        // a linked PR is still an issue in the listing — the derivation decides;
+        // the PR itself is never an issue item
+        await harness.createPullRequest(open.ref);
 
-        const candidates = await adapter().listCandidates(harness.repo, ready);
-        const numbers = candidates.map((c) => c.ref.number);
-        assert.ok(numbers.includes(a.ref.number), "the ready open issue is a candidate");
-        assert.ok(!candidates.some((c) => c.title === `wrong label ${harness.name}`), "other labels are excluded");
-        assert.ok(!candidates.some((c) => c.title === `closed ready ${harness.name}`), "closed issues are excluded");
-        // PRs themselves never appear: the REST issue listing only lists issues (the
-        // v1 REST adapter filtered the pull_request key of the same endpoint).
-        // An issue WITH a linked PR is still a listing item — the factory
-        // excludes it later through the derived PR-open state (tickets 12/14).
+        const issues = await adapter().listOpenIssues(harness.repo);
+        const numbers = issues.map((issue) => issue.ref.number);
+        assert.ok(numbers.includes(open.ref.number), "the open labeled issue is listed");
+        assert.ok(
+          numbers.includes(unlabeled.ref.number),
+          "the neutral read filters NO label — every open issue is listed",
+        );
+        assert.ok(!issues.some((issue) => issue.title === `closed one ${harness.name}`), "closed issues are excluded");
+        assert.equal(issues.length, 2, "only the two open issues — the PR itself is never an issue item");
+        const first = issues.find((issue) => issue.ref.number === open.ref.number);
+        assert.ok(first);
+        assert.deepEqual([...first.labels].sort(), [other, ready].sort(), "ALL labels travel, not just the ready one");
       },
     },
     {
-      name: "1. listCandidates: candidates carry createdAt for age-based priority",
+      name: "1. listOpenIssues: ref, title and createdAt for age-based priority",
       run: async () => {
-        const seeded = await harness.createIssue({ title: `aged candidate ${harness.name}`, labels: [ready] });
-        const candidates = await adapter().listCandidates(harness.repo, ready);
-        const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
-        assert.ok(candidate, "seeded issue is a candidate");
+        const seeded = await harness.createIssue({ title: `aged issue ${harness.name}`, labels: [ready] });
+        const issues = await adapter().listOpenIssues(harness.repo);
+        const issue = issues.find((i) => i.ref.number === seeded.ref.number);
+        assert.ok(issue, "seeded issue is in the read");
+        assert.equal(issue.title, `aged issue ${harness.name}`);
+        assert.deepEqual(issue.ref, seeded.ref);
         if (seeded.createdAt !== undefined) {
-          assert.equal(candidate.createdAt, seeded.createdAt);
+          assert.equal(issue.createdAt, seeded.createdAt);
         } else {
-          assert.ok(!Number.isNaN(Date.parse(candidate.createdAt)), "createdAt is a date");
+          assert.ok(!Number.isNaN(Date.parse(issue.createdAt)), "createdAt is a date");
         }
       },
     },
     {
-      name: "1. listCandidates: a JUST-created issue is a candidate on the first call — no settle",
+      name: "1. listOpenIssues: a JUST-created issue appears on the first call — no settle",
       run: async () => {
         // The dialect proof (ticket 16 smoke fix): on real GitHub the old
         // label-filtered listing lagged minutes behind a fresh label (search
-        // index); the unfiltered open-issues listing is immediate. The
-        // candidates read that follows the create must therefore need no
-        // bounded wait at all — one call, the issue is right there.
+        // index); the unfiltered open-issues listing is immediate. The read
+        // that follows the create must therefore need no bounded wait at all
+        // — one call, the issue is right there.
         const seeded = await harness.createIssue({ title: `just labeled ${harness.name}`, labels: [ready] });
-        const candidates = await adapter().listCandidates(harness.repo, ready);
-        const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
-        assert.ok(candidate, "a just-created ready-labeled issue is returned by the FIRST candidates call (no settle needed)");
+        const issues = await adapter().listOpenIssues(harness.repo);
+        assert.ok(
+          issues.some((issue) => issue.ref.number === seeded.ref.number),
+          "a just-created issue is in the FIRST read (no settle needed)",
+        );
       },
     },
     {
-      name: "1. listCandidates: an issue linked by an OPEN PR is NOT a candidate (ticket 12: only sem-PR issues enter the pool)",
+      name: "1. listOpenIssues: the open-PR linkage is resolved per issue — hasOpenPr, not a filtered listing",
       run: async () => {
-        // Ticket 12's pool rule, now on the real adapter too: the issue
-        // listing itself cannot tell PR linkage, so the adapter excludes
-        // issues linked by an open PR's body ("Closes/Fixes/Resolves #N").
-        // The fake knows the linkage structurally; the real adapter reads it
-        // from the open-PRs listing.
+        // Ticket 12's pool rule moves into the derivation: the listing itself
+        // cannot tell PR linkage, so the adapter resolves it (the open-PRs
+        // bodies) and flags each issue; the derivation excludes it. The fake
+        // knows the linkage structurally; the real adapter reads it from the
+        // open-PRs listing.
         const withPr = await harness.createIssue({ title: `has a PR ${harness.name}`, labels: [ready] });
         const withoutPr = await harness.createIssue({ title: `no PR ${harness.name}`, labels: [ready] });
         await harness.createPullRequest(withPr.ref);
-        const candidates = await adapter().listCandidates(harness.repo, ready);
-        const numbers = candidates.map((c) => c.ref.number);
-        assert.ok(numbers.includes(withoutPr.ref.number), "the PR-less issue is a candidate");
-        assert.ok(!numbers.includes(withPr.ref.number), "the issue linked by an open PR is excluded");
+        const issues = await adapter().listOpenIssues(harness.repo);
+        const linked = issues.find((i) => i.ref.number === withPr.ref.number);
+        const unlinked = issues.find((i) => i.ref.number === withoutPr.ref.number);
+        assert.ok(linked && unlinked, "both issues are listed");
+        assert.equal(linked.hasOpenPr, true, "the issue linked by an OPEN PR is still listed, flagged");
+        assert.equal(unlinked.hasOpenPr, false, "the PR-less issue is not flagged");
+      },
+    },
+    {
+      name: "1. listOpenIssues: ONE whole-repo read — one issues listing + at most one open-PRs listing, no per-issue reread",
+      run: async () => {
+        const readCost = harness.readCost?.bind(harness);
+        if (!readCost) return; // a harness that cannot count cannot pin the cost
+        const before = readCost();
+        await harness.createIssue({ title: `cost one ${harness.name}`, labels: [ready] });
+        await harness.createIssue({ title: `cost two ${harness.name}`, labels: [other] });
+
+        await adapter().listOpenIssues(harness.repo);
+
+        const after = readCost();
+        const delta = {
+          issueListings: after.issueListings - before.issueListings,
+          pullListings: after.pullListings - before.pullListings,
+          issueReads: after.issueReads - before.issueReads,
+        };
+        assert.equal(delta.issueListings, 1, "one whole-repo issues listing serves the read");
+        assert.ok(delta.pullListings <= 1, "at most one open-PRs listing (the linkage), never one per issue");
+        assert.equal(delta.issueReads, 0, "no per-issue snapshot read — labels and linkage come from the listings");
       },
     },
     {

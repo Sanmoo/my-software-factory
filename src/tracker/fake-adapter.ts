@@ -2,11 +2,11 @@ import type { Labels } from "../config.js";
 import {
   AGENT_MARKER,
   type Blocker,
-  type Candidate,
   type IssueComment,
   type IssueRef,
   type IssueSnapshot,
   type Known,
+  type OpenIssue,
   type OpenPrInput,
   type PrFeedback,
   type PullRequest,
@@ -73,6 +73,9 @@ export class FakeTrackerAdapter implements TrackerPort {
   readonly pushedBranches: PushBranchInput[] = [];
   /** The reservation sequence: every claim's "<repo>#<n>", in order. */
   readonly claimedOrder: string[] = [];
+  /** The read cost of the neutral read (issue 99): whole-repo listings and
+   *  per-issue snapshots, for the contract's budget pin. */
+  readonly readCounts = { issueListings: 0, pullListings: 0, issueReads: 0 };
 
   /** Test-only fault injection (the interruption rows of the swaps, issue 98):
    *  an armed key makes the NEXT matching step of a transition fail with a real
@@ -193,19 +196,31 @@ export class FakeTrackerAdapter implements TrackerPort {
 
   // ---- the port (9 operations + rank) ----
 
-  async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
-    const candidates: Candidate[] = [];
+  async listOpenIssues(repo: string): Promise<OpenIssue[]> {
+    this.readCounts.issueListings += 1;
+    const open: OpenIssue[] = [];
     for (const issue of this.issues.values()) {
       if (issue.ref.repo !== repo) continue;
       if (issue.state !== "open") continue;
-      if (!issue.labels.has(readyLabel)) continue;
-      if (issue.pr !== null) continue; // candidates are never PRs
-      candidates.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
+      open.push({
+        ref: issue.ref,
+        title: issue.title,
+        createdAt: issue.createdAt,
+        labels: [...issue.labels],
+        assignees: [...issue.assignees],
+        hasOpenPr: issue.pr !== null && issue.pr.state === "open",
+      });
     }
-    return candidates;
+    return open;
+  }
+
+  /** The read cost since construction — the neutral read's budget pin. */
+  readCost(): { issueListings: number; pullListings: number; issueReads: number } {
+    return { ...this.readCounts };
   }
 
   async readIssue(ref: IssueRef): Promise<Known<IssueSnapshot>> {
+    this.readCounts.issueReads += 1;
     const issue = this.issues.get(this.key(ref));
     if (!issue) return notKnown;
     return known({

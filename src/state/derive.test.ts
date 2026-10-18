@@ -113,6 +113,42 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
     assert.deepEqual(pool, []);
   });
+
+  test("the neutral read is filtered by the derivation: ready in, non-ready/claimed/PR-linked out", async () => {
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 2, labels: ["other"] });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 3, labels: [DEFAULT_LABELS.ready, DEFAULT_LABELS.blocked] });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 4, labels: [DEFAULT_LABELS.ready] });
+    adapter.seedPullRequest({ repo: "Sanmoo/a", number: 4, state: "open" });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 5, labels: [DEFAULT_LABELS.ready] });
+    adapter.seedPullRequest({ repo: "Sanmoo/a", number: 5, state: "closed" });
+
+    const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
+
+    assert.deepEqual(
+      pool.map((entry) => entry.ref.number),
+      [1, 5],
+      "only the plain ready issue and the closed-PR issue are eligible",
+    );
+  });
+
+  test("the pool derivation reads each repo's open issues once and never re-reads a candidate's issue", async () => {
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 2, labels: ["other"] });
+    seedIssue(adapter, { repo: "Sanmoo/b", number: 3, labels: [DEFAULT_LABELS.ready] });
+
+    const before = adapter.readCost();
+    const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
+    const after = adapter.readCost();
+
+    assert.equal(pool.length, 2);
+    assert.equal(
+      after.issueListings - before.issueListings,
+      repos.length,
+      "one neutral open-issues read per target repo",
+    );
+    assert.equal(after.issueReads - before.issueReads, 0, "eligibility never re-reads a candidate's issue");
+  });
 });
 
 describe("derive — the reserved states, the tick's full derivation (ticket 14)", () => {

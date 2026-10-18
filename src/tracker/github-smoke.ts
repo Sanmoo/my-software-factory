@@ -38,8 +38,8 @@ import { DEFAULT_LABELS } from "../config.js";
  * LATE (the label-filtered one lagged minutes; even the plain open-issues
  * listing lagged >30s behind a freshly CREATED issue), while DIRECT GETs
  * are immediate. Eligibility is proven via direct reads right after seeding
- * with no settle wait, and candidates() is re-checked ONCE after the
- * cycle's last op — NON-BLOCKING: a stale listing is reported as
+ * with no settle wait, and the neutral open-issues read is re-checked ONCE
+ * after the cycle's last op — NON-BLOCKING: a stale listing is reported as
  * environmental lag, never a failure (the factory re-derives the pool every
  * tick and self-heals). The cycle itself lives in `smoke-cycle.ts` so the
  * offline suites run the same flow over the sim.
@@ -66,15 +66,15 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        openPr ....................................... 1
  *        PR comment + readPrFeedback (5 reads) ........ 6
  *        comment + human comment + readComments ....... 3
- *        derive (candidates listing + the open-PRs linkage
- *        listing — ticket 12/18: the seeded issue's OWN open PR
- *        (op9b, "Closes #N") links it, so it is excluded BEFORE any
- *        per-candidate readIssue; the old readIssue — isEligible
- *        early-returned on the blocked label — became the linkage
+ *        derive (open-issues listing + the open-PRs linkage
+ *        listing — ticket 12/99: the seeded issue's OWN open PR
+ *        (op9b, "Closes #N") flags it, so the derivation excludes it in
+ *        memory (no per-candidate readIssue); the old isEligible
+ *        readIssue early-returned on the blocked label — became the linkage
  *        listing, net 0) ............................. 2
  *        markDone + re-read ........................... 2
  *        rank ......................................... 0
- *        the LATE candidates() re-check ............... 1
+ *        the LATE open-issues re-check ................ 1
  *    - reversion (cleanup) .............................. 14
  *        PR read+close 2, branch delete 1, 3 comment deletes,
  *        issue A: blockers read+unlink+patch 3, issue B patch 1,
