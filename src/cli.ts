@@ -10,6 +10,7 @@ import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { utcStamp } from "./log.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
+import { acquireRunLock } from "./run-lock.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { TrackerPort } from "./tracker/port.js";
@@ -126,14 +127,26 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   // Strict argument parsing has already completed; config is next, before
   // workspace writes or the keyring boot check.
   const config = loadConfigFrom(process.cwd(), overridePath);
-  const workspace = ensureWorkspace(config.workspace);
-
   if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
     console.error(
       utcStamp(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`),
     );
     process.exit(1);
   }
+
+  // Issue #90: one `run` per REAL config path, established before ANY
+  // operational activity (the workspace below included). A second run for the
+  // same configuration is refused here and never touches the factory.
+  const lock = await acquireRunLock(config.configPath);
+  try {
+    await executeRun(config, once, runtimeName);
+  } finally {
+    await lock.close();
+  }
+}
+
+async function executeRun(config: Config, once: boolean, runtimeName: string): Promise<void> {
+  const workspace = ensureWorkspace(config.workspace);
   const deps: LoopDeps = await wireRunDeps(config, workspace, {
     ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),
   });

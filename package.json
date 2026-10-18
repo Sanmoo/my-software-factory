@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.12.0",
+    "@deepseek-ai/node-addon-system": "0.1.2",
     "yaml": "^2.6.0"
   },
   "devDependencies": {
