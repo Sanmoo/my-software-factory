@@ -23,7 +23,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (arg === "--config" || arg === "--runtime") {
       if (arg === "--runtime" && command !== "run") throw new Error(`unknown flag "${arg}"\n${usage}`);
       const value = args[++i];
-      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a ${arg === "--config" ? "path" : "value"}\n${usage}`);
+      if (!value || value.startsWith("--")) throw new Error(`unknown flag "${arg}"\n${usage}`);
       if (arg === "--config") configPath = value;
       else runtime = value;
       continue;
