@@ -411,7 +411,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(!existsSync(request.workDir), "no footprint: no dir, no logs, no session");
   });
 
-  test("the default preflight checks docker, the image and a non-empty token", async () => {
+  test("the default preflight checks docker, the image, the token and the git credential helper", async () => {
     const checks: string[][] = [];
     const recorded = defaultPreflight({
       token: "present",
@@ -425,6 +425,19 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.deepEqual(checks, [
       ["docker", "info", "--format", "{{.ServerVersion}}"],
       ["docker", "image", "inspect", WORKER_IMAGE],
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "git",
+        WORKER_IMAGE,
+        "config",
+        "--get",
+        "credential.https://github.com.helper",
+      ],
     ]);
 
     const failing = defaultPreflight({
@@ -433,6 +446,20 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       run: async () => ({ stdout: "29.7.2", stderr: "" }),
     });
     await assert.rejects(failing, /token/);
+  });
+
+  test("the default preflight refuses an image without the git credential helper", async () => {
+    // The image exists and the token is present: only the push capability is
+    // missing. It must fail at boot (an actionable rebuild), never later as a
+    // work-level blocked report the worker reads as its own failure.
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      run: async (_command, args) =>
+        args[0] === "run" ? { stdout: "", stderr: "" } : { stdout: "ok", stderr: "" },
+    });
+    await assert.rejects(failing, /no git credential helper for github\.com/);
+    await assert.rejects(failing, /npm run build:image/);
   });
 });
 

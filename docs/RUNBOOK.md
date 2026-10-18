@@ -16,7 +16,10 @@ operator PAT inside the unrestricted container. Factory speech is the
 npm run build:image
 
 # 2. the bot credential in the gh keyring (the boot check reads it;
-#    the SAME token is injected as GH_TOKEN inside the worker container)
+#    the SAME token is injected as GH_TOKEN inside the worker container;
+#    the image ships the `gh auth git-credential` helper that `git push`
+#    uses to read that token — the boot refuses an image without it, so a
+#    stale image fails with `npm run build:image` instead of a blocked round)
 gh auth token --user Sanmoo   # must print a token; v0.1 uses the operator account
 
 # 3. the config — a working directory with msf.yaml, e.g.:

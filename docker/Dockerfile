@@ -50,6 +50,19 @@ RUN set -eux; \
   printf 'export PATH="/home/agent/.local/share/mise/shims:$PATH"\n' >> /home/agent/.profile; \
   chown -R "${AGENT_UID}:${AGENT_GID}" /home/agent
 
+# The worker publishes the work branch with `git push` over HTTPS (the
+# prompt's step 2); `gh auth git-credential` is the bridge from git to the
+# token. GH_TOKEN — injected into the container at launch, never baked here —
+# is what that helper reads, but git only calls it when a credential.helper
+# is configured: without this section `git push` dies with "could not read
+# Username for 'https://github.com'" and the round self-reports blocked for a
+# factory provisioning gap. The section is configuration, not a secret — the
+# empty helper first resets any ambient helper list, the same shape
+# `gh auth setup-git` writes. The file stays the agent's own: Sandcastle's
+# `git config --global user.name/email` setup edits it in place at launch.
+RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n[credential "https://gist.github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' > /home/agent/.gitconfig \
+ && chown "${AGENT_UID}:${AGENT_GID}" /home/agent/.gitconfig
+
 RUN npm install --global --no-fund --no-audit "@earendil-works/pi-coding-agent@${PI_VERSION}" \
  && pi --version
 

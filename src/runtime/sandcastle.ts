@@ -380,8 +380,9 @@ export interface PreflightDeps {
 
 /**
  * The launch preconditions (the v1's refusal pattern): Docker is alive, the
- * worker image exists, and the token is present. A failure is a factory-
- * level failure, not a work outcome — the launch throws before any artifact.
+ * worker image exists, the token is present, and the image carries the git
+ * credential helper the worker's push needs. A failure is a factory-level
+ * failure, not a work outcome — the launch throws before any artifact.
  */
 export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
   return async () => {
@@ -402,6 +403,36 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     if (deps.token === "") {
       throw new Error(
         "no GitHub token for the worker: pass the worker account's token (gh keyring) — GH_TOKEN is how the container authenticates.",
+      );
+    }
+
+    // The worker publishes with `git push` over HTTPS. GH_TOKEN authenticates
+    // gh, but git only calls the keyring bridge when the image configures a
+    // credential.helper; an image without it fails at the push with "could
+    // not read Username", which the worker can only read as a work-level
+    // blocked report. Refuse at boot instead, naming the rebuild. The check
+    // reads the image's config from a throwaway container — no network, no
+    // artifact, no workspace.
+    let helper = "";
+    try {
+      ({ stdout: helper } = await run("docker", [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "git",
+        deps.image,
+        "config",
+        "--get",
+        "credential.https://github.com.helper",
+      ]));
+    } catch {
+      helper = "";
+    }
+    if (helper.trim() === "") {
+      throw new Error(
+        `worker image ${deps.image} has no git credential helper for github.com — the worker cannot push. Rebuild it with: npm run build:image`,
       );
     }
   };
