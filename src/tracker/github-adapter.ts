@@ -193,7 +193,13 @@ interface RestTimelineEvent {
 
 const isNotFound = (stderr: string): boolean => stderr.includes("Not Found") || stderr.includes("HTTP 404");
 const isAbsentLabel = (stderr: string): boolean => /'[^']+' not found/.test(stderr) || isNotFound(stderr);
-const isLabelAlreadyExists = (stderr: string): boolean => /already.?exists/i.test(stderr);
+const isLabelAlreadyExists = (stderr: string): boolean =>
+  /already.?exists/i.test(stderr) ||
+  // gh prints the 422 body to stdout, not stderr: "Validation Failed (HTTP 422)"
+  // with {"errors":[{"code":"already_exists", ...}]} — the label-exists case is
+  // the only realistic 422 of a label create; a true failure surfaces later on
+  // the label's first real use.
+  stderr.includes("HTTP 422");
 
 export interface GitHubTrackerAdapterOptions extends GitHubAdapterOptions {
   token: string;
@@ -305,8 +311,12 @@ export class GitHubTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  /** 5. Release: remove only the claim mark (label + account assignee). */
-  async releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome> {
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters
+   *  the pool; the ready label is given) or remove only the claim mark when no ready
+   *  label is given. The swap mirrors the claim's composite write in reverse: the
+   *  ready label comes back last, so a half-written release never shows the work as
+   *  ready while the claim mark is still on. */
+  async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     // absent label (on the issue or in the repo) is a tolerated no-op
     await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${this.claimedLabel}`, {
@@ -325,6 +335,47 @@ export class GitHubTrackerAdapter implements TrackerPort {
       throw new PartialWriteError(performed, (error as Error).message);
     }
     performed.push(`unassignee ${account}`);
+    // The ruler's 1st fall releases the work BACK to the pool: the ready label
+    // returns — same composite shape as the claim's swap, mirrored in reverse.
+    if (readyLabel !== undefined) {
+      try {
+        await this.ensureLabelExists(ref.repo, readyLabel);
+        await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+          method: "POST",
+          input: { labels: [readyLabel] },
+        });
+      } catch (error) {
+        throw new PartialWriteError(performed, (error as Error).message);
+      }
+      performed.push(`label+${readyLabel} on ${ref.repo}#${ref.number}`);
+    }
+    return { performed };
+  }
+
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of
+   *  ticket 13) — the claim is held until the terminal state, so the assignee
+   *  stays. The blocked label replaces the claimed one, same ordered composite
+   *  write as the claim's swap. */
+  async blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome> {
+    const performed: string[] = [];
+    // absent label (on the issue or in the repo) is a tolerated no-op
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${claimedLabel}`, {
+      method: "DELETE",
+      tolerate: isAbsentLabel,
+    }).then(
+      () => performed.push(`label-${claimedLabel} on ${ref.repo}#${ref.number}`),
+      () => {},
+    );
+    try {
+      await this.ensureLabelExists(ref.repo, blockedLabel);
+      await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
+        method: "POST",
+        input: { labels: [blockedLabel] },
+      });
+    } catch (error) {
+      throw new PartialWriteError(performed, (error as Error).message);
+    }
+    performed.push(`label+${blockedLabel} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 

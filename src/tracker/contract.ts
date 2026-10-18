@@ -60,6 +60,7 @@ export interface ContractHarness {
 
 const ready = "ready-for-agent";
 const other = "other-label";
+const blocked = "agent-blocked";
 
 /** The checks, in port order. Each check is self-contained: it seeds what it needs. */
 export function contractChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
@@ -189,6 +190,43 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       run: async () => {
         const a = await harness.createIssue({ title: `never claimed ${harness.name}` });
         await assert.doesNotReject(adapter().releaseClaim(a.ref, harness.workerAccount));
+      },
+    },
+    {
+      name: "5. releaseClaim with a ready label swaps claimed→ready (the work re-enters the pool)",
+      run: async () => {
+        const a = await harness.createIssue({ title: `released to pool ${harness.name}`, labels: [other] });
+        await adapter().claim(a.ref, harness.workerAccount);
+        await adapter().releaseClaim(a.ref, harness.workerAccount, ready);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(ready), "the ready label is back");
+        assert.ok(!issue.value.labels.includes(harness.claimedLabel), "the claim is gone");
+        assert.deepEqual(issue.value.assignees, [], "the assignee is gone");
+        assert.ok(issue.value.labels.includes(other), "unrelated labels are untouched");
+      },
+    },
+    {
+      name: "5b. blockClaim: swaps claimed→blocked, the claim held until the terminal state",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to block ${harness.name}` });
+        await adapter().claim(a.ref, harness.workerAccount);
+        await adapter().blockClaim(a.ref, harness.claimedLabel, blocked);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(!issue.value.labels.includes(harness.claimedLabel), "claimed swapped away");
+        assert.ok(issue.value.labels.includes(blocked), "the blocked label on");
+        assert.deepEqual(issue.value.assignees, [harness.workerAccount], "the claim stays held");
+      },
+    },
+    {
+      name: "5b. blockClaim: an absent claimed label is tolerated, not an error",
+      run: async () => {
+        const a = await harness.createIssue({ title: `never claimed, blocked ${harness.name}` });
+        await assert.doesNotReject(adapter().blockClaim(a.ref, harness.claimedLabel, blocked));
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.ok(issue.value.labels.includes(blocked), "the blocked label lands anyway");
       },
     },
     {

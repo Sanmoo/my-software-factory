@@ -274,12 +274,23 @@ class RealGithubHarness implements ContractHarness {
   }
 
   private async ensureRepoLabel(label: string): Promise<void> {
+    // gh prints the 422 body to stdout, not stderr: an existing label answers
+    // "Validation Failed (HTTP 422)" — tolerated as already-exists. Only a
+    // label WE actually create is journaled: a pre-existing label must never
+    // be deleted by the cleanup.
+    let alreadyExisted = false;
     await this.rest(`repos/${this.repo}/labels`, {
       method: "POST",
       input: { name: label },
-      tolerate: (stderr) => /already.?exists/i.test(stderr),
+      tolerate: (stderr) => {
+        if (/already.?exists|HTTP 422/i.test(stderr)) {
+          alreadyExisted = true;
+          return true;
+        }
+        return false;
+      },
     });
-    this.journal.repoLabelsCreated.push(label);
+    if (!alreadyExisted) this.journal.repoLabelsCreated.push(label);
   }
 
   async defaultBranch(): Promise<string> {

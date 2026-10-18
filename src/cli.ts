@@ -4,6 +4,7 @@ import { loadConfigFrom } from "./config.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
+import { FakeTrackerAdapter } from "./tracker/fake-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
 import type { WorkerRuntime } from "./runtime/port.js";
@@ -103,8 +104,10 @@ async function statusCommand(argv: string[]): Promise<void> {
     archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
   };
 
-  // Derivation on demand through the same port the run uses (ticket 16 wires
-  // the real GitHub adapter here too) — the factory being stopped changes nothing.
+  // Derivation on demand through the port — the factory being stopped changes
+  // nothing. The fake keeps `msf status` offline (read-only, no keyring read);
+  // ticket 16 wires the real GitHub adapter into the run loop only — the boot
+  // check must not gate a read-only status command.
   const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
   const view = await deriveStatus(tracker, config, layout);
   console.log(renderStatus(view));
