@@ -1,0 +1,318 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
+import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
+import { DEFAULT_LABELS } from "../config.js";
+import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
+import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
+import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+
+const execFile = promisify(execFileCallback);
+
+/**
+ * The real runtime (ticket 17): worker sessions ARE Sandcastle — the `run()`
+ * API of `@ai-hero/sandcastle` with the Pi headless template in print mode —
+ * behind the same WorkerRuntime port the fake mirrors. The proven mechanics
+ * of the v1 (research 01-sandcastle-sessao-headless):
+ *
+ *   - the container NEVER mounts the operator's real profile: the host
+ *     resolves it once into a read-only snapshot (profile-snapshot.ts) and a
+ *     sandbox-ready hook copies it into the container's writable agent dir —
+ *     OAuth renewal and session writes happen on the copy;
+ *   - the work's session dir (<workDir>/sessao/) is bind-mounted read-write
+ *     at the agent's session path: the session is persisted on the HOST;
+ *   - GH_TOKEN rides the container env: `gh` inside authenticates as the
+ *     factory's worker account (scan goes through the keyring — ticket 09);
+ *   - no `network` option: Docker's default bridge, open egress;
+ *   - the work branch strategy is the named branch the git host prepared,
+ *     born from the base it reported — Sandcastle reuses the existing
+ *     worktree when clean and preserves it when dirty;
+ *   - one full agent run per launch (`maxIterations: 1`); the session ends
+ *     its turn with the completion signal after writing its outcome record.
+ *
+ * The artifact contract (ticket 13) is written around the session: sessao/
+ * and log-<n>.jsonl at launch time — BEFORE any outcome, so an abrupt death
+ * leaves the footprint the registry reads — and desfecho.json whenever the
+ * session manages (the worker writes it through the /msf-work mount; its
+ * absence is the class "abrupt-death" and nothing writes it for it).
+ */
+
+/** The factory's worker image; built from this repo's docker/Dockerfile. */
+export const WORKER_IMAGE = "msf-v2-worker:local";
+
+/** Inside the container: the agent dir is the writable COPY of the snapshot. */
+export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+export const AGENT_DIR = "/home/agent/.pi/agent";
+export const SESSIONS_CONTAINER_DIR = `${AGENT_DIR}/sessions`;
+
+/** Where the host profiles live by default. */
+export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
+
+const PROFILE_SETUP_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
+
+export interface SandcastleRuntimeOptions {
+  /** Pi model for the headless session: "provider/model-id". */
+  model: string;
+  /** The worker account's GitHub token — injected as GH_TOKEN in the container. */
+  token: string;
+  /** The worker image; defaults to WORKER_IMAGE (build with `npm run build:image`). */
+  image?: string;
+  /** The operator's Pi agent dir to snapshot; defaults to ~/.pi/agent. */
+  profileDir?: string;
+  /** Roots the profile may reach through links; see profile-snapshot.ts. */
+  allowedRoots?: readonly string[];
+  /** Stale (dangling) profile links are skipped and logged instead of
+   * blocking the launch. Off by default — fail closed. */
+  skipDanglingProfileLinks?: boolean;
+  /** Extra top-level profile entries not copied (on top of sessions and
+   * npm) — operator state with no meaning in the container. */
+  skipProfileEntries?: readonly string[];
+  /** The blocked label the worker self-reports; defaults to the config default. */
+  blockedLabel?: string;
+  /** Full agent runs per launch; defaults to 1 (one session, one full run). */
+  maxIterations?: number;
+  /** Sandcastle's idle timeout in seconds (the only time budget of a worker). */
+  idleTimeoutSeconds?: number;
+
+  // ---- process-boundary seams (tests inject; production leaves unset) ----
+  /** The Pi agent factory itself. */
+  piProvider?: (model: string, options?: PiOptions) => AgentProvider;
+  /** The Sandcastle `run()` itself. */
+  runSandcastle?: (options: RunOptions) => Promise<RunResult>;
+  /** The docker provider factory. */
+  dockerProvider?: (options: DockerOptions) => SandboxProvider;
+  /** Launch preconditions; default defaultPreflight. */
+  preflight?: () => Promise<void>;
+}
+
+export class SandcastleRuntime implements WorkerRuntime {
+  private readonly model: string;
+  private readonly token: string;
+  private readonly image: string;
+  private readonly profileDir: string;
+  private readonly allowedRoots: readonly string[];
+  private readonly skipDanglingProfileLinks: boolean;
+  private readonly skipProfileEntries: readonly string[];
+  private readonly blockedLabel: string;
+  private readonly maxIterations: number;
+  private readonly idleTimeoutSeconds: number;
+  private readonly runSandcastle: (options: RunOptions) => Promise<RunResult>;
+  private readonly dockerProvider: (options: DockerOptions) => SandboxProvider;
+  private readonly preflight: () => Promise<void>;
+  private readonly piProvider: (model: string, options?: PiOptions) => AgentProvider;
+
+  constructor(options: SandcastleRuntimeOptions) {
+    this.model = options.model;
+    this.token = options.token;
+    this.image = options.image ?? WORKER_IMAGE;
+    this.profileDir = options.profileDir ?? DEFAULT_PROFILE_DIR;
+    this.allowedRoots = options.allowedRoots ?? [];
+    this.skipDanglingProfileLinks = options.skipDanglingProfileLinks ?? false;
+    this.skipProfileEntries = options.skipProfileEntries ?? [];
+    this.blockedLabel = options.blockedLabel ?? DEFAULT_LABELS.blocked;
+    this.maxIterations = options.maxIterations ?? 1;
+    this.idleTimeoutSeconds = options.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
+    this.runSandcastle = options.runSandcastle ?? (async (runOptions) => sandcastleRun(runOptions));
+    this.dockerProvider = options.dockerProvider ?? ((dockerOptions) => docker(dockerOptions));
+    this.preflight = options.preflight ?? (async () => defaultPreflight({ token: this.token, image: this.image })());
+    this.piProvider = options.piProvider ?? ((model, piOptions) => pi(model, piOptions));
+  }
+
+  async launch(request: WorkRequest): Promise<SessionResult> {
+    // Preconditions BEFORE any footprint: infra and config failures are not
+    // work falls — the factory fails fast with the reason (the v1's refusal).
+    await this.preflight();
+
+    // The read-only profile snapshot: resolved once, mounted, copied by the
+    // hook, and gone after the launch (never the operator's own profile).
+    const snapshotDir = mkdtempSync(join(tmpdir(), "msf-perfil-"));
+    try {
+      const { warnings } = await snapshotProfile(this.profileDir, snapshotDir, {
+        allowedRoots: this.allowedRoots,
+        skipDanglingLinks: this.skipDanglingProfileLinks,
+        skip: [...DEFAULT_SNAPSHOT_SKIP, ...this.skipProfileEntries],
+      });
+
+      // The footprint comes first (ticket 13): sessao/ and the attempt's log
+      // exist before any outcome can exist. An abrupt death leaves exactly
+      // this — the start line without an end, the record's absence.
+      const sessionsDir = join(request.workDir, "sessao");
+      mkdirSync(sessionsDir, { recursive: true });
+      this.event(request, "session-start", {
+        branch: request.branch,
+        baseBranch: request.baseBranch,
+        model: this.model,
+        image: this.image,
+        ...(warnings.length > 0 ? { profileWarnings: warnings } : {}),
+      });
+
+      let outcome: SessionResult["outcome"];
+      try {
+        await this.runSandcastle(this.runOptionsFor(request, snapshotDir, sessionsDir));
+        outcome = await this.observedOutcome(request);
+      } catch (error) {
+        this.event(request, "session-failed", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        outcome = "abrupt-death";
+      }
+      this.event(request, "session-end", { outcome });
+      return { request, outcome };
+    } finally {
+      rmSync(snapshotDir, { recursive: true, force: true });
+    }
+  }
+
+  /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
+  private runOptionsFor(request: WorkRequest, snapshotDir: string, sessionsDir: string): RunOptions {
+    const agent = this.piProvider(this.model, {
+      // No implicit capture: the sessions bind does the persistence, the
+      // session file already lives on the host (the resume path of later
+      // tickets reads it from there).
+      captureSessions: false,
+      env: { [AGENT_DIR_ENV]: AGENT_DIR },
+      sessionStorage: { hostSessionsDir: sessionsDir },
+    });
+
+    // The proven closed flags (v1 agentFor): automatic tool approval, no
+    // context files / prompt templates / MCP, a closed tool list.
+    const agentWithFlags = {
+      ...agent,
+      buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
+        const command = agent.buildPrintCommand(options);
+        return {
+          ...command,
+          command:
+            command.command +
+            " --approve --no-context-files --no-prompt-templates --no-mcp" +
+            " --tools read,bash,edit,write,subagent,subagents_enable" +
+            " --exclude-tools 'mcp__*,mcp'",
+        };
+      },
+    };
+
+    return {
+      agent: agentWithFlags,
+      sandbox: this.dockerProvider({
+        imageName: this.image,
+        env: { GH_TOKEN: this.token },
+        // No `network` — Docker's default bridge, open egress.
+        mounts: [
+          { hostPath: snapshotDir, sandboxPath: PROFILE_MOUNT, readonly: true },
+          { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
+          { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
+        ],
+      }),
+      cwd: request.repoDir,
+      // The branch the git host prepared: reuse when clean, preserve when
+      // dirty (Sandcastle's own worktree behavior) — never recreated.
+      branchStrategy: { type: "branch", branch: request.branch, baseBranch: request.baseBranch },
+      prompt: buildWorkerPrompt(request, { blockedLabel: this.blockedLabel }),
+      maxIterations: this.maxIterations,
+      completionSignal: COMPLETION_SIGNAL,
+      idleTimeoutSeconds: this.idleTimeoutSeconds,
+      name: `work-${request.ref.number}-attempt-${request.attempt}`,
+      hooks: {
+        sandbox: {
+          onSandboxReady: [
+            {
+              // The writable agent dir is built from the read-only snapshot
+              // BEFORE the prompt (the v1's prepare-profile, inlined): the
+              // agent dir must be writable because OAuth renewal rewrites
+              // auth.json and sessions are written by default.
+              command:
+                `mkdir -p "$HOME/.pi/agent" && ` +
+                `cp -R ${PROFILE_MOUNT}/. "$HOME/.pi/agent/" && ` +
+                `[ -f "$HOME/.pi/agent/auth.json" ] && chmod 600 "$HOME/.pi/agent/auth.json" || true`,
+              timeoutMs: PROFILE_SETUP_TIMEOUT_MS,
+            },
+          ],
+        },
+      },
+      logging: {
+        type: "file",
+        // The attempt's readable log rides the session dir (inspection).
+        path: join(request.workDir, "sessao", `sandcastle-${request.attempt}.log`),
+        onAgentStreamEvent: (event: AgentStreamEvent) => {
+          this.agentEvent(request, event);
+        },
+      },
+    };
+  }
+
+  /** The outcome the runtime observed: the record's class, or the absence. */
+  private async observedOutcome(request: WorkRequest): Promise<SessionResult["outcome"]> {
+    const record: OutcomeRecord | null = await readOutcomeRecord(request.workDir);
+    return record?.class ?? "abrupt-death";
+  }
+
+  private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
+    this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+      event,
+      attempt: request.attempt,
+      ...extra,
+    });
+  }
+
+  private agentEvent(request: WorkRequest, event: AgentStreamEvent): void {
+    const payload: Record<string, unknown> =
+      event.type === "text"
+        ? { event: "agent-text", message: event.message }
+        : event.type === "toolCall"
+          ? { event: "agent-tool", tool: event.name, args: event.formattedArgs }
+          : { event: "agent-raw", line: event.line };
+    this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+      attempt: request.attempt,
+      iteration: event.iteration,
+      ...payload,
+    });
+  }
+
+  private appendLine(path: string, value: Record<string, unknown>): void {
+    appendFileSync(path, `${JSON.stringify(value)}\n`, "utf8");
+  }
+}
+
+// ---- the launch preconditions ----
+
+export interface PreflightDeps {
+  token: string;
+  image: string;
+  /** The command runner (docker); injectable for tests. */
+  run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
+}
+
+/**
+ * The launch preconditions (the v1's refusal pattern): Docker is alive, the
+ * worker image exists, and the token is present. A failure is a factory-
+ * level failure, not a work outcome — the launch throws before any artifact.
+ */
+export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
+  return async () => {
+    const run = deps.run ?? (async (command, args) => execFile(command, args, { encoding: "utf8" }));
+
+    try {
+      await run("docker", ["info", "--format", "{{.ServerVersion}}"]);
+    } catch {
+      throw new Error("Docker is unavailable (docker info failed) — refusing to launch a worker.");
+    }
+    try {
+      await run("docker", ["image", "inspect", deps.image]);
+    } catch {
+      throw new Error(
+        `worker image ${deps.image} is missing. Build it with: npm run build:image`,
+      );
+    }
+    if (deps.token === "") {
+      throw new Error(
+        "no GitHub token for the worker: pass the worker account's token (gh keyring) — GH_TOKEN is how the container authenticates.",
+      );
+    }
+  };
+}

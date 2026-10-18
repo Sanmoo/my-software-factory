@@ -103,10 +103,38 @@ describe("profile snapshot — a portrait of real files", () => {
     await assert.rejects(snapshotProfile(profile, destination), ProfileSnapshotError);
   });
 
+  test("stale links may be explicitly skipped — named in the warnings, never silent", async () => {
+    symlinkSync(join(profile, "does-not-exist"), join(profile, "stale-link.ts"));
+    writeFileSync(join(profile, "auth.json"), "{}", "utf8");
+
+    const { warnings } = await snapshotProfile(profile, destination, { skipDanglingLinks: true });
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0] ?? "", /stale-link\.ts/);
+    assert.ok(!existsSync(join(destination, "stale-link.ts")));
+    assert.ok(existsSync(join(destination, "auth.json")));
+  });
+
   test("a symlink cycle fails instead of hanging or exploding", async () => {
     symlinkSync(".", join(profile, "self"));
 
     await assert.rejects(snapshotProfile(profile, destination), ProfileSnapshotError);
+  });
+
+  test("non-file entries (sockets, pipes) are skipped and named — runtime state, not context", async () => {
+    writeFileSync(join(profile, "auth.json"), "{}", "utf8");
+
+    // A real socket is awkward to fixture; a fifo behaves like one to stat.
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    await promisify(execFile)("mkfifo", [join(profile, "pipe")]);
+
+    const { warnings } = await snapshotProfile(profile, destination);
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0] ?? "", /pipe/);
+    assert.ok(!existsSync(join(destination, "pipe")));
+    assert.ok(existsSync(join(destination, "auth.json")));
   });
 
   test("the destination is created when missing", async () => {

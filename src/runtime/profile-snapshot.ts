@@ -42,13 +42,17 @@ export interface SnapshotOptions {
   allowedRoots?: readonly string[];
   /** Top-level entries not copied. Defaults to sessions and npm. */
   skip?: readonly string[];
+  /** Stale links (dangling) are skipped and named in the warnings instead of
+   * blocking the admission. Off by default — fail closed. */
+  skipDanglingLinks?: boolean;
 }
 
 export async function snapshotProfile(
   source: string,
   destination: string,
   options: SnapshotOptions = {},
-): Promise<void> {
+): Promise<{ warnings: string[] }> {
+  const warnings: string[] = [];
   const resolvedSource = resolve(source);
   if (!existsSync(resolvedSource)) {
     throw new ProfileSnapshotError(`profile source does not exist: ${resolvedSource}`);
@@ -64,8 +68,16 @@ export async function snapshotProfile(
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
 
-  const walk: Walk = { allowedRoots, skip, visited: new Set([realSource]), sourceRoot: realSource };
+  const walk: Walk = {
+    allowedRoots,
+    skip,
+    visited: new Set([realSource]),
+    sourceRoot: realSource,
+    skipDanglingLinks: options.skipDanglingLinks ?? false,
+    warnings,
+  };
   copyDirInto(realSource, destination, walk);
+  return { warnings };
 }
 
 interface Walk {
@@ -75,6 +87,8 @@ interface Walk {
   visited: Set<string>;
   /** The real path of the profile root — the level where `skip` applies. */
   sourceRoot: string;
+  skipDanglingLinks: boolean;
+  warnings: string[];
 }
 
 /** Recursively copy the real files of one directory into the destination. */
@@ -85,6 +99,7 @@ function copyDirInto(sourceDir: string, destinationDir: string, walk: Walk): voi
     if (sourceDir === walk.sourceRoot && walk.skip.has(entry.name)) continue;
 
     const target = resolveEntry(childPath, walk);
+    if (target === null) continue; // a stale link skipped by explicit choice
     const stats = statSync(target);
     if (stats.isDirectory()) {
       const realDir = realpathSync(target);
@@ -94,15 +109,15 @@ function copyDirInto(sourceDir: string, destinationDir: string, walk: Walk): voi
     } else if (stats.isFile()) {
       cpSync(target, join(destinationDir, entry.name));
     } else {
-      throw new ProfileSnapshotError(
-        `unsupported profile entry (not a file, directory or link): ${target}`,
-      );
+      // Sockets, pipes and devices are runtime state — they have no meaning
+      // in a container: skipped, named in the warnings.
+      walk.warnings.push(`non-file profile entry skipped: ${displayPath(target, walk)}`);
     }
   }
 }
 
-/** Resolve one path to a real file or directory, failing fast on bad links. */
-function resolveEntry(path: string, walk: Walk): string {
+/** Resolve one path to a real file or directory; null = skipped stale link. */
+function resolveEntry(path: string, walk: Walk): string | null {
   const stats = lstatSync(path);
   if (!stats.isSymbolicLink()) return path;
 
@@ -110,6 +125,10 @@ function resolveEntry(path: string, walk: Walk): string {
   try {
     real = realpathSync(path);
   } catch {
+    if (walk.skipDanglingLinks) {
+      walk.warnings.push(`stale profile link skipped: ${linkPath(path, walk)}`);
+      return null;
+    }
     throw new ProfileSnapshotError(`profile link is dangling: ${linkPath(path, walk)}`);
   }
   if (!isAllowed(real, walk)) {
@@ -141,4 +160,8 @@ function isAllowed(real: string, walk: Walk): boolean {
 /** Links are reported by their path inside the profile, not the absolute one. */
 function linkPath(path: string, walk: Walk): string {
   return isAbsolute(path) ? relative(walk.sourceRoot, path) : path;
+}
+
+function displayPath(path: string, walk: Walk): string {
+  return linkPath(path, walk);
 }
