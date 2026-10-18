@@ -164,6 +164,13 @@ taken.
 
 ## Notes
 
+- **One `run` per configuration**: `msf run` (continuous or `--once`) is
+exclusive per REAL path of the config file (symlinks resolved). A second run
+for the same file fails immediately with a clear message and a nonzero exit,
+before any operational activity; the active run is untouched. The exclusivity
+is held for the whole process and released by the kernel on exit — including a
+`kill -9` — so a restart never needs manual cleanup. `msf status` does not
+take it and stays available while a run is up.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target

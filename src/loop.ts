@@ -454,10 +454,17 @@ export class SweepEngine {
     return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
   }
 
-  /** The --once boundary: wait for every launched worker, transitively —
-   * each collection replenishes the slot within the same cycle. */
-  async awaitAllLaunched(stopAdmissions = false): Promise<void> {
-    if (stopAdmissions) this.stopping = true;
+  /** Ctrl-C: stop admitting launches and replacing finished slots. The
+   * already-admitted launches are NOT cancelled — their collection and result
+   * registration still complete (below). */
+  stopAdmissions(): void {
+    this.stopping = true;
+  }
+
+  /** The --once/shutdown boundary: wait for every launched worker,
+   * transitively — each collection replenishes the slot within the same
+   * cycle. Once {@link stopAdmissions} ran, no replenishment is admitted. */
+  async awaitAllLaunched(): Promise<void> {
     while (this.pending.size > 0) {
       await Promise.all([...this.pending]);
     }
@@ -824,24 +831,35 @@ export async function runForever(
   const tickMs = options.tickMs ?? TICK_MS;
   const signal = options.signal;
 
-  await engine.deriveAndAct();
-  for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+  // Ctrl-C stops admissions the instant it is perceived — even during a
+  // derivation, before the wait for the next event. The already-admitted
+  // launches are preserved: the loop below still awaits their collection.
+  const onAbort = (): void => engine.stopAdmissions();
+  signal?.addEventListener("abort", onAbort, { once: true });
 
-  for (;;) {
-    const event = await engine.waitForWake(tickMs, signal);
-    if (event === "abort" || signal?.aborted) {
-      // Stop admissions immediately, but retain ownership until every admitted
-      // launch has completed collection and result registration.
-      await engine.awaitAllLaunched(true);
-      break;
-    }
-    if (event === "worker-end") {
-      // The collection happened at the act; nothing to re-derive — the
-      // human changes wait for the tick (staleness bounded by the interval).
-      continue;
-    }
+  try {
     await engine.deriveAndAct();
     for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+
+    for (;;) {
+      const event = await engine.waitForWake(tickMs, signal);
+      if (event === "abort" || signal?.aborted) {
+        // No new admission from here on; the run retains ownership until every
+        // admitted worker has completed collection and result registration.
+        engine.stopAdmissions();
+        await engine.awaitAllLaunched();
+        break;
+      }
+      if (event === "worker-end") {
+        // The collection happened at the act; nothing to re-derive — the
+        // human changes wait for the tick (staleness bounded by the interval).
+        continue;
+      }
+      await engine.deriveAndAct();
+      for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
   log("factory ended cleanly (human act)");
 }
