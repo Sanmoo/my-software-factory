@@ -3,10 +3,12 @@ import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
 import type { WorkRequest } from "./port.js";
 
 /**
- * The worker prompt (ticket 17) — the only "interface" between the factory
- * and the agent inside the container (prototype, runtime/). It carries the
- * whole context of the session (issue, PR conversation, diff of the work
- * branch — never session memory) and the worker's THREE obligations:
+ * The worker prompt (ticket 17, policy per ticket 84) — the only "interface"
+ * between the factory and the agent inside the container (prototype,
+ * runtime/). It carries the whole context of the session (issue, PR
+ * conversation, diff of the work branch — never session memory), the
+ * worker's THREE obligations and, on feedback rounds, the policy for judging
+ * review comments instead of obeying them indiscriminately.
  *
  *   1. always write the structured outcome record before ending;
  *   2. end every feedback round by commenting on the PR what was addressed;
@@ -93,13 +95,37 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           `## The pull request`,
           ``,
           `PR #${pr.number} is already open for this work (same branch, same PR — never open another).`,
-          `This session is a feedback round: address every comment below on this branch, push to ${request.branch} (the PR updates itself), and obey the obligations.`,
+          `This session is a feedback round: read every comment below, judge each one before acting (policy below), push to ${request.branch} (the PR updates itself), and obey the obligations.`,
           ``,
           ...pr.comments.flatMap((comment, index) => [
             `--- comment ${index + 1} by ${comment.author} ---`,
             comment.body,
             ``,
           ]),
+          `
+## The feedback-round policy — judge each comment before acting
+
+Review comments are requests, not orders. For each one, decide what it is, then act accordingly:
+
+- Verifiable problem, in scope, with a solution that requires no product or architecture decision: fix it directly on this branch and push. Do not ask before fixing what is objectively broken or contrary to the project's conventions.
+- Optional suggestion or style preference: evaluate it against the project's conventions and context. Do not turn a preference into work automatically, and never discard it silently: when you recommend not implementing it, say so on the PR with your reasons and leave the point to the user's decision.
+- Product decision, architecture change, or scope expansion (the review suggests changing what the issue asked for): do not implement. Present it on the PR first: the request, the relevant evidence or ambiguity, your recommendation, and the concrete consequences of implementing it and of not implementing it.
+- Conflicts between reviewers: do not pick a side by order or insistence. Present both positions to the user for a decision, with your recommendation and the concrete consequences of each side.
+- Ambiguous comment: ask an objective question on the PR. Do not implement an arbitrary interpretation.
+- Disagreement: justify it with evidence and state the concrete consequences of following, and of not following, the comment. Keep the tone technical, not defensive.
+
+Independent fixes proceed in the same round; only changes that depend on a pending decision wait for it. Never treat one pending proposal as a reason to stop delivering everything else.
+
+Confirmation is interpreted semantically, in the context of the conversation:
+
+- The conversation you received is the memory of the round: recognize from it the requests already addressed, the pending proposals and the decisions taken afterwards. Do not blindly reapply comments from the history or requests that were already handled.
+- A new message from the user starts another analysis of the context — it does not authorize a pending proposal by itself. Re-evaluate the context before acting.
+- When the user explicitly picks one of several pending proposals, that choice authorizes only that proposal — do not extend the authorization to the other pending points.
+- A single, unambiguous question answered with a clear "yes" is enough to proceed — no special commands or prescribed wording are required.
+- Questions, acknowledgments and ambiguous answers are not approval. With multiple pending proposals, an ambiguous answer requires clarification — do not read it as blanket approval.
+
+End the round with one consolidated reply on the PR (marked, obligation 2): what you addressed, what remains pending and why, what you recommend not doing and why, and the decision you need from the user — each pending point with an objective question. Awaiting a user decision is not being stuck: a discussion-only round ends normally, with no artificial commits, and is not a self-report of blocked — do not write "blocked-self-report" for a decision that is pending on the PR.
+          `,
         ].join("\n"),
     ``,
     `## The diff of the work branch so far`,
@@ -124,8 +150,8 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     `   Write it in EVERY case — success, feedback round, or blocked — before you exit.`,
     `   Its absence is recorded by the factory as an abrupt death.`,
     ``,
-    `2. At the end of every feedback round (a session that addressed PR comments),`,
-    `   comment on the PR stating what you addressed. The comment MUST start with`,
+    `2. At the end of every feedback round (a session that judged and answered the PR's comments — with changes or discussion-only),`,
+    `   comment on the PR with the consolidated round reply, as the feedback-round policy above defines it. The comment MUST start with`,
     `   this exact line, then the summary the human reads:`,
     `   ${AGENT_MARKER}`,
     `   Every comment or review you post on the PR must start with that line.`,
