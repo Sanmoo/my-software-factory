@@ -25,7 +25,6 @@ import { installGhShim, runCli, spawnCli, waitFor, type GhShim } from "./cli-har
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
-const CLI = new URL("../cli.js", import.meta.url).pathname;
 
 class FakeGitWork implements GitWork {
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {

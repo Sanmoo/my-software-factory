@@ -4,10 +4,13 @@ import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { waitForStdout } from "./e2e/cli-harness.js";
 
 const moduleUrl = new URL("./run-lock.js", import.meta.url).href;
 
-function child(config: string) {
+/** A lock holder that never boots the factory: the module's public
+ * acquisition boundary, used to prove cross-process exclusivity directly. */
+function spawnLockHolder(config: string) {
   return spawn(process.execPath, ["--input-type=module", "-e", `
     import { acquireRunLock } from ${JSON.stringify(moduleUrl)};
     const lock = await acquireRunLock(process.argv[1]);
@@ -17,27 +20,16 @@ function child(config: string) {
   `, config], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
-function waitForLine(process: ReturnType<typeof child>, text: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let output = "";
-    process.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      if (output.includes(text)) resolve();
-    });
-    process.once("exit", (code) => reject(new Error(`child exited ${code}: ${output}`)));
-  });
-}
-
 test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", { timeout: 30_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "msf-run-lock-"));
   const config = join(dir, "msf.yaml");
   const alias = join(dir, "alias.yaml");
   writeFileSync(config, "worker-gh-account: test\nrepos: []\n");
   symlinkSync(config, alias);
-  let owner: ReturnType<typeof child> | undefined;
+  let owner: ReturnType<typeof spawnLockHolder> | undefined;
   try {
-    owner = child(config);
-    await waitForLine(owner, "LOCKED");
+    owner = spawnLockHolder(config);
+    await waitForStdout(owner, "LOCKED");
     const contender = spawn(process.execPath, ["--input-type=module", "-e", `
       import { acquireRunLock } from ${JSON.stringify(moduleUrl)};
       try { await acquireRunLock(process.argv[1]); process.exit(0); }
@@ -51,9 +43,9 @@ test("run exclusivity is process-wide, aliases converge, and abrupt death releas
     owner.kill("SIGKILL");
     await new Promise<void>((resolve) => owner!.once("exit", () => resolve()));
     owner = undefined;
-    const restarted = child(alias);
+    const restarted = spawnLockHolder(alias);
     try {
-      await waitForLine(restarted, "LOCKED");
+      await waitForStdout(restarted, "LOCKED");
     } finally {
       restarted.kill("SIGTERM");
       await new Promise<void>((resolve) => restarted.once("exit", () => resolve()));

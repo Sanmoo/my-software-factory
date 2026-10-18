@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 /** The built CLI entry, resolved from this module's compiled location. */
-export function cliPath(): string {
+function cliPath(): string {
   return new URL("../cli.js", import.meta.url).pathname;
 }
 
