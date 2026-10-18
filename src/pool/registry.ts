@@ -71,6 +71,33 @@ async function attemptNumbers(workDir: string): Promise<number[]> {
   return numbers.sort((a, b) => a - b);
 }
 
+/** The facts a sweep derives about an unreconciled fall (ticket 14): the
+ * crashed attempt's number, and whether the session before it also fell. */
+export interface ReconciliationFacts {
+  /** The number of the last attempt (the one that fell unreconciled). */
+  lastAttempt: number;
+  /** True when the fall is a 2nd consecutive one: at least two attempts
+   * without a record after the last record, or exactly one abrupt attempt
+   * right after a recorded fall. */
+  consecutiveFall: boolean;
+}
+
+/**
+ * The crash footprint replayed from disk (ticket 05 Q3): the attempts are
+ * the logs' numbers; the abrupt attempts are the ones after the last record.
+ * The ruler applies from there — 1st fall releases, 2nd consecutive blocks.
+ */
+export async function readReconciliationFacts(workDir: string): Promise<ReconciliationFacts> {
+  const logs = await attemptNumbers(workDir);
+  const record = await readOutcomeRecord(workDir);
+  const lastRecorded = record?.attempt ?? 0;
+  const lastAttempt = Math.max(logs.at(-1) ?? 0, lastRecorded);
+  const abruptCount = lastAttempt - lastRecorded;
+  const lastRecordedFall = record?.class === "clean-without-pr";
+  const consecutiveFall = abruptCount >= 2 || (abruptCount === 1 && lastRecordedFall);
+  return { lastAttempt, consecutiveFall };
+}
+
 // ---- the derivation's reserved-works scan + the done archive (ticket 14) ----
 
 /** A reserved work as the registry sees it: its ref and where its artifacts live. */

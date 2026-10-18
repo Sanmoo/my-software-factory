@@ -127,7 +127,8 @@ export function blockedCommentBody(record: OutcomeRecord | null, attempt?: numbe
     );
   }
   return (
-    `worker blocked after 2 consecutive falls (attempt ${record.attempt}) — the exact outcome record:\n\n` +
+    `worker blocked after 2 consecutive falls (attempt ${attempt ?? record.attempt}) — ` +
+    "the exact outcome record:\n\n" +
     JSON.stringify(record, null, 2)
   );
 }

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { test, describe, beforeEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { derivePool, deriveReserved } from "./derive.js";
 import { DEFAULT_LABELS } from "../config.js";
+import { DESFECHO_FILENAME } from "./outcome.js";
 
 describe("derive — the pool of eligible works, stateless re-read", () => {
   let adapter: FakeTrackerAdapter;
@@ -233,5 +237,91 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     seedIssue(adapter, { repo: REPO, number: 14, labels: [DEFAULT_LABELS.ready] });
     const derived = await deriveOne(14);
     assert.equal(derived.state, "idle");
+  });
+
+  describe("ticket 05 Q3 — the unreconciled fall (a factory death is an abrupt fall by definition)", () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "msf-derive-fall-"));
+    });
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    function workDirFor(number: number): string {
+      const path = join(dir, `a#${number}`);
+      mkdirSync(path, { recursive: true });
+      return path;
+    }
+
+    async function deriveFrom(path: string, number: number) {
+      const [derived] = await deriveReserved(adapter, [{ ref: ref(number), dir: path }], DEFAULT_LABELS, "bot");
+      assert.ok(derived);
+      return derived;
+    }
+
+    test("claimed, dir exists from the reservation, zero attempt evidence → idle: the claim is held, never released", async () => {
+      seedIssue(adapter, { repo: REPO, number: 19, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(19); // the dir exists; nothing was ever written inside
+
+      const derived = await deriveFrom(path, 19);
+      assert.equal(derived.state, "idle", "nothing fell — a second sweep must not release it");
+    });
+
+    test("claimed, no PR, no worker in flight, first crash → fall: release (the work re-enters the pool)", async () => {
+      seedIssue(adapter, { repo: REPO, number: 20, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(20);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8"); // the crash footprint: an attempt started, no record
+
+      const derived = await deriveFrom(path, 20);
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "release");
+    });
+
+    test("claimed, no PR, two attempts without records → fall: blocked with the absence stated", async () => {
+      seedIssue(adapter, { repo: REPO, number: 21, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(21);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+
+      const derived = await deriveFrom(path, 21);
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "block");
+      assert.match(derived.comment, /attempt 2/);
+      assert.match(derived.comment, /no outcome record/i);
+    });
+
+    test("claimed, no PR, a recorded clean fall followed by a crash → fall: blocked (2nd consecutive)", async () => {
+      seedIssue(adapter, { repo: REPO, number: 22, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(22);
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "clean-without-pr", attempt: 1 }),
+        "utf8",
+      );
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8"); // the crashed attempt 2
+
+      const derived = await deriveFrom(path, 22);
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "block");
+      assert.match(derived.comment, /attempt 2/);
+    });
+
+    test("claimed, no PR, an attempt recorded pr-open… impossible here (a PR fact would have handled it) — a stale pr-open record with no PR heals as a 1st fall", async () => {
+      seedIssue(adapter, { repo: REPO, number: 23, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(23);
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "pr-open", attempt: 1, pr: { repo: REPO, number: 9, branch: "agent-issue-23" } }),
+        "utf8",
+      );
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+
+      const derived = await deriveFrom(path, 23);
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "release", "one abrupt attempt after a non-fall record: 1st fall, release");
+    });
   });
 });

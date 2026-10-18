@@ -1,6 +1,8 @@
 import type { Labels } from "../config.js";
 import type { IssueComment, IssueRef, PrFeedback, PullRequest, TrackerPort } from "../tracker/port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
+import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
+import { readReconciliationFacts } from "../pool/registry.js";
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
@@ -99,6 +101,11 @@ export type ReservedDerivation =
   /** Parked, nothing to decide: waiting for the human (PR open, worker last;
    * blocked without answer) — or a released work the pool owns. */
   | { ref: IssueRef; state: "idle" }
+  /** An unreconciled fall: the claimed work's session ended without the
+   * factory acting on it (a factory death) — release, or block with the
+   * exact outcome on the 2nd consecutive fall (ticket 05 Q3). */
+  | { ref: IssueRef; state: "fall"; decision: "release" }
+  | { ref: IssueRef; state: "fall"; decision: "block"; comment: string; attempt: number }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -163,11 +170,51 @@ async function deriveReservedWork(
     if (last !== null && last.author !== workerAccount) {
       return { ref, state: "feedback", pr, createdAt: issue.value.createdAt };
     }
+    // The worker just opened the PR (or ended the round commenting on it):
+    // the ball is with the human — parked, nothing to decide.
+    return { ref, state: "idle" };
   }
 
-  // No PR, not blocked: parked (in flight or waiting for the human) — or a
-  // released work, whose state is the pool's business, not this one's.
+  // No PR, not blocked: a claimed work without a worker in flight is an
+  // unreconciled fall (the collection never happened — a factory death is an
+  // abrupt fall by definition); anything else is parked — in flight or
+  // waiting for the human — or a released work, whose state is the pool's
+  // business, not this one's.
+  if (issue.value.labels.includes(labels.claimed)) {
+    return deriveUnreconciledFall(port, ref, work.dir);
+  }
   return { ref, state: "idle" };
+}
+
+/**
+ * The unreconciled fall (ticket 05 Q3, derived in 14): a claimed work with
+ * no PR and no worker in flight is a session that ended without the factory
+ * acting on it — a factory death is an abrupt fall by definition. The ruler
+ * applies from the crash footprint alone: 1st fall → release; 2nd
+ * consecutive → blocked with the exact outcome.
+ */
+async function deriveUnreconciledFall(
+  port: TrackerPort,
+  ref: IssueRef,
+  dir: string,
+): Promise<ReservedDerivation> {
+  const recon = await readReconciliationFacts(dir);
+  if (recon.lastAttempt === 0) {
+    // A claim with zero attempt evidence: no session ever started (a death
+    // between the claim and the spawn) — nothing fell, so ruling it a fall
+    // would release a work whose claim is legitimately held. It stays
+    // reserved, held (idle); the sweep's in-flight set covers this process.
+    return { ref, state: "idle" };
+  }
+  if (!recon.consecutiveFall) return { ref, state: "fall", decision: "release" };
+  const record = await readOutcomeRecord(dir);
+  return {
+    ref,
+    state: "fall",
+    decision: "block",
+    comment: blockedCommentBody(record, recon.lastAttempt),
+    attempt: recon.lastAttempt,
+  };
 }
 
 /**

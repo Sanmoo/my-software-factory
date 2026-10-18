@@ -11,6 +11,7 @@ import {
 } from "./state/outcome.js";
 import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
 import { Slots } from "./pool/slots.js";
+import { mkdirSync } from "node:fs";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
