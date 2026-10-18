@@ -55,4 +55,11 @@ export interface GitWork {
    * stale worktree registrations and remote-tracking refs. Idempotent.
    */
   cleanupDoneWork(ref: IssueRef): Promise<void>;
+
+  /**
+   * The diff of the work branch's own changes against its base (merge-base,
+   * three-dot) — the prompt's diff material (ticket 17). Empty string when
+   * the branch has no changes yet; a later base advance never leaks in.
+   */
+  diffWork(ref: IssueRef): Promise<string>;
 }

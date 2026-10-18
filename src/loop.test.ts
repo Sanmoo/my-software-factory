@@ -21,6 +21,7 @@ import type { IssueRef } from "./tracker/port.js";
 class FakeGitWork implements GitWork {
   readonly prepared: IssueRef[] = [];
   readonly cleaned: IssueRef[] = [];
+  readonly diffs = new Map<number, string>();
   private count = 0;
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -36,6 +37,10 @@ class FakeGitWork implements GitWork {
 
   async cleanupDoneWork(ref: IssueRef): Promise<void> {
     this.cleaned.push(ref);
+  }
+
+  async diffWork(ref: IssueRef): Promise<string> {
+    return this.diffs.get(ref.number) ?? "";
   }
 }
 
@@ -85,6 +90,19 @@ describe("loop wiring — the git host feeds every launch", () => {
       assert.equal(request.repoDir, `/clones/${request.ref.repo.replaceAll("/", "#")}`);
       assert.equal(request.workDir, workDir(deps.workspace, request.ref.repo, request.ref.number));
     }
+  });
+
+  test("the launch request carries the worker material — issue, PR conversation, diff (ticket 17)", async () => {
+    git.diffs.set(7, "diff --git a/x b/x\n+work");
+
+    const { launched } = await runOnce(deps);
+
+    const request = launched[0]?.request;
+    assert.ok(request);
+    assert.equal(request.material.issue.title, "issue #7");
+    assert.equal(request.material.issue.body, "");
+    assert.equal(request.material.diff, "diff --git a/x b/x\n+work");
+    assert.equal(request.material.pr, undefined, "no PR exists at the first launch");
   });
 
   test("an empty pool never touches the git host", async () => {

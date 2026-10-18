@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { join } from "node:path";
-import { loadConfigFrom } from "./config.js";
+import { loadConfigFrom, type Config } from "./config.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { FakeTrackerAdapter } from "./tracker/fake-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
+import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 
 /**
@@ -34,6 +35,8 @@ async function main(): Promise<void> {
 
 async function runCommand(argv: string[]): Promise<void> {
   const once = argv.includes("--once");
+  const runtimeName = optionValue(argv, "--runtime") ?? "fake";
+  const model = optionValue(argv, "--model");
   const configIndex = argv.indexOf("--config");
   const overridePath = configIndex >= 0 ? argv[configIndex + 1] : undefined;
   if (configIndex >= 0 && !overridePath) {
@@ -55,7 +58,7 @@ async function runCommand(argv: string[]): Promise<void> {
   const deps: LoopDeps = {
     config,
     tracker,
-    runtime: workerRuntime(),
+    runtime: await workerRuntime(runtimeName, config, model),
     git: localGitWork({ reposDir: workspace.repos }),
     workspace,
     log: (message) => console.log(message),
@@ -79,15 +82,36 @@ main().catch((error: unknown) => {
   process.exit(1);
 });
 
-function workerRuntime(): WorkerRuntime {
-  // TODO(ticket-13): the Sandcastle runtime replaces this placeholder; with
-  // the pool derived empty nothing ever reaches launch.
-  return {
-    launch: (request) =>
-      Promise.reject(
-        new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
-      ),
-  };
+function optionValue(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : undefined;
+}
+
+/**
+ * The runtime the cli selects (ticket 17): `--runtime sandcastle` is the real
+ * launch (Sandcastle run(), Pi headless, container); `--runtime fake` (the
+ * default) keeps the placeholder that never launches — the scripted mirror
+ * lives in tests (FakeWorkerRuntime), not on the cli.
+ */
+async function workerRuntime(name: string, config: Config, model: string | undefined): Promise<WorkerRuntime> {
+  if (name === "fake") {
+    return {
+      launch: (request) =>
+        Promise.reject(
+          new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
+        ),
+    };
+  }
+  if (name === "sandcastle") {
+    if (!model) {
+      console.error("--runtime sandcastle requires --model <provider/model-id>");
+      process.exit(1);
+    }
+    const token = await workerToken(config.workerGhAccount);
+    return new SandcastleRuntime({ model, token });
+  }
+  console.error(`unknown runtime "${name}" — use --runtime fake or --runtime sandcastle`);
+  process.exit(1);
 }
 
 async function statusCommand(argv: string[]): Promise<void> {

@@ -8,6 +8,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir } from "../layout.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "./fake-runtime.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
+import type { WorkRequest } from "./port.js";
 
 describe("fake runtime — worker launches with scripted outcomes", () => {
   let workspaceRoot: string;
@@ -29,13 +30,17 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     return new FakeWorkerRuntime({ outcomes: script, tracker });
   }
 
-  const request = (dir: string) => ({
+  const request = (dir: string): WorkRequest => ({
     ref: { repo: "Sanmoo/a", number: 3 },
     workDir: dir,
     branch: "agent-issue-3",
     repoDir: "/clones/Sanmoo#a",
     baseBranch: "main",
     attempt: 1,
+    material: {
+      issue: { title: "issue #3", body: "" },
+      diff: "",
+    },
   });
 
   test("records every launch for assertions", async () => {
