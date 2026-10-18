@@ -121,5 +121,14 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
       await git(repoDir, ["worktree", "prune"]);
       await git(repoDir, ["remote", "prune", "origin"]);
     },
+
+    async diffWork(ref) {
+      const repoDir = repoCloneDir(options.reposDir, ref.repo);
+      const branch = workBranchName(ref.number);
+      const baseBranch = await detectDefaultBranch(repoDir);
+      // Three-dot: from the merge-base — only the work's own changes, never
+      // the base's later advances.
+      return git(repoDir, ["diff", `refs/remotes/origin/${baseBranch}...${branch}`]);
+    },
   };
 }

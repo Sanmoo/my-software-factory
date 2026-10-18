@@ -4,7 +4,21 @@
  * scripts outcomes without a container.
  */
 
-import type { IssueRef } from "../tracker/port.js";
+import type { IssueComment, IssueRef } from "../tracker/port.js";
+
+/**
+ * The material the worker reads at session start (ticket 17, spec story 37):
+ * the issue, the PR conversation when one exists (a feedback round), and the
+ * diff of the work branch — every session (new, resume or feedback) starts
+ * from the whole context, never from session memory.
+ */
+export interface WorkerMaterial {
+  issue: { title: string; body: string };
+  /** The open PR linked to the issue and its conversation; absent on a first launch. */
+  pr?: { number: number; comments: IssueComment[] };
+  /** Diff of the work branch against its base — the branch's memory so far. */
+  diff: string;
+}
 
 export interface WorkRequest {
   ref: IssueRef;
@@ -18,6 +32,8 @@ export interface WorkRequest {
   baseBranch: string;
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
+  /** The material the prompt is built from (ticket 17). */
+  material: WorkerMaterial;
 }
 
 export interface SessionResult {

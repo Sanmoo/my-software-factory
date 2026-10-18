@@ -1,32 +1,34 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * End-to-end of the idle `--once`: the factory boots with a minimal config,
- * derives an empty pool, launches no worker and exits clean. Real temp dir
- * for the workspace — the disk is never mocked; no network, no container.
+ * Boot behavior of the cli (ticket 16): without the bot token in the gh
+ * keyring, `msf run` fails at boot with a clear message. The account used
+ * here has no token in any keyring, so the failure is local — no network,
+ * no credential needed. The live boot (token present, real derivation) is
+ * proven in the credential-gated smoke (`npm run smoke:github`).
  */
 
-describe("e2e: msf run --once with an empty pool", () => {
+describe("e2e: msf run boots through the keyring check", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "msf-e2e-once-"));
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-boot-"));
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function writeMinimalConfig(extra?: string): void {
+  function writeMinimalConfig(account?: string, extra?: string): void {
     writeFileSync(
       join(dir, "msf.yaml"),
       [
-        "worker-gh-account: bot-do-samuca",
+        `worker-gh-account: ${account ?? "bot-do-samuca"}`,
         "repos:",
         "  - Sanmoo/my-tasks",
         `workspace: ${join(dir, "ws")}`,
@@ -42,27 +44,27 @@ describe("e2e: msf run --once with an empty pool", () => {
     return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   }
 
-  test("boots, derives an empty pool, launches no worker and exits 0", () => {
-    writeMinimalConfig();
+  test("without the bot token in the keyring, the boot fails with a clear message", () => {
+    const ghost = "msf-boot-test-ghost-account";
+    writeMinimalConfig(ghost);
 
     const result = runCli(["run", "--once"], dir);
 
-    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
-    assert.match(result.stdout, /empty pool/i);
-
-    // the workspace is guaranteed with its derived subpaths — real disk
-    const ws = join(dir, "ws");
-    assert.ok(existsSync(join(ws, "repos")));
-    assert.ok(existsSync(join(ws, "trabalhos")));
-    assert.ok(existsSync(join(ws, "arquivo")));
+    assert.notEqual(result.status, 0);
+    assert.match(
+      result.stderr + result.stdout,
+      new RegExp(`no GitHub token in the gh keyring for account "${ghost}"`),
+      `stderr: ${result.stderr}\nstdout: ${result.stdout}`,
+    );
   });
 
-  test("--config overrides the msf.yaml of the cwd", () => {
+  test("--config overrides the msf.yaml of the cwd (the named account is the one checked)", () => {
     writeMinimalConfig();
     const other = join(dir, "other.yaml");
+    const ghost = "msf-boot-test-ghost-account-2";
     writeFileSync(
       other,
-      ["worker-gh-account: other-bot", "repos:", "  - Sanmoo/other", `workspace: ${join(dir, "ws2")}`].join(
+      [`worker-gh-account: ${ghost}`, "repos:", "  - Sanmoo/other", `workspace: ${join(dir, "ws2")}`].join(
         "\n",
       ),
       "utf8",
@@ -70,8 +72,8 @@ describe("e2e: msf run --once with an empty pool", () => {
 
     const result = runCli(["run", "--once", "--config", other], dir);
 
-    assert.equal(result.status, 0);
-    assert.ok(existsSync(join(dir, "ws2", "repos")));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr + result.stdout, new RegExp(`"${ghost}"`));
   });
 
   test("missing required config fails fast at boot, nonzero exit", () => {

@@ -49,6 +49,10 @@ class RecordingGitWork implements GitWork {
     this.cleaned.push(ref);
   }
 
+  async diffWork(_ref: IssueRef): Promise<string> {
+    return "diff --git a/x b/x\n+work";
+  }
+
   get prepareCount(): number {
     return this.count;
   }

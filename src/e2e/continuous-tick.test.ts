@@ -48,6 +48,10 @@ class FakeGitWork implements GitWork {
   }
 
   async cleanupDoneWork(_ref: IssueRef): Promise<void> {}
+
+  async diffWork(_ref: IssueRef): Promise<string> {
+    return "diff --git a/x b/x\n+work";
+  }
 }
 
 describe("e2e: the continuous run — tick forever, wake by event, clean exit (ticket 14)", () => {
