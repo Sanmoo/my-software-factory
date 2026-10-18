@@ -66,11 +66,15 @@ async function runCommand(argv: string[]): Promise<void> {
     return;
   }
 
-  console.log("msf run: sweeping forever on the fixed tick (Ctrl-C to end)");
   // Ticket 14: ending the factory is a human act — Ctrl-C exits cleanly.
+  // The handler is armed BEFORE the announcement: the boot line is then a
+  // proof of registration — a SIGINT sent right after it can never land in
+  // the default-disposition window (kernel kills the process instead of
+  // running the handler).
   const controller = new AbortController();
   const onInterrupt = (): void => controller.abort();
   process.on("SIGINT", onInterrupt);
+  console.log("msf run: sweeping forever on the fixed tick (Ctrl-C to end)");
   try {
     await runForever(deps, { signal: controller.signal });
   } finally {
