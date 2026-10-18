@@ -361,6 +361,10 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /TWO SEPARATE subagent runs, issued IN PARALLEL/);
     assert.match(initial, /one for the Standards/);
     assert.match(initial, /one for the Spec axis/);
+    assert.match(
+      initial,
+      /set the registered agent explicitly: `code-reviewer` for Standards and\s+`spec-reviewer` for Spec; never use the generic `default` agent/,
+    );
     assert.match(initial, /never your own inline review/);
   });
 

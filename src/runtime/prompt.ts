@@ -118,6 +118,8 @@ function implementationProcedure(request: WorkRequest): string {
     `5. REVIEW per /code-review, against the starting SHA of step 1:`,
     `   - TWO SEPARATE subagent runs, issued IN PARALLEL (the subagent tool): one for the Standards`,
     `     axis, one for the Spec axis — never one agent doing both, never your own inline review;`,
+    `   - set the registered agent explicitly: \`code-reviewer\` for Standards and`,
+    `     \`spec-reviewer\` for Spec; never use the generic \`default\` agent;`,
     `   - each reviewer's context: the diff \`git diff <starting-sha>...HEAD\`, the commit list, the`,
     `     spec (the issue and, in a feedback round, the applicable PR comments), the repo's`,
     `     documented standards files and the smell baseline the skill defines;`,
