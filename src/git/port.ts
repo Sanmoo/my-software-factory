@@ -39,6 +39,11 @@ export interface PreparedWork {
   baseBranch: string;
   /** True when this prepare created the branch; false on reuse (relaunch). */
   branchCreated: boolean;
+  /** True when `refs/heads/<branch>` exists on origin — asked of the remote
+   *  itself, so a branch deleted remotely reads as absent. The work branch is
+   *  pushed only when the worker publishes (push + PR): a relaunch of a work
+   *  that fell before publishing has nothing on the remote to fast-forward. */
+  branchOnOrigin: boolean;
 }
 
 export interface GitWork {

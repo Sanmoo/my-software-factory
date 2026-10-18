@@ -57,6 +57,7 @@ class FakeGitWork implements GitWork {
       branch: workBranchName(ref.number),
       baseBranch: "main",
       branchCreated: true,
+      branchOnOrigin: false, // never pushed: the fakes launch, they do not publish
     };
   }
 

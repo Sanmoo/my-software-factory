@@ -42,6 +42,7 @@ class RecordingGitWork implements GitWork {
       branch: workBranchName(ref.number),
       baseBranch: "main",
       branchCreated: this.prepared.filter((r) => r.number === ref.number).length === 1,
+      branchOnOrigin: false, // never pushed: the fakes launch, they do not publish
     };
   }
 

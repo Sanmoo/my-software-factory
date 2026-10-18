@@ -95,7 +95,12 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
         branchCreated = true;
       }
 
-      return { repoDir, branch, baseBranch, branchCreated };
+      // Asked of the remote, never of the local remote-tracking ref: a branch
+      // deleted on the remote (the human's merge, a hand cleanup) must read as
+      // absent, and only the remote knows it (issue 96).
+      const remoteHead = await git(repoDir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+
+      return { repoDir, branch, baseBranch, branchCreated, branchOnOrigin: remoteHead.trim() !== "" };
     },
 
     async cleanupDoneWork(ref: IssueRef): Promise<void> {

@@ -144,3 +144,12 @@ in flight, last outcomes, archived dones. Works with the factory stopped.
   (`trabalhos/<repo>#<n>/`) holds the attempts, logs and outcome records;
   the tracker holds the labels and the PR. No factory state lives in the
   process.
+- **`Could not fetch from origin` on a retomada is expected, not a broken
+  remote**: the work branch reaches the origin only when the worker
+  publishes it (push + PR). A work that fell before publishing (blocked
+  self-report, abrupt death) keeps its branch only in the workspace clone
+  (`repos/<owner>#<name>`), so the relaunch has nothing to fast-forward —
+  the launch line right above it says `branch agent-issue-<n> is not on
+  origin yet`. When the branch WAS published the note is absent, and a
+  fetch failure there is real: check the bot credential in the gh keyring
+  and the egress.

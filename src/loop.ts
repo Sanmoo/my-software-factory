@@ -303,6 +303,17 @@ export class SweepEngine {
       `launching worker for ${key} (branch ${prepared.branch}, ` +
         `${prepared.branchCreated ? "created" : "reused"} from base ${prepared.baseBranch})`,
     );
+    // A work branch reaches the remote only when the worker publishes it
+    // (push + PR): a relaunch of a work that fell before publishing reuses a
+    // branch the remote never saw, so the reuse has nothing to fast-forward.
+    // Said once per launch, next to the launch it explains (issue 96) — the
+    // runtime's reuse fetch then reads as expected instead of a broken remote.
+    if (!prepared.branchCreated && !prepared.branchOnOrigin) {
+      this.log(
+        `branch ${prepared.branch} is not on origin yet (the worker pushes it when it opens the PR) — ` +
+          `the relaunch has nothing to fast-forward`,
+      );
+    }
 
     // The registry numbers the attempt and remembers the previous fall —
     // both are disk facts of this work, not process state (ticket 13).

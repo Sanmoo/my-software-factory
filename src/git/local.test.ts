@@ -95,6 +95,31 @@ describe("git host — one clone per target repo", () => {
     assert.equal(afterRelaunch.stdout.trim(), workerHead.stdout.trim(), "worker commits intact");
   });
 
+  test("prepare reveals whether the work branch is on origin — the fact behind a relaunch's fetch (issue 96)", async () => {
+    const git = gitWork();
+    const first = await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.equal(first.branchCreated, true);
+    assert.equal(first.branchOnOrigin, false, "born from the base is not the same as published");
+
+    // The worker's round without publishing — a blocked self-report or an
+    // abrupt death leaves the branch only in the clone.
+    const unpublished = await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.equal(unpublished.branchCreated, false);
+    assert.equal(unpublished.branchOnOrigin, false, "a relaunch has nothing to fast-forward");
+
+    // The worker published (push + PR): the retomada now has something to fetch.
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+    const published = await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.equal(published.branchOnOrigin, true);
+
+    // The remote branch is gone (deleted by hand): the truth comes from the
+    // remote itself, never from a stale local remote-tracking ref.
+    await execFile("git", ["push", "-q", "origin", "--delete", workBranchName(7)], { cwd: cloneDir });
+    const deleted = await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.equal(deleted.branchOnOrigin, false, "a deleted remote branch is not on origin");
+  });
+
   test("the base advanced between rounds — the work branch is untouched, no rebase, no merge", async () => {
     const git = gitWork();
     await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });

@@ -22,6 +22,10 @@ class FakeGitWork implements GitWork {
   readonly prepared: IssueRef[] = [];
   readonly cleaned: IssueRef[] = [];
   readonly diffs = new Map<number, string>();
+  /** Prepare reports the branch as already prepared (a relaunch, not a claim). */
+  branchReused = false;
+  /** Prepare reports the work branch as present on origin (the worker published). */
+  branchOnOrigin = false;
   private count = 0;
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -31,7 +35,8 @@ class FakeGitWork implements GitWork {
       repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
       branch: workBranchName(ref.number),
       baseBranch: "main",
-      branchCreated: this.count === 1,
+      branchCreated: !this.branchReused && this.count === 1,
+      branchOnOrigin: this.branchOnOrigin,
     };
   }
 
@@ -105,6 +110,45 @@ describe("loop wiring — the git host feeds every launch", () => {
     assert.equal(request.material.issue.body, "");
     assert.equal(request.material.diff, "diff --git a/x b/x\n+work");
     assert.equal(request.material.pr, undefined, "no PR exists at the first launch");
+  });
+
+  test("a relaunch of a branch not on origin says so — the reuse has nothing to fast-forward (issue 96)", async () => {
+    const logged: string[] = [];
+    git.branchReused = true;
+    git.branchOnOrigin = false;
+
+    const { launched } = await runOnce({ ...deps, log: (line) => logged.push(line) });
+
+    const notes = logged.filter((line) => line.includes("is not on origin yet"));
+    assert.equal(notes.length, launched.length, "one note per launch — the fact, not a per-tick alarm");
+    assert.match(notes[0]!, /agent-issue-7/, "the note names the branch");
+    assert.match(notes[0]!, /nothing to fast-forward/, "and what the relaunch's fetch finds");
+  });
+
+  test("no note when the worker published the branch — the retomada fetches for real", async () => {
+    const logged: string[] = [];
+    git.branchReused = true;
+    git.branchOnOrigin = true;
+
+    await runOnce({ ...deps, log: (line) => logged.push(line) });
+
+    assert.equal(
+      logged.filter((line) => line.includes("is not on origin yet")).length,
+      0,
+      "a published branch never needs the note",
+    );
+  });
+
+  test("no note on the claim that creates the branch — only the reused one is annotated", async () => {
+    const logged: string[] = [];
+
+    await runOnce({ ...deps, log: (line) => logged.push(line) });
+
+    // The fake reports #7's branch as created now and #8's as reused — the
+    // claim fetches nothing at all, so only the relaunch earns the note.
+    const notes = logged.filter((line) => line.includes("is not on origin yet"));
+    assert.equal(notes.length, 1, "the created branch says nothing; the reused one does");
+    assert.match(notes[0]!, /agent-issue-8/);
   });
 
   test("an empty pool never touches the git host", async () => {
