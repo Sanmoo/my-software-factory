@@ -13,3 +13,7 @@ Default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-f
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+### Pull request contents
+
+Do not include review reports, attempt notes, or other temporary `revisao/` artifacts in pull requests. Keep review evidence outside the repository; remove any such artifacts before committing or pushing.
