@@ -54,6 +54,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
       join(dir, "msf.yaml"),
       [
         "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos:",
         `  - ${REPO}`,
         "concurrency: 1",

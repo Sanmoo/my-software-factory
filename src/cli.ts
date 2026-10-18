@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
+import { parseCliArgs } from "./cli-args.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -14,14 +15,14 @@ import type { TrackerPort } from "./tracker/port.js";
 import type { GitWork } from "./git/port.js";
 
 /**
- * `msf run [--once] [--config <path>]` and `msf status` — the minimal CLI
+ * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status` — the minimal CLI
  * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
  * from the gh keyring (boot check, ticket 16: no token → clear failure),
  * guarantees the workspace and hands the thin loop its four seams.
  *
  * Ticket 18: `msf run` (both --once and continuous) is wired with ALL REAL
  * components by default — the real GitHub adapter, the real Sandcastle
- * runtime (which demands `--model`), the real git host. The fake seams exist
+ * runtime (configured by worker-model), the real git host. The fake seams exist
  * ONLY for tests: `--runtime fake` keeps the placeholder that never launches,
  * and the fake adapter is injectable ONLY through the exported `wireRunDeps`
  * seams (tests import it) — never through any flag, so the binary's default
@@ -40,9 +41,6 @@ export interface WiredSeams {
 }
 
 export interface WireRunOptions {
-  /** The Pi model for the real runtime (`--model`); required whenever the
-   * runtime is not injected. */
-  model?: string | undefined;
   /** Test-only seams; absent = all real components. */
   seams?: WiredSeams;
 }
@@ -66,7 +64,7 @@ export async function wireRunDeps(
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
     }));
-  const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, options.model));
+  const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   return { config, tracker, runtime, git, workspace, log: (message) => console.log(message) };
 }
@@ -75,13 +73,7 @@ export async function wireRunDeps(
  * (ticket 17), fed the config's profile-snapshot settings (ticket 18) and the
  * workspace root the toolchain binds derive from (the convergence layer,
  * ticket 18 — tools installed inside the volume survive the container). */
-async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string | undefined): Promise<WorkerRuntime> {
-  if (!model) {
-    console.error(
-      "msf run launches the real Sandcastle runtime by default, which requires --model <provider/model-id>",
-    );
-    process.exit(1);
-  }
+async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string): Promise<WorkerRuntime> {
   const token = await workerToken(config.workerGhAccount);
   return new SandcastleRuntime({
     model,
@@ -112,36 +104,21 @@ function fakeRuntimePlaceholder(): WorkerRuntime {
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const command = argv[0];
-
-  if (command === "run") {
-    await runCommand(argv.slice(1));
+  const args = parseCliArgs(process.argv.slice(2));
+  if (args.command === "run") {
+    await runCommand(args);
     return;
   }
-  if (command === "status") {
-    await statusCommand(argv.slice(1));
-    return;
-  }
-  console.error("usage: msf run [--once] [--config <path>]\n       msf status");
-  process.exit(1);
+  await statusCommand(args);
 }
 
-async function runCommand(argv: string[]): Promise<void> {
-  const once = argv.includes("--once");
-  const runtimeName = optionValue(argv, "--runtime") ?? "sandcastle";
-  const model = optionValue(argv, "--model");
-  const configIndex = argv.indexOf("--config");
-  const overridePath = configIndex >= 0 ? argv[configIndex + 1] : undefined;
-  if (configIndex >= 0 && !overridePath) {
-    console.error("--config requires a path");
-    process.exit(1);
-  }
+async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
+  const once = args.once;
+  const runtimeName = args.runtime ?? "sandcastle";
+  const overridePath = args.configPath;
 
-  // The config is the first gate: a bad config fails fast before anything
-  // else (the boot tests pin this order). Then the runtime flags — bad
-  // flags fail fast without touching the keyring (the selection e2e stays
-  // offline; the boot check is the next gate).
+  // Strict argument parsing has already completed; config is next, before
+  // workspace writes or the keyring boot check.
   const config = loadConfigFrom(process.cwd(), overridePath);
   const workspace = ensureWorkspace(config.workspace);
 
@@ -149,15 +126,7 @@ async function runCommand(argv: string[]): Promise<void> {
     console.error(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`);
     process.exit(1);
   }
-  if (runtimeName === "sandcastle" && !model) {
-    console.error(
-      "msf run launches the real Sandcastle runtime by default, which requires --model <provider/model-id>",
-    );
-    process.exit(1);
-  }
-
   const deps: LoopDeps = await wireRunDeps(config, workspace, {
-    model,
     ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),
   });
   if (once) {
@@ -186,15 +155,8 @@ async function runCommand(argv: string[]): Promise<void> {
   }
 }
 
-function optionValue(argv: string[], flag: string): string | undefined {
-  const index = argv.indexOf(flag);
-  return index >= 0 ? argv[index + 1] : undefined;
-}
-
-async function statusCommand(argv: string[]): Promise<void> {
-  const configIndex = argv.indexOf("--config");
-  const overridePath = configIndex >= 0 ? argv[configIndex + 1] : undefined;
-  const config = loadConfigFrom(process.cwd(), overridePath);
+async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
+  const config = loadConfigFrom(process.cwd(), args.configPath);
 
   // Read-only: status never creates the workspace — an absent one is empty
   // (status before any run is a legal, informative state).

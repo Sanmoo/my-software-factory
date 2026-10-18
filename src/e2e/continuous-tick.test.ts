@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,6 +70,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
   function makeConfig(concurrency: number): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency,
       workspace: layout.root,
@@ -246,13 +247,21 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       join(dir, "msf.yaml"),
       [
         "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos: []",
         `workspace: ${join(dir, "ws")}`,
       ].join("\n"),
       "utf8",
     );
+    const ghBin = join(dir, "bin");
+    mkdirSync(ghBin);
+    const gh = join(ghBin, "gh");
+    writeFileSync(gh, '#!/bin/sh\ncat >/dev/null\n[ "$1 $2 $3" = "auth token --user" ] && echo fake-token\n', "utf8");
+    chmodSync(gh, 0o755);
     const cli = new URL("../cli.js", import.meta.url).pathname;
-    const child = spawn(process.execPath, [cli, "run", "--runtime", "fake"], { cwd: dir });
+    const child = spawn(process.execPath, [cli, "run", "--runtime", "fake"], {
+      cwd: dir, env: { ...process.env, PATH: `${ghBin}:${process.env.PATH ?? ""}` },
+    });
 
     let stdout = "";
     child.stdout!.on("data", (chunk) => {

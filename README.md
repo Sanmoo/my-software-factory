@@ -10,8 +10,9 @@ dedicated bot account. The human is the gate — the factory never merges.
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml
-# msf.yaml — only two fields are required; every optional field defaults
+# msf.yaml — three required fields; every optional field defaults
 worker-gh-account: bot-do-samuca
+worker-model: opencode-go/glm-5.3-flash
 repos:
   - Sanmoo/my-tasks
 
@@ -36,11 +37,13 @@ npm install
 npm run build
 # all real components: GitHub adapter (keyring boot check) + Sandcastle
 # runtime (a real worker per launch, needs the worker image built)
-node dist/cli.js run --once --model <provider/model-id>   # one sweep
-node dist/cli.js run --model <provider/model-id>          # sweeps forever
-node dist/cli.js status                                   # the trail, read-only
+node dist/cli.js run --once  # one sweep
+node dist/cli.js run         # sweeps forever
+node dist/cli.js status      # the trail, read-only
 ```
 
+The worker model is required in `msf.yaml`; invocations do not select it.
+Move any model previously selected on the command line into `worker-model`.
 The live proof's exact script — commands, what the human does, the REST
 budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 

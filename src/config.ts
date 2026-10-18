@@ -7,6 +7,7 @@ import { parse } from "yaml";
  * Config of the factory (msf.yaml), verbatim shape from ticket 06:
  *
  *   worker-gh-account: bot-do-samuca
+ *   worker-model: provider/model-id
  *   repos:
  *     - Sanmoo/my-tasks
  *   concurrency: 2
@@ -16,7 +17,7 @@ import { parse } from "yaml";
  *     claimed: agent-claimed
  *     blocked: agent-blocked
  *
- * Only `worker-gh-account` and `repos` are required. Every optional field
+ * `worker-gh-account`, `worker-model` and `repos` are required. Every optional field
  * defaults in the factory — a missing optional field is never an error.
  */
 
@@ -47,6 +48,8 @@ export interface Labels {
 export interface Config {
   /** The dedicated bot account: PRs arrive from it, claims are assigned to it. */
   workerGhAccount: string;
+  /** Pi model used for each worker session. */
+  workerModel: string;
   /** Target repos whose issues feed the pool. */
   repos: string[];
   /** The `y` — worker slots in process. */
@@ -96,6 +99,10 @@ export function loadConfig(filePath: string): Config {
   const doc = parsed as Record<string, unknown>;
 
   const workerGhAccount = requireString(doc, "worker-gh-account");
+  const workerModel = requireString(doc, "worker-model");
+  if (!/^[^/\s]+\/[^/\s]+$/.test(workerModel)) {
+    throw new ConfigError('config field "worker-model" must be "provider/model-id"');
+  }
   const repos = requireRepos(doc);
   const concurrency = optionalConcurrency(doc);
   const workspace = optionalWorkspace(doc);
@@ -105,6 +112,7 @@ export function loadConfig(filePath: string): Config {
 
   return {
     workerGhAccount,
+    workerModel,
     repos,
     concurrency,
     workspace,

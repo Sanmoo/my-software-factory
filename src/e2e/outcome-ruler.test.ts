@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -81,6 +81,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
   function makeConfig(concurrency: number): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency,
       workspace: layout.root,
@@ -385,13 +386,21 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
       join(dir, "msf.yaml"),
       [
         "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
         "repos: []",
         `workspace: ${join(dir, "ws")}`,
       ].join("\n"),
       "utf8",
     );
+    const ghBin = join(dir, "bin");
+    mkdirSync(ghBin, { recursive: true });
+    const gh = join(ghBin, "gh");
+    writeFileSync(gh, '#!/bin/sh\ncat >/dev/null\n[ "$1 $2 $3" = "auth token --user" ] && echo fake-token\n', "utf8");
+    chmodSync(gh, 0o755);
     const cli = new URL("../cli.js", import.meta.url).pathname;
-    const result = spawnSync(process.execPath, [cli, "status"], { cwd: dir, encoding: "utf8" });
+    const result = spawnSync(process.execPath, [cli, "status"], {
+      cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${ghBin}:${process.env.PATH ?? ""}` },
+    });
     return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   }
 
