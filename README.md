@@ -51,25 +51,17 @@ budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 ## Local desktop notifications
 
 A session ending is not the work concluding: an open PR leaves the work
-reserved for the human. `msf` therefore notifies locally when a NEW occurrence
-needs the operator — a PR ready for review (initial execution or a feedback
-round), a help request, a second consecutive fall, or a PR rejected without
-merge.
-
-Delivery is a passive Linux desktop notification through `notify-send`
-(libnotify), from the CLI on the HOST — the worker container needs no
-graphical access (ADR-0001). Notifications are **on by default**; set
-`notifications: false` in `msf.yaml` to run silently. They are punctual and
-best-effort: one per new occurrence, no reminders, no read receipts, no click
-actions, no focus stealing and no browser window. Review notices point at the
-PR; help/block notices point at the issue, where the continuity context
-lives. Only structured work facts ride the notice — never agent prose or
-logs. `msf status` is a read-only query and never notifies.
-
-If the backend or graphical session is unavailable, the sweep prints
-`local notification failed (...)`, keeps processing and keeps the work's
-outcome and the command's exit code. Prerequisites, the manual smoke test and
-the unavailable-backend behavior are in the [RUNBOOK](docs/RUNBOOK.md).
+reserved for the human. `msf` therefore sends a passive `notify-send`
+(libnotify) notice from the CLI on the HOST when a NEW occurrence needs the
+operator — a PR ready for review, a help request or a block. Notifications are
+**on by default** (set `notifications: false` in `msf.yaml` to run silently),
+punctual and best-effort: one per new occurrence, no reminders, no focus
+stealing, no browser window. Review notices point at the PR; help/block
+notices at the issue. A delivery failure only prints
+`local notification failed (...)` — the work's outcome and exit code are
+untouched. The worker container needs no graphical access (ADR-0001). The
+full trigger/silence table, prerequisites, the manual smoke test and the
+unavailable-backend behavior are in the [RUNBOOK](docs/RUNBOOK.md).
 
 ## Layout
 
