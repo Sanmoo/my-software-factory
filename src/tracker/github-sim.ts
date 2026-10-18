@@ -2,7 +2,7 @@ import type { CommandRunner } from "./github-adapter.js";
 
 /**
  * An in-memory GitHub that speaks the exact REST dialect the real adapter
- * uses over `gh api`/`gh issue list` — the gh/process-boundary double for the
+ * uses over `gh api` — the gh/process-boundary double for the
  * offline contract suite (ticket 16: the suite must pass against the REAL
  * adapter, the same checks the fake satisfies; here the real adapter runs
  * against a simulated GitHub instead of the network).
@@ -184,25 +184,10 @@ export class GitHubSim {
     if (args[0] === "auth" && args[1] === "token") {
       return { stdout: "sim-token\n", stderr: "" };
     }
-    if (args[0] === "issue" && args[1] === "list") {
-      return { stdout: this.issueList(args), stderr: "" };
-    }    if (args[0] === "api") {
+    if (args[0] === "api") {
       return { stdout: this.api(args, input), stderr: "" };
     }
     throw new SimHttpError(0, `sim: unexpected gh command: ${args.join(" ")}`);
-  }
-
-  private issueList(args: string[]): string {
-    const stateFlag = args.indexOf("--state");
-    const state = stateFlag >= 0 ? args[stateFlag + 1] : "open";
-    const labelFlag = args.indexOf("--label");
-    const label = labelFlag >= 0 ? args[labelFlag + 1] : undefined;
-    const items = [...this.issues.values()]
-      .filter((issue) => issue.pr === undefined) // gh issue list never returns PRs
-      .filter((issue) => (state === "all" ? true : issue.state === state))
-      .filter((issue) => (label === undefined ? true : issue.labels.includes(label)))
-      .map((issue) => ({ number: issue.number, title: issue.title, createdAt: issue.createdAt }));
-    return JSON.stringify(items);
   }
 
   /** One `gh api` call: ["api", "-X", METHOD, path, "--input", "-"] — the
