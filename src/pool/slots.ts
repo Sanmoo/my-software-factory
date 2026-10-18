@@ -12,6 +12,11 @@ export class Slots {
     return this.running.size;
   }
 
+  /** The keys of the works currently in flight (the derivation filters them). */
+  get workKeys(): string[] {
+    return [...this.running];
+  }
+
   get free(): number {
     return Math.max(this.capacity - this.running.size, 0);
   }

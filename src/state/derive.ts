@@ -62,6 +62,8 @@ async function isEligible(
   const issue = await port.readIssue(ref);
   if (!issue.known) return false;
   if (issue.value.labels.includes(labels.claimed)) return false;
+  // Blocked works listen to the issue channel, never to the pool (ticket 14).
+  if (issue.value.labels.includes(labels.blocked)) return false;
   if (issue.value.assignees.length > 0) return false;
 
   // Native blockers must all be terminal — unknown is never "without impediment".

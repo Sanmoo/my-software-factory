@@ -70,6 +70,8 @@ export class FakeTrackerAdapter implements TrackerPort {
 
   /** Every pushBranch performed, in order — for assertions. */
   readonly pushedBranches: PushBranchInput[] = [];
+  /** The reservation sequence: every claim's "<repo>#<n>", in order. */
+  readonly claimedOrder: string[] = [];
 
   constructor(private readonly options: { workerAccount: string }) {}
 
@@ -215,6 +217,7 @@ export class FakeTrackerAdapter implements TrackerPort {
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
+    this.claimedOrder.push(this.key(ref));
     // The swap ready→claimed is one composite write: removing the ready label
     // is what keeps a concurrent sweep from ever seeing the work again.
     if (readyLabel !== undefined && issue.labels.delete(readyLabel)) {
