@@ -11,5 +11,6 @@
 | Block | A work the factory stopped driving (2nd consecutive fall or PR closed without merge) until a human answers on the issue. |
 | Occurrence | A new act that needs human continuity (initial execution or feedback round leaving a PR open, a help request, a block) — never an ordinary sweep. |
 | Notification | A passive local desktop notice about a new occurrence: the work, a brief reason and the relevant GitHub address. |
+| Notice | The short form of Notification, used in code and docs. |
 | Review notice | A notification that a confirmed-open PR waits for the operator; it points at the PR. |
 | Help notice | A notification that a work needs the operator on the issue (help request, block, rejection); it points at the issue. |
