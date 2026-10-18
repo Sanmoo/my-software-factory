@@ -227,15 +227,17 @@ export class SweepEngine {
     return new Promise((resolve) => {
       if (signal?.aborted) return resolve("abort");
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const onAbort = (): void => waiter.fire("abort");
       const waiter = { fire: (event: WakeEvent) => {
         const index = this.endedWaiters.indexOf(waiter);
         if (index >= 0) this.endedWaiters.splice(index, 1);
         if (timer !== undefined) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve(event);
       } };
       timer = setTimeout(() => waiter.fire("tick"), tickMs);
       this.endedWaiters.push(waiter);
-      signal?.addEventListener("abort", () => waiter.fire("abort"), { once: true });
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
@@ -294,7 +296,7 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    await this.collect(launchable, dir, facts.attempt, facts.previousFall);
+    await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
 
     // The freed slot replenishes in the same cycle — the act of collection
     // triggers the next launches; no barrier waits for the slowest.
@@ -312,11 +314,12 @@ export class SweepEngine {
    */
   private async collect(
     launchable: Launchable,
+    result: SessionResult,
     dir: string,
     attempt: number,
     consecutiveFall: boolean,
   ): Promise<void> {
-    const { config, tracker, git, workspace } = this.deps;
+    const { config, tracker } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
 
@@ -358,7 +361,7 @@ export class SweepEngine {
     }
     this.collected.push({
       ref,
-      result: this.launched.at(-1)!,
+      result,
       prConfirmed,
       ruling: { decision: ruling.decision, because: ruling.because },
     });
