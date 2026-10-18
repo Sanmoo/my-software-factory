@@ -1,16 +1,17 @@
 import { execFile } from "node:child_process";
 import type { Notifier, WorkNotification } from "./port.js";
 
-/**
- * `notify-send` (libnotify): a passive notice, no focus steal or window. Needs
- * a graphical session; a spawn failure rejects and the loop only reports it.
- */
+/** Runs the desktop command; injectable so tests need no desktop. */
 export type SendNotification = (command: string, args: string[]) => Promise<void>;
 
 export interface LinuxNotifierOptions {
   send?: SendNotification;
 }
 
+/**
+ * `notify-send` (libnotify): a passive notice, no focus steal or window. Needs
+ * a graphical session; a failure rejects and the loop only reports it.
+ */
 export class LinuxNotifier implements Notifier {
   constructor(private readonly options: LinuxNotifierOptions = {}) {}
 

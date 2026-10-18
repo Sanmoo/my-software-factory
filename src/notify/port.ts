@@ -26,12 +26,10 @@ function pullUrl(ref: IssueRef, prNumber: number): string {
   return `https://github.com/${ref.repo}/pull/${prNumber}`;
 }
 
-/** The review notice points at the PR. */
 export function reviewNotice(ref: IssueRef, prNumber: number): WorkNotification {
   return { ref, kind: "review", url: pullUrl(ref, prNumber) };
 }
 
-/** The help notice points at the issue. */
 export function helpNotice(ref: IssueRef): WorkNotification {
   return { ref, kind: "help", url: issueUrl(ref) };
 }
