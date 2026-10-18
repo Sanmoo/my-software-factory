@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { readdir, rename } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import { WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
+import { workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import type { IssueRef } from "../tracker/port.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -68,6 +69,70 @@ async function attemptNumbers(workDir: string): Promise<number[]> {
     if (match) numbers.push(Number(match[1]));
   }
   return numbers.sort((a, b) => a - b);
+}
+
+// ---- the derivation's reserved-works scan + the done archive (ticket 14) ----
+
+/** A reserved work as the registry sees it: its ref and where its artifacts live. */
+export interface ReservedWorkEntry {
+  ref: IssueRef;
+  /** Absolute path of the work's registry dir (launches, archiving). */
+  dir: string;
+}
+
+/** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
+export function parseWorkKey(name: string): { repo: string; number: number } | null {
+  const match = /^(.+)#(\d+)$/.exec(name);
+  return match ? { repo: match[1]!, number: Number(match[2]) } : null;
+}
+
+/**
+ * The works the factory ever launched and still owns on disk: every
+ * trabalhos/<repo>#<n> dir (recursively — the repo's slash nests the dir).
+ * This is the derivation's source of "who is reserved": the tracker tells
+ * the state, the registry tells WHO (ticket 14 — nothing but disk survives
+ * a restart, and a released work keeps its dir until done).
+ */
+export async function scanReservedWorks(
+  workspace: WorkspaceLayout | string,
+): Promise<ReservedWorkEntry[]> {
+  const works =
+    typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
+
+  const entries: ReservedWorkEntry[] = [];
+  for (const dir of await workDirs(works)) {
+    const relativePath = relative(works, dir).split(sep).join("/");
+    const parsed = parseWorkKey(relativePath);
+    if (parsed === null) continue;
+    entries.push({ ref: { repo: parsed.repo, number: parsed.number }, dir });
+  }
+  return entries.sort((a, b) => a.ref.repo.localeCompare(b.ref.repo) || a.ref.number - b.ref.number);
+}
+
+/**
+ * Done-only disk duty (ticket 05 Q5, executed for real in 14): MOVE the
+ * work's artifacts out of trabalhos/ into arquivo/<repo>#<n>-<date>/ —
+ * nothing is deleted, the audit trail stays forever. Returns the archive
+ * path, or null when there was nothing to move. A same-day re-archive (a
+ * second run's artifacts) gets a fresh name — never overwritten.
+ */
+export async function archiveDoneWork(
+  layout: WorkspaceLayout,
+  ref: IssueRef,
+): Promise<string | null> {
+  const src = workDir(layout, ref.repo, ref.number);
+  if (!existsSync(src)) return null;
+
+  const date = new Date().toISOString().slice(0, 10);
+  // The same nesting shape as workDir(): the repo's slash nests the dir —
+  // arquivo/Sanmoo/a#1-<date>, a mirror of trabalhos/Sanmoo/a#1.
+  let dest = join(layout.archive, `${ref.repo}#${ref.number}-${date}`);
+  for (let suffix = 2; existsSync(dest); suffix += 1) {
+    dest = join(layout.archive, `${ref.repo}#${ref.number}-${date}-${suffix}`);
+  }
+  mkdirSync(dest, { recursive: true });
+  await rename(src, dest);
+  return dest;
 }
 
 // ---- the status view (msf status) ----

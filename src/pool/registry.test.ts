@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
-import { readLaunchFacts, scanRegistry } from "./registry.js";
+import { archiveDoneWork, parseWorkKey, readLaunchFacts, scanRegistry, scanReservedWorks } from "./registry.js";
+import type { IssueRef } from "../tracker/port.js";
 
 /**
  * The registry (pool/registry.ts, ticket 13): reads back the per-work
@@ -135,5 +136,84 @@ describe("registry — the status view (worked on by msf status, factory stopped
     // status shows the work still in flight rather than a fake outcome.
     assert.deepEqual(view.inFlight, ["Sanmoo/c#9"]);
     assert.deepEqual(view.lastOutcome, []);
+  });
+});
+
+describe("registry — the derivation's reserved-works scan and the done archive (ticket 14)", () => {
+  let dir: string;
+  let layout: WorkspaceLayout;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-registry14-"));
+    layout = ensureWorkspace(join(dir, "ws"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("scanReservedWorks: every trabalhos/<repo>#<n> dir becomes a ref — the factory's memory of what it launched", async () => {
+    mkdirSync(join(layout.works, "Sanmoo", "a#1"), { recursive: true });
+    mkdirSync(join(layout.works, "Sanmoo", "my-tasks#12"), { recursive: true });
+    // A dir that is not a work (the repo's nested path itself) is not a work.
+    mkdirSync(join(layout.works, "Sanmoo", "b"), { recursive: true });
+
+    const reserved = await scanReservedWorks(layout);
+
+    assert.deepEqual(
+      reserved.map((r) => r.ref).sort((x, y) => x.repo.localeCompare(y.repo) || x.number - y.number),
+      [
+        { repo: "Sanmoo/a", number: 1 },
+        { repo: "Sanmoo/my-tasks", number: 12 },
+      ],
+    );
+    for (const entry of reserved) {
+      assert.ok(existsSync(entry.dir), "the dir is handed over — launches and archiving need it");
+    }
+  });
+
+  test("scanReservedWorks: a workspace never created reads empty", async () => {
+    assert.deepEqual(await scanReservedWorks(join("/nowhere/nonexistent-msf-ws")), []);
+  });
+
+  test("parseWorkKey: the dir name is <repo>#<n> with the repo keeping its slash", () => {
+    assert.deepEqual(parseWorkKey("Sanmoo/my-tasks#12"), { repo: "Sanmoo/my-tasks", number: 12 });
+    assert.equal(parseWorkKey("no-number"), null);
+  });
+
+  test("archiveDoneWork MOVES the work dir into arquivo/<repo>#<n>-<date> — nothing is deleted", async () => {
+    const src = join(layout.works, "Sanmoo", "a#1");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, DESFECHO_FILENAME), JSON.stringify({ class: "pr-open", attempt: 1 }), "utf8");
+    writeFileSync(join(src, "log-1.jsonl"), "{}\n", "utf8");
+
+    const dest = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 1 });
+    assert.ok(dest, "the archive path is returned");
+
+    assert.ok(!existsSync(src), "the work dir left trabalhos");
+    assert.ok(existsSync(dest), "the artifacts live in the archive now");
+    assert.match(dest, /arquivo\/Sanmoo\/a#1-\d{4}-\d{2}-\d{2}$/, "the archive name carries the done date");
+    assert.ok(existsSync(join(dest, DESFECHO_FILENAME)), "the desfecho survived the move");
+    assert.ok(existsSync(join(dest, "log-1.jsonl")), "the logs survived the move");
+    const view = await scanRegistry(layout);
+    assert.deepEqual(view.archived, [dest]);
+  });
+
+  test("archiveDoneWork of a work with no dir is a no-op (nothing to archive)", async () => {
+    const dest = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 42 });
+    assert.equal(dest, null);
+  });
+
+  test("archiveDoneWork twice on the same day never collides (the second gets a fresh name)", async () => {
+    const src = join(layout.works, "Sanmoo", "a#2");
+    mkdirSync(src, { recursive: true });
+    const first = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 2 });
+    assert.ok(first);
+    mkdirSync(src, { recursive: true }); // a second run's artifacts for the same work
+    const second = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 2 });
+    assert.ok(second, "the second archive also happens");
+    assert.notEqual(first, second, "a unique dest, never the same dir");
+    const view = await scanRegistry(layout);
+    assert.equal(view.archived.length, 2, "both archive entries exist");
   });
 });

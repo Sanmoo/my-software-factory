@@ -54,6 +54,10 @@ export type ObservedClass = OutcomeClass | "abrupt-fall";
 
 /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
+  /** The terminal state reached while the claim was held (the human's merge
+   * closed the issue mid-flight — ticket 14): archive the artifacts, no
+   * release, no fall. */
+  | { decision: "done"; because: "issue-closed" }
   /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
    * reserved awaiting the human; a fall is never recorded, the claim is held. */
   | { decision: "reserve"; because: "pr-open" }
@@ -76,6 +80,8 @@ export interface OutcomeFacts {
   consecutiveFall: boolean;
   /** The attempt being collected (the registry's launch fact) — names the fall in the blocked comment. */
   attempt: number;
+  /** The port's fact: the issue itself is closed — the terminal state was reached while this claim was held (ticket 14). */
+  issueClosed: boolean;
 }
 
 /**
@@ -87,6 +93,7 @@ export interface OutcomeFacts {
  *   abrupt fall — 1st consecutive → release, 2nd consecutive → blocked + comment.
  */
 export function classifyOutcome(facts: OutcomeFacts): OutcomeRuling {
+  if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
 

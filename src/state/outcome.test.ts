@@ -23,6 +23,7 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
     blockedLabelOnIssue: false,
     consecutiveFall: false,
     attempt: 1,
+    issueClosed: false,
     ...overrides,
   };
 }
@@ -185,6 +186,25 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     // readOutcomeRecord rejected it already — the ruler never even sees it.
     const ruling = classifyOutcome(facts({ record: null, consecutiveFall: true }));
     assert.equal(ruling.decision, "block");
+  });
+
+  describe("ticket 14 — the terminal state is read at the act too", () => {
+    test("an issue closed (done by linkage while the claim was held) ends the work: archive, no release, no fall", () => {
+      // The human merged while a feedback round was still in flight: the issue
+      // is terminal — the claim ends, artifacts are archived, nothing falls.
+      const ruling = classifyOutcome(
+        facts({ record: { class: "pr-open", attempt: 2 }, issueClosed: true }),
+      );
+      assert.equal(ruling.decision, "done");
+      assert.equal(ruling.because, "issue-closed");
+    });
+
+    test("issue closed wins over everything — even a fall without PR", () => {
+      const ruling = classifyOutcome(
+        facts({ record: null, consecutiveFall: true, issueClosed: true }),
+      );
+      assert.equal(ruling.decision, "done");
+    });
   });
 
   describe("the blocked comment carries the exact outcome (the desfecho, verbatim)", () => {

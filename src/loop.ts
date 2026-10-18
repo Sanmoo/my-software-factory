@@ -9,7 +9,7 @@ import {
   classifyOutcome,
   type OutcomeRuling,
 } from "./state/outcome.js";
-import { readLaunchFacts } from "./pool/registry.js";
+import { readLaunchFacts, archiveDoneWork } from "./pool/registry.js";
 import { Slots } from "./pool/slots.js";
 
 /**
@@ -143,9 +143,17 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
         issue.known && issue.value.labels.includes(config.labels.blocked),
       consecutiveFall: facts.previousFall,
       attempt: facts.attempt,
+      issueClosed: issue.known && issue.value.state === "closed",
     });
 
-    if (ruling.decision === "reserve") {
+    if (ruling.decision === "done") {
+      // The terminal state was reached while this claim was held (the
+      // human's merge closed the issue mid-flight — ticket 14): archive the
+      // artifacts and clean the branches, nothing is released or recorded.
+      log(`collected ${key}: issue closed — done; artifacts archived, branches cleaned`);
+      await archiveDoneWork(workspace, entry.ref);
+      await git.cleanupDoneWork(entry.ref);
+    } else if (ruling.decision === "reserve") {
       log(`collected ${key}: PR open — stays reserved, waiting for the human`);
     } else if (ruling.decision === "record-only") {
       log(`collected ${key}: blocked self-report — the factory only records the outcome`);
