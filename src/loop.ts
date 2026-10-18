@@ -165,8 +165,7 @@ export class SweepEngine {
             `derived ${workKey(decision.ref)}: PR closed without merge — rejected, ` +
               "blocked with a comment pointing at the PR",
           );
-          await this.applyBlockWithComment(decision.ref, decision.comment);
-          await this.notify(helpNotice(decision.ref));
+          await this.applyRecoveryBlock(decision.ref, decision.comment);
           break;
         }
         case "fall": {
@@ -181,10 +180,9 @@ export class SweepEngine {
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
-            await this.applyBlockWithComment(decision.ref, decision.comment);
-            // A NEW block applied during recovery needs the human: notify it
-            // (a pre-existing block stays silent — see story 20).
-            await this.notify(helpNotice(decision.ref));
+            // A NEW block applied during recovery needs the human (a
+            // pre-existing block stays silent — see story 20).
+            await this.applyRecoveryBlock(decision.ref, decision.comment);
           }
           break;
         }
@@ -464,11 +462,11 @@ export class SweepEngine {
       const selfReportedNow =
         record !== null && record.attempt === attempt && record.class === "blocked-self-report";
       const needsHelp = blockedLabelOnIssue || selfReportedNow || ruling.decision === "block";
-      const reviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
+      const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
       if (needsHelp) {
-        await this.notify(helpNotice(ref));
-      } else if (reviewLaunch && prConfirmed && pr !== null) {
-        await this.notify(reviewNotice(ref, pr.number));
+        await this.deliverNotice(helpNotice(ref));
+      } else if (isReviewLaunch && prConfirmed && pr !== null) {
+        await this.deliverNotice(reviewNotice(ref, pr.number));
       }
     }
   }
@@ -492,6 +490,15 @@ export class SweepEngine {
     await tracker.comment(ref, comment);
   }
 
+  /** A block applied by the derivation (a rejection or a 2nd fall) travels
+   *  with its help notice: a new intervention need must not stay invisible.
+   *  The collection's 2nd fall is blocked in a different flow and goes
+   *  through collect()'s unified notice policy instead. */
+  private async applyRecoveryBlock(ref: IssueRef, comment: string): Promise<void> {
+    await this.applyBlockWithComment(ref, comment);
+    await this.deliverNotice(helpNotice(ref));
+  }
+
   /** The done duties on real disk and real git: archive the work's artifacts
    * (trabalhos/ → arquivo/, nothing deleted) and clean the branches. */
   private async finishWork(ref: IssueRef): Promise<void> {
@@ -506,7 +513,7 @@ export class SweepEngine {
    * terminal — processing, the work's outcome and the exit code stay
    * untouched. One call per new occurrence: the caller decides the act.
    */
-  private async notify(notification: WorkNotification): Promise<void> {
+  private async deliverNotice(notification: WorkNotification): Promise<void> {
     if (!this.deps.config.notifications) return;
     const notifier = this.deps.notifier;
     if (notifier === undefined) return;

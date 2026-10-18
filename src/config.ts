@@ -204,19 +204,20 @@ function optionalProfileAllowedRoots(doc: Record<string, unknown>): string[] {
 }
 
 function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean {
-  const value = doc["profile-skip-dangling-links"];
-  if (value === undefined) return false;
-  if (typeof value !== "boolean") {
-    throw new ConfigError(`config field "profile-skip-dangling-links" must be a boolean when given`);
-  }
-  return value;
+  return optionalBoolean(doc, "profile-skip-dangling-links", false);
 }
 
 function optionalNotifications(doc: Record<string, unknown>): boolean {
-  const value = doc["notifications"];
-  if (value === undefined) return DEFAULT_NOTIFICATIONS;
+  return optionalBoolean(doc, "notifications", DEFAULT_NOTIFICATIONS);
+}
+
+/** One parser for the config's boolean keys: absent → the key's default;
+ *  a non-boolean is a config error naming the offending key. */
+function optionalBoolean(doc: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = doc[key];
+  if (value === undefined) return fallback;
   if (typeof value !== "boolean") {
-    throw new ConfigError(`config field "notifications" must be a boolean when given`);
+    throw new ConfigError(`config field "${key}" must be a boolean when given`);
   }
   return value;
 }

@@ -85,16 +85,15 @@ src/
 │   └── outcome.ts      # the ruler: classifies desfecho.json — structured facts only
 ├── pool/
 │   └── slots.ts        # the y slots in memory; nothing here survives a restart
-└── runtime/
-    ├── port.ts         # WorkerRuntime: how a session is born
-    ├── sandcastle.ts   # the REAL runtime: Sandcastle run(), Pi headless, container
-    ├── prompt.ts       # the worker prompt: issue + PR + diff + the artifact contract
-    └── fake-runtime.ts # scripted worker outcomes — the ruler's test seam
-
-notify/
-├── port.ts             # Notifier: structured notice (review | help) + GitHub addresses
-├── linux.ts            # the REAL backend: notify-send (libnotify), host-side
-└── fake-notifier.ts    # the recorder the tests inject (or a simulated failure)
+├── runtime/
+│   ├── port.ts         # WorkerRuntime: how a session is born
+│   ├── sandcastle.ts   # the REAL runtime: Sandcastle run(), Pi headless, container
+│   ├── prompt.ts       # the worker prompt: issue + PR + diff + the artifact contract
+│   └── fake-runtime.ts # scripted worker outcomes — the ruler's test seam
+└── notify/
+    ├── port.ts         # Notifier: structured notice (review | help) + GitHub addresses
+    ├── linux.ts        # the REAL backend: notify-send (libnotify), host-side
+    └── fake-notifier.ts # the recorder the tests inject (or a simulated failure)
 ```
 
 Two rulers, one contract: the worker's obligations live in its prompt; the
