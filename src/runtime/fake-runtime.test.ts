@@ -156,4 +156,57 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
       assert.ok(existsSync(join(dir, "log-2.jsonl")));
     });
   });
+
+  describe("ticket 14 — a feedback round is the same branch and the same PR", () => {
+    test("a pr-open with an open PR already on the branch REUSES it — the worker never opens a second PR", async () => {
+      const runtime = makeRuntime(["pr-open"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      // Attempt 1 opens the PR; attempt 2 (the feedback round) reuses it.
+      const first = await runtime.launch({ ...request(dir), attempt: 1 });
+      const second = await runtime.launch({ ...request(dir), attempt: 2 });
+
+      assert.equal(first.outcome, "pr-open");
+      assert.equal(second.outcome, "pr-open");
+      const feedback = await tracker.readPrFeedback({ repo: "Sanmoo/a", number: 3 });
+      assert.ok(feedback.known && feedback.value.pr);
+      const prNumber = feedback.value.pr.number;
+      const record = JSON.parse(readFileSync(join(dir, DESFECHO_FILENAME), "utf8"));
+      assert.equal(record.attempt, 2, "the last attempt wrote the record last");
+      assert.equal(record.pr.number, prNumber, "the same PR number, no second PR");
+      const allPrs = (await tracker.readPrFeedback({ repo: "Sanmoo/a", number: 3 }));
+      assert.ok(allPrs.known && allPrs.value.pr !== null);
+    });
+
+    test("ending a feedback round, the worker comments on the PR (the norma of ticket 07)", async () => {
+      const runtime = makeRuntime(["pr-open"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch({ ...request(dir), attempt: 1 });
+      // The human gives feedback — the second round reuses the PR and, at its
+      // end, comments on it as the worker account.
+      const feedbackBefore = await tracker.readPrFeedback({ repo: "Sanmoo/a", number: 3 });
+      const prNumber = feedbackBefore.known && feedbackBefore.value.pr ? feedbackBefore.value.pr.number : 0;
+      tracker.addPrComment({ repo: "Sanmoo/a", prNumber }, "humano", "please address this");
+
+      await runtime.launch({ ...request(dir), attempt: 2 });
+
+      const comments = (await tracker.readComments({ repo: "Sanmoo/a", number: 3 }));
+      assert.ok(comments.known);
+      const last = comments.value.at(-1);
+      assert.ok(last);
+      assert.equal(last.author, "bot", "the worker commented on the PR");
+    });
+
+    test("the FIRST pr-open (no PR yet) opens a fresh one and posts no round comment", async () => {
+      const runtime = makeRuntime(["pr-open"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch(request(dir));
+
+      const comments = (await tracker.readComments({ repo: "Sanmoo/a", number: 3 }));
+      assert.ok(comments.known);
+      assert.equal(comments.value.length, 0, "no comment — the first round is not a feedback round");
+    });
+  });
 });

@@ -73,6 +73,11 @@ export class FakeTrackerAdapter implements TrackerPort {
 
   constructor(private readonly options: { workerAccount: string }) {}
 
+  /** The bot account this fake acts as (also used by the fake runtime). */
+  get workerAccount(): string {
+    return this.options.workerAccount;
+  }
+
   // ---- seeding (test side of the seam; not part of the port) ----
 
   seedIssue(input: FakeIssueInput): void {

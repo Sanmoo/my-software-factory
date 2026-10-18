@@ -75,14 +75,32 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (outcome === "pr-open") {
       const tracker = this.options.tracker;
       if (!tracker) throw new Error("fake runtime: pr-open needs a tracker to open the PR");
-      const opened = await tracker.openPr({
-        repo: request.ref.repo,
-        issueNumber: request.ref.number,
-        headBranch: request.branch,
-        baseBranch: "main",
-        title: `work ${request.ref.repo}#${request.ref.number}`,
-      });
-      pr = { repo: request.ref.repo, number: opened.number, branch: request.branch };
+      // Same branch, same PR (ticket 04 Q10): when the work's PR is already
+      // open on this branch, the worker reuses it — a feedback round never
+      // opens a second PR.
+      const feedback = await tracker.readPrFeedback(request.ref);
+      const existing = feedback.known ? feedback.value.pr : null;
+      const reused = existing !== null && existing.state === "open" && existing.headBranch === request.branch;
+      if (reused && existing) {
+        pr = { repo: request.ref.repo, number: existing.number, branch: request.branch };
+        // The norma (ticket 07 Q3): the worker ends EVERY feedback round by
+        // commenting on the PR what it addressed — the ball goes back to the
+        // human, derivable from the PR alone.
+        tracker.addPrComment(
+          { repo: request.ref.repo, prNumber: existing.number },
+          tracker.workerAccount,
+          `addressed the feedback (attempt ${request.attempt}) — see the new commits on ${request.branch}`,
+        );
+      } else {
+        const opened = await tracker.openPr({
+          repo: request.ref.repo,
+          issueNumber: request.ref.number,
+          headBranch: request.branch,
+          baseBranch: "main",
+          title: `work ${request.ref.repo}#${request.ref.number}`,
+        });
+        pr = { repo: request.ref.repo, number: opened.number, branch: request.branch };
+      }
     }
 
     const record: OutcomeRecord = {
