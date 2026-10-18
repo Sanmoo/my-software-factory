@@ -128,8 +128,11 @@ export interface TrackerPort {
   /** 4. Claim: swap ready→claimed (when the ready label is given) + assign the worker account — the reservation lands on the tracker BEFORE any launch. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5. Release: remove only the claim mark (label + account assignee). */
-  releaseClaim(ref: IssueRef, account: string): Promise<WriteOutcome>;
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool; the ready label is given) or remove only the claim mark when no ready label is given. */
+  releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
+
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of ticket 13) — the claim is held until the terminal state. */
+  blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome>;
 
   /** 6. Done: close the issue as completed. */
   markDone(ref: IssueRef): Promise<WriteOutcome>;

@@ -46,6 +46,86 @@ export interface OutcomeRecord {
 }
 
 /**
+ * The umbrella classification of a collection, no matter how the record got
+ * there: `abrupt-fall` is written by no one — its fact IS the absence, so it
+ * never appears in the artifact vocabulary, only in the ruler's reasoning.
+ */
+export type ObservedClass = OutcomeClass | "abrupt-fall";
+
+/** The ruled transition of a collection, decided in state/, executed by the loop. */
+export type OutcomeRuling =
+  /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
+   * reserved awaiting the human; a fall is never recorded, the claim is held. */
+  | { decision: "reserve"; because: "pr-open" }
+  /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
+  | { decision: "record-only"; because: "blocked-self-report" }
+  /** Class 2: fall without PR, 1st consecutive — release (claimed→ready; the branch stays). */
+  | { decision: "release"; because: "fall-first" }
+  /** Class 3/4: fall without PR, 2nd consecutive — blocked + comment carrying the exact outcome. */
+  | { decision: "block"; because: "fall-second"; comment: string };
+
+/** The structured facts the ruler reads — nothing else, zero prose (the two-rulers contract). */
+export interface OutcomeFacts {
+  /** desfecho.json of the collected attempt; null = absent = abrupt fall. */
+  record: OutcomeRecord | null;
+  /** The port's fact: an open PR linked to the issue (recorded now or pre-existing). */
+  prOpen: boolean;
+  /** The port's fact: the blocked label is on the issue (the worker's self-report). */
+  blockedLabelOnIssue: boolean;
+  /** The registry's fact from launch time: the previous attempt on this branch also fell. */
+  consecutiveFall: boolean;
+  /** The attempt being collected (the registry's launch fact) — names the fall in the blocked comment. */
+  attempt: number;
+}
+
+/**
+ * The factory's ruler (ticket 13), applied at collection (loop) on structured
+ * facts alone. Priority is the vocabulary of the six classes:
+ *   1/5. PR open → reserve, no fall recorded (pre-existing PR included);
+ *   6. blocked self-report → only recorded (the worker posted marker + label);
+ *   then any end without PR is the one fall (ticket 05 Q1): absent record =
+ *   abrupt fall — 1st consecutive → release, 2nd consecutive → blocked + comment.
+ */
+export function classifyOutcome(facts: OutcomeFacts): OutcomeRuling {
+  if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
+  if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
+
+  // Fall without PR — clean or abrupt, the ruler is a single one.
+  if (facts.consecutiveFall) {
+    return {
+      decision: "block",
+      because: "fall-second",
+      comment: blockedCommentBody(facts.record, facts.attempt),
+    };
+  }
+  return { decision: "release", because: "fall-first" };
+}
+
+/** A self-report is the record class or the label — both are structured facts. */
+function isBlockedSelfReport(facts: OutcomeFacts): boolean {
+  return facts.blockedLabelOnIssue || facts.record?.class === "blocked-self-report";
+}
+
+/**
+ * The blocked comment: the exact outcome carried on the issue (ticket 05 Q7:
+ * the human must SEE why it fell before deciding to resume). For a recorded
+ * fall the record's JSON is embedded verbatim; for an abrupt one the absence
+ * itself is the statement. The port mounts the agent marker on top.
+ */
+export function blockedCommentBody(record: OutcomeRecord | null, attempt?: number): string {
+  if (record === null) {
+    return (
+      `worker blocked after 2 consecutive falls (attempt ${attempt ?? "unknown"}) — ` +
+      "abrupt fall: no outcome record was written"
+    );
+  }
+  return (
+    `worker blocked after 2 consecutive falls (attempt ${record.attempt}) — the exact outcome record:\n\n` +
+    JSON.stringify(record, null, 2)
+  );
+}
+
+/**
  * Read the outcome record of a work. Returns null when the record is absent,
  * invalid or corrupt — absence is itself the class "abrupt fall"
  * (dead process, restart, garbage), and the ruler applies from there.

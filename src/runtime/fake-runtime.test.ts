@@ -105,4 +105,55 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     assert.equal(second.outcome, "abrupt-death");
     assert.equal(third.outcome, "abrupt-death");
   });
+
+  // ---- ticket 13: the per-work artifacts the runtime writes ----
+
+  describe("per-work artifacts on real disk (ticket 13)", () => {
+    test("every launch writes the session dir and the attempt's event log", async () => {
+      const runtime = makeRuntime(["pr-open"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch(request(dir));
+
+      assert.ok(existsSync(join(dir, "sessao")), "the session dir is written at launch");
+      assert.ok(existsSync(join(dir, "log-1.jsonl")), "log-<n>.jsonl for attempt n");
+      const log = readFileSync(join(dir, "log-1.jsonl"), "utf8");
+      assert.match(log, /"event":"session-start"/);
+    });
+
+    test("a scripted end appends the session-end event to the attempt's log", async () => {
+      const runtime = makeRuntime(["clean-without-pr"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch(request(dir));
+
+      const log = readFileSync(join(dir, "log-1.jsonl"), "utf8");
+      assert.match(log, /"event":"session-start"/);
+      assert.match(log, /"event":"session-end"/);
+      assert.match(log, /clean-without-pr/);
+    });
+
+    test("an abrupt death leaves only the start line — the log records that the attempt began and never ended", async () => {
+      const runtime = makeRuntime(["abrupt-death"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch(request(dir));
+
+      const log = readFileSync(join(dir, "log-1.jsonl"), "utf8");
+      assert.match(log, /"event":"session-start"/);
+      assert.doesNotMatch(log, /"event":"session-end"/);
+      assert.ok(!existsSync(join(dir, DESFECHO_FILENAME)));
+    });
+
+    test("each attempt gets its own log file (log-<attempt>.jsonl)", async () => {
+      const runtime = makeRuntime(["clean-without-pr", "clean-without-pr"]);
+      const dir = workDir(layout, "Sanmoo/a", 3);
+
+      await runtime.launch({ ...request(dir), attempt: 1 });
+      await runtime.launch({ ...request(dir), attempt: 2 });
+
+      assert.ok(existsSync(join(dir, "log-1.jsonl")));
+      assert.ok(existsSync(join(dir, "log-2.jsonl")));
+    });
+  });
 });

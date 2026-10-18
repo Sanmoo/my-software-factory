@@ -4,6 +4,12 @@ import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork } from "./git/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, type PoolEntry } from "./state/derive.js";
+import {
+  readOutcomeRecord,
+  classifyOutcome,
+  type OutcomeRuling,
+} from "./state/outcome.js";
+import { readLaunchFacts } from "./pool/registry.js";
 import { Slots } from "./pool/slots.js";
 
 /**
@@ -32,6 +38,8 @@ export interface CollectedWork {
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
+  /** The ruler's decided transition, applied at the act (ticket 13). */
+  ruling: { decision: OutcomeRuling["decision"]; because: string };
 }
 
 export interface SweepResult {
@@ -105,31 +113,60 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
       `launching worker for ${key} (branch ${prepared.branch}, ` +
         `${prepared.branchCreated ? "created" : "reused"} from base ${prepared.baseBranch})`,
     );
+
+    // The registry numbers the attempt and remembers the previous fall —
+    // both are disk facts of this work, not process state (ticket 13).
+    const dir = workDir(workspace, entry.ref.repo, entry.ref.number);
+    const facts = await readLaunchFacts(dir);
     const result = await runtime.launch({
       ref: entry.ref,
-      workDir: workDir(workspace, entry.ref.repo, entry.ref.number),
+      workDir: dir,
       branch: prepared.branch,
       repoDir: prepared.repoDir,
       baseBranch: prepared.baseBranch,
-      attempt: 1,
+      attempt: facts.attempt,
     });
     launched.push(result);
 
-    // Collection at the act: confirm the PR through the port — a structured
-    // fact, never prose. With PR: the work stays reserved for the human.
-    // Without PR: any end is a fall — the 1st fall releases the claim (the
-    // full ruler, double fall → blocked, is ticket 13).
+    // Collection at the act: the ruler of ticket 13, on structured facts
+    // alone — the outcome record (absence = abrupt fall), the PR fact and
+    // the label fact from the port, and the registry's consecutiveness.
     const feedback = await tracker.readPrFeedback(entry.ref);
     const prConfirmed =
       feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open";
-    if (prConfirmed) {
+    const issue = await tracker.readIssue(entry.ref);
+    const record = await readOutcomeRecord(dir);
+    const ruling = classifyOutcome({
+      record,
+      prOpen: prConfirmed,
+      blockedLabelOnIssue:
+        issue.known && issue.value.labels.includes(config.labels.blocked),
+      consecutiveFall: facts.previousFall,
+      attempt: facts.attempt,
+    });
+
+    if (ruling.decision === "reserve") {
       log(`collected ${key}: PR open — stays reserved, waiting for the human`);
+    } else if (ruling.decision === "record-only") {
+      log(`collected ${key}: blocked self-report — the factory only records the outcome`);
+    } else if (ruling.decision === "release") {
+      log(
+        `collected ${key}: fall without PR — release (claimed→ready back; ` +
+          "the branch stays, the next sweep picks it up)",
+      );
+      await tracker.releaseClaim(entry.ref, config.workerGhAccount, config.labels.ready);
     } else {
-      log(`collected ${key}: outcome ${result.outcome} without PR — releasing the claim`);
-      await tracker.releaseClaim(entry.ref, config.workerGhAccount);
+      log(`collected ${key}: 2nd consecutive fall — blocked, the exact outcome goes to the issue`);
+      await tracker.blockClaim(entry.ref, config.labels.claimed, config.labels.blocked);
+      await tracker.comment(entry.ref, ruling.comment);
     }
     slots.release(key);
-    collected.push({ entry, result, prConfirmed });
+    collected.push({
+      entry,
+      result,
+      prConfirmed,
+      ruling: { decision: ruling.decision, because: ruling.because },
+    });
 
     // Replenish the freed slot in the same cycle — the act of collection
     // triggers the next claims; no barrier waits for the slowest.
