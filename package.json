@@ -16,6 +16,7 @@
     "test": "npm run build && node --test --test-timeout=5000 --test-force-exit \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
     "yaml": "^2.6.0"
   },
   "devDependencies": {
