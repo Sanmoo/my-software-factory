@@ -30,10 +30,9 @@ import { DEFAULT_LABELS } from "../config.js";
  *  3+1, openPr 1, readPrFeedback 5 (timeline, pull, conversation, review
  *  submissions, inline comments), comment+readComments 2, derivation 2
  *  (candidates listing + the open-PRs linkage listing — ticket 12: the seeded
- *  issue's OWN open PR (op9b, "Closes #N") links it, so it is excluded from
- *  the pool BEFORE any per-candidate readIssue; before ticket 12's real-
- *  adapter fix this was candidates + readIssue, where isEligible early-
- *  returned on the blocked label — same count, different path), markDone+
+ *  issue's OWN open PR (op9b, "Closes #N") links it, so the derivation
+ *  excludes it from the pool in memory (issue 99: the neutral read flags
+ *  hasOpenPr; no per-candidate readIssue), markDone+
  *  re-read 2, the late candidates() re-check 1 (its listing is EMPTY at that
  *  point — both seeded issues closed — so no linkage listing) = 31. */
 export const CYCLE_ADAPTER_REST_CALLS = 31;
@@ -59,26 +58,26 @@ export interface SmokeCycleReport {
   op1ListingProof: Op1ListingProof;
 }
 
-/** The late, non-blocking candidates() re-check: op1's live listing proof.
+/** The late, non-blocking open-issues re-check: op1's live listing proof.
  *  The cycle ends with the seeded issue CLOSED (op6, markDone), so a
- *  CONVERGED open-issues listing does not list it — its presence is
- *  stale-open lag. Either way this reports; it never throws. */
+ *  CONVERGED open-issues read does not list it — its presence is stale-open
+ *  lag. Either way this reports; it never throws. */
 export async function recheckLateCandidates(
   adapter: TrackerPort,
   repo: string,
   ref: IssueRef,
 ): Promise<Op1ListingProof> {
-  const candidates = await adapter.listCandidates(repo, DEFAULT_LABELS.ready);
-  const sawIssue = candidates.some((candidate) => candidate.ref.number === ref.number);
+  const issues = await adapter.listOpenIssues(repo);
+  const sawIssue = issues.some((issue) => issue.ref.number === ref.number);
   const converged = !sawIssue;
   const note = sawIssue
-    ? `op1 verified via direct reads; candidates() listing lag observed (environmental) — the late ` +
-      `re-check still listed the seeded issue (closed in op6): the open-issues listing lagged the whole ` +
-      `cycle. The factory tolerates this by design (the pool re-derives every tick and self-heals) — ` +
-      `not a failure.`
-    : `op1 FULLY PROVEN LIVE: the late candidates() re-check is converged — the listing reflects the ` +
-      `cycle's end (the seeded issue, closed in op6, is correctly out of the open listing); eligibility ` +
-      `was proven by direct reads right after seeding.`;
+    ? `op1 verified via direct reads; open-issues() listing lag observed (environmental) — the late `
+      + `re-check still listed the seeded issue (closed in op6): the open-issues listing lagged the whole `
+      + `cycle. The factory tolerates this by design (the pool re-derives every tick and self-heals) — `
+      + `not a failure.`
+    : `op1 FULLY PROVEN LIVE: the late open-issues() re-check is converged — the listing reflects the `
+      + `cycle's end (the seeded issue, closed in op6, is correctly out of the open listing); eligibility `
+      + `was proven by direct reads right after seeding.`;
   return { sawIssue, converged, note };
 }
 

@@ -97,7 +97,7 @@ describe("boot: credential from the gh keyring", () => {
 
   test("every gh call carries the bot token in its env, not in the argv", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "[]" }));
-    await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
+    await adapter.listOpenIssues("Sanmoo/a");
     const gh = calls.find((c) => c.file === "gh" && c.args[0] !== "auth");
     assert.ok(gh);
     assert.equal(gh.env.GH_TOKEN, TOKEN);
@@ -106,39 +106,62 @@ describe("boot: credential from the gh keyring", () => {
 });
 
 describe("the 9 operations over gh", () => {
-  test("1. listCandidates: plain open-issues listing, ready label matched CLIENT-SIDE, PRs excluded via the open-PRs listing", async () => {
+  test("1. listOpenIssues: plain open-issues listing, ALL labels matched CLIENT-SIDE (no label filter), PRs excluded", async () => {
     const { adapter, calls } = await makeAdapter((call) => {
       const path = call.args.find((a) => a.startsWith("repos/"));
       if (path?.includes("/pulls?")) return { stdout: "[]" };
       return {
         stdout:
           call.file === "gh"
-            ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z","labels":[{"name":"ready-for-agent"}]},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{},"labels":[{"name":"ready-for-agent"}]},{"number":9,"title":"unlabeled","created_at":"2026-01-04T00:00:00Z","labels":[]},{"number":10,"title":"other label","created_at":"2026-01-05T00:00:00Z","labels":[{"name":"other"}]}]`
+            ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z","labels":[{"name":"ready-for-agent"},{"name":"triaged"}],"assignees":[{"login":"bot-do-samuca"}]},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{},"labels":[{"name":"ready-for-agent"}],"assignees":[]},{"number":9,"title":"unlabeled","created_at":"2026-01-04T00:00:00Z","labels":[],"assignees":[]},{"number":10,"title":"other label","created_at":"2026-01-05T00:00:00Z","labels":[{"name":"other"}],"assignees":[]}]`
             : "",
       };
     });
-    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
-    assert.deepEqual(candidates, [
-      { ref: { repo: "Sanmoo/a", number: 7 }, title: "do it", createdAt: "2026-01-02T00:00:00Z" },
+    const issues = await adapter.listOpenIssues("Sanmoo/a");
+    assert.deepEqual(issues, [
+      {
+        ref: { repo: "Sanmoo/a", number: 7 },
+        title: "do it",
+        createdAt: "2026-01-02T00:00:00Z",
+        labels: ["ready-for-agent", "triaged"],
+        assignees: ["bot-do-samuca"],
+        hasOpenPr: false,
+      },
+      {
+        ref: { repo: "Sanmoo/a", number: 9 },
+        title: "unlabeled",
+        createdAt: "2026-01-04T00:00:00Z",
+        labels: [],
+        assignees: [],
+        hasOpenPr: false,
+      },
+      {
+        ref: { repo: "Sanmoo/a", number: 10 },
+        title: "other label",
+        createdAt: "2026-01-05T00:00:00Z",
+        labels: ["other"],
+        assignees: [],
+        hasOpenPr: false,
+      },
     ]);
     const gh = ghCall(calls, (c) => c.args[0] === "api");
     const path = gh.args.find((a) => a.startsWith("repos/"));
     assert.ok(path?.includes("state=open"));
     // the dialect (ticket 16 smoke fix): NO labels query param — GitHub's
     // label-filtered listing is search-index-backed and lags minutes behind a
-    // fresh label; the filter happens in the adapter instead
+    // fresh label; the neutral read hands every issue to the derivation
     assert.ok(!path?.includes("labels="), "the labels query param is never sent");
     assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
   });
 
-  test("1. listCandidates: an issue linked by an OPEN PR's body is excluded (only sem-PR issues enter the pool — ticket 12)", async () => {
+  test("1. listOpenIssues: an issue linked by an OPEN PR's body is flagged hasOpenPr (the derivation excludes it)", async () => {
     const { adapter, calls } = await makeAdapter((call) => {
       const path = call.args.find((a) => a.startsWith("repos/"));
       if (path?.endsWith("/issues") || path?.includes("/issues?")) {
         return {
           stdout: JSON.stringify([
-            { number: 7, title: "has a PR", created_at: "2026-01-02T00:00:00Z", labels: [{ name: "ready-for-agent" }] },
-            { number: 8, title: "no PR", created_at: "2026-01-03T00:00:00Z", labels: [{ name: "ready-for-agent" }] },
+            { number: 7, title: "has a PR", created_at: "2026-01-02T00:00:00Z", labels: [{ name: "ready-for-agent" }], assignees: [] },
+            { number: 8, title: "no PR", created_at: "2026-01-03T00:00:00Z", labels: [{ name: "ready-for-agent" }], assignees: [] },
           ]),
         };
       }
@@ -154,31 +177,47 @@ describe("the 9 operations over gh", () => {
       }
       return { stdout: "[]" };
     });
-    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
-    assert.deepEqual(
-      candidates.map((c) => c.ref.number),
-      [8],
-      "#7 (Closes #7) is excluded; #8 (fixes #8) is excluded too — only sem-PR issues remain",
-    );
-    const pulls = calls.find(
+    const issues = await adapter.listOpenIssues("Sanmoo/a");
+    const byNumber = new Map(issues.map((issue) => [issue.ref.number, issue]));
+    assert.equal(byNumber.get(7)?.hasOpenPr, true, "#7 (Closes #7) is flagged");
+    assert.equal(byNumber.get(8)?.hasOpenPr, false, "#8 has no open PR");
+    const pulls = calls.filter(
       (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls?"),
     );
-    assert.ok(pulls, "the open-PRs listing is read");
-    const pullsPath = pulls?.args.find((a) => a.startsWith("repos/"));
+    assert.equal(pulls.length, 1, "the open-PRs listing is read ONCE, not per issue");
+    const pullsPath = pulls[0]?.args.find((a) => a.startsWith("repos/"));
     assert.match(pullsPath ?? "", /state=open/);
-    assert.equal(
-      calls.filter(
-        (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls?"),
-      ).length,
-      1,
-      "the open-PRs listing is read ONCE, not per candidate",
+  });
+
+  test("1. listOpenIssues: the whole read is ONE issues listing + ONE open-PRs listing — no per-issue read", async () => {
+    const { adapter, calls } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/pulls?")) return { stdout: JSON.stringify([{ number: 20, body: "Closes #7" }]) };
+      if (path?.includes("/issues?")) {
+        return {
+          stdout: JSON.stringify([
+            { number: 7, title: "a", created_at: "2026-01-01T00:00:00Z", labels: [], assignees: [] },
+            { number: 8, title: "b", created_at: "2026-01-02T00:00:00Z", labels: [], assignees: [] },
+          ]),
+        };
+      }
+      return { stdout: "[]" };
+    });
+    await adapter.listOpenIssues("Sanmoo/a");
+    const listings = calls.filter((c) => c.file === "gh" && c.args[0] === "api");
+    const pathOf = (c: { args: string[] }) => c.args.find((a) => a.startsWith("repos/")) ?? "";
+    assert.equal(listings.filter((c) => pathOf(c).includes("/issues?")).length, 1, "one issues listing");
+    assert.equal(listings.filter((c) => pathOf(c).includes("/pulls?")).length, 1, "one open-PRs listing");
+    assert.ok(
+      !listings.some((c) => /\/issues\/\d+$/.test(pathOf(c))),
+      "no per-issue snapshot read — labels and linkage come from the listings",
     );
   });
 
-  test("1. listCandidates: an EMPTY issues listing never reads the open-PRs listing (nothing to filter)", async () => {
+  test("1. listOpenIssues: an EMPTY issues listing never reads the open-PRs listing (nothing to link)", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "[]" }));
-    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
-    assert.deepEqual(candidates, []);
+    const issues = await adapter.listOpenIssues("Sanmoo/a");
+    assert.deepEqual(issues, []);
     assert.ok(
       !calls.some(
         (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls"),

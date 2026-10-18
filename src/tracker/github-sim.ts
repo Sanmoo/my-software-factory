@@ -315,7 +315,7 @@ export class GitHubSim {
     if (rest[0] === "pulls") {
       if (rest.length === 1 && method === "GET") {
         // the pool's linkage read: GET /repos/{repo}/pulls?state=open — only
-        // the fields the adapter's listCandidates reads (number, body). A PR
+        // the fields the adapter's listOpenIssues reads (number, body). A PR
         // body carries the "Closes/Fixes/Resolves #N" linkage keywords.
         const state = query.get("state") ?? "open";
         return [...this.issues.values()]
