@@ -16,18 +16,6 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 
-/**
- * End-to-end of issue 93: local desktop notices when a NEW occurrence needs
- * human continuity — always through the public sweep (runOnce / runForever)
- * with the existing fake tracker + runtime, a real temp workspace and the one
- * extra replaceable seam: a recording notifier. No desktop, no network.
- *
- * The notice is a structured fact (work, reason, address) — never agent
- * prose. Review points at the PR; help/block points at the issue where the
- * continuity context lives. Help wins over review when a session both leaves
- * a PR open and asks for help, without changing the ruler's state decision.
- */
-
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 const TICK_MS = 5;
@@ -53,7 +41,6 @@ class FakeGitWork implements GitWork {
   }
 }
 
-/** A worker that opens the PR AND posts the structured help request (blocked label + marker). */
 class PrAndHelpRuntime implements WorkerRuntime {
   private readonly inner: FakeWorkerRuntime;
 
@@ -150,8 +137,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     }
   }
 
-  // ---- review: the initial execution and every later feedback round ----
-
   test("the initial execution that leaves the PR open sends exactly one review notice with the PR address", async () => {
     const config = makeConfig(1);
     const { tracker, notifier, deps } = makeFactory(config, ["pr-open"]);
@@ -193,13 +178,10 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(notifier.notifications[1]?.kind, "review");
     assert.equal(notifier.notifications[1]?.url, prAddress(1), "the SAME PR");
 
-    // Nothing new: the ball is with the human — no reminders.
     await runOnce(deps);
     await runOnce(deps);
     assert.equal(notifier.notifications.length, 2, "waiting human action is silent");
   });
-
-  // ---- help: self-report, second fall, rejection, recovery blocks ----
 
   test("a blocked self-report sends one help notice pointing at the issue", async () => {
     const config = makeConfig(1);
@@ -254,19 +236,13 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     const { tracker, notifier, deps } = makeFactory(config, ["blocked-self-report", "abrupt-death"]);
     seedIssue(tracker, { repo: REPO, number: 17, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    // Attempt 1 writes the blocked-self-report record — one help notice.
     const first = await runOnce(deps);
     assert.equal(first.collected[0]?.ruling.decision, "record-only");
     assert.equal(notifier.notifications.length, 1);
 
-    // The worker also posted the blocked label; the human answers after the
-    // marker, so the next sweep resumes on the same branch.
     await tracker.blockClaim({ repo: REPO, number: 17 }, { ...DEFAULT_LABELS });
     tracker.addComment({ repo: REPO, number: 17 }, "humano", "try again");
 
-    // Attempt 2 dies abruptly (no new record). desfecho.json still holds the
-    // attempt-1 self-report; it must not be read as a help request NOW —
-    // a first fall after a resume is scheduled for automatic retry (silent).
     const resumed = await runOnce(deps);
     assert.equal(resumed.launched.length, 1, "the resume ran");
     assert.equal(notifier.notifications.length, 1, "the stale record does not re-notify help");
@@ -295,8 +271,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 6, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // The crash footprint: attempt 1 recorded a clean fall, attempt 2 died
-    // abruptly (log, no record) — the restart sees a 2nd consecutive fall.
     const work = workDir(layout, REPO, 6);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
@@ -321,8 +295,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     });
   });
 
-  // ---- concurrent facts: PR open + help in the same session ----
-
   test("PR open AND a help request in the same session: exactly one help notice, the state keeps the PR precedence", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
@@ -333,16 +305,12 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
 
     const result = await runOnce(deps);
 
-    // The ruler's state decision is unchanged: the open PR reserves the work.
     assert.equal(result.collected[0]?.ruling.decision, "reserve");
     assert.equal(result.collected[0]?.prConfirmed, true);
-    // But the message is help, pointing at the issue — a block is not a mere review.
     assert.equal(notifier.notifications.length, 1, "one notice, never two for the same occurrence");
     assert.equal(notifier.notifications[0]?.kind, "help");
     assert.equal(notifier.notifications[0]?.url, issueAddress(7));
   });
-
-  // ---- intentional silence ----
 
   test("a retomada the human initiated does not re-notify a review — only initial execution / feedback do", async () => {
     const config = makeConfig(1);
@@ -353,13 +321,11 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     ]);
     seedIssue(tracker, { repo: REPO, number: 16, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    await runOnce(deps); // 1st fall — retried silently
-    await runOnce(deps); // 2nd consecutive fall — blocked, help notice
+    await runOnce(deps);
+    await runOnce(deps);
     assert.equal(notifier.notifications.length, 1);
     assert.equal(notifier.notifications[0]?.kind, "help");
 
-    // The human answers the issue; the retomada reopens the flow and leaves
-    // the PR open. The operator already initiated it: no extra review notice.
     tracker.addComment({ repo: REPO, number: 16 }, "humano", "go ahead and open the PR");
     const resumed = await runOnce(deps);
 
@@ -415,8 +381,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(notifier.notifications.length, 0);
   });
 
-  // ---- concurrency ----
-
   test("parallel works get individual notices, each identified by its own repository and issue", async () => {
     const config = makeConfig(2);
     const { tracker, notifier, deps } = makeFactory(config, ["pr-open"]);
@@ -435,8 +399,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(second.kind, "review");
     assert.notEqual(first.url, second.url, "each points at its own PR");
   });
-
-  // ---- configuration + delivery failures ----
 
   test("notifications: false runs the factory silently, and the work's outcome is untouched", async () => {
     const config = makeConfig(1, false);
@@ -467,8 +429,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     );
   });
 
-  // ---- continuous mode parity ----
-
   test("continuous mode applies the same policy: the initial PR and the later feedback round both notify", async () => {
     const config = makeConfig(1);
     const { tracker, runtime, notifier, deps } = makeFactory(config, ["pr-open", "pr-open"]);
@@ -492,8 +452,6 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       await running;
     }
   });
-
-  // ---- status has no notification effects ----
 
   test("msf status is a read-only query: it never invokes the desktop notifier", () => {
     writeFileSync(

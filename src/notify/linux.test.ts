@@ -4,14 +4,6 @@ import { test, describe } from "node:test";
 import { LinuxNotifier, renderNotification } from "./linux.js";
 import type { WorkNotification } from "./port.js";
 
-/**
- * The Linux delivery backend (issue 93): the notice text is composed from the
- * structured facts (work, reason, address) and handed to `notify-send` — no
- * focus stealing, no window, no browser. The subprocess is injected, so these
- * tests never need a desktop session; the failure path proves the delivery is
- * a rejection the loop can report without changing the work.
- */
-
 const review: WorkNotification = {
   ref: { repo: "Sanmoo/my-tasks", number: 42 },
   kind: "review",

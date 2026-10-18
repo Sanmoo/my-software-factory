@@ -39,8 +39,7 @@ export interface LoopDeps {
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
-  /** The host-side delivery of local desktop notifications (issue 93); the
-   * cli wires the Linux backend, tests inject a recorder. Absent = silent. */
+  /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
 }
 
@@ -180,8 +179,6 @@ export class SweepEngine {
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
-            // A NEW block applied during recovery needs the human (a
-            // pre-existing block stays silent — see story 20).
             await this.applyRecoveryBlock(decision.ref, decision.comment);
           }
           break;
@@ -444,21 +441,10 @@ export class SweepEngine {
       ruling: { decision: ruling.decision, because: ruling.because },
     });
 
-    // One notice per new occurrence of this act (issue 93). Help wins over
-    // review when the session both left a PR open and asked for help: the
-    // state keeps the ruler's precedence (PR open reserves), only the message
-    // points at the issue — a block is not a simple review request. Silence
-    // when the fall is already retrying automatically, when the work
-    // concluded, or when the ball is simply with the human. A review is
-    // triggered by the initial execution or a feedback round (the spec's
-    // triggers), never by merely finding a pre-existing PR or by a retomada
-    // the human already initiated.
+    // One notice per new occurrence; help (self-report, block) wins over
+    // review, and the ruler's state decision is untouched. The self-report
+    // counts only for THIS attempt — desfecho.json survives between attempts.
     if (ruling.decision !== "done") {
-      // The self-report only counts when the record belongs to THIS attempt:
-      // desfecho.json is not cleared between attempts, so a resume that ends
-      // without a new record still has the previous one on disk. Reading it
-      // as a help request for the new attempt would break the silence of a
-      // first fall scheduled for automatic retry.
       const selfReportedNow =
         record !== null && record.attempt === attempt && record.class === "blocked-self-report";
       const needsHelp = blockedLabelOnIssue || selfReportedNow || ruling.decision === "block";
@@ -490,10 +476,7 @@ export class SweepEngine {
     await tracker.comment(ref, comment);
   }
 
-  /** A block applied by the derivation (a rejection or a 2nd fall) travels
-   *  with its help notice: a new intervention need must not stay invisible.
-   *  The collection's 2nd fall is blocked in a different flow and goes
-   *  through collect()'s unified notice policy instead. */
+  /** A block applied during recovery also notifies, so a new need stays visible. */
   private async applyRecoveryBlock(ref: IssueRef, comment: string): Promise<void> {
     await this.applyBlockWithComment(ref, comment);
     await this.deliverNotice(helpNotice(ref));
@@ -506,13 +489,7 @@ export class SweepEngine {
     await this.deps.git.cleanupDoneWork(ref);
   }
 
-  /**
-   * Best-effort delivery of one occurrence notice (issue 93). The config
-   * switch turns the whole feature off; without a wired notifier (tests that
-   * do not care) nothing is sent. A delivery failure only logs on the
-   * terminal — processing, the work's outcome and the exit code stay
-   * untouched. One call per new occurrence: the caller decides the act.
-   */
+  /** Best-effort delivery of one occurrence notice; a failure only logs. */
   private async deliverNotice(notification: WorkNotification): Promise<void> {
     if (!this.deps.config.notifications) return;
     const notifier = this.deps.notifier;
