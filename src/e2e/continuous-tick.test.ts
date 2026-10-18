@@ -194,6 +194,49 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     assert.ok(existsSync(workDir(layout, REPO, 3)), "the work's artifacts survive the exit");
   });
 
+  test("ticket 18 — a legit launch in flight is never released by a tick's derivation (zero footprint, held)", async () => {
+    const config = makeConfig(1);
+    const { tracker, deps, runtime } = makeFactory(config, ["pr-open"]);
+
+    // Hold the worker before its first write: the claim is on the tracker and
+    // the registry dir exists, but the footprint on disk is still zero —
+    // exactly the window between the claim and the spawn.
+    const hold = deferred();
+    runtime.hold = () => hold.promise;
+
+    seedIssue(tracker, { repo: REPO, number: 4, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const controller = new AbortController();
+    const running = runForever(deps, { tickMs: TICK_MS, signal: controller.signal });
+    running.catch(() => {});
+
+    try {
+      await waitUntil("claimed with the registry dir created", async () => {
+        const issue = await tracker.readIssue({ repo: REPO, number: 4 });
+        return (
+          issue.known &&
+          issue.value.labels.includes(DEFAULT_LABELS.claimed) &&
+          existsSync(workDir(layout, REPO, 4))
+        );
+      });
+
+      // Several ticks fire while the launch is in flight: the engine's
+      // in-flight set holds the work — the derivation must not release it.
+      await new Promise((resolve) => setTimeout(resolve, TICK_MS * 20));
+      const issue = await tracker.readIssue({ repo: REPO, number: 4 });
+      assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.claimed), "the claim was never released mid-launch");
+      assert.ok(!issue.value.labels.includes(DEFAULT_LABELS.ready), "never devolved back to the pool mid-launch");
+    } finally {
+      hold.resolve(); // the launch proceeds: the worker opens the PR
+      await waitUntil("the PR opened", async () => {
+        const feedback = await tracker.readPrFeedback({ repo: REPO, number: 4 });
+        return feedback.known && feedback.value.pr !== null;
+      });
+      controller.abort();
+      await running;
+    }
+  });
+
   test("Ctrl-C on the spawned cli ends the process cleanly (exit 0)", async () => {
     // The tests-only fake runtime (ticket 18) and an empty repo list: the
     // sweep boots through the REAL tracker boot check (keyring) and runs

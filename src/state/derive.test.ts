@@ -262,12 +262,28 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       return derived;
     }
 
-    test("claimed, dir exists from the reservation, zero attempt evidence → idle: the claim is held, never released", async () => {
+    test("claimed, zero attempt evidence, NOT in the engine's in-flight set → orphan: fall → release (ticket 18)", async () => {
       seedIssue(adapter, { repo: REPO, number: 19, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(19); // the dir exists; nothing was ever written inside
 
       const derived = await deriveFrom(path, 19);
-      assert.equal(derived.state, "idle", "nothing fell — a second sweep must not release it");
+      assert.equal(derived.state, "fall", "an orphan claim is an abrupt fall (story 22) — never held forever");
+      assert.equal(derived.decision, "release", "zero evidence is honestly a 1st fall: release (branch preserved)");
+    });
+
+    test("claimed, zero attempt evidence, IN the engine's in-flight set → idle: a legit launch is held, never released", async () => {
+      seedIssue(adapter, { repo: REPO, number: 24, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(24); // claimed, dir created, the worker not yet up — zero footprint so far
+
+      const [derived] = await deriveReserved(
+        adapter,
+        [{ ref: ref(24), dir: path }],
+        DEFAULT_LABELS,
+        "bot",
+        new Set([`${REPO}#24`]),
+      );
+      assert.ok(derived);
+      assert.equal(derived.state, "idle", "this process holds the launch — no false release mid-flight");
     });
 
     test("claimed, no PR, no worker in flight, first crash → fall: release (the work re-enters the pool)", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -313,5 +313,32 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     );
     assert.equal(second.launched.length, 3, "y=2: the feedback round and the oldest claim first, #3 renews a freed slot");
     assert.equal(second.launched.find((r) => r.request.ref.number === 10)?.request.attempt, 2, "the registry numbered the round");
+  });
+
+  // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an abrupt fall ----
+
+  test("an orphan claim with zero footprint is released by the sweep, then re-claimed and launched as attempt 1", async () => {
+    const config = makeConfig(2);
+    const { tracker, runtime, deps } = makeFactory(config, ["pr-open"]);
+
+    // The death scene (sweep #1): the work was claimed and the process died
+    // before any spawn — the tracker holds the claim, the registry dir is
+    // empty (no log-*.jsonl, no sessao/, no desfecho.json): zero footprint.
+    seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    await tracker.claim({ repo: REPO, number: 7 }, config.workerGhAccount, DEFAULT_LABELS.ready);
+    mkdirSync(workDir(layout, REPO, 7), { recursive: true });
+
+    // Sweep #2 (--once): the orphan is an abrupt fall — released back to the
+    // pool in the very same sweep, then re-claimed and launched as attempt 1.
+    const sweep = await runOnce(deps);
+    const fall = sweep.reserved.find((decision) => decision.ref.number === 7);
+    assert.ok(fall, "the orphan was derived as a reserved work");
+    assert.equal(fall.state, "fall", "the orphan claim is an abrupt fall (story 22)");
+    assert.ok(fall.state === "fall" && fall.decision === "release", "1st fall: release");
+
+    assert.equal(runtime.launched.length, 1, "the released work was picked up again in the same sweep");
+    assert.equal(runtime.launched[0]?.attempt, 1, "the registry honestly reports attempt 1 (zero evidence)");
+    assert.ok((await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.claimed), "re-claimed by this sweep");
+    assert.ok(!(await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.ready), "never stuck claimed-and-idle again");
   });
 });

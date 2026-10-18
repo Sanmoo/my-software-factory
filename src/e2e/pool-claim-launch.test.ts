@@ -22,8 +22,12 @@ import { DEFAULT_LABELS, type Config } from "../config.js";
  *      cycle the moment a slot frees, with no barrier waiting for the slowest.
  *   2. An eligible with an open blocker stays out of the pool; with all
  *      closed it enters.
- *   3. The claim swaps the label on the tracker BEFORE the launch — a second
- *      concurrent sweep never picks the same work.
+ *   3. The claim swaps the label on the tracker BEFORE the launch — the
+ *      swap is one composite write, and the engine's own in-flight set
+ *      keeps its launches out of its own re-derivations. A second,
+ *      stateless sweep reading a zero-footprint claim cannot see the live
+ *      launch: it treats the claim as an orphan and falls it (ticket 18,
+ *      story 22) — the honest disk truth, never a freeze.
  *   4. --once only exits after every launched worker ended, with the final
  *      tracker state correct (claimed with an open PR).
  *   5. A long work never blocks the other slots.
@@ -268,7 +272,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
 
   // ---- checklist 3: the claim swaps the label before the launch ----
 
-  test("the claim swaps ready→claimed on the tracker before the launch — a second concurrent sweep never picks the same work", async () => {
+  test("the claim swaps ready→claimed on the tracker before the launch — this sweep's in-flight set keeps its own launch out of its own re-derivations", async () => {
     const config = makeConfig(1);
     const { deps, tracker, runtime } = makeDeps(config);
 
@@ -293,8 +297,12 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       const issue = await tracker.readIssue({ repo: REPO, number: 1 });
       assert.ok(issue.known && issue.value.assignees.includes("bot-do-samuca"));
 
-      // A second concurrent sweep derives the same tracker: the claimed work
-      // is not in its pool, and it launches nothing.
+      // A second, stateless sweep derives the same tracker with an EMPTY
+      // in-flight set: the zero-footprint claim is an orphan to it (ticket
+      // 18, story 22) — it falls the work (1st fall → release) and picks it
+      // up itself. The disk truth is honest: no session ever started. The
+      // composite swap protects the pool within one derivation, never
+      // across processes — a freeze would hold the work forever.
       const secondRuntime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
       const secondSweep = await runOnce({
         config,
@@ -304,8 +312,10 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         workspace: layout,
         log: () => {},
       });
-      assert.equal(secondSweep.pool.length, 0, "the claimed work is out of the second sweep's pool");
-      assert.equal(secondRuntime.launched.length, 0, "the second sweep claims nothing");
+      const orphan = secondSweep.reserved.find((decision) => decision.ref.number === 1);
+      assert.ok(orphan && orphan.state === "fall" && orphan.decision === "release", "the stateless second sweep falls the zero-footprint orphan");
+      assert.equal(secondRuntime.launched.length, 1, "the second sweep re-claims and launches the orphan");
+      assert.equal(secondRuntime.launched[0]?.attempt, 1, "the registry honestly reports attempt 1 (zero evidence)");
 
       releaseWorker.resolve();
       await firstSweep;

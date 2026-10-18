@@ -118,7 +118,10 @@ export class SweepEngine {
 
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
-    // re-launch it and does not act on a terminal state mid-flight).
+    // re-launch it and does not act on a terminal state mid-flight). The
+    // in-flight set also goes INTO the derivation (ticket 18): a zero-
+    // footprint claim inside it is a legit launch between the claim and the
+    // worker's first write — held; outside it, an orphan — an abrupt fall.
     const inFlight = new Set(this.slots.workKeys);
     const reservedWorks = (await scanReservedWorks(workspace)).filter(
       (work) => !inFlight.has(workKey(work.ref)),
@@ -129,6 +132,7 @@ export class SweepEngine {
       reservedWorks,
       config.labels,
       config.workerGhAccount,
+      inFlight,
     );
 
     // The actions state/ decided — executed here, in the loop's IO duty.

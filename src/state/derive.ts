@@ -120,8 +120,9 @@ export async function deriveReserved(
   reserved: ReservedWorkInput[],
   labels: Labels,
   workerAccount: string,
+  inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
-  return Promise.all(reserved.map((work) => deriveReservedWork(port, work, labels, workerAccount)));
+  return Promise.all(reserved.map((work) => deriveReservedWork(port, work, labels, workerAccount, inFlight)));
 }
 
 async function deriveReservedWork(
@@ -129,6 +130,7 @@ async function deriveReservedWork(
   work: ReservedWorkInput,
   labels: Labels,
   workerAccount: string,
+  inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
   const issue = await port.readIssue(ref);
@@ -181,30 +183,44 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
-    return deriveUnreconciledFall(port, ref, work.dir);
+    return deriveUnreconciledFall(port, ref, work.dir, inFlight);
   }
   return { ref, state: "idle" };
 }
 
 /**
- * The unreconciled fall (ticket 05 Q3, derived in 14): a claimed work with
- * no PR and no worker in flight is a session that ended without the factory
- * acting on it — a factory death is an abrupt fall by definition. The ruler
- * applies from the crash footprint alone: 1st fall → release; 2nd
- * consecutive → blocked with the exact outcome.
+ * The unreconciled fall (ticket 05 Q3, derived in 14; orphans in 18): a
+ * claimed work with no PR and no worker in flight is a session that ended
+ * without the factory acting on it — a factory death is an abrupt fall by
+ * definition. The ruler applies from the crash footprint alone: 1st fall →
+ * release; 2nd consecutive → blocked with the exact outcome.
+ *
+ * Ticket 18 (story 22): the derivation itself cannot see the process, so
+ * the engine hands its in-flight set in. A claim with ZERO attempt evidence
+ * is only held when THIS process holds its launch (between the claim and
+ * the worker's first write); outside the set it is an ORPHAN — a death
+ * between the claim and the spawn — and the same ruler applies from the
+ * empty registry: the disk honestly reports attempt 1 with no previous
+ * fall, so the 1st fall releases (story 17: the work devolves to the pool).
  */
 async function deriveUnreconciledFall(
   port: TrackerPort,
   ref: IssueRef,
   dir: string,
+  inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const recon = await readReconciliationFacts(dir);
   if (recon.lastAttempt === 0) {
     // A claim with zero attempt evidence: no session ever started (a death
-    // between the claim and the spawn) — nothing fell, so ruling it a fall
-    // would release a work whose claim is legitimately held. It stays
-    // reserved, held (idle); the sweep's in-flight set covers this process.
-    return { ref, state: "idle" };
+    // between the claim and the spawn). In this process's in-flight set the
+    // claim is legitimately held — a worker is between the claim and its
+    // first write; the sweep's own derivation must not release it.
+    if (inFlight?.has(`${ref.repo}#${ref.number}`)) return { ref, state: "idle" };
+    // An orphan: nothing fell on disk (no logs, no session, no record), but
+    // no process holds the claim either — held forever would contradict the
+    // ruler. The empty registry reads as attempt 1, no previous fall: the
+    // 1st fall releases (claimed→ready back, branch preserved).
+    return { ref, state: "fall", decision: "release" };
   }
   if (!recon.consecutiveFall) return { ref, state: "fall", decision: "release" };
   const record = await readOutcomeRecord(dir);
