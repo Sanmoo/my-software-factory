@@ -67,7 +67,15 @@ async function runCommand(argv: string[]): Promise<void> {
   }
 
   console.log("msf run: sweeping forever on the fixed tick (Ctrl-C to end)");
-  await runForever(deps);
+  // Ticket 14: ending the factory is a human act — Ctrl-C exits cleanly.
+  const controller = new AbortController();
+  const onInterrupt = (): void => controller.abort();
+  process.on("SIGINT", onInterrupt);
+  try {
+    await runForever(deps, { signal: controller.signal });
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+  }
 }
 
 main().catch((error: unknown) => {

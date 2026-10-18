@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { FakeTrackerAdapter, seedIssue } from "./tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "./runtime/fake-runtime.js";
 import { ensureWorkspace, workDir } from "./layout.js";
-import { runOnce, type LoopDeps } from "./loop.js";
+import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
 import { workBranchName, type GitWork, type PreparedWork } from "./git/port.js";
 import type { IssueRef } from "./tracker/port.js";
 
@@ -94,5 +94,19 @@ describe("loop wiring — the git host feeds every launch", () => {
     assert.equal(pool.length, 0);
     assert.equal(git.prepared.length, 0);
     assert.equal(git.cleaned.length, 0);
+  });
+
+  test("the wait wakes by event: a worker's end resolves before the tick (ticket 14)", async () => {
+    const engine = new SweepEngine(deps);
+    await engine.deriveAndAct();
+
+    // The tick is far away (60 s); the worker ends in microseconds — the
+    // wake must come from the event, never from the clock.
+    const wake = engine.waitForWake(60_000);
+    const run = engine.fillSlots()[0]!;
+    const event = await wake;
+
+    assert.equal(event, "worker-end");
+    await run;
   });
 });

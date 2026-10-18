@@ -1,0 +1,212 @@
+import assert from "node:assert/strict";
+import { test, describe, beforeEach, afterEach } from "node:test";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { runForever, workKey, type LoopDeps } from "../loop.js";
+import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
+import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
+import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
+import type { IssueRef } from "../tracker/port.js";
+import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
+import { DEFAULT_LABELS, type Config } from "../config.js";
+
+/**
+ * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
+ * tick forever, waking by event on a worker's end — a work that becomes
+ * eligible (a human labels it) is picked up at the next tick WITHOUT a
+ * restart, and ending the factory is a human act (Ctrl-C) that exits clean.
+ * The two fake seams + real temp workspace; the tick is injected (the code
+ * seam of the fixed 60 s tick) so the scenarios stay fast and deterministic.
+ */
+
+const REPO = "Sanmoo/my-tasks";
+const NOW = "2026-01-01T00:00:00Z";
+const TICK_MS = 10;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+class FakeGitWork implements GitWork {
+  readonly prepared: IssueRef[] = [];
+
+  async prepareWork(ref: IssueRef): Promise<PreparedWork> {
+    this.prepared.push(ref);
+    return {
+      repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
+      branch: workBranchName(ref.number),
+      baseBranch: "main",
+      branchCreated: this.prepared.filter((r) => r.number === ref.number).length === 1,
+    };
+  }
+
+  async cleanupDoneWork(_ref: IssueRef): Promise<void> {}
+}
+
+describe("e2e: the continuous run — tick forever, wake by event, clean exit (ticket 14)", () => {
+  let dir: string;
+  let layout: WorkspaceLayout;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-run-"));
+    layout = ensureWorkspace(join(dir, "ws"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeConfig(concurrency: number): Config {
+    return {
+      workerGhAccount: "bot-do-samuca",
+      repos: [REPO],
+      concurrency,
+      workspace: layout.root,
+      labels: { ...DEFAULT_LABELS },
+      configPath: join(dir, "msf.yaml"),
+    };
+  }
+
+  function makeFactory(config: Config, outcomes: ScriptedOutcome[]) {
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes });
+    const git = new FakeGitWork();
+    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    return { tracker, runtime, git, deps };
+  }
+
+  async function waitUntil(what: string, condition: () => Promise<boolean>): Promise<void> {
+    const deadline = Date.now() + 3_000;
+    while (!(await condition())) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+  }
+
+  test("a work the human marks ready AFTER the boot is picked up at the next tick, no restart", async () => {
+    const config = makeConfig(1);
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+
+    // The factory boots on an empty pool and keeps sweeping on the tick.
+    const controller = new AbortController();
+    const running = runForever(deps, { tickMs: TICK_MS, signal: controller.signal });
+    running.catch(() => {}); // guarded; the assertion below reads the state
+
+    try {
+      // Mid-flight, the human marks an issue ready on the tracker.
+      seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+      // No restart: the very next tick claims and launches it.
+      await waitUntil("the new eligible to be claimed and launched", async () => {
+        const issue = await tracker.readIssue({ repo: REPO, number: 1 });
+        return (
+          issue.known &&
+          issue.value.labels.includes(DEFAULT_LABELS.claimed) &&
+          existsSync(workDir(layout, REPO, 1))
+        );
+      });
+
+      // The claim came from the tick's derivation, not from the boot sweep
+      // (the boot saw an empty pool).
+      assert.deepEqual(tracker.claimedOrder, [workKey({ repo: REPO, number: 1 })]);
+    } finally {
+      controller.abort(); // every hold has a release path
+      await running;
+    }
+  });
+
+  test("a human comment on the PR becomes a feedback round at the next tick, in the continuous flow", async () => {
+    const config = makeConfig(1);
+    const { tracker, runtime, deps } = makeFactory(config, ["pr-open"]);
+
+    seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const controller = new AbortController();
+    const running = runForever(deps, { tickMs: TICK_MS, signal: controller.signal });
+    running.catch(() => {});
+
+    try {
+      // Attempt 1 opens the PR and stays reserved.
+      await waitUntil("attempt 1 launched", () =>
+        Promise.resolve(tracker.claimedOrder.length === 1),
+      );
+
+      // The human reviews; the NEXT tick derives the round and launches
+      // attempt 2 on the same branch and the same PR.
+      tracker.addPrComment({ repo: REPO, prNumber: 1 }, "humano", "please address this");
+      await waitUntil("the feedback round (attempt 2) launched", () =>
+        Promise.resolve(runtime.launched.length === 2),
+      );
+      assert.equal(runtime.launched[1]?.attempt, 2);
+      assert.equal(runtime.launched[1]?.branch, workBranchName(2), "the SAME branch");
+    } finally {
+      controller.abort();
+      await running;
+    }
+
+    // The SAME PR — no second PR; the worker ended the round commenting on it.
+    const facts = await tracker.readPrFeedback({ repo: REPO, number: 2 });
+    assert.ok(facts.known && facts.value.pr !== null && facts.value.pr.number === 1, "the SAME PR");
+    const comments = await tracker.readComments({ repo: REPO, number: 2 });
+    assert.ok(comments.known);
+    assert.ok(
+      comments.value.some((c) => c.author === "bot-do-samuca"),
+      "the worker ended the round commenting on the PR",
+    );
+  });
+
+  test("ending the factory is a human act: the abort exits clean, in-flight workers are reconciled by disk", async () => {
+    const config = makeConfig(1);
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+
+    seedIssue(tracker, { repo: REPO, number: 3, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const controller = new AbortController();
+    const running = runForever(deps, { tickMs: TICK_MS, signal: controller.signal });
+
+    await waitUntil("the worker launched", () =>
+      Promise.resolve(tracker.claimedOrder.length === 1),
+    );
+    controller.abort();
+
+    // runForever RESOLVES (no rejection, no hang): the clean exit.
+    await running;
+
+    // The factory is stateless between sweeps: the artifacts are on disk.
+    assert.ok(existsSync(workDir(layout, REPO, 3)), "the work's artifacts survive the exit");
+  });
+
+  test("Ctrl-C on the spawned cli ends the process cleanly (exit 0)", async () => {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "repos:",
+        `  - ${REPO}`,
+        `workspace: ${join(dir, "ws")}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const cli = new URL("../cli.js", import.meta.url).pathname;
+    const child = spawn(process.execPath, [cli, "run"], { cwd: dir });
+
+    let stdout = "";
+    child.stdout!.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    await waitUntil("the boot sweep line", () => Promise.resolve(stdout.includes("sweeping forever")));
+
+    child.kill("SIGINT");
+    const code = await new Promise<number | null>((resolve) => child.on("exit", (c) => resolve(c)));
+
+    assert.equal(code, 0, `stdout: ${stdout}`);
+    assert.match(stdout, /ended cleanly/i);
+  });
+});
