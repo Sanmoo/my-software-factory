@@ -13,6 +13,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { readOutcomeRecord } from "../state/outcome.js";
+import { FakeNotifier } from "../notify/fake-notifier.js";
 
 /**
  * End-to-end of ticket 18: the full pipeline through the REAL cli wiring
@@ -73,6 +74,9 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
         // The REAL git host code, offline: the clone URL points at the
         // local bare fixture — the same class the live run exercises.
         git: localGitWork({ reposDir: layout.repos, remoteUrl: () => fixture.barePath(REPO) }),
+        // The host-side notice seam is replaced by a recorder: this suite
+        // never needs (or touches) a desktop session.
+        notifier: new FakeNotifier(),
       },
     });
   }

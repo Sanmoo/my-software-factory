@@ -13,6 +13,8 @@ import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { TrackerPort } from "./tracker/port.js";
 import type { GitWork } from "./git/port.js";
+import { LinuxNotifier } from "./notify/linux.js";
+import type { Notifier } from "./notify/port.js";
 
 /**
  * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status` — the minimal CLI
@@ -38,6 +40,9 @@ export interface WiredSeams {
   runtime?: WorkerRuntime;
   /** The git host; default is the real local git (clone/fetch/branch). */
   git?: GitWork;
+  /** The host-side notification delivery; default is the Linux desktop
+   * backend. Tests inject a recorder to stay off any desktop session. */
+  notifier?: Notifier;
 }
 
 export interface WireRunOptions {
@@ -66,7 +71,11 @@ export async function wireRunDeps(
     }));
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
-  return { config, tracker, runtime, git, workspace, log: (message) => console.log(message) };
+  // The delivery seam belongs to the CLI on the HOST (issue 93): the real
+  // Linux desktop backend by default; tests inject a recorder. A disabled
+  // config is honoured by the loop, so the wiring stays unconditional.
+  const notifier = seams.notifier ?? new LinuxNotifier();
+  return { config, tracker, runtime, git, workspace, notifier, log: (message) => console.log(message) };
 }
 
 /** The real runtime: Sandcastle, demanding the model and the keyring token

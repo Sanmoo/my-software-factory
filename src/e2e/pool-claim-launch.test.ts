@@ -91,6 +91,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }

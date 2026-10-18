@@ -41,6 +41,7 @@ describe("status — derivation on demand + local registry scan", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }

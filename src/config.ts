@@ -1,3 +1,5 @@
+// Config loading is host-local and pure: only the filesystem and the YAML
+// parser are touched — no tracker, runtime or container dependency.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -23,6 +25,9 @@ import { parse } from "yaml";
 
 export const DEFAULT_CONCURRENCY = 2;
 export const DEFAULT_WORKSPACE = "~/.local/share/msf";
+/** Local desktop notifications are ON by default (issue 93) — the operator
+ * opts out explicitly with `notifications: false`. */
+export const DEFAULT_NOTIFICATIONS = true;
 export const DEFAULT_LABELS: Labels = {
   ready: "ready-for-agent",
   claimed: "agent-claimed",
@@ -64,6 +69,9 @@ export interface Config {
   /** Stale (dangling) profile links are skipped and logged instead of
    * blocking the launch. Off by default — fail closed (ticket 17). */
   profileSkipDanglingLinks: boolean;
+  /** Local Linux desktop notifications when a new occurrence needs human
+   * action (issue 93). On by default; `false` runs the factory silently. */
+  notifications: boolean;
   /** Where the config was loaded from. */
   configPath: string;
 }
@@ -109,6 +117,7 @@ export function loadConfig(filePath: string): Config {
   const labels = optionalLabels(doc);
   const profileAllowedRoots = optionalProfileAllowedRoots(doc);
   const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
+  const notifications = optionalNotifications(doc);
 
   return {
     workerGhAccount,
@@ -119,6 +128,7 @@ export function loadConfig(filePath: string): Config {
     labels,
     profileAllowedRoots,
     profileSkipDanglingLinks,
+    notifications,
     configPath: absolute,
   };
 }
@@ -198,6 +208,15 @@ function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean
   if (value === undefined) return false;
   if (typeof value !== "boolean") {
     throw new ConfigError(`config field "profile-skip-dangling-links" must be a boolean when given`);
+  }
+  return value;
+}
+
+function optionalNotifications(doc: Record<string, unknown>): boolean {
+  const value = doc["notifications"];
+  if (value === undefined) return DEFAULT_NOTIFICATIONS;
+  if (typeof value !== "boolean") {
+    throw new ConfigError(`config field "notifications" must be a boolean when given`);
   }
   return value;
 }

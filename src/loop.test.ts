@@ -73,6 +73,7 @@ describe("loop wiring — the git host feeds every launch", () => {
         labels: { ready: "ready-for-agent", claimed: "agent-claimed", blocked: "agent-blocked" },
         profileAllowedRoots: [],
         profileSkipDanglingLinks: false,
+        notifications: true,
         configPath: join(root, "msf.yaml"),
       },
       tracker,

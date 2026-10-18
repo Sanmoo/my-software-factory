@@ -120,6 +120,68 @@ msf status
 
 Derives on demand from the tracker + the workspace disk (read-only): works
 in flight, last outcomes, archived dones. Works with the factory stopped.
+`status` is a query with NO notification effects: it never delivers a notice.
+
+## (d) Local desktop notifications (issue 93)
+
+`msf run` (both continuous and `--once`) delivers a passive Linux desktop
+notification when a NEW occurrence needs you. Notifications are ON by
+default; set `notifications: false` in `msf.yaml` to run silently.
+
+What notifies (once per new occurrence, never per sweep):
+
+- a session that leaves a confirmed-open PR after the initial execution or a
+  feedback round → **review** notice, pointing at the **PR**;
+- a structured help request (blocked self-report) → **help** notice, pointing
+  at the **issue**;
+- a second consecutive fall (clean or abrupt) that blocks the work → **help**;
+- a PR closed without merge (the factory's rejection block) → **help**;
+- a NEW block applied during restart recovery (including an unreconciled
+  second fall) → **help**.
+
+What stays silent: the first fall that retries automatically, a concluded/
+archived work, an empty sweep, an already-existing PR or block found at boot,
+and any sweep that merely waits for you. A later feedback round on the same PR
+IS a new occurrence and notifies again. If a session both left a PR open and
+asked for help, exactly one **help** notice is delivered (the ruler still
+reserves the work on the PR — only the message points at the issue).
+
+### Prerequisites
+
+- A Linux desktop session with a freedesktop notification daemon (GNOME, KDE,
+  mako, dunst, …).
+- `notify-send` from libnotify: `sudo apt install libnotify-bin`
+  (Debian/Ubuntu) or `sudo pacman -S libnotify` (Arch).
+- The CLI must see the session bus (`DBUS_SESSION_BUS_ADDRESS`, plus
+  `DISPLAY` or `WAYLAND_DISPLAY`) — start `msf` from a terminal inside the
+  graphical session, not from a system service.
+
+The notice is passive: it does not steal focus or open a browser/window. The
+relevant GitHub address is shown in the content; there are no buttons. The
+desktop's own policy decides how long the notice is retained — the factory
+keeps no delivery history.
+
+### Manual smoke test
+
+1. Run a work that opens a PR (`msf run --once`, or the continuous run).
+   Expected: a passive notice `msf: <repo>#<n> — review requested`, with the
+   PR URL in the body; no window opens and focus stays where it was.
+2. Comment on the PR. The feedback round that leaves the PR open produces a
+   NEW notice for the same PR.
+3. Force a help occurrence (a blocked self-report, or a second consecutive
+   fall). Expected: `msf: <repo>#<n> — help requested`, with the issue URL.
+4. Restart the factory. Existing open PRs and existing blocks produce no
+   notice; a NEW block applied during recovery (an unreconciled second fall)
+   does.
+
+### When notifications are unavailable
+
+If `notify-send` is missing or there is no graphical session, the sweep prints
+`local notification failed (...)` on the terminal and keeps going: the work's
+outcome, its tracker state and the command's exit code are unchanged, and a
+successful sweep is never turned into a failure by the notification. Delivery
+is not retried. The automated test suite never needs a desktop: it injects a
+recording notifier and simulates failure through the same port.
 
 ## What the human does in the proof
 
