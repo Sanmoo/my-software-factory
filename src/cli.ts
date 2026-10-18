@@ -1,21 +1,110 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
-import { FakeTrackerAdapter } from "./tracker/fake-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
+import type { TrackerPort } from "./tracker/port.js";
+import type { GitWork } from "./git/port.js";
 
 /**
  * `msf run [--once] [--config <path>]` and `msf status` — the minimal CLI
  * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
  * from the gh keyring (boot check, ticket 16: no token → clear failure),
  * guarantees the workspace and hands the thin loop its four seams.
+ *
+ * Ticket 18: `msf run` (both --once and continuous) is wired with ALL REAL
+ * components by default — the real GitHub adapter, the real Sandcastle
+ * runtime (which demands `--model`), the real git host. The fake seams exist
+ * ONLY for tests: `--runtime fake` keeps the placeholder that never launches,
+ * and the fake adapter is injectable ONLY through the exported `wireRunDeps`
+ * seams (tests import it) — never through any flag, so the binary's default
+ * path can never reach it.
  */
+
+/** Test-only injection points: the seams tests replace with fakes. The
+ * production wiring (`msf run`) passes none of them. */
+export interface WiredSeams {
+  /** The tracker adapter; default is the real GitHub adapter (keyring boot check). */
+  tracker?: TrackerPort;
+  /** The worker runtime; default is the real Sandcastle runtime. */
+  runtime?: WorkerRuntime;
+  /** The git host; default is the real local git (clone/fetch/branch). */
+  git?: GitWork;
+}
+
+export interface WireRunOptions {
+  /** The Pi model for the real runtime (`--model`); required whenever the
+   * runtime is not injected. */
+  model?: string | undefined;
+  /** Test-only seams; absent = all real components. */
+  seams?: WiredSeams;
+}
+
+/**
+ * The wiring of `msf run` (ticket 18): config → boot → the thin loop's four
+ * seams. Default path: real GitHub adapter (token from the gh keyring — the
+ * boot check of ticket 16), real Sandcastle runtime (profile snapshot fed
+ * from the config's allowed roots — the fail-closed behavior of the
+ * ticket-17 proof), real git host.
+ */
+export async function wireRunDeps(
+  config: Config,
+  workspace: WorkspaceLayout,
+  options: WireRunOptions = {},
+): Promise<LoopDeps> {
+  const seams = options.seams ?? {};
+  const tracker =
+    seams.tracker ??
+    (await createGitHubAdapter({
+      account: config.workerGhAccount,
+      clonesDir: workspace.repos,
+    }));
+  const runtime = seams.runtime ?? (await sandcastleRuntime(config, options.model));
+  const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
+  return { config, tracker, runtime, git, workspace, log: (message) => console.log(message) };
+}
+
+/** The real runtime: Sandcastle, demanding the model and the keyring token
+ * (ticket 17), fed the config's profile-snapshot settings (ticket 18). */
+async function sandcastleRuntime(config: Config, model: string | undefined): Promise<WorkerRuntime> {
+  if (!model) {
+    console.error(
+      "msf run launches the real Sandcastle runtime by default, which requires --model <provider/model-id>",
+    );
+    process.exit(1);
+  }
+  const token = await workerToken(config.workerGhAccount);
+  return new SandcastleRuntime({
+    model,
+    token,
+    // The config feeds the snapshot's fail-closed admission (ticket 18):
+    // the allowed roots the profile legitimately reaches (defaults fixed in
+    // config.ts — the ticket-17 proof's roots) and the dangling-link escape.
+    allowedRoots: config.profileAllowedRoots,
+    skipDanglingProfileLinks: config.profileSkipDanglingLinks,
+    // The worker self-reports blocked with the SAME vocabulary the factory
+    // derives with — a non-default config label must reach the prompt too.
+    blockedLabel: config.labels.blocked,
+  });
+}
+
+/** `--runtime fake`: the placeholder that never launches — tests only; the
+ * scripted fake lives in the test files, never on the cli. */
+function fakeRuntimePlaceholder(): WorkerRuntime {
+  return {
+    launch: (request) =>
+      Promise.reject(
+        new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
+      ),
+  };
+}
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -35,7 +124,7 @@ async function main(): Promise<void> {
 
 async function runCommand(argv: string[]): Promise<void> {
   const once = argv.includes("--once");
-  const runtimeName = optionValue(argv, "--runtime") ?? "fake";
+  const runtimeName = optionValue(argv, "--runtime") ?? "sandcastle";
   const model = optionValue(argv, "--model");
   const configIndex = argv.indexOf("--config");
   const overridePath = configIndex >= 0 ? argv[configIndex + 1] : undefined;
@@ -44,25 +133,28 @@ async function runCommand(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // The config is the first gate: a bad config fails fast before anything
+  // else (the boot tests pin this order). Then the runtime flags — bad
+  // flags fail fast without touching the keyring (the selection e2e stays
+  // offline; the boot check is the next gate).
   const config = loadConfigFrom(process.cwd(), overridePath);
   const workspace = ensureWorkspace(config.workspace);
 
-  // Boot check (ticket 16): the real tracker is the only adapter of v0.1 —
-  // without the bot token in the gh keyring, msf run fails here, at boot,
-  // with a clear message. The fake (test mirror) never runs in production.
-  const tracker = await createGitHubAdapter({
-    account: config.workerGhAccount,
-    clonesDir: workspace.repos,
-  });
+  if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
+    console.error(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`);
+    process.exit(1);
+  }
+  if (runtimeName === "sandcastle" && !model) {
+    console.error(
+      "msf run launches the real Sandcastle runtime by default, which requires --model <provider/model-id>",
+    );
+    process.exit(1);
+  }
 
-  const deps: LoopDeps = {
-    config,
-    tracker,
-    runtime: await workerRuntime(runtimeName, config, model),
-    git: localGitWork({ reposDir: workspace.repos }),
-    workspace,
-    log: (message) => console.log(message),
-  };
+  const deps: LoopDeps = await wireRunDeps(config, workspace, {
+    model,
+    ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),
+  });
   if (once) {
     const result = await runOnce(deps);
     console.log(
@@ -89,41 +181,9 @@ async function runCommand(argv: string[]): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
-
 function optionValue(argv: string[], flag: string): string | undefined {
   const index = argv.indexOf(flag);
   return index >= 0 ? argv[index + 1] : undefined;
-}
-
-/**
- * The runtime the cli selects (ticket 17): `--runtime sandcastle` is the real
- * launch (Sandcastle run(), Pi headless, container); `--runtime fake` (the
- * default) keeps the placeholder that never launches — the scripted mirror
- * lives in tests (FakeWorkerRuntime), not on the cli.
- */
-async function workerRuntime(name: string, config: Config, model: string | undefined): Promise<WorkerRuntime> {
-  if (name === "fake") {
-    return {
-      launch: (request) =>
-        Promise.reject(
-          new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
-        ),
-    };
-  }
-  if (name === "sandcastle") {
-    if (!model) {
-      console.error("--runtime sandcastle requires --model <provider/model-id>");
-      process.exit(1);
-    }
-    const token = await workerToken(config.workerGhAccount);
-    return new SandcastleRuntime({ model, token });
-  }
-  console.error(`unknown runtime "${name}" — use --runtime fake or --runtime sandcastle`);
-  process.exit(1);
 }
 
 async function statusCommand(argv: string[]): Promise<void> {
@@ -140,11 +200,30 @@ async function statusCommand(argv: string[]): Promise<void> {
     archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
   };
 
-  // Derivation on demand through the port — the factory being stopped changes
-  // nothing. The fake keeps `msf status` offline (read-only, no keyring read);
-  // ticket 16 wires the real GitHub adapter into the run loop only — the boot
-  // check must not gate a read-only status command.
-  const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+  // Ticket 18: status reads the REAL tracker — the trail it shows is the
+  // work's real trail (issue labels, PR, the works the registry holds on
+  // disk). Only the keyring read at boot touches the machine; the reads
+  // themselves are the same REST reads the sweep does, and the command
+  // writes NOTHING to the tracker. Without the bot credential in the
+  // keyring, status fails with the same clear boot message as run.
+  const tracker = await createGitHubAdapter({ account: config.workerGhAccount });
   const view = await deriveStatus(tracker, config, layout);
   console.log(renderStatus(view));
+}
+
+// The binary runs main(); the module imported (by the tests of the wiring)
+// does not — the exported wireRunDeps is the entry the tests drive. The
+// comparison is by real path so a symlinked bin (`npm link`) still counts.
+const invokedDirectly = (() => {
+  try {
+    return realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+if (invokedDirectly) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
 }

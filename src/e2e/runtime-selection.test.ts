@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * The cli selects the runtime (ticket 17): `--runtime sandcastle` demands a
- * model and a keyring credential; an unknown runtime is rejected. The
- * selection is validated BEFORE any launch — with an empty pool nothing
- * reaches the runtime either way, but the flags must parse at boot.
+ * The cli selects the runtime (ticket 17, retightened by 18): the DEFAULT is
+ * the real Sandcastle runtime — it demands a model; `--runtime fake` (tests
+ * only) is accepted without one; an unknown runtime is rejected. The flag
+ * validation happens BEFORE the keyring boot check — bad flags fail fast
+ * without touching the machine, and this suite stays offline.
  */
 
 describe("e2e: the cli selects the worker runtime", () => {
@@ -44,10 +45,37 @@ describe("e2e: the cli selects the worker runtime", () => {
     assert.match(result.stderr, /unknown runtime/);
   });
 
+  test("the default runtime (real Sandcastle) without --model is rejected at boot", () => {
+    writeMinimalConfig();
+    const result = runCli(["run", "--once"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--model/);
+  });
+
   test("--runtime sandcastle without --model is rejected at boot", () => {
     writeMinimalConfig();
     const result = runCli(["run", "--once", "--runtime", "sandcastle"]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--model/);
+  });
+
+  test("--runtime fake is accepted without a model (tests only) and still hits the keyring boot check", () => {
+    // The fake ADAPTER is not reachable from the binary — the boot check for
+    // the REAL tracker adapter runs anyway; with an account that has no
+    // token in the keyring, the run fails at boot with the clear message
+    // (ticket 16), offline: the token lookup is a local keyring read.
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: msf-no-such-account",
+        "repos:",
+        `  - Sanmoo/nothing`,
+        `workspace: ${join(dir, "ws")}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const result = runCli(["run", "--once", "--runtime", "fake"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /no GitHub token in the gh keyring for account "msf-no-such-account"/);
   });
 });

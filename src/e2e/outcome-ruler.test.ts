@@ -85,6 +85,8 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
       configPath: join(dir, "msf.yaml"),
     };
   }
@@ -375,12 +377,15 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
   }
 
   function runStatus(): { stdout: string; stderr: string; status: number | null } {
+    // `repos: []` keeps the pool listing OFFLINE (no REST call): the status
+    // command is wired to the REAL tracker adapter (ticket 18) — the keyring
+    // boot read is local, and with no repos there is nothing to list. The
+    // pool-over-real-repos path is derived with the fake in status.test.ts.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
         "worker-gh-account: bot-do-samuca",
-        "repos:",
-        "  - Sanmoo/my-tasks",
+        "repos: []",
         `workspace: ${join(dir, "ws")}`,
       ].join("\n"),
       "utf8",

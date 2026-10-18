@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_WORKSPACE } from "./config.js";
+import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_WORKSPACE, DEFAULT_PROFILE_ALLOWED_ROOTS } from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -125,5 +125,47 @@ describe("config", () => {
   test("repos must be a list of strings", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nrepos: 3\n");
     assert.throws(() => loadConfig(path), /repos/);
+  });
+
+  // ---- the profile-snapshot keys (ticket 18 wiring) ----
+
+  test("profile-allowed-roots defaults to the ticket-17 proof roots, tilde-expanded", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\n");
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.profileAllowedRoots, DEFAULT_PROFILE_ALLOWED_ROOTS.map((root) =>
+      root.startsWith("~") ? join(homedir(), root.slice(2)) : root,
+    ));
+    assert.equal(config.profileSkipDanglingLinks, false, "fail closed by default");
+  });
+
+  test("profile-allowed-roots and profile-skip-dangling-links parse when given", () => {
+    const path = writeYaml(
+      dir,
+      [
+        "worker-gh-account: bot",
+        "repos: [Sanmoo/a]",
+        "profile-allowed-roots:",
+        "  - ~/meus-dotfiles",
+        "  - /abs/raiz",
+        "profile-skip-dangling-links: true",
+      ].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.profileAllowedRoots, [join(homedir(), "meus-dotfiles"), "/abs/raiz"]);
+    assert.equal(config.profileSkipDanglingLinks, true);
+  });
+
+  test("profile-allowed-roots must be a list of strings when given", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\nprofile-allowed-roots: 3\n");
+    assert.throws(() => loadConfig(path), /profile-allowed-roots/);
+  });
+
+  test("profile-skip-dangling-links must be a boolean when given", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
+    assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
   });
 });

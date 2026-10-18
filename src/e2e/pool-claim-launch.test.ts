@@ -83,6 +83,8 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
       configPath: join(dir, "msf.yaml"),
     };
   }

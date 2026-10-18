@@ -61,7 +61,15 @@ export async function snapshotProfile(
 
   const allowedRoots = new Set<string>([realSource]);
   for (const root of options.allowedRoots ?? []) {
-    allowedRoots.add(realpathSync(resolve(root)));
+    // A declared root that does not exist on this machine cannot be the
+    // target of any link inside the profile — skipped (named), never an
+    // error: the fail-closed rule is about LINKS, not about absent roots.
+    const resolved = resolve(root);
+    if (!existsSync(resolved)) {
+      warnings.push(`allowed root does not exist (skipped): ${resolved}`);
+      continue;
+    }
+    allowedRoots.add(realpathSync(resolved));
   }
   const skip = new Set(options.skip ?? DEFAULT_SNAPSHOT_SKIP);
 

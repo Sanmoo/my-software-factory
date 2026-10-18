@@ -78,6 +78,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
       configPath: join(dir, "msf.yaml"),
     };
   }

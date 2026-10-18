@@ -9,7 +9,9 @@ import { join } from "node:path";
  * Boot behavior of the cli (ticket 16): without the bot token in the gh
  * keyring, `msf run` fails at boot with a clear message. The account used
  * here has no token in any keyring, so the failure is local — no network,
- * no credential needed. The live boot (token present, real derivation) is
+ * no credential needed. The runs pass `--runtime fake` (the tests-only
+ * flag, ticket 18) so the boot check is reached without demanding --model.
+ * The live boot (token present, real derivation) is
  * proven in the credential-gated smoke (`npm run smoke:github`).
  */
 
@@ -48,7 +50,7 @@ describe("e2e: msf run boots through the keyring check", () => {
     const ghost = "msf-boot-test-ghost-account";
     writeMinimalConfig(ghost);
 
-    const result = runCli(["run", "--once"], dir);
+    const result = runCli(["run", "--once", "--runtime", "fake"], dir);
 
     assert.notEqual(result.status, 0);
     assert.match(
@@ -70,7 +72,7 @@ describe("e2e: msf run boots through the keyring check", () => {
       "utf8",
     );
 
-    const result = runCli(["run", "--once", "--config", other], dir);
+    const result = runCli(["run", "--once", "--runtime", "fake", "--config", other], dir);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr + result.stdout, new RegExp(`"${ghost}"`));

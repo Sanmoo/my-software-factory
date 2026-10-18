@@ -28,6 +28,19 @@ export const DEFAULT_LABELS: Labels = {
   blocked: "agent-blocked",
 };
 
+/**
+ * The profile snapshot's allowed roots (ticket 18 wiring): the roots the
+ * operator's Pi profile legitimately reaches through links — dotfiles,
+ * .agents, omarchy (the same roots declared in the ticket-17 live proof).
+ * Fixed here so a real launch has the proof's fail-closed snapshot behavior
+ * with a config that fits on a screen; `profile-allowed-roots` overrides.
+ */
+export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [
+  "~/dev/github.com/Sanmoo/dotfiles",
+  "~/.agents",
+  "~/.local/share/omarchy",
+];
+
 export interface Labels {
   ready: string;
   claimed: string;
@@ -45,6 +58,12 @@ export interface Config {
   workspace: string;
   /** The 3-label vocabulary, configurable per project. */
   labels: Labels;
+  /** Roots the profile may reach through links (tilde-expanded); the
+   * profile's own real path is always allowed (ticket 17). */
+  profileAllowedRoots: string[];
+  /** Stale (dangling) profile links are skipped and logged instead of
+   * blocking the launch. Off by default — fail closed (ticket 17). */
+  profileSkipDanglingLinks: boolean;
   /** Where the config was loaded from. */
   configPath: string;
 }
@@ -84,6 +103,8 @@ export function loadConfig(filePath: string): Config {
   const concurrency = optionalConcurrency(doc);
   const workspace = optionalWorkspace(doc);
   const labels = optionalLabels(doc);
+  const profileAllowedRoots = optionalProfileAllowedRoots(doc);
+  const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
 
   return {
     workerGhAccount,
@@ -91,6 +112,8 @@ export function loadConfig(filePath: string): Config {
     concurrency,
     workspace,
     labels,
+    profileAllowedRoots,
+    profileSkipDanglingLinks,
     configPath: absolute,
   };
 }
@@ -154,6 +177,24 @@ function optionalLabels(doc: Record<string, unknown>): Labels {
     claimed: pick("claimed", DEFAULT_LABELS.claimed),
     blocked: pick("blocked", DEFAULT_LABELS.blocked),
   };
+}
+
+function optionalProfileAllowedRoots(doc: Record<string, unknown>): string[] {
+  const value = doc["profile-allowed-roots"];
+  if (value === undefined) return DEFAULT_PROFILE_ALLOWED_ROOTS.map(expandTilde);
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new ConfigError(`config field "profile-allowed-roots" must be a list of path strings when given`);
+  }
+  return (value as string[]).map((item) => expandTilde(item.trim()));
+}
+
+function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean {
+  const value = doc["profile-skip-dangling-links"];
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new ConfigError(`config field "profile-skip-dangling-links" must be a boolean when given`);
+  }
+  return value;
 }
 
 function expandTilde(path: string): string {

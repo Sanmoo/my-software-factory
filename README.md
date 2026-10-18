@@ -22,6 +22,11 @@ repos:
 #   ready: ready-for-agent
 #   claimed: agent-claimed
 #   blocked: agent-blocked
+# profile-allowed-roots:          # roots the Pi profile reaches through links
+#   - ~/dev/github.com/Sanmoo/dotfiles
+#   - ~/.agents
+#   - ~/.local/share/omarchy
+# profile-skip-dangling-links: false  # stale profile links: fail closed
 ```
 
 ## Usage
@@ -29,9 +34,15 @@ repos:
 ```sh
 npm install
 npm run build
-node dist/cli.js run --once   # one sweep; exits 0 when the pool is empty
-node dist/cli.js status
+# all real components: GitHub adapter (keyring boot check) + Sandcastle
+# runtime (a real worker per launch, needs the worker image built)
+node dist/cli.js run --once --model <provider/model-id>   # one sweep
+node dist/cli.js run --model <provider/model-id>          # sweeps forever
+node dist/cli.js status                                   # the trail, read-only
 ```
+
+The live proof's exact script — commands, what the human does, the REST
+budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
 ## Layout
 
@@ -57,6 +68,8 @@ src/
 │   └── slots.ts        # the y slots in memory; nothing here survives a restart
 └── runtime/
     ├── port.ts         # WorkerRuntime: how a session is born
+    ├── sandcastle.ts   # the REAL runtime: Sandcastle run(), Pi headless, container
+    ├── prompt.ts       # the worker prompt: issue + PR + diff + the artifact contract
     └── fake-runtime.ts # scripted worker outcomes — the ruler's test seam
 ```
 

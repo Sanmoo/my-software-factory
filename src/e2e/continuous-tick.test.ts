@@ -74,6 +74,8 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
       configPath: join(dir, "msf.yaml"),
     };
   }
@@ -193,18 +195,21 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
   });
 
   test("Ctrl-C on the spawned cli ends the process cleanly (exit 0)", async () => {
+    // The tests-only fake runtime (ticket 18) and an empty repo list: the
+    // sweep boots through the REAL tracker boot check (keyring) and runs
+    // idle forever — no tracker listing, no launch, no network — so the
+    // signal behavior is proven hermetically.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
         "worker-gh-account: bot-do-samuca",
-        "repos:",
-        `  - ${REPO}`,
+        "repos: []",
         `workspace: ${join(dir, "ws")}`,
       ].join("\n"),
       "utf8",
     );
     const cli = new URL("../cli.js", import.meta.url).pathname;
-    const child = spawn(process.execPath, [cli, "run"], { cwd: dir });
+    const child = spawn(process.execPath, [cli, "run", "--runtime", "fake"], { cwd: dir });
 
     let stdout = "";
     child.stdout!.on("data", (chunk) => {

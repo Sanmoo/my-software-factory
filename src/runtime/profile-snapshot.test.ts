@@ -103,6 +103,20 @@ describe("profile snapshot — a portrait of real files", () => {
     await assert.rejects(snapshotProfile(profile, destination), ProfileSnapshotError);
   });
 
+  test("a declared allowed root that does not exist is skipped with a warning, not an error (ticket 18)", async () => {
+    // The config's default roots name machine-specific paths — on a machine
+    // without one of them, the launch must not block: a missing root cannot
+    // be the target of any link inside the profile anyway.
+    writeFileSync(join(profile, "auth.json"), "{}", "utf8");
+
+    const { warnings } = await snapshotProfile(profile, destination, {
+      allowedRoots: [join(root, "no-such-root")],
+    });
+
+    assert.equal(existsSync(join(destination, "auth.json")), true);
+    assert.ok(warnings.some((w) => w.includes("allowed root does not exist")));
+  });
+
   test("stale links may be explicitly skipped — named in the warnings, never silent", async () => {
     symlinkSync(join(profile, "does-not-exist"), join(profile, "stale-link.ts"));
     writeFileSync(join(profile, "auth.json"), "{}", "utf8");

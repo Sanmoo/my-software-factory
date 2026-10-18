@@ -38,6 +38,8 @@ describe("status — derivation on demand + local registry scan", () => {
       concurrency: 2,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
       configPath: join(dir, "msf.yaml"),
     };
   }

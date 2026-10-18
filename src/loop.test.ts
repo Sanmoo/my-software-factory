@@ -65,6 +65,8 @@ describe("loop wiring — the git host feeds every launch", () => {
         concurrency: 2,
         workspace: root,
         labels: { ready: "ready-for-agent", claimed: "agent-claimed", blocked: "agent-blocked" },
+        profileAllowedRoots: [],
+        profileSkipDanglingLinks: false,
         configPath: join(root, "msf.yaml"),
       },
       tracker,
