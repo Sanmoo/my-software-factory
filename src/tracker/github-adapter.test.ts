@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import {
+  bakeCredentialHelper,
   createGitHubAdapter,
   MissingCredentialError,
   GitHubTrackerAdapter,
   readGhToken,
   type CommandRunner,
 } from "./github-adapter.js";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { AGENT_MARKER, PartialWriteError, type TrackerPort } from "./port.js";
 
 /**
@@ -393,6 +399,90 @@ describe("9c. pushBranch: git with the credential helper baked into the clone", 
 describe("runner default: real child process", () => {
   test("default runner executes and surfaces failure (real gh, keyring only)", async () => {
     await assert.rejects(readGhToken("definitely-not-an-account-xyz"));
+  });
+});
+
+describe("9c. credential bake: a reused clone with accumulated helpers ends with exactly one", () => {
+  const exec = promisify(execFileCallback);
+
+  /** A fixture "clone": a local repo whose config already accumulated helpers —
+   * the clone-time pair plus a stale machine leftover (the smoke's exit-5 state). */
+  async function fixtureCloneWithAccumulatedHelpers(): Promise<{ dir: string; root: string }> {
+    const root = mkdtempSync(join(tmpdir(), "msf-credhelper-"));
+    tempRoots.push(root);
+    const dir = join(root, "clone");
+    await exec("git", ["init", "-q", dir]);
+    const cfg = (args: string[]) => exec("git", ["config", "--local", ...args], { cwd: dir });
+    await cfg(["credential.helper", ""]);
+    await cfg(["--add", "credential.helper", "!gh auth git-credential"]);
+    await cfg(["--add", "credential.helper", "osxkeychain"]);
+    await cfg(["credential.https://github.com.helper", "osxkeychain"]);
+    return { dir, root };
+  }
+
+  /** Every local value of a config key, via the multivar-safe --null read. */
+  async function localValues(dir: string, key: string): Promise<string[]> {
+    const { stdout } = await exec("git", ["config", "--local", "--get-all", "--null", key], { cwd: dir });
+    return stdout.split("\0").slice(0, -1);
+  }
+
+  const tempRoots: string[] = [];
+
+  test.after(() => {
+    for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+  });
+
+  test("fixture pre-state: the bare set the smoke used fails with exit 5 on the multivar", async () => {
+    const { dir } = await fixtureCloneWithAccumulatedHelpers();
+    await assert.rejects(
+      exec("git", ["config", "--local", "credential.helper", ""], { cwd: dir }),
+      (error: unknown) => (error as { code?: number }).code === 5,
+    );
+  });
+
+  test("a clone with TWO-plus credential.helper values ends with exactly one (the intended)", async () => {
+    const { dir } = await fixtureCloneWithAccumulatedHelpers();
+    await bakeCredentialHelper(dir, { GIT_TERMINAL_PROMPT: "0" });
+    const helpers = await localValues(dir, "credential.helper");
+    assert.equal(helpers.length, 1, `expected exactly one credential.helper, got ${JSON.stringify(helpers)}`);
+    assert.equal(helpers[0], "", "the surviving helper is the ambient-wipe empty value");
+    const urlHelpers = await localValues(dir, "credential.https://github.com.helper");
+    assert.equal(urlHelpers.length, 1, "exactly one URL-scoped helper survives");
+    assert.equal(urlHelpers[0], "!gh auth git-credential");
+  });
+
+  test("the bake tolerates a clone with no helper keys at all (absent-key exit 5)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "msf-credhelper-"));
+    tempRoots.push(root);
+    const dir = join(root, "pristine");
+    await exec("git", ["init", "-q", dir]);
+    await bakeCredentialHelper(dir, { GIT_TERMINAL_PROMPT: "0" });
+    assert.equal((await localValues(dir, "credential.helper")).length, 1);
+  });
+
+  test("pushBranch (reused clone): unset-all precedes the set and tolerates the absent-key exit 5", async () => {
+    const { adapter, calls } = await makeAdapter((call) => {
+      // simulate the real git behavior of --unset-all on a key with no values
+      if (call.file === "git" && call.args[0] === "config" && call.args.includes("--unset-all")) {
+        const absent = new Error("git config --unset-all exited 5") as Error & { exitCode?: number | null };
+        absent.exitCode = 5;
+        throw absent;
+      }
+      return {};
+    });
+    // clonesDir has no clone: nothing below exercises the network — the fake
+    // runner answers every call, so the command lines are all that is proven.
+    const configCalls = () => calls.filter((c) => c.file === "git" && c.args[0] === "config");
+    await adapter.pushBranch({ repo: "Sanmoo/a", branch: "agent-issue-3" }).catch(() => {});
+    const configs = configCalls();
+    const firstUnset = configs.findIndex((c) => c.args.includes("--unset-all"));
+    const bakeSet = configs.findIndex((c) => c.args[2] === "credential.helper" && c.args[3] === "");
+    assert.ok(firstUnset !== -1, "the bake starts by unsetting every local helper value");
+    assert.ok(bakeSet > firstUnset, "the set comes only after the unset-all");
+    assert.ok(
+      configs.some((c) => c.args.includes("!gh auth git-credential")),
+      "the intended helper is still baked",
+    );
   });
 });
 

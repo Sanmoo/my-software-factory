@@ -41,6 +41,7 @@ import {
  */
 
 const GIT_CREDENTIAL_HELPER = "!gh auth git-credential";
+const CREDENTIAL_URL_HELPER_KEY = "credential.https://github.com.helper";
 
 export type CommandRunner = (
   file: string,
@@ -112,6 +113,40 @@ export const defaultCommandRunner: CommandRunner = (file, args, options) =>
     });
     child.stdin.end(options.input ?? "");
   });
+
+/**
+ * 9c. Bake exactly ONE credential helper into a clone's local config. A reused
+ * clone accumulates helper entries: clone time bakes two (`--config
+ * credential.helper=` plus the gh helper), and earlier works or an odd machine
+ * config can leave more behind (ticket 16's smoke: a bare set on the multivar
+ * failed with exit 5 — "cannot overwrite multiple values with a single value").
+ *
+ * So the bake unsets EVERY local value of both helper keys first, then sets the
+ * single intended values. The unset tolerates exit 5 — the key is simply absent
+ * — and every read of the keys is multivar-safe (`--unset-all` / `--get-all`),
+ * so git's "has multiple values" warning can never break the flow.
+ */
+export async function bakeCredentialHelper(
+  cloneDir: string,
+  env: Record<string, string | undefined>,
+  runner: CommandRunner = defaultCommandRunner,
+): Promise<void> {
+  const unsetAll = async (key: string): Promise<void> => {
+    try {
+      await runner("git", ["config", "--local", "--unset-all", key], { cwd: cloneDir, env });
+    } catch (error) {
+      // Exit 5: the key holds no value in the local config — nothing to unset.
+      if ((error as { exitCode?: number | null }).exitCode !== 5) throw error;
+    }
+  };
+  // The empty value resets the ambient helper list read so far (the system and
+  // global scopes — e.g. a broken mac leftover); the URL-scoped one is the gh
+  // keyring helper for real remotes.
+  await unsetAll("credential.helper");
+  await unsetAll(CREDENTIAL_URL_HELPER_KEY);
+  await runner("git", ["config", "--local", "credential.helper", ""], { cwd: cloneDir, env });
+  await runner("git", ["config", "--local", CREDENTIAL_URL_HELPER_KEY, GIT_CREDENTIAL_HELPER], { cwd: cloneDir, env });
+}
 
 /**
  * Boot check (ticket 16): read the bot token from the gh keyring. Fails the
@@ -529,11 +564,10 @@ export class GitHubTrackerAdapter implements TrackerPort {
     if (!existsSync(join(cloneDir, ".git"))) {
       await this.runner("git", ["clone", "--config", "credential.helper=", "--config", `credential.helper=${GIT_CREDENTIAL_HELPER}`, url, cloneDir], { env });
     }
-    // Bake the helper into the clone and isolate ambient helper config: the
-    // empty values reset whatever the system/global config declared.
-    await this.runner("git", ["config", "--local", "credential.helper", ""], { cwd: cloneDir, env });
-    await this.runner("git", ["config", "--local", "credential.https://github.com.helper", ""], { cwd: cloneDir, env });
-    await this.runner("git", ["config", "--local", "credential.https://github.com.helper", GIT_CREDENTIAL_HELPER], { cwd: cloneDir, env });
+    // Bake the helper into the clone — unset-all first, then set, so a reused
+    // clone never accumulates stale helpers and the bake never fails on a
+    // multi-valued key (exit 5).
+    await bakeCredentialHelper(cloneDir, env, this.runner);
     await this.runner("git", ["fetch", "origin", "--prune"], { cwd: cloneDir, env });
 
     const hasLocalBranch = await this.runner(
