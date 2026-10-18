@@ -133,10 +133,15 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     running.catch(() => {});
 
     try {
-      // Attempt 1 opens the PR and stays reserved.
+      // Attempt 1 opens the PR and stays reserved — the round started at the
+      // tick's derivation, not at the boot sweep (the boot saw an empty pool).
       await waitUntil("attempt 1 launched", () =>
         Promise.resolve(tracker.claimedOrder.length === 1),
       );
+      await waitUntil("attempt 1's PR open", async () => {
+        const fb = await tracker.readPrFeedback({ repo: REPO, number: 2 });
+        return fb.known && fb.value.pr !== null;
+      });
 
       // The human reviews; the NEXT tick derives the round and launches
       // attempt 2 on the same branch and the same PR.
@@ -203,10 +208,25 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     });
     await waitUntil("the boot sweep line", () => Promise.resolve(stdout.includes("sweeping forever")));
 
+    // The exit listener is attached BEFORE the kill: node emits 'exit'
+    // exactly once, and a late attach would miss it and hang forever.
+    let code: number | null | undefined;
+    child.on("exit", (c) => {
+      code = c;
+    });
     child.kill("SIGINT");
-    const code = await new Promise<number | null>((resolve) => child.on("exit", (c) => resolve(c)));
+    // The handler is an idempotent abort — a resent signal still exits 0.
+    // The resend covers a signal lost against a set of piped stdio startups
+    // (a platform-level race, not a behavior the test pins down).
+    const deadline = Date.now() + 1_000;
+    while (code === undefined && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    if (code === undefined) child.kill("SIGINT");
+    const finalCode = await new Promise<number | null>((resolve) => {
+      if (code !== undefined) resolve(code);
+      else child.on("exit", (c) => resolve(c));
+    });
 
-    assert.equal(code, 0, `stdout: ${stdout}`);
+    assert.equal(finalCode, 0, `stdout: ${stdout}`);
     assert.match(stdout, /ended cleanly/i);
   });
 });
