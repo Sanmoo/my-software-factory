@@ -50,6 +50,24 @@ export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 export const AGENT_DIR = "/home/agent/.pi/agent";
 export const SESSIONS_CONTAINER_DIR = `${AGENT_DIR}/sessions`;
 
+/**
+ * The toolchain convergence layer (ticket 18): the workspace subpaths bound
+ * read-write over the container's toolchain homes. Tools installed by `mise`
+ * inside these host dirs persist ACROSS launches — the container is recreated
+ * per work, the volume survives — so the first launch of a new toolchain pays
+ * the install and every later launch reuses it. The v1's proven sandboxMounts
+ * (research 01-sandcastle-sessao-headless): the mise data dir (shared between
+ * profiles) and the agent's npm tree.
+ */
+export const TOOLCHAIN_SUBPATHS = {
+  /** <workspace>/toolchains/mise → /home/agent/.local/share/mise (RW). */
+  mise: "toolchains/mise",
+  /** <workspace>/toolchains/agent/npm → /home/agent/.pi/agent/npm (RW). */
+  agentNpm: "toolchains/agent/npm",
+} as const;
+export const MISE_CONTAINER_DIR = "/home/agent/.local/share/mise";
+export const NPM_CONTAINER_DIR = `${AGENT_DIR}/npm`;
+
 /** Where the host profiles live by default. */
 export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
 
@@ -73,6 +91,10 @@ export interface SandcastleRuntimeOptions {
   /** Extra top-level profile entries not copied (on top of sessions and
    * npm) — operator state with no meaning in the container. */
   skipProfileEntries?: readonly string[];
+  /** The workspace root the toolchain binds derive from (the convergence
+   * layer): <workspace>/toolchains/... created idempotently at launch and
+   * bound read-write so installed toolchains survive the container. */
+  workspace: string;
   /** The blocked label the worker self-reports; defaults to the config default. */
   blockedLabel?: string;
   /** Full agent runs per launch; defaults to 1 (one session, one full run). */
@@ -95,6 +117,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly model: string;
   private readonly token: string;
   private readonly image: string;
+  private readonly workspace: string;
   private readonly profileDir: string;
   private readonly allowedRoots: readonly string[];
   private readonly skipDanglingProfileLinks: boolean;
@@ -111,6 +134,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.model = options.model;
     this.token = options.token;
     this.image = options.image ?? WORKER_IMAGE;
+    this.workspace = options.workspace;
     this.profileDir = options.profileDir ?? DEFAULT_PROFILE_DIR;
     this.allowedRoots = options.allowedRoots ?? [];
     this.skipDanglingProfileLinks = options.skipDanglingProfileLinks ?? false;
@@ -169,6 +193,21 @@ export class SandcastleRuntime implements WorkerRuntime {
     }
   }
 
+  /** The toolchain binds (ticket 18): workspace-derived host dirs, created
+   * idempotently at launch (mkdir is a no-op on an existing volume) and bound
+   * read-write. Convergence happens INSIDE the volume across launches — the
+   * runtime itself never pre-installs a toolchain. */
+  private toolchainBinds(): Array<{ hostPath: string; sandboxPath: string; readonly: false }> {
+    const miseDir = join(this.workspace, TOOLCHAIN_SUBPATHS.mise);
+    const npmDir = join(this.workspace, TOOLCHAIN_SUBPATHS.agentNpm);
+    mkdirSync(miseDir, { recursive: true });
+    mkdirSync(npmDir, { recursive: true });
+    return [
+      { hostPath: miseDir, sandboxPath: MISE_CONTAINER_DIR, readonly: false },
+      { hostPath: npmDir, sandboxPath: NPM_CONTAINER_DIR, readonly: false },
+    ];
+  }
+
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
   private runOptionsFor(request: WorkRequest, snapshotDir: string, sessionsDir: string): RunOptions {
     const agent = this.piProvider(this.model, {
@@ -207,6 +246,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           { hostPath: snapshotDir, sandboxPath: PROFILE_MOUNT, readonly: true },
           { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
+          ...this.toolchainBinds(),
         ],
       }),
       cwd: request.repoDir,

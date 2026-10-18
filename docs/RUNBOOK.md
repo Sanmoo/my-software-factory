@@ -34,6 +34,34 @@ link's real target as a `profile-allowed-roots` entry, or set
 `profile-skip-dangling-links: true` for stale links — the same fail-closed
 snapshot behavior of the ticket-17 proof, configurable.
 
+## Toolchains — the convergence layer (ticket 18)
+
+The worker image ships the `mise` binary (its apt repo, mise.jdx.dev/deb) and
+the agent's PATH starts with `/home/agent/.local/share/mise/shims`. The
+runtime binds two workspace dirs read-write into every container:
+
+```sh
+<workspace>/toolchains/mise      → /home/agent/.local/share/mise    (RW)
+<workspace>/toolchains/agent/npm → /home/agent/.pi/agent/npm        (RW)
+```
+
+The container is recreated per work; these volumes survive. Convergence
+happens INSIDE the volume across launches — the runtime and the worker
+prompt NEVER pre-install a toolchain:
+
+- **First launch of a new toolchain pays the install**: the worker runs
+  `mise install go` (or `mise use go@<version>` in the repo) and the
+  toolchain, its shims and its cache land in the bind-mounted volume.
+- **Every later launch reuses it**: a fresh container over the same volume
+  resolves `go`, `node`, `python`… through the persisted shims — no install,
+  no download, steady start. The empty `shims/` on a first launch is
+  harmless on PATH (nothing resolves there until the first `mise install`).
+
+This is the live-proof lesson the binds fix: the work needed Go and the
+worker burned its run hunting a toolchain (`go: command not found`). With
+the layer in place, one launch installs; the factory's remaining launches
+inherit.
+
 ## (a) One-shot: claim + launch a real worker
 
 Label a real issue with `ready-for-agent` on the target repo, then:

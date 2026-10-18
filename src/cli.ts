@@ -66,14 +66,16 @@ export async function wireRunDeps(
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
     }));
-  const runtime = seams.runtime ?? (await sandcastleRuntime(config, options.model));
+  const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, options.model));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   return { config, tracker, runtime, git, workspace, log: (message) => console.log(message) };
 }
 
 /** The real runtime: Sandcastle, demanding the model and the keyring token
- * (ticket 17), fed the config's profile-snapshot settings (ticket 18). */
-async function sandcastleRuntime(config: Config, model: string | undefined): Promise<WorkerRuntime> {
+ * (ticket 17), fed the config's profile-snapshot settings (ticket 18) and the
+ * workspace root the toolchain binds derive from (the convergence layer,
+ * ticket 18 — tools installed inside the volume survive the container). */
+async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string | undefined): Promise<WorkerRuntime> {
   if (!model) {
     console.error(
       "msf run launches the real Sandcastle runtime by default, which requires --model <provider/model-id>",
@@ -84,6 +86,9 @@ async function sandcastleRuntime(config: Config, model: string | undefined): Pro
   return new SandcastleRuntime({
     model,
     token,
+    // The toolchain convergence layer binds <workspace>/toolchains/... into
+    // the container (ticket 18): installed once, reused by every launch.
+    workspace: workspace.root,
     // The config feeds the snapshot's fail-closed admission (ticket 18):
     // the allowed roots the profile legitimately reaches (defaults fixed in
     // config.ts — the ticket-17 proof's roots) and the dangling-link escape.

@@ -14,6 +14,9 @@ import {
   SESSIONS_CONTAINER_DIR,
   AGENT_DIR_ENV,
   WORKER_IMAGE,
+  MISE_CONTAINER_DIR,
+  NPM_CONTAINER_DIR,
+  TOOLCHAIN_SUBPATHS,
   defaultPreflight,
 } from "./sandcastle.js";
 import type { WorkRequest } from "./port.js";
@@ -40,9 +43,11 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   let snapshotSeen: { path: string; auth: string | null; hasSessions: boolean } | undefined;
   let runtime: SandcastleRuntime;
   let request: WorkRequest;
+  let workspace: string;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "msf-sandcastle-"));
+    workspace = join(root, "fabrica");
     profileDir = join(root, "perfil");
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(join(profileDir, "auth.json"), '{"tokens":{"x":1}}', "utf8");
@@ -65,6 +70,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
       model: MODEL,
       token: "gh-token-for-the-container",
       profileDir,
+      workspace,
       blockedLabel: DEFAULT_LABELS.blocked,
       preflight: async () => {}, // the mechanics tests never touch docker
       runSandcastle: async (options) => {
@@ -98,7 +104,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("the sandbox mounts: profile snapshot read-only, work dir read-write, sessions read-write", () => {
+  test("the sandbox mounts: profile snapshot read-only, work dir read-write, sessions read-write, the two toolchain binds read-write", () => {
     return runtime.launch(request).then(() => {
       const mounts = dockerOptions?.mounts ?? [];
       assert.deepEqual(
@@ -107,12 +113,39 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
           [PROFILE_MOUNT, true],
           [WORK_MOUNT, false],
           [SESSIONS_CONTAINER_DIR, false],
+          [MISE_CONTAINER_DIR, false],
+          [NPM_CONTAINER_DIR, false],
         ],
       );
       assert.equal(mounts[1]?.hostPath, request.workDir);
       assert.equal(mounts[2]?.hostPath, join(request.workDir, "sessao"));
       assert.match(snapshotSeen?.path ?? "", /perfil/, "the profile mount is the snapshot, not the profile");
     });
+  });
+
+  test("the toolchain binds are workspace-derived: the mise data dir and the agent npm tree on the host", async () => {
+    await runtime.launch(request);
+
+    const mounts = dockerOptions?.mounts ?? [];
+    assert.equal(mounts[3]?.hostPath, join(workspace, TOOLCHAIN_SUBPATHS.mise));
+    assert.equal(mounts[4]?.hostPath, join(workspace, TOOLCHAIN_SUBPATHS.agentNpm));
+    assert.equal(mounts[3]?.sandboxPath, "/home/agent/.local/share/mise");
+    assert.equal(mounts[4]?.sandboxPath, "/home/agent/.pi/agent/npm");
+  });
+
+  test("the toolchain host dirs are created idempotently at launch — pre-existing state is never clobbered", async () => {
+    const miseDir = join(workspace, TOOLCHAIN_SUBPATHS.mise);
+    const npmDir = join(workspace, TOOLCHAIN_SUBPATHS.agentNpm);
+    mkdirSync(miseDir, { recursive: true });
+    mkdirSync(npmDir, { recursive: true });
+    writeFileSync(join(miseDir, "go"), "x", "utf8");
+    writeFileSync(join(npmDir, "some-package"), "x", "utf8");
+
+    await runtime.launch(request);
+    await runtime.launch(request); // a second launch reuses, never resets
+
+    assert.ok(existsSync(join(miseDir, "go")), "the mise volume survives across launches");
+    assert.ok(existsSync(join(npmDir, "some-package")), "the npm volume survives across launches");
   });
 
   test("the profile mount holds the snapshot: real files in, sessions out, never the operator's own profile", async () => {
@@ -245,6 +278,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       model: MODEL,
       token: "t",
       profileDir,
+      workspace: root,
       preflight: async () => {}, // offline: the contract tests never touch docker
       runSandcastle: async () => {
         if (fakes.die !== undefined) throw new Error(fakes.die);
@@ -270,6 +304,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       model: MODEL,
       token: "t",
       profileDir,
+      workspace: root,
       preflight: async () => {}, // offline: the contract tests never touch docker
       runSandcastle: async () => {
         seen = {
@@ -323,6 +358,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       model: MODEL,
       token: "t",
       profileDir,
+      workspace: root,
       preflight: async () => {
         throw new Error("docker unavailable");
       },
