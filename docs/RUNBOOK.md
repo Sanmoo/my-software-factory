@@ -90,11 +90,19 @@ Label a real issue with `ready-for-agent` on the target repo, then:
 msf run --once
 ```
 
-The sweep derives the pool from the tracker, claims the issue
-(`ready-for-agent` → `agent-claimed` BEFORE any launch), clones the repo,
-creates the work branch `agent-issue-<n>` and launches ONE real worker (Pi,
-container, using the configured `worker-model`). When the worker opens the PR from the bot
-account and writes `desfecho.json`, the sweep collects it and exits.
+The sweep derives the pool from the tracker and claims the issue in the
+recoverable order (issue 98): the work's registry directory on disk FIRST,
+then the protecting label `agent-claimed` (the padlock), then the assignee,
+and the pool label `ready-for-agent` LAST. The exclusion guarantee is the
+PRESENCE of the claim label, never the absence of the pool label: the two
+labels coexist for the instant between the padlock landing and the pool label
+leaving, so a neighbouring sweep excludes by `agent-claimed` (the derivation
+does). Only an absent label (404/422) is tolerated in these swaps; any other
+failure surfaces as a failed launch, the work stays in the pool and the next
+tick retries it. The sweep then clones the repo, creates the work branch
+`agent-issue-<n>` and launches ONE real worker (Pi, container, using the
+configured `worker-model`). When the worker opens the PR from the bot account
+and writes `desfecho.json`, the sweep collects it and exits.
 
 ## (b) Continuous: the feedback rounds
 
