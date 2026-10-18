@@ -14,7 +14,8 @@
     "build": "tsc -p tsconfig.json",
     "build:image": "docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) -t msf-v2-worker:local docker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test --test-timeout=5000 --test-force-exit \"dist/**/*.test.js\""
+    "test": "npm run build && node --test --test-timeout=5000 --test-force-exit \"dist/**/*.test.js\"",
+    "smoke:github": "npm run build && node dist/tracker/github-smoke.js"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.12.0",

@@ -1,287 +1,145 @@
 import assert from "node:assert/strict";
-import { test, describe, beforeEach } from "node:test";
+import { test } from "node:test";
 
-import { FakeTrackerAdapter, seedIssue } from "./fake-adapter.js";
+import { FakeTrackerAdapter } from "./fake-adapter.js";
+import { runTrackerContractSuite, type ContractHarness } from "./contract.js";
 import { AGENT_MARKER } from "./port.js";
 
-describe("fake tracker adapter — the 9 operations + rank", () => {
-  let adapter: FakeTrackerAdapter;
+/**
+ * The fake adapter is the test mirror of the port (ticket 16): it satisfies
+ * the same contract suite the real GitHub adapter must satisfy. The suite
+ * lives in contract.ts; the harness below only seeds and asserts what the
+ * fake makes cheap. Fake-specific behaviors (author attribution on seeded
+ * comments, the push log) keep their own tests at the bottom.
+ */
 
-  beforeEach(() => {
-    adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
-  });
+function makeHarness(): ContractHarness {
+  let adapter = freshAdapter();
+  let nextNumber = 1;
+  let nextPrNumber = 1;
+  const prByIssueNumber = new Map<number, number>();
+  let missingNumber = 10_000;
 
-  test("1. listCandidates: open issues with the ready label, excluding PRs", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent"] });
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 2, labels: ["other"] });
-    seedIssue(adapter, {
-      repo: "Sanmoo/a",
-      number: 3,
-      labels: ["ready-for-agent"],
-      state: "closed",
-    });
-    adapter.seedPullRequest({ repo: "Sanmoo/a", number: 4, labels: ["ready-for-agent"] });
+  function freshAdapter(): FakeTrackerAdapter {
+    return new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  }
 
-    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
+  return {
+    name: "fake (in-memory)",
+    repo: "Sanmoo/fake-target",
+    workerAccount: "bot-do-samuca",
+    claimedLabel: "agent-claimed",
+    getAdapter: () => adapter,
+    reset: async () => {
+      adapter = freshAdapter();
+      nextNumber = 1;
+      nextPrNumber = 1;
+      prByIssueNumber.clear();
+    },
+    async createIssue(input) {
+      const number = nextNumber++;
+      adapter.seedIssue({
+        repo: "Sanmoo/fake-target",
+        number,
+        title: input.title,
+        labels: input.labels ?? [],
+        ...(input.closed ? { state: "closed" as const, stateReason: "completed" as const } : {}),
+      });
+      return { ref: { repo: "Sanmoo/fake-target", number }, createdAt: "2026-01-01T00:00:00Z" };
+    },
+    async missingRef() {
+      return { repo: "Sanmoo/fake-target", number: missingNumber++ };
+    },
+    async addBlocker(ref, blocker) {
+      adapter.addBlocker(ref, blocker);
+    },
+    async addComment(ref, author, body) {
+      const prNumber = prByIssueNumber.get(ref.number);
+      if (prNumber !== undefined) {
+        adapter.addPrComment({ repo: ref.repo, prNumber }, author, body);
+        return;
+      }
+      adapter.addComment(ref, author, body);
+    },
+    async ensureBranch() {
+      // branches have no remote existence in the fake
+    },
+    async createPullRequest(issue, input) {
+      const prNumber = nextPrNumber++;
+      const { headBranch, baseBranch } = input ?? {};
+      adapter.seedPullRequest({
+        repo: issue.repo,
+        number: issue.number,
+        ...(headBranch === undefined ? {} : { headBranch }),
+        ...(baseBranch === undefined ? {} : { baseBranch }),
+      });
+      // the fake numbers PRs from its own counter; read the number back
+      const feedback = await adapter.readPrFeedback(issue);
+      const created = feedback.known ? feedback.value.pr?.number : undefined;
+      if (created === undefined) throw new Error("fake: PR did not link back to the issue");
+      prByIssueNumber.set(issue.number, created);
+      return created;
+    },
+    async branchExists(branch) {
+      return adapter.pushedBranches.some((p) => p.branch === branch);
+    },
+    async cleanup() {
+      // in-memory: nothing to revert
+    },
+  };
+}
 
-    assert.deepEqual(
-      candidates.map((c) => c.ref.number),
-      [1],
-    );
-  });
+runTrackerContractSuite(makeHarness());
 
-  test("1. listCandidates: candidates carry createdAt for age-based priority", async () => {
-    seedIssue(adapter, {
-      repo: "Sanmoo/a",
-      number: 7,
-      labels: ["ready-for-agent"],
-      createdAt: "2026-01-02T00:00:00Z",
-    });
+// ---- fake-specific behaviors (not part of the shared contract) ----
 
-    const [candidate] = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
+test("fake keeps the author of seeded comments verbatim", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1 });
+  adapter.addComment({ repo: "Sanmoo/a", number: 1 }, "samuca", "human feedback");
 
-    assert.equal(candidate?.createdAt, "2026-01-02T00:00:00Z");
-  });
+  const comments = await adapter.readComments({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(comments.known);
+  assert.equal(comments.value[0]?.author, "samuca");
+});
 
-  test("2. readIssue: full snapshot (labels, assignees, state, createdAt, title)", async () => {
-    seedIssue(adapter, {
-      repo: "Sanmoo/a",
-      number: 5,
-      title: "do the thing",
-      labels: ["ready-for-agent"],
-      createdAt: "2026-01-01T10:00:00Z",
-    });
+test("fake records every pushed branch, in order", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  await adapter.pushBranch({ repo: "Sanmoo/a", branch: "agent-issue-3" });
+  await adapter.pushBranch({ repo: "Sanmoo/a", branch: "agent-issue-4" });
+  assert.deepEqual(
+    adapter.pushedBranches.map((p) => p.branch),
+    ["agent-issue-3", "agent-issue-4"],
+  );
+});
 
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 5 });
+test("fake comments never lose the agent marker prefix", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1 });
+  await adapter.comment({ repo: "Sanmoo/a", number: 1 }, `${AGENT_MARKER} already marked`);
+  const comments = await adapter.readComments({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(comments.known);
+  assert.equal(comments.value[0]?.body, `${AGENT_MARKER} already marked`);
+});
 
-    assert.ok(issue.known);
-    assert.equal(issue.value.title, "do the thing");
-    assert.equal(issue.value.state, "open");
-    assert.deepEqual(issue.value.labels, ["ready-for-agent"]);
-    assert.equal(issue.value.createdAt, "2026-01-01T10:00:00Z");
-  });
+test("fake claim swaps the ready label away (the reservation is the swap, ticket 12)", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent", "triaged"] });
+  await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
 
-  test("2. readIssue: missing issue is unknown, never absent-as-empty", async () => {
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 999 });
-    assert.ok(!issue.known);
-  });
+  const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(issue.known);
+  assert.ok(!issue.value.labels.includes("ready-for-agent"), "ready label swapped away");
+  assert.ok(issue.value.labels.includes("agent-claimed"));
+  assert.ok(issue.value.labels.includes("triaged"), "unrelated labels are untouched");
+});
 
-  test("3. readBlockers: native blocked_by with each blocker's terminal state", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent"] });
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 2, state: "closed" });
-    adapter.addBlocker({ repo: "Sanmoo/a", number: 1 }, { repo: "Sanmoo/a", number: 2 });
-
-    const blockers = await adapter.readBlockers({ repo: "Sanmoo/a", number: 1 });
-
-    assert.ok(blockers.known);
-    assert.equal(blockers.value.length, 1);
-    assert.equal(blockers.value[0]?.ref.number, 2);
-    assert.equal(blockers.value[0]?.state, "closed");
-  });
-
-  test("3. readBlockers: no dependencies is known-empty, not unknown", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-    const blockers = await adapter.readBlockers({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(blockers.known);
-    assert.deepEqual(blockers.value, []);
-  });
-
-  test("4. claim: adds the claimed label + assigns the worker account", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-
-    await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
-
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(issue.known);
-    assert.ok(issue.value.labels.includes("agent-claimed"));
-    assert.deepEqual(issue.value.assignees, ["bot-do-samuca"]);
-  });
-
-  test("4. claim: swaps the ready label away (the reservation is the swap, ticket 12)", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent", "triaged"] });
-
-    await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
-
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(issue.known);
-    assert.ok(!issue.value.labels.includes("ready-for-agent"), "ready label swapped away");
-    assert.ok(issue.value.labels.includes("agent-claimed"));
-    assert.ok(issue.value.labels.includes("triaged"), "unrelated labels are untouched");
-  });
-
-  test("4. claim: an absent ready label is tolerated, not an error", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-
-    await assert.doesNotReject(
-      adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent"),
-    );
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(issue.known && issue.value.labels.includes("agent-claimed"));
-  });
-
-  test("5. releaseClaim: removes only the claim mark (label + assignee of the account)", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: ["other"] });
-
-    await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
-    await adapter.releaseClaim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
-
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(issue.known);
-    assert.ok(!issue.value.labels.includes("agent-claimed"));
-    assert.deepEqual(issue.value.assignees, []);
-    assert.ok(issue.value.labels.includes("other"), "unrelated labels are untouched");
-  });
-
-  test("5. releaseClaim: removing an absent claim mark is tolerated, not an error", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-    await assert.doesNotReject(
-      adapter.releaseClaim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca"),
-    );
-  });
-
-  test("6. markDone: closes the issue as completed", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-
-    await adapter.markDone({ repo: "Sanmoo/a", number: 1 });
-
-    const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(issue.known);
-    assert.equal(issue.value.state, "closed");
-    assert.equal(issue.value.stateReason, "completed");
-  });
-
-  test("7. comment: posts on the issue carrying the invisible agent marker", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-
-    await adapter.comment({ repo: "Sanmoo/a", number: 1 }, "fell over");
-
-    const comments = await adapter.readComments({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(comments.known);
-    assert.equal(comments.value.length, 1);
-    assert.ok(comments.value[0]?.body.startsWith(AGENT_MARKER));
-    assert.ok(comments.value[0]?.body.includes("fell over"));
-  });
-
-  test("8. readComments: reads back issue comments with author and body", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-    adapter.addComment({ repo: "Sanmoo/a", number: 1 }, "samuca", "human feedback");
-
-    const comments = await adapter.readComments({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(comments.known);
-    assert.equal(comments.value[0]?.author, "samuca");
-    assert.equal(comments.value[0]?.body, "human feedback");
-  });
-
-  test("9a. readPrFeedback: reads the PR conversation of the issue's work", async () => {
-    adapter.seedPullRequest({ repo: "Sanmoo/a", number: 3, headBranch: "agent-issue-3" });
-    adapter.addPrComment({ repo: "Sanmoo/a", prNumber: 3 }, "samuca", "fix this");
-
-    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 3 });
-    assert.ok(feedback.known);
-    assert.equal(feedback.value.pr?.number, 3);
-    assert.equal(feedback.value.pr?.state, "open");
-    assert.equal(feedback.value.comments[0]?.author, "samuca");
-  });
-
-  test("9a. readPrFeedback: no PR is known-null, not unknown", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 3 });
-    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 3 });
-    assert.ok(feedback.known);
-    assert.equal(feedback.value.pr, null);
-  });
-
-  test("9b. openPr: creates an open PR linked to the issue's branch", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 3 });
-    const pr = await adapter.openPr({
-      repo: "Sanmoo/a",
-      issueNumber: 3,
-      headBranch: "agent-issue-3",
-      baseBranch: "main",
-      title: "fix #3",
-    });
-
-    assert.equal(pr.state, "open");
-    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 3 });
-    assert.ok(feedback.known);
-    assert.equal(feedback.value.pr?.number, pr.number);
-  });
-
-  test("9c. pushBranch: records the branch push per repo", async () => {
-    await adapter.pushBranch({ repo: "Sanmoo/a", branch: "agent-issue-3" });
-    assert.deepEqual(adapter.pushedBranches, [{ repo: "Sanmoo/a", branch: "agent-issue-3" }]);
-  });
-
-  test("rank: GitHub has no native priority — the honest answer is known(null)", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-    const rank = await adapter.rank({ repo: "Sanmoo/a", number: 1 });
-    assert.ok(rank.known);
-    assert.equal(rank.value, null);
-  });
-
-  test("writes report intents performed; confirmation stays with the re-read", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1 });
-    const outcome = await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
-    assert.ok(Array.isArray(outcome.performed));
-    assert.ok(outcome.performed.length > 0);
-  });
-
-  // ---- ticket 13: the ruler's decided transitions need two label swaps ----
-
-  describe("ticket 13 — release back to the pool and block the claim", () => {
-    test("releaseClaim with a ready label swaps claimed→ready (the work re-enters the pool)", async () => {
-      seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [] });
-      await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca");
-
-      const outcome = await adapter.releaseClaim(
-        { repo: "Sanmoo/a", number: 1 },
-        "bot-do-samuca",
-        "ready-for-agent",
-      );
-
-      assert.ok(outcome.performed.length > 0);
-      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
-      assert.ok(issue.known);
-      assert.ok(issue.value.labels.includes("ready-for-agent"), "the ready label is back");
-      assert.ok(!issue.value.labels.includes("agent-claimed"), "the claim is gone");
-      assert.deepEqual(issue.value.assignees, [], "the assignee is gone");
-    });
-
-    test("releaseClaim without a ready label keeps its old shape (remove only the claim mark)", async () => {
-      seedIssue(adapter, { repo: "Sanmoo/a", number: 2 });
-      await adapter.claim({ repo: "Sanmoo/a", number: 2 }, "bot-do-samuca");
-
-      await adapter.releaseClaim({ repo: "Sanmoo/a", number: 2 }, "bot-do-samuca");
-
-      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 2 });
-      assert.ok(issue.known);
-      assert.ok(!issue.value.labels.includes("agent-claimed"));
-    });
-
-    test("blockClaim swaps claimed→blocked, the claim held until the terminal state", async () => {
-      seedIssue(adapter, { repo: "Sanmoo/a", number: 3 });
-      await adapter.claim({ repo: "Sanmoo/a", number: 3 }, "bot-do-samuca");
-
-      await adapter.blockClaim(
-        { repo: "Sanmoo/a", number: 3 },
-        "agent-claimed",
-        "agent-blocked",
-      );
-
-      const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 3 });
-      assert.ok(issue.known);
-      assert.ok(!issue.value.labels.includes("agent-claimed"), "claimed swapped away");
-      assert.ok(issue.value.labels.includes("agent-blocked"), "the blocked label on");
-      assert.deepEqual(issue.value.assignees, ["bot-do-samuca"], "the claim stays held");
-    });
-
-    test("blockClaim is tolerant when the claimed label is already gone", async () => {
-      seedIssue(adapter, { repo: "Sanmoo/a", number: 4 });
-      const outcome = await adapter.blockClaim(
-        { repo: "Sanmoo/a", number: 4 },
-        "agent-claimed",
-        "agent-blocked",
-      );
-      assert.ok(Array.isArray(outcome.performed));
-    });
-  });
+test("fake claim: an absent ready label is tolerated, not an error", async () => {
+  const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+  adapter.seedIssue({ repo: "Sanmoo/a", number: 1 });
+  await assert.doesNotReject(
+    adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent"),
+  );
+  const issue = await adapter.readIssue({ repo: "Sanmoo/a", number: 1 });
+  assert.ok(issue.known && issue.value.labels.includes("agent-claimed"));
 });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadConfigFrom, type Config } from "./config.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
+import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { FakeTrackerAdapter } from "./tracker/fake-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { deriveStatus, renderStatus } from "./state/status.js";
@@ -11,8 +12,9 @@ import type { WorkerRuntime } from "./runtime/port.js";
 
 /**
  * `msf run [--once] [--config <path>]` and `msf status` — the minimal CLI
- * (fundação #9). The run loads msf.yaml from the cwd, guarantees the
- * workspace and hands the thin loop its four seams.
+ * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
+ * from the gh keyring (boot check, ticket 16: no token → clear failure),
+ * guarantees the workspace and hands the thin loop its four seams.
  */
 
 async function main(): Promise<void> {
@@ -45,10 +47,13 @@ async function runCommand(argv: string[]): Promise<void> {
   const config = loadConfigFrom(process.cwd(), overridePath);
   const workspace = ensureWorkspace(config.workspace);
 
-  // TODO(ticket-12): the GitHub adapter lands behind this same port; the
-  // in-memory fake is the only adapter born with the skeleton (fundação #3)
-  // and keeps `run --once` with an empty pool fully offline.
-  const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+  // Boot check (ticket 16): the real tracker is the only adapter of v0.1 —
+  // without the bot token in the gh keyring, msf run fails here, at boot,
+  // with a clear message. The fake (test mirror) never runs in production.
+  const tracker = await createGitHubAdapter({
+    account: config.workerGhAccount,
+    clonesDir: workspace.repos,
+  });
 
   const deps: LoopDeps = {
     config,
@@ -58,7 +63,6 @@ async function runCommand(argv: string[]): Promise<void> {
     workspace,
     log: (message) => console.log(message),
   };
-
   if (once) {
     const result = await runOnce(deps);
     console.log(
@@ -124,8 +128,10 @@ async function statusCommand(argv: string[]): Promise<void> {
     archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
   };
 
-  // Derivation on demand through the same port the run uses (ticket 16 wires
-  // the real GitHub adapter here too) — the factory being stopped changes nothing.
+  // Derivation on demand through the port — the factory being stopped changes
+  // nothing. The fake keeps `msf status` offline (read-only, no keyring read);
+  // ticket 16 wires the real GitHub adapter into the run loop only — the boot
+  // check must not gate a read-only status command.
   const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
   const view = await deriveStatus(tracker, config, layout);
   console.log(renderStatus(view));
