@@ -159,6 +159,23 @@ export class SweepEngine {
           await tracker.comment(decision.ref, decision.comment);
           break;
         }
+        case "fall": {
+          if (decision.decision === "release") {
+            this.log(
+              `derived ${workKey(decision.ref)}: unreconciled fall (the factory died on it) — ` +
+                "release (claimed→ready back; the branch stays)",
+            );
+            await tracker.releaseClaim(decision.ref, config.workerGhAccount, config.labels.ready);
+          } else {
+            this.log(
+              `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
+                "blocked with the exact outcome on the issue",
+            );
+            await tracker.blockClaim(decision.ref, config.labels.claimed, config.labels.blocked);
+            await tracker.comment(decision.ref, decision.comment);
+          }
+          break;
+        }
         case "feedback":
         case "resumable":
           parked.push({
@@ -258,6 +275,9 @@ export class SweepEngine {
       // The swap ready→claimed is one composite write: removing the ready
       // label is what keeps a concurrent sweep from ever seeing the work.
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+      // The registry dir exists from the reservation on — a crash after the
+      // claim (before any worker) is still a visible, reconcilable fact.
+      mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
       await tracker.resumeClaim(ref, config.labels.blocked, config.labels.claimed);
@@ -297,14 +317,17 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
-
-    // The freed slot replenishes in the same cycle — the act of collection
-    // triggers the next launches; no barrier waits for the slowest.
-    this.slots.release(key);
-    this.discardFromCacheAndParked(key);
-    this.fillSlots();
-    this.notifyWorkerEnded();
+    try {
+      await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
+    } finally {
+      // The slot is released even when the collection's transition fails —
+      // the work stays reconcilable by the next derivation (the claim or its
+      // swap is already on the tracker; a failed write leaves it auditable).
+      this.slots.release(key);
+      this.discardFromCacheAndParked(key);
+      this.fillSlots();
+      this.notifyWorkerEnded();
+    }
   }
 
   /**
