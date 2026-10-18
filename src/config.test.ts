@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_WORKSPACE, DEFAULT_PROFILE_ALLOWED_ROOTS } from "./config.js";
+import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_WORKSPACE } from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -129,14 +129,16 @@ describe("config", () => {
 
   // ---- the profile-snapshot keys (ticket 18 wiring) ----
 
-  test("profile-allowed-roots defaults to the ticket-17 proof roots, tilde-expanded", () => {
+  test("profile-allowed-roots defaults to EMPTY — no operator-personal path in the product", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nrepos: [Sanmoo/a]\n");
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.profileAllowedRoots, DEFAULT_PROFILE_ALLOWED_ROOTS.map((root) =>
-      root.startsWith("~") ? join(homedir(), root.slice(2)) : root,
-    ));
+    // The default carries no root: a profile with symlinks then fails the
+    // snapshot fail-closed (ProfileSnapshotError naming the link and the
+    // "profile-allowed-roots" key) until THIS operator declares the roots
+    // the own machine's profile legitimately reaches.
+    assert.deepEqual(config.profileAllowedRoots, []);
     assert.equal(config.profileSkipDanglingLinks, false, "fail closed by default");
   });
 

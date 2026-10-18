@@ -66,8 +66,12 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        openPr ....................................... 1
  *        PR comment + readPrFeedback (5 reads) ........ 6
  *        comment + human comment + readComments ....... 3
- *        derive (candidates + readIssue — isEligible early-returns
- *        on the blocked label, before readBlockers) ... 2
+ *        derive (candidates listing + the open-PRs linkage
+ *        listing — ticket 12/18: the seeded issue's OWN open PR
+ *        (op9b, "Closes #N") links it, so it is excluded BEFORE any
+ *        per-candidate readIssue; the old readIssue — isEligible
+ *        early-returned on the blocked label — became the linkage
+ *        listing, net 0) ............................. 2
  *        markDone + re-read ........................... 2
  *        rank ......................................... 0
  *        the LATE candidates() re-check ............... 1
@@ -80,7 +84,10 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *  The adapter-side 31 are sim-verified offline (CYCLE_ADAPTER_REST_CALLS,
  *  asserted in github-contract.test.ts). On top of the plan (environmental,
  *  not gated): foreign ready-labeled open issues the derivation reads
- *  (+2 each) and repo labels this run creates (+1 delete +1 verify each).
+ *  (+2 each), the late candidates() re-check's open-PRs linkage listing
+ *  (+1 whenever its issues listing is non-empty — any open issue in the
+ *  repo makes it fire; near-certain, covered by the margin) and repo labels
+ *  this run creates (+1 delete +1 verify each).
  */
 const PLANNED_REST_CALLS = 57;
 

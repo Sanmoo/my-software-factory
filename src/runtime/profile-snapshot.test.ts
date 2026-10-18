@@ -67,7 +67,13 @@ describe("profile snapshot — a portrait of real files", () => {
 
     await assert.rejects(
       snapshotProfile(profile, destination),
-      (error: unknown) => error instanceof ProfileSnapshotError && error.message.includes("skills/my-skill"),
+      (error: unknown) =>
+        error instanceof ProfileSnapshotError &&
+        error.message.includes("skills/my-skill") &&
+        // the default is EMPTY (no operator-personal roots in the product),
+        // so the fail-closed error must point the operator at the ONE config
+        // key that declares the root: profile-allowed-roots
+        error.message.includes('"profile-allowed-roots"'),
     );
   });
 

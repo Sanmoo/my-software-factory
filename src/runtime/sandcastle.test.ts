@@ -17,6 +17,7 @@ import {
   MISE_CONTAINER_DIR,
   NPM_CONTAINER_DIR,
   TOOLCHAIN_SUBPATHS,
+  WORKER_FLAG_ARGS,
   defaultPreflight,
 } from "./sandcastle.js";
 import type { WorkRequest } from "./port.js";
@@ -161,7 +162,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.ok(!existsSync(snapshotSeen!.path), "the temp snapshot dies with the launch");
   });
 
-  test("the agent is the Pi headless template in print mode with the proven closed flags", async () => {
+  test("the agent is the Pi headless template in print mode with the proven closed flags (WORKER_FLAG_ARGS)", async () => {
     await runtime.launch(request);
 
     const agent = runOptions?.agent as unknown as {
@@ -172,13 +173,9 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     const command = agent.buildPrintCommand({ prompt: "p" }).command;
     assert.match(command, /^pi -p --mode json --model/);
     assert.ok(command.includes(MODEL), "the configured model rides the print command");
-    for (const flag of [
-      "--approve",
-      "--no-context-files",
-      "--no-prompt-templates",
-      "--no-mcp",
-      "--tools read,bash,edit,write",
-    ]) {
+    // the flags are single-sourced in WORKER_FLAG_ARGS — the test asserts
+    // the constant is what the print command actually carries, entry by entry
+    for (const flag of WORKER_FLAG_ARGS) {
       assert.ok(command.includes(flag), `the print command carries ${flag}`);
     }
   });

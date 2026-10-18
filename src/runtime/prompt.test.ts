@@ -92,6 +92,14 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
     assert.match(prompt, /"pr".*"repo".*"number".*"branch"/s);
   });
 
+  test("obligation 1: the schema example shows the optional `paths` — the record's artifact trail (story 19)", () => {
+    // The record carries classe, tentativa, PR, caminhos — the schema example
+    // must teach `paths`, or the worker never learns the field exists.
+    assert.match(prompt, /"paths": \{"<artifact name>": "<path, relative to the work dir>"\}/);
+    assert.match(prompt, /"paths" is optional: the paths of the artifacts this session wrote/);
+    assert.match(prompt, /"paths" optional\)/, "the example marks paths as the optional member it is");
+  });
+
   test("obligation 2: every feedback round ends with a marked comment on the PR", () => {
     assert.match(prompt, /comment on the PR/i);
     assert.match(prompt, new RegExp(`comment MUST start with[\\s\\S]*${AGENT_MARKER}`));

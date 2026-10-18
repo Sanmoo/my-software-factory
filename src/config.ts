@@ -29,17 +29,14 @@ export const DEFAULT_LABELS: Labels = {
 };
 
 /**
- * The profile snapshot's allowed roots (ticket 18 wiring): the roots the
- * operator's Pi profile legitimately reaches through links — dotfiles,
- * .agents, omarchy (the same roots declared in the ticket-17 live proof).
- * Fixed here so a real launch has the proof's fail-closed snapshot behavior
- * with a config that fits on a screen; `profile-allowed-roots` overrides.
+ * The profile snapshot's allowed roots (ticket 18 wiring): EMPTY by default —
+ * no root is pre-declared (no operator-personal path belongs in the product).
+ * A profile with symlinks then fails the snapshot fail-closed, naming the
+ * link and the config key that declares it: `profile-allowed-roots` names
+ * the roots THIS operator's profile legitimately reaches (dotfiles,
+ * .agents, omarchy… — whatever the machine actually has).
  */
-export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [
-  "~/dev/github.com/Sanmoo/dotfiles",
-  "~/.agents",
-  "~/.local/share/omarchy",
-];
+export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [];
 
 export interface Labels {
   ready: string;

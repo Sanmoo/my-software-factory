@@ -99,13 +99,17 @@ describe("boot: credential from the gh keyring", () => {
 });
 
 describe("the 9 operations over gh", () => {
-  test("1. listCandidates: plain open-issues listing, ready label matched CLIENT-SIDE", async () => {
-    const { adapter, calls } = await makeAdapter((call) => ({
-      stdout:
-        call.file === "gh"
-          ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z","labels":[{"name":"ready-for-agent"}]},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{},"labels":[{"name":"ready-for-agent"}]},{"number":9,"title":"unlabeled","created_at":"2026-01-04T00:00:00Z","labels":[]},{"number":10,"title":"other label","created_at":"2026-01-05T00:00:00Z","labels":[{"name":"other"}]}]`
-          : "",
-    }));
+  test("1. listCandidates: plain open-issues listing, ready label matched CLIENT-SIDE, PRs excluded via the open-PRs listing", async () => {
+    const { adapter, calls } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/pulls?")) return { stdout: "[]" };
+      return {
+        stdout:
+          call.file === "gh"
+            ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z","labels":[{"name":"ready-for-agent"}]},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{},"labels":[{"name":"ready-for-agent"}]},{"number":9,"title":"unlabeled","created_at":"2026-01-04T00:00:00Z","labels":[]},{"number":10,"title":"other label","created_at":"2026-01-05T00:00:00Z","labels":[{"name":"other"}]}]`
+            : "",
+      };
+    });
     const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
     assert.deepEqual(candidates, [
       { ref: { repo: "Sanmoo/a", number: 7 }, title: "do it", createdAt: "2026-01-02T00:00:00Z" },
@@ -118,6 +122,62 @@ describe("the 9 operations over gh", () => {
     // fresh label; the filter happens in the adapter instead
     assert.ok(!path?.includes("labels="), "the labels query param is never sent");
     assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
+  });
+
+  test("1. listCandidates: an issue linked by an OPEN PR's body is excluded (only sem-PR issues enter the pool — ticket 12)", async () => {
+    const { adapter, calls } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.endsWith("/issues") || path?.includes("/issues?")) {
+        return {
+          stdout: JSON.stringify([
+            { number: 7, title: "has a PR", created_at: "2026-01-02T00:00:00Z", labels: [{ name: "ready-for-agent" }] },
+            { number: 8, title: "no PR", created_at: "2026-01-03T00:00:00Z", labels: [{ name: "ready-for-agent" }] },
+          ]),
+        };
+      }
+      if (path?.includes("/pulls?")) {
+        return {
+          stdout: JSON.stringify([
+            { number: 20, body: "Closes #7\n\nwork of #7" },
+            { number: 21, body: "a human PR without a linkage keyword — slips through (documented limitation)" },
+            { number: 22, body: "Resolves #99 — outside the issue listing" },
+            { number: 23, body: null },
+          ]),
+        };
+      }
+      return { stdout: "[]" };
+    });
+    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
+    assert.deepEqual(
+      candidates.map((c) => c.ref.number),
+      [8],
+      "#7 (Closes #7) is excluded; #8 (fixes #8) is excluded too — only sem-PR issues remain",
+    );
+    const pulls = calls.find(
+      (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls?"),
+    );
+    assert.ok(pulls, "the open-PRs listing is read");
+    const pullsPath = pulls?.args.find((a) => a.startsWith("repos/"));
+    assert.match(pullsPath ?? "", /state=open/);
+    assert.equal(
+      calls.filter(
+        (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls?"),
+      ).length,
+      1,
+      "the open-PRs listing is read ONCE, not per candidate",
+    );
+  });
+
+  test("1. listCandidates: an EMPTY issues listing never reads the open-PRs listing (nothing to filter)", async () => {
+    const { adapter, calls } = await makeAdapter(() => ({ stdout: "[]" }));
+    const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
+    assert.deepEqual(candidates, []);
+    assert.ok(
+      !calls.some(
+        (c) => c.file === "gh" && (c.args.find((a) => a.startsWith("repos/")) ?? "").includes("/pulls"),
+      ),
+      "no PR listing call when the issues listing is empty",
+    );
   });
 
   test("2. readIssue: maps state, stateReason, labels, assignees, createdAt", async () => {
@@ -339,6 +399,66 @@ describe("the 9 operations over gh", () => {
     assert.equal(feedback.value.reviews[1]?.createdAt, "2026-01-03T00:00:00Z");
     const timeline = ghCall(calls, (c) => c.args.some((a) => a.includes("/timeline")));
     assert.ok(timeline.args.some((a) => a.includes("/issues/1/timeline")));
+  });
+
+  test("9a. readPrFeedback: an approval-only review (body null) is dropped — no crash, the inline comment still counts", async () => {
+    // Spec #7: GitHub returns body: null for approval-only reviews. The
+    // adapter drops them (no speech signal); the inline comment — the other
+    // channel — still counts as feedback. A null body reaching the state
+    // derivation crashed isAgentSpeech (body.includes of null).
+    const { adapter } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/timeline")) {
+        return {
+          stdout: JSON.stringify([
+            { event: "cross-referenced", source: { issue: { number: 3, pull_request: { merged_at: null } } } },
+          ]),
+        };
+      }
+      if (path?.includes("/pulls/3/reviews")) {
+        return {
+          stdout: JSON.stringify([
+            { id: 7, user: { login: "samuca" }, body: null, submitted_at: "2026-01-02T00:00:00Z" },
+            { id: 8, user: { login: "samuca" }, body: "LGTM", submitted_at: "2026-01-02T01:00:00Z" },
+          ]),
+        };
+      }
+      if (path?.includes("/pulls/3/comments")) {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 9,
+              user: { login: "samuca" },
+              body: "inline: too many comments",
+              created_at: "2026-01-03T00:00:00Z",
+              path: "internal/issuefiles/write.go",
+              line: 53,
+            },
+          ]),
+        };
+      }
+      if (path?.endsWith("/pulls/3")) {
+        return {
+          stdout: JSON.stringify({
+            number: 3,
+            state: "open",
+            merged_at: null,
+            head: { ref: "agent-issue-1" },
+            base: { ref: "main" },
+            user: { login: "bot-do-samuca" },
+          }),
+        };
+      }
+      return { stdout: "[]" };
+    });
+    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 1 });
+    assert.ok(feedback.known);
+    // only the speech-bearing review submission and the inline comment remain —
+    // the null-body approval is gone, so no null body can reach the derivation
+    assert.deepEqual(
+      feedback.value.reviews.map((review) => review.body),
+      ["LGTM", "inline: too many comments\n(internal/issuefiles/write.go:53)"],
+    );
   });
 
   test("9a. readPrFeedback: no linked PR is known-null, comments still read", async () => {

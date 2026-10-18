@@ -29,8 +29,13 @@ import { DEFAULT_LABELS } from "../config.js";
  *  Direct reads 2, claim 4+1 re-read, release 4+1, 2nd claim 2, blockClaim
  *  3+1, openPr 1, readPrFeedback 5 (timeline, pull, conversation, review
  *  submissions, inline comments), comment+readComments 2, derivation 2
- *  (candidates + readIssue — isEligible early-returns on the blocked label),
- *  markDone+re-read 2, the late candidates() re-check 1 = 31. */
+ *  (candidates listing + the open-PRs linkage listing — ticket 12: the seeded
+ *  issue's OWN open PR (op9b, "Closes #N") links it, so it is excluded from
+ *  the pool BEFORE any per-candidate readIssue; before ticket 12's real-
+ *  adapter fix this was candidates + readIssue, where isEligible early-
+ *  returned on the blocked label — same count, different path), markDone+
+ *  re-read 2, the late candidates() re-check 1 (its listing is EMPTY at that
+ *  point — both seeded issues closed — so no linkage listing) = 31. */
 export const CYCLE_ADAPTER_REST_CALLS = 31;
 
 /** op1's blocking proof: the direct reads right after seeding (immediate). */
@@ -145,7 +150,7 @@ export async function runSmokeCycle(
   await adapter.claim(issue.ref, account);
 
   // 5b. block — the 2nd-consecutive-fall swap (claimed→blocked, the claim held)
-  await adapter.blockClaim(issue.ref, DEFAULT_LABELS.claimed, DEFAULT_LABELS.blocked);
+  await adapter.blockClaim(issue.ref, DEFAULT_LABELS);
   const blockedState = await adapter.readIssue(issue.ref);
   if (
     !blockedState.known ||
@@ -199,13 +204,13 @@ export async function runSmokeCycle(
   console.log("op7+op8 EXECUTED+VERIFIED: comment → marker carried; readComments → both readable");
 
   // derivation over the real adapter: the pool derivation of ticket 11 —
-  // the blocked claim holds the work out of the pool (the ready label came
-  // back in op5, but the claim's assignee is held until the terminal state)
+  // the work's own open PR (op9b, "Closes #N") keeps it out of the pool
+  // (ticket 12: only sem-PR issues enter), and the blocked label would too
   const pool = await derivePool(adapter, [repo], DEFAULT_LABELS);
   if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
-    throw new Error("derive: the blocked claim must NOT be eligible");
+    throw new Error("derive: the PR-linked blocked claim must NOT be eligible");
   }
-  console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → the blocked claim kept out of the pool");
+  console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → the PR-linked blocked claim kept out of the pool");
 
   // 6. done
   await adapter.markDone(issue.ref);

@@ -41,14 +41,17 @@ const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
 /**
  * The record schema the worker must write, rendered as the example the
  * prompt teaches. Field names are the artifact contract with the factory's
- * ruler — kept verbatim with `OutcomeRecord` (state/outcome.ts).
+ * ruler — kept verbatim with `OutcomeRecord` (state/outcome.ts). The optional
+ * `paths` (story 19: "classe, tentativa, PR, caminhos") records the artifact
+ * paths of this attempt — the trail the human (and the factory) reads after.
  */
 function outcomeSchemaExample(request: WorkRequest): string {
   const pr = `,\n     "pr": {"repo": "${request.ref.repo}", "number": <the PR number>, "branch": "${request.branch}"}`;
+  const paths = `,\n     "paths": {"<artifact name>": "<path, relative to the work dir>"}`;
   return (
     `{\n` +
     `     "class": <one of: "pr-open" | "blocked-self-report" | "clean-without-pr">,\n` +
-    `     "attempt": ${request.attempt}${pr}\n` +
+    `     "attempt": ${request.attempt}${pr}${paths}   ("pr" only with a PR; "paths" optional)\n` +
     `   }`
   );
 }
@@ -116,6 +119,8 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     `     - "blocked-self-report": you self-reported blocked (obligation 3);`,
     `     - "clean-without-pr": the session ended without a PR and without blocked.`,
     `   - "attempt" is ${request.attempt}, the number above.`,
+    `   - "pr" is present when you opened the PR (class "pr-open") — the PR's repo, number and branch.`,
+    `   - "paths" is optional: the paths of the artifacts this session wrote, keyed by artifact name, relative to the work dir — record it whenever the session wrote artifacts worth finding again.`,
     `   Write it in EVERY case — success, feedback round, or blocked — before you exit.`,
     `   Its absence is recorded by the factory as an abrupt death.`,
     ``,

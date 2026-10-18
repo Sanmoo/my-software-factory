@@ -1,3 +1,4 @@
+import type { Labels } from "../config.js";
 import {
   AGENT_MARKER,
   type Blocker,
@@ -248,25 +249,25 @@ export class FakeTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  async blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome> {
+  async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    if (issue.labels.delete(claimedLabel)) {
-      performed.push(`label-${claimedLabel} on ${ref.repo}#${ref.number}`);
+    if (issue.labels.delete(labels.claimed)) {
+      performed.push(`label-${labels.claimed} on ${ref.repo}#${ref.number}`);
     }
-    issue.labels.add(blockedLabel);
-    performed.push(`label+${blockedLabel} on ${ref.repo}#${ref.number}`);
+    issue.labels.add(labels.blocked);
+    performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
-  async resumeClaim(ref: IssueRef, blockedLabel: string, claimedLabel: string): Promise<WriteOutcome> {
+  async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    if (issue.labels.delete(blockedLabel)) {
-      performed.push(`label-${blockedLabel} on ${ref.repo}#${ref.number}`);
+    if (issue.labels.delete(labels.blocked)) {
+      performed.push(`label-${labels.blocked} on ${ref.repo}#${ref.number}`);
     }
-    issue.labels.add(claimedLabel);
-    performed.push(`label+${claimedLabel} on ${ref.repo}#${ref.number}`);
+    issue.labels.add(labels.claimed);
+    performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 

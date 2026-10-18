@@ -142,7 +142,8 @@ function resolveEntry(path: string, walk: Walk): string | null {
   if (!isAllowed(real, walk)) {
     throw new ProfileSnapshotError(
       `profile link escapes the snapshot roots: ${linkPath(path, walk)} → ${real} ` +
-        `(declare the root in the runtime's allowedRoots, or remove the link)`,
+        `(declare the link's root under the config key "profile-allowed-roots" ` +
+        `in msf.yaml, or remove the link)`,
     );
   }
   if (leadsBackAboveItself(real, path)) {

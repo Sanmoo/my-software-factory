@@ -26,8 +26,13 @@ repos:
   - Sanmoo/my-tasks        # the target repo(s) — this account must have write
 concurrency: 2
 workspace: ~/.local/share/msf
-# profile-snapshot wiring (ticket 18; the defaults are the ticket-17 proof's):
-# profile-allowed-roots: [~/dev/github.com/Sanmoo/dotfiles, ~/.agents, ~/.local/share/omarchy]
+# profile-snapshot wiring (ticket 18): the default is EMPTY — no root is
+# pre-declared (no operator-personal path lives in the product). A profile
+# WITH symlinks fails the snapshot fail-closed (ProfileSnapshotError naming
+# the link) until you declare the roots YOUR profile legitimately reaches:
+profile-allowed-roots:
+  - ~/meus-dotfiles         # every root a profile link really points into
+  - ~/.agents
 # profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
 EOF
 ```
@@ -35,7 +40,8 @@ EOF
 If a launch fails naming a profile link (`ProfileSnapshotError`), declare the
 link's real target as a `profile-allowed-roots` entry, or set
 `profile-skip-dangling-links: true` for stale links — the same fail-closed
-snapshot behavior of the ticket-17 proof, configurable.
+snapshot behavior of the ticket-17 proof, configurable. A profile without
+symlinks needs no `profile-allowed-roots` at all.
 
 ## Toolchains — the convergence layer (ticket 18)
 

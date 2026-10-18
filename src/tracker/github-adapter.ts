@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Labels } from "../config.js";
 import {
   AGENT_MARKER,
   type Blocker,
@@ -211,6 +212,12 @@ interface RestComment {
   created_at: string;
 }
 
+/** GET /repos/{owner}/{repo}/pulls?state=open (the linkage read of the pool) */
+interface RestListedPull {
+  number: number;
+  body: string | null;
+}
+
 /** GET /repos/{owner}/{repo}/pulls/{n} */
 interface RestPull {
   number: number;
@@ -221,11 +228,11 @@ interface RestPull {
   user: { login: string };
 }
 
-/** GET /repos/{owner}/{repo}/pulls/{n}/reviews */
+/** GET /repos/{owner}/{repo}/pulls/{n}/reviews — body is null for approval-only reviews. */
 interface RestReview {
   id: number;
   user: { login: string };
-  body: string;
+  body: string | null;
   submitted_at: string | null;
 }
 
@@ -285,19 +292,44 @@ export class GitHubTrackerAdapter implements TrackerPort {
    * immediately consistent (a just-labeled issue appears at once). The client-side
    * filter makes candidates see brand-new labeled issues in the same poll — the
    * real-GitHub smoke failure that motivated this dialect (ticket 16).
+   *
+   * Ticket 12 (spec: only issues WITHOUT a PR enter the pool): the issue listing
+   * cannot tell PR linkage, so ONE open-PRs listing is read and every issue whose
+   * number a PR body links (Closes/Fixes/Resolves #N) is excluded. LIMITATION,
+   * accepted for budget: a human PR whose body carries no linkage keyword slips
+   * through — the honest alternative, a per-candidate timeline cross-ref, costs
+   * one REST call per candidate and was rejected (60/h shared budget). A slipped
+   * work is caught after its claim (the PR fact re-derives every tick), and only
+   * the first 100 open PRs are read (per_page=100, one call).
    */
   async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
     const nodes = await this.api<RestListedIssue[]>(
       `repos/${repo}/issues?state=open&per_page=500`,
     );
-    return nodes
+    const labeled = nodes
       .filter((issue) => !issue.pull_request) // PRs never appear in the issue listing
-      .filter((issue) => issue.labels.some((label) => label.name === readyLabel))
+      .filter((issue) => issue.labels.some((label) => label.name === readyLabel));
+    if (nodes.length === 0) return []; // nothing listed — nothing to filter, no PR read
+    const linked = await this.linkedIssueNumbers(repo);
+    return labeled
+      .filter((issue) => !linked.has(issue.number))
       .map((issue) => ({
         ref: { repo, number: issue.number },
         title: issue.title,
         createdAt: issue.created_at,
       }));
+  }
+
+  /** The issue numbers linked by OPEN PR bodies — one listing, one pass. */
+  private async linkedIssueNumbers(repo: string): Promise<Set<number>> {
+    const pulls = await this.api<RestListedPull[]>(`repos/${repo}/pulls?state=open&per_page=100`);
+    const linked = new Set<number>();
+    for (const pull of pulls) {
+      for (const match of pull.body?.matchAll(/(?:Closes|Fixes|Resolves) #(\d+)/g) ?? []) {
+        linked.add(Number(match[1]));
+      }
+    }
+    return linked;
   }
 
   /** 2. Snapshot of one issue. */
@@ -410,26 +442,26 @@ export class GitHubTrackerAdapter implements TrackerPort {
    *  ticket 13) — the claim is held until the terminal state, so the assignee
    *  stays. The blocked label replaces the claimed one, same ordered composite
    *  write as the claim's swap. */
-  async blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome> {
+  async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
     // absent label (on the issue or in the repo) is a tolerated no-op
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${claimedLabel}`, {
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${labels.claimed}`, {
       method: "DELETE",
       tolerate: isAbsentLabel,
     }).then(
-      () => performed.push(`label-${claimedLabel} on ${ref.repo}#${ref.number}`),
+      () => performed.push(`label-${labels.claimed} on ${ref.repo}#${ref.number}`),
       () => {},
     );
     try {
-      await this.ensureLabelExists(ref.repo, blockedLabel);
+      await this.ensureLabelExists(ref.repo, labels.blocked);
       await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
         method: "POST",
-        input: { labels: [blockedLabel] },
+        input: { labels: [labels.blocked] },
       });
     } catch (error) {
       throw new PartialWriteError(performed, (error as Error).message);
     }
-    performed.push(`label+${blockedLabel} on ${ref.repo}#${ref.number}`);
+    performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
@@ -437,25 +469,25 @@ export class GitHubTrackerAdapter implements TrackerPort {
    *  answered after the marker, the claim is held again. Mirrors blockClaim
    *  in reverse: the blocked label leaves first (tolerated when absent), the
    *  claimed label returns last, the assignee never left. */
-  async resumeClaim(ref: IssueRef, blockedLabel: string, claimedLabel: string): Promise<WriteOutcome> {
+  async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
-    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${blockedLabel}`, {
+    await this.api(`repos/${ref.repo}/issues/${ref.number}/labels/${labels.blocked}`, {
       method: "DELETE",
       tolerate: isAbsentLabel,
     }).then(
-      () => performed.push(`label-${blockedLabel} on ${ref.repo}#${ref.number}`),
+      () => performed.push(`label-${labels.blocked} on ${ref.repo}#${ref.number}`),
       () => {},
     );
     try {
-      await this.ensureLabelExists(ref.repo, claimedLabel);
+      await this.ensureLabelExists(ref.repo, labels.claimed);
       await this.api(`repos/${ref.repo}/issues/${ref.number}/labels`, {
         method: "POST",
-        input: { labels: [claimedLabel] },
+        input: { labels: [labels.claimed] },
       });
     } catch (error) {
       throw new PartialWriteError(performed, (error as Error).message);
     }
-    performed.push(`label+${claimedLabel} on ${ref.repo}#${ref.number}`);
+    performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
     return { performed };
   }
 
@@ -537,7 +569,14 @@ export class GitHubTrackerAdapter implements TrackerPort {
       },
       comments: (comments ?? []).map(mapComment),
       reviews: [
-        ...(reviews ?? []).map((review) => ({
+        // Approval-only reviews carry body: null — no speech signal in them,
+        // so they are dropped here (an approval is not feedback; the inline
+        // comments come from the other channel below). Dropped, a null body
+        // can never reach the state derivation, where isAgentSpeech would
+        // crash on it (body.includes of null — spec #7). A review that DID
+        // speak keeps its submitted_at; one without it falls back to ""
+        // (sorted first — the honest floor, never a lie).
+        ...(reviews ?? []).filter(isSpeechReview).map((review) => ({
           id: String(review.id),
           author: review.user.login,
           body: review.body,
@@ -674,6 +713,13 @@ export class GitHubTrackerAdapter implements TrackerPort {
     });
     this.labelsEnsured.add(cacheKey);
   }
+}
+
+/** A review submission that carries speech — body null/empty is the
+ *  approval-only review: no signal, dropped before it can reach the
+ *  derivation (a null body would crash isAgentSpeech — spec #7). */
+function isSpeechReview(review: RestReview): review is RestReview & { body: string } {
+  return review.body !== null && review.body !== "";
 }
 
 /** The PR linked to the issue: the latest cross-reference from a PR ("Closes #N"). */

@@ -14,6 +14,8 @@
  *    and "eligible the longest" orders by createdAt from the same listing.
  */
 
+import type { Labels } from "../config.js";
+
 /** Marks everything the factory or the worker publishes; adapters never remove it. */
 export const AGENT_MARKER = "<!-- msf:agent -->";
 
@@ -131,11 +133,11 @@ export interface TrackerPort {
   /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool; the ready label is given) or remove only the claim mark when no ready label is given. */
   releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of ticket 13) — the claim is held until the terminal state. */
-  blockClaim(ref: IssueRef, claimedLabel: string, blockedLabel: string): Promise<WriteOutcome>;
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of ticket 13) — the claim is held until the terminal state. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
+  blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14) — the claim is held again. */
-  resumeClaim(ref: IssueRef, blockedLabel: string, claimedLabel: string): Promise<WriteOutcome>;
+  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14) — the claim is held again. Same bundled `Labels`. */
+  resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
   /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one (ticket 04 Q9). Tolerated when no PR exists. */
   reopenPr(ref: IssueRef): Promise<WriteOutcome>;

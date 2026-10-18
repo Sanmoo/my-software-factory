@@ -77,6 +77,23 @@ export const TOOLCHAIN_SETUP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Where the host profiles live by default. */
 export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
 
+/** The proven closed flags of the worker's print command (v1 agentFor):
+ *  automatic tool approval, no context files / prompt templates / MCP, a
+ *  closed tool list. pi's buildPrintCommand returns a bare command STRING
+ *  (PrintCommand carries `command` + optional `stdin`, no structured args
+ *  array), so the flags ride a string concatenation — single-sourced HERE:
+ *  this constant is the only place the list lives, and the one concatenation
+ *  in runOptionsFor is the only place it is applied. Change the flags here,
+ *  never inline. */
+export const WORKER_FLAG_ARGS: readonly string[] = [
+  "--approve",
+  "--no-context-files",
+  "--no-prompt-templates",
+  "--no-mcp",
+  "--tools read,bash,edit,write,subagent,subagents_enable",
+  "--exclude-tools 'mcp__*,mcp'",
+];
+
 const PROFILE_SETUP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
 
@@ -226,18 +243,16 @@ export class SandcastleRuntime implements WorkerRuntime {
     });
 
     // The proven closed flags (v1 agentFor): automatic tool approval, no
-    // context files / prompt templates / MCP, a closed tool list.
+    // context files / prompt templates / MCP, a closed tool list — the one
+    // concatenation that applies WORKER_FLAG_ARGS (single-sourced above;
+    // pi's print command is a string, not structured args).
     const agentWithFlags = {
       ...agent,
       buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
         const command = agent.buildPrintCommand(options);
         return {
           ...command,
-          command:
-            command.command +
-            " --approve --no-context-files --no-prompt-templates --no-mcp" +
-            " --tools read,bash,edit,write,subagent,subagents_enable" +
-            " --exclude-tools 'mcp__*,mcp'",
+          command: `${command.command} ${WORKER_FLAG_ARGS.join(" ")}`,
         };
       },
     };

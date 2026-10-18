@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test, beforeEach, after } from "node:test";
 
+import type { Labels } from "../config.js";
 import type {
   IssueRef,
   TrackerPort,
@@ -70,6 +71,9 @@ const blocked = "agent-blocked";
 /** The checks, in port order. Each check is self-contained: it seeds what it needs. */
 export function contractChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
   const adapter = () => harness.getAdapter();
+  /** The bundled 3-label vocabulary the multi-label transitions take (the
+   *  harness's claimed label + this suite's ready/blocked constants). */
+  const labels: Labels = { ready, claimed: harness.claimedLabel, blocked };
   return [
     {
       name: "1. listCandidates: open issues with the ready label, excluding closed ones",
@@ -115,6 +119,23 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
         const candidates = await adapter().listCandidates(harness.repo, ready);
         const candidate = candidates.find((c) => c.ref.number === seeded.ref.number);
         assert.ok(candidate, "a just-created ready-labeled issue is returned by the FIRST candidates call (no settle needed)");
+      },
+    },
+    {
+      name: "1. listCandidates: an issue linked by an OPEN PR is NOT a candidate (ticket 12: only sem-PR issues enter the pool)",
+      run: async () => {
+        // Ticket 12's pool rule, now on the real adapter too: the issue
+        // listing itself cannot tell PR linkage, so the adapter excludes
+        // issues linked by an open PR's body ("Closes/Fixes/Resolves #N").
+        // The fake knows the linkage structurally; the real adapter reads it
+        // from the open-PRs listing.
+        const withPr = await harness.createIssue({ title: `has a PR ${harness.name}`, labels: [ready] });
+        const withoutPr = await harness.createIssue({ title: `no PR ${harness.name}`, labels: [ready] });
+        await harness.createPullRequest(withPr.ref);
+        const candidates = await adapter().listCandidates(harness.repo, ready);
+        const numbers = candidates.map((c) => c.ref.number);
+        assert.ok(numbers.includes(withoutPr.ref.number), "the PR-less issue is a candidate");
+        assert.ok(!numbers.includes(withPr.ref.number), "the issue linked by an open PR is excluded");
       },
     },
     {
@@ -230,9 +251,9 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       run: async () => {
         const a = await harness.createIssue({ title: `to resume ${harness.name}` });
         await adapter().claim(a.ref, harness.workerAccount);
-        await adapter().blockClaim(a.ref, harness.claimedLabel, blocked);
+        await adapter().blockClaim(a.ref, labels);
 
-        const outcome = await adapter().resumeClaim(a.ref, blocked, harness.claimedLabel);
+        const outcome = await adapter().resumeClaim(a.ref, labels);
 
         assert.ok(outcome.performed.length > 0);
         const issue = await adapter().readIssue(a.ref);
@@ -246,7 +267,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       name: "5c. resumeClaim: a blocked label already gone is tolerated, not an error",
       run: async () => {
         const a = await harness.createIssue({ title: `resume without blocked ${harness.name}` });
-        await assert.doesNotReject(adapter().resumeClaim(a.ref, blocked, harness.claimedLabel));
+        await assert.doesNotReject(adapter().resumeClaim(a.ref, labels));
         const issue = await adapter().readIssue(a.ref);
         assert.ok(issue.known && issue.value.labels.includes(harness.claimedLabel));
       },
@@ -256,7 +277,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       run: async () => {
         const a = await harness.createIssue({ title: `to block ${harness.name}` });
         await adapter().claim(a.ref, harness.workerAccount);
-        await adapter().blockClaim(a.ref, harness.claimedLabel, blocked);
+        await adapter().blockClaim(a.ref, labels);
         const issue = await adapter().readIssue(a.ref);
         assert.ok(issue.known);
         assert.ok(!issue.value.labels.includes(harness.claimedLabel), "claimed swapped away");
@@ -268,7 +289,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       name: "5b. blockClaim: an absent claimed label is tolerated, not an error",
       run: async () => {
         const a = await harness.createIssue({ title: `never claimed, blocked ${harness.name}` });
-        await assert.doesNotReject(adapter().blockClaim(a.ref, harness.claimedLabel, blocked));
+        await assert.doesNotReject(adapter().blockClaim(a.ref, labels));
         const issue = await adapter().readIssue(a.ref);
         assert.ok(issue.known);
         assert.ok(issue.value.labels.includes(blocked), "the blocked label lands anyway");

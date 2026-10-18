@@ -159,8 +159,7 @@ export class SweepEngine {
             `derived ${workKey(decision.ref)}: PR closed without merge — rejected, ` +
               "blocked with a comment pointing at the PR",
           );
-          await tracker.blockClaim(decision.ref, config.labels.claimed, config.labels.blocked);
-          await tracker.comment(decision.ref, decision.comment);
+          await this.applyBlockWithComment(decision.ref, decision.comment);
           break;
         }
         case "fall": {
@@ -169,14 +168,13 @@ export class SweepEngine {
               `derived ${workKey(decision.ref)}: unreconciled fall (the factory died on it) — ` +
                 "release (claimed→ready back; the branch stays)",
             );
-            await tracker.releaseClaim(decision.ref, config.workerGhAccount, config.labels.ready);
+            await this.applyRelease(decision.ref);
           } else {
             this.log(
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
-            await tracker.blockClaim(decision.ref, config.labels.claimed, config.labels.blocked);
-            await tracker.comment(decision.ref, decision.comment);
+            await this.applyBlockWithComment(decision.ref, decision.comment);
           }
           break;
         }
@@ -284,7 +282,7 @@ export class SweepEngine {
       mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
-      await tracker.resumeClaim(ref, config.labels.blocked, config.labels.claimed);
+      await tracker.resumeClaim(ref, config.labels);
       // The rejection's retomada: the SAME PR is reopened, never a new one.
       if (launchable.pr !== null && launchable.pr.state === "closed") {
         await tracker.reopenPr(ref);
@@ -386,11 +384,10 @@ export class SweepEngine {
         `collected ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
-      await tracker.releaseClaim(ref, config.workerGhAccount, config.labels.ready);
+      await this.applyRelease(ref);
     } else {
       this.log(`collected ${key}: 2nd consecutive fall — blocked, the exact outcome goes to the issue`);
-      await tracker.blockClaim(ref, config.labels.claimed, config.labels.blocked);
-      await tracker.comment(ref, ruling.comment);
+      await this.applyBlockWithComment(ref, ruling.comment);
     }
     this.collected.push({
       ref,
@@ -398,6 +395,25 @@ export class SweepEngine {
       prConfirmed,
       ruling: { decision: ruling.decision, because: ruling.because },
     });
+  }
+
+  /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,
+   *  the assignee of the worker account released — the work re-enters the
+   *  pool, the branch stays. One write pair, one helper: the derivation's
+   *  unreconciled release and the collection's ruled release share it. */
+  private async applyRelease(ref: IssueRef): Promise<void> {
+    const { tracker, config } = this.deps;
+    await tracker.releaseClaim(ref, config.workerGhAccount, config.labels.ready);
+  }
+
+  /** The block transition every 2nd fall and every rejection shares: the
+   *  claimed label swaps to blocked (the claim is held until the terminal
+   *  state) and the exact outcome is commented on the issue — the human
+   * must SEE why it fell before deciding to resume. One pair, one helper. */
+  private async applyBlockWithComment(ref: IssueRef, comment: string): Promise<void> {
+    const { tracker, config } = this.deps;
+    await tracker.blockClaim(ref, config.labels);
+    await tracker.comment(ref, comment);
   }
 
   /** The done duties on real disk and real git: archive the work's artifacts
