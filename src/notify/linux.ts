@@ -18,8 +18,6 @@ import type { Notifier, WorkNotification } from "./port.js";
 export type SendNotification = (command: string, args: string[]) => Promise<void>;
 
 export interface LinuxNotifierOptions {
-  /** The desktop command; `notify-send` is the default. */
-  command?: string;
   /** Test seam: replaces the subprocess with a recorder. */
   send?: SendNotification;
 }
@@ -30,7 +28,7 @@ export class LinuxNotifier implements Notifier {
   async notify(notification: WorkNotification): Promise<void> {
     const { title, body } = renderNotification(notification);
     const send = this.options.send ?? defaultSend;
-    await send(this.options.command ?? "notify-send", ["--app-name=msf", title, body]);
+    await send("notify-send", ["--app-name=msf", title, body]);
   }
 }
 

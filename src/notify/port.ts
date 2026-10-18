@@ -40,11 +40,21 @@ export interface Notifier {
 }
 
 /** The work's issue address — where the continuity context of help/blocks lives. */
-export function issueUrl(ref: IssueRef): string {
+function issueUrl(ref: IssueRef): string {
   return `https://github.com/${ref.repo}/issues/${ref.number}`;
 }
 
 /** The work's PR address — what the operator reviews. */
-export function pullUrl(ref: IssueRef, prNumber: number): string {
+function pullUrl(ref: IssueRef, prNumber: number): string {
   return `https://github.com/${ref.repo}/pull/${prNumber}`;
+}
+
+/** The structured review notice: the address is the PR the operator reviews. */
+export function reviewNotice(ref: IssueRef, prNumber: number): WorkNotification {
+  return { ref, kind: "review", url: pullUrl(ref, prNumber) };
+}
+
+/** The structured help notice: the address is the issue where continuity lives. */
+export function helpNotice(ref: IssueRef): WorkNotification {
+  return { ref, kind: "help", url: issueUrl(ref) };
 }

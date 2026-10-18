@@ -2,7 +2,7 @@ import type { Config } from "./config.js";
 import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork } from "./git/port.js";
-import { issueUrl, pullUrl, type Notifier, type WorkNotification } from "./notify/port.js";
+import { helpNotice, reviewNotice, type Notifier, type WorkNotification } from "./notify/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import { derivePool, deriveReserved, type PoolEntry, type ReservedDerivation } from "./state/derive.js";
 import {
@@ -166,7 +166,7 @@ export class SweepEngine {
               "blocked with a comment pointing at the PR",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
-          await this.notify({ ref: decision.ref, kind: "help", url: issueUrl(decision.ref) });
+          await this.notify(helpNotice(decision.ref));
           break;
         }
         case "fall": {
@@ -184,7 +184,7 @@ export class SweepEngine {
             await this.applyBlockWithComment(decision.ref, decision.comment);
             // A NEW block applied during recovery needs the human: notify it
             // (a pre-existing block stays silent — see story 20).
-            await this.notify({ ref: decision.ref, kind: "help", url: issueUrl(decision.ref) });
+            await this.notify(helpNotice(decision.ref));
           }
           break;
         }
@@ -456,13 +456,19 @@ export class SweepEngine {
     // triggers), never by merely finding a pre-existing PR or by a retomada
     // the human already initiated.
     if (ruling.decision !== "done") {
-      const needsHelp =
-        blockedLabelOnIssue || record?.class === "blocked-self-report" || ruling.decision === "block";
+      // The self-report only counts when the record belongs to THIS attempt:
+      // desfecho.json is not cleared between attempts, so a resume that ends
+      // without a new record still has the previous one on disk. Reading it
+      // as a help request for the new attempt would break the silence of a
+      // first fall scheduled for automatic retry.
+      const selfReportedNow =
+        record !== null && record.attempt === attempt && record.class === "blocked-self-report";
+      const needsHelp = blockedLabelOnIssue || selfReportedNow || ruling.decision === "block";
       const reviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
       if (needsHelp) {
-        await this.notify({ ref, kind: "help", url: issueUrl(ref) });
+        await this.notify(helpNotice(ref));
       } else if (reviewLaunch && prConfirmed && pr !== null) {
-        await this.notify({ ref, kind: "review", url: pullUrl(ref, pr.number) });
+        await this.notify(reviewNotice(ref, pr.number));
       }
     }
   }
