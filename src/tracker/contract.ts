@@ -78,7 +78,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
         assert.ok(numbers.includes(a.ref.number), "the ready open issue is a candidate");
         assert.ok(!candidates.some((c) => c.title === `wrong label ${harness.name}`), "other labels are excluded");
         assert.ok(!candidates.some((c) => c.title === `closed ready ${harness.name}`), "closed issues are excluded");
-        // PRs themselves never appear: `gh issue list` only lists issues (the
+        // PRs themselves never appear: the REST issue listing only lists issues (the
         // v1 REST adapter filtered the pull_request key of the same endpoint).
         // An issue WITH a linked PR is still a listing item — the factory
         // excludes it later through the derived PR-open state (tickets 12/14).

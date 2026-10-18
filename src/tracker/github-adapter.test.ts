@@ -93,22 +93,22 @@ describe("boot: credential from the gh keyring", () => {
 });
 
 describe("the 9 operations over gh", () => {
-  test("1. listCandidates: gh issue list --state open --label, mapped from JSON", async () => {
+  test("1. listCandidates: REST listing with state+labels query, mapped from JSON", async () => {
     const { adapter, calls } = await makeAdapter((call) => ({
       stdout:
         call.file === "gh"
-          ? `[{"number":7,"title":"do it","createdAt":"2026-01-02T00:00:00Z"}]`
+          ? `[{"number":7,"title":"do it","created_at":"2026-01-02T00:00:00Z"},{"number":8,"title":"a pr","created_at":"2026-01-03T00:00:00Z","pull_request":{}}]`
           : "",
     }));
     const candidates = await adapter.listCandidates("Sanmoo/a", "ready-for-agent");
     assert.deepEqual(candidates, [
       { ref: { repo: "Sanmoo/a", number: 7 }, title: "do it", createdAt: "2026-01-02T00:00:00Z" },
     ]);
-    const gh = ghCall(calls, (c) => c.args.includes("issue"));
-    assert.ok(gh.args.includes("list"));
-    assert.ok(gh.args.includes("--state") && gh.args.includes("open"));
-    assert.ok(gh.args.includes("--label") && gh.args.includes("ready-for-agent"));
-    assert.ok(gh.args.includes("-R") && gh.args.includes("Sanmoo/a"));
+    const gh = ghCall(calls, (c) => c.args[0] === "api");
+    const path = gh.args.find((a) => a.startsWith("repos/"));
+    assert.ok(path?.includes("state=open"));
+    assert.ok(path?.includes("labels=ready-for-agent"));
+    assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
   });
 
   test("2. readIssue: maps state, stateReason, labels, assignees, createdAt", async () => {

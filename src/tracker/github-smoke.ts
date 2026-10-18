@@ -181,10 +181,11 @@ class RealGithubHarness implements ContractHarness {
   }
 
   private async listingNumbers(label: string): Promise<number[]> {
-    const { stdout } = await this.gh([
-      "issue", "list", "-R", this.repo, "--state", "open", "--label", label, "--json", "number",
-    ]);
-    return (JSON.parse(stdout) as { number: number }[]).map((item) => item.number);
+    // REST listing (gh issue list is GraphQL under the hood — never touched)
+    const nodes = (await this.rest(
+      `repos/${this.repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=500`,
+    )) as { number: number }[];
+    return nodes.map((item) => item.number);
   }
 
   async missingRef(): Promise<IssueRef> {
@@ -353,7 +354,7 @@ class RealGithubHarness implements ContractHarness {
         }
         await this.rest(`repos/${this.repo}/issues/${issue}`, {
           method: "PATCH",
-          input: { labels: [], assignees: [], state: "closed", state_reason: "not planned" },
+          input: { labels: [], assignees: [], state: "closed", state_reason: "not_planned" },
         });
       } catch (error) {
         failures.push(`issue #${issue}: ${(error as Error).message}`);

@@ -186,8 +186,7 @@ export class GitHubSim {
     }
     if (args[0] === "issue" && args[1] === "list") {
       return { stdout: this.issueList(args), stderr: "" };
-    }
-    if (args[0] === "api") {
+    }    if (args[0] === "api") {
       return { stdout: this.api(args, input), stderr: "" };
     }
     throw new SimHttpError(0, `sim: unexpected gh command: ${args.join(" ")}`);
@@ -206,9 +205,10 @@ export class GitHubSim {
     return JSON.stringify(items);
   }
 
-  /** One `gh api` call: ["api", "-X", METHOD, path, "--input", "-"]. */
+  /** One `gh api` call: ["api", "-X", METHOD, path, "--input", "-"] — the
+   *  path may carry a query string (the listing's state/labels). */
   private api(args: string[], input: string | undefined): string {
-    const parsed = { method: "GET", path: "", body: undefined as unknown };
+    const parsed = { method: "GET", path: "", query: new URLSearchParams(), body: undefined as unknown };
     for (let i = 1; i < args.length; i++) {
       if (args[i] === "-X") {
         parsed.method = args[i + 1] ?? "GET";
@@ -217,20 +217,38 @@ export class GitHubSim {
         parsed.body = JSON.parse(input ?? "{}");
         i++;
       } else if (parsed.path === "") {
-        parsed.path = args[i] ?? "";
+        const raw = args[i] ?? "";
+        const qIndex = raw.indexOf("?");
+        if (qIndex >= 0) {
+          parsed.path = raw.slice(0, qIndex);
+          parsed.query = new URLSearchParams(raw.slice(qIndex + 1));
+        } else {
+          parsed.path = raw;
+        }
       }
     }
-    const path = parsed.path.replace(/^\//, "").replace(/\?.*$/, "");
+    const path = parsed.path.replace(/^\//, "");
     const parts = path.split("/"); // repos/{owner}/{repo}/...
-    const out = this.route(parsed.method, parts.slice(3), parsed.body);
+    const out = this.route(parsed.method, parts.slice(3), parsed.body, parsed.query);
     return JSON.stringify(out);
   }
 
-  /** `rest` = the path after repos/{owner}/{repo}. */
-  private route(method: string, rest: string[], body: unknown): unknown {
+  /** `rest` = the path after repos/{owner}/{repo}; query = its query params. */
+  private route(method: string, rest: string[], body: unknown, query: URLSearchParams): unknown {
     if (rest.length === 0) {
       // GET /repos/{repo} → repo metadata
       return { name: "sim", default_branch: this.defaultBranch };
+    }
+    if (rest[0] === "issues" && rest.length === 1 && method === "GET") {
+      // the listing: GET /repos/{repo}/issues?state=…&labels=… — issues only,
+      // never PRs (the pull_request filter in the adapter is defensive)
+      const state = query.get("state") ?? "open";
+      const labels = (query.get("labels") ?? "").split(",").filter((l) => l !== "");
+      return [...this.issues.values()]
+        .filter((issue) => issue.pr === undefined)
+        .filter((issue) => (state === "all" ? true : issue.state === state))
+        .filter((issue) => labels.every((label) => issue.labels.includes(label)))
+        .map((issue) => this.restIssue(issue));
     }
     if (rest[0] === "issues") {
       const issue = this.issue(Number(rest[1]));
@@ -421,7 +439,10 @@ export class GitHubSim {
     if (input.state === "closed") issue.state = "closed";
     if (input.state === "open") issue.state = "open";
     if (input.state_reason !== undefined) {
-      issue.stateReason = (input.state_reason === "" ? null : input.state_reason) as SimIssue["stateReason"];
+      // the PATCH vocabulary is underscored ("not_planned"), the GET shape is
+      // spaced ("not planned") — the sim normalizes on store, like GitHub
+      const stored = input.state_reason === "not_planned" ? "not planned" : input.state_reason;
+      issue.stateReason = (stored === "" ? null : stored) as SimIssue["stateReason"];
     }
     if (input.labels !== undefined) issue.labels = [...input.labels];
     if (input.assignees !== undefined) issue.assignees = [...input.assignees];

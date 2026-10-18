@@ -31,9 +31,9 @@ import {
  * credential helper baked into the clone (the pattern proven in ticket 09:
  * `!gh auth git-credential` + `GH_TOKEN` authenticates clone and push).
  *
- * REST-only (the machine's shared-IP budget leaves no GraphQL room): the gh
- * calls are `gh issue list` (REST under the hood) and `gh api` against the
- * REST endpoints — never `gh issue view`/`gh pr view`/`gh pr create` (GraphQL).
+ * REST-only (the machine's shared-IP budget leaves no GraphQL room): every gh
+ * call is `gh api` against the REST endpoints — never `gh issue list` (GraphQL
+ * under the hood in gh ≥ 2.63), `gh issue view`/`gh pr view`/`gh pr create`.
  *
  * Contract from the port: writes report intents, never confirmations; unknown
  * is never absent; priority is createdAt from the same listing (GitHub has no
@@ -147,6 +147,14 @@ export async function createGitHubAdapter(options: GitHubAdapterOptions): Promis
 
 // ---- REST JSON shapes (only the fields the adapter reads) ----
 
+/** GET /repos/{owner}/{repo}/issues?labels=… (the listing; PRs excluded defensively) */
+interface RestListedIssue {
+  number: number;
+  title: string;
+  created_at: string;
+  pull_request?: unknown;
+}
+
 /** GET /repos/{owner}/{repo}/issues/{n} */
 interface RestIssue {
   number: number;
@@ -229,21 +237,16 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   /** 1. Open issues carrying the ready label — candidates and createdAt in the same listing. */
   async listCandidates(repo: string, readyLabel: string): Promise<Candidate[]> {
-    const { stdout } = await this.gh([
-      "issue", "list",
-      "-R", repo,
-      "--state", "open",
-      "--label", readyLabel,
-      "--limit", "500",
-      "--json", "number,title,createdAt",
-    ]);
-    const parsed = JSON.parse(stdout) as { number: number; title: string; createdAt: string }[];
-    // gh issue list never returns PRs — no pull_request filter needed here.
-    return parsed.map((issue) => ({
-      ref: { repo, number: issue.number },
-      title: issue.title,
-      createdAt: issue.createdAt,
-    }));
+    const nodes = await this.api<RestListedIssue[]>(
+      `repos/${repo}/issues?state=open&labels=${encodeURIComponent(readyLabel)}&per_page=500`,
+    );
+    return nodes
+      .filter((issue) => !issue.pull_request) // PRs never appear in the issue listing
+      .map((issue) => ({
+        ref: { repo, number: issue.number },
+        title: issue.title,
+        createdAt: issue.created_at,
+      }));
   }
 
   /** 2. Snapshot of one issue. */
