@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js"
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
-import { installGhShim } from "./cli-harness.js";
+import { installGhShim, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
  * End-to-end of issue #90's shutdown contract: Ctrl-C stops new admissions and
@@ -19,8 +19,8 @@ import { installGhShim } from "./cli-harness.js";
  * registered, and the run's exclusivity holds until the process (the whole
  * `run`) is over — a contender is refused while a pending worker concludes and
  * is admitted only after the process exits. The loop effects are driven
- * through the existing fake tracker/runtime/git seams with explicit worker
- * synchronization (no sleeps to observe the window).
+ * through the existing fake tracker/runtime/git seams, synchronized on worker
+ * events; one short bounded wait confirms ticks pass without admitting.
  */
 
 const REPO = "Sanmoo/my-tasks";
@@ -52,7 +52,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", () => {
+describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", { timeout: 30_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];
@@ -82,14 +82,6 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     };
   }
 
-  async function waitUntil(what: string, condition: () => Promise<boolean>, timeoutMs = 8_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (!(await condition())) {
-      if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  }
-
   test("the loop stops replenishing, the pending worker concludes and is registered, and the loop resolves only after it", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
@@ -117,10 +109,12 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     });
 
     try {
-      await waitUntil("worker #1 to launch", () => Promise.resolve(runtime.launched.length === 1));
+      await waitFor("worker #1 to launch", () => runtime.launched.length === 1);
 
       controller.abort();
-      await new Promise((resolve) => setTimeout(resolve, 60)); // several ticks pass
+      // A bounded observation: several ticks would have replenished the slot
+      // by now if Ctrl-C had not closed admissions.
+      await new Promise((resolve) => setTimeout(resolve, 60));
       assert.equal(settled, false, "the loop is still up while the admitted worker runs");
       assert.deepEqual(
         runtime.launched.map((r) => r.ref.number),
@@ -154,6 +148,54 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     }
   });
 
+  test("an admission past the reservation but before its worker starts launches nothing after Ctrl-C", async () => {
+    const config = makeConfig(1);
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    // Park the admission inside git.prepareWork — after the reservation (the
+    // claim and the registry dir) and before runtime.launch.
+    const entered = deferred();
+    const release = deferred();
+    const git: GitWork = {
+      prepareWork: async (ref) => {
+        entered.resolve();
+        await release.promise;
+        return {
+          repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
+          branch: workBranchName(ref.number),
+          baseBranch: "main",
+          branchCreated: true,
+        };
+      },
+      cleanupDoneWork: async () => {},
+      diffWork: async () => "",
+    };
+
+    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    const controller = new AbortController();
+    const running = runForever(deps, { tickMs: 10, signal: controller.signal });
+
+    try {
+      await entered.promise;
+      controller.abort();
+      release.resolve();
+      await running;
+
+      assert.equal(runtime.launched.length, 0, "no worker starts after Ctrl-C");
+      // The reservation already effected is preserved and reconcilable: the
+      // claim is on the tracker and the registry dir exists.
+      const issue = await tracker.readIssue({ repo: REPO, number: 1 });
+      assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.claimed));
+      assert.ok(existsSync(join(layout.works, "Sanmoo", "my-tasks#1")), "the registry dir stays for reconciliation");
+    } finally {
+      release.resolve();
+      controller.abort();
+      await running.catch(() => {});
+    }
+  });
+
   test("another run stays refused while the worker concludes, and is admitted after the process exits", async () => {
     const configPath = join(dir, "msf.yaml");
     writeFileSync(
@@ -161,7 +203,7 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
       ["worker-gh-account: bot-do-samuca", "repos: []", `workspace: ${layout.root}`].join("\n"),
       "utf8",
     );
-    const shim = installGhShim(dir);
+    const shim: GhShim = installGhShim(dir);
     const launchedFile = join(dir, "launched.txt");
     const holdFile = join(dir, "worker-hold");
     const resultFile = join(dir, "result.json");
@@ -218,10 +260,10 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
 
     // The owner is inside the loop, holding a pending worker: the lock covers
     // it. An actual `msf run` contender must be refused.
-    await waitUntil("the owner's worker #1 to launch", () => Promise.resolve(readFileSync(launchedFile, "utf8").includes("1")));
+    await waitFor("the owner's worker #1 to launch", () => readFileSync(launchedFile, "utf8").includes("1"));
     owner.kill("SIGINT");
 
-    const contender = runCli(["run", "--runtime", "fake"], shim.env());
+    const contender = runCli(dir, ["run", "--runtime", "fake"], shim.env());
     assert.notEqual(contender.status, 0, `stderr: ${contender.stderr}`);
     assert.match(contender.stderr, /already has an active msf run/);
 
@@ -238,19 +280,10 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     const ready = join(dir, "admitted-ready");
     const hold = join(dir, "admitted-hold");
     writeFileSync(hold, "", "utf8");
-    const admitted = spawn(process.execPath, [CLI, "run", "--once", "--runtime", "fake"], {
-      cwd: dir,
-      env: shim.env({ ready, hold }),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const admitted = spawnCli(dir, ["run", "--once", "--runtime", "fake"], shim.env({ ready, hold }));
     children.push(admitted);
-    await waitUntil("a new run to be admitted", () => Promise.resolve(existsSync(ready)));
+    await waitFor("a new run to be admitted", () => existsSync(ready));
     rmSync(hold, { force: true });
     admitted.kill("SIGKILL");
   });
-
-  function runCli(args: string[], env: NodeJS.ProcessEnv) {
-    const result = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: "utf8", env, timeout: 15_000 });
-    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
-  }
 });

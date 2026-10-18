@@ -609,6 +609,13 @@ export class SweepEngine {
       kind === "resume" ? launchable.issueReplies : undefined,
       repairTrigger,
     );
+    // Ctrl-C perceived after the reservation but before the worker started:
+    // do not start a new worker after this point. The reservation (the claim
+    // and the registry dir) stays for the next run's reconciliation.
+    if (this.stopping) {
+      this.log(`admission for ${key} stopped before the worker started — the reservation stays for reconciliation`);
+      return;
+    }
     const result = await runtime.launch({
       ref,
       workDir: dir,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { open, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, open, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
 
@@ -27,6 +27,11 @@ export interface RunLock {
   close(): Promise<void>;
 }
 
+/** Per-user state directory for the lock files. Stable across shell sessions
+ * (unlike TMPDIR), so the identity of a run never depends on the environment
+ * that happened to start it. */
+const LOCK_DIR = join(homedir(), ".local", "state", "msf", "locks");
+
 export async function acquireRunLock(configPath: string): Promise<RunLock> {
   let canonicalConfig: string;
   try {
@@ -37,15 +42,16 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
     );
   }
 
-  // The hash keeps the identity (a full path) out of the filename; the uid
-  // keeps two users apart in a shared tmpdir. The file is permanent: unlinking
-  // a locked inode would let a second process lock a fresh inode under the
-  // same name while the first still holds the old one.
+  // The hash keeps the identity (a full path) out of the filename. The lock
+  // file is permanent: unlinking a locked inode would let a second process
+  // lock a fresh inode under the same name while the first still holds the
+  // old one.
   const key = createHash("sha256").update(canonicalConfig).digest("hex");
-  const lockPath = join(tmpdir(), `msf-run-${process.getuid?.() ?? "user"}-${key}.lock`);
+  const lockPath = join(LOCK_DIR, `${key}.lock`);
 
   let handle: Awaited<ReturnType<typeof open>>;
   try {
+    await mkdir(LOCK_DIR, { recursive: true });
     handle = await open(lockPath, "a+");
   } catch (error) {
     throw new Error(

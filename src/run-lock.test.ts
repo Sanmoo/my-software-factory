@@ -28,7 +28,7 @@ function waitForLine(process: ReturnType<typeof child>, text: string): Promise<v
   });
 }
 
-test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", async () => {
+test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", { timeout: 30_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "msf-run-lock-"));
   const config = join(dir, "msf.yaml");
   const alias = join(dir, "alias.yaml");

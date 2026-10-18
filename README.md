@@ -61,9 +61,13 @@ check results) — never LLM prose.
 npm test
 ```
 
-Fast and deterministic: the tracker and the worker runtime are fakes; the
+Deterministic and hermetic: the tracker and the worker runtime are fakes; the
 workspace uses a real temp dir — the disk is never mocked. The git host side
-is exercised with local bare remotes as fixtures — no GitHub, no network.
+is exercised with local bare remotes as fixtures. The CLI-level suites spawn
+real subprocesses with a suite-owned HOME (the factory's per-user state, run
+lock included, never touches the operator's); the suites that need a token
+stub `gh` on PATH, while the boot-path suite keeps the real `gh` precisely to
+exercise a missing credential. No GitHub, no credentials, no network.
 
 ## Real smoke (credential-gated)
 

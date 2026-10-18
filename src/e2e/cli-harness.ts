@@ -1,5 +1,11 @@
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+
+/** The built CLI entry, resolved from this module's compiled location. */
+export function cliPath(): string {
+  return new URL("../cli.js", import.meta.url).pathname;
+}
 
 /**
  * Hermetic `gh` for the CLI e2e suites: the binary under test spawns `gh` for
@@ -32,7 +38,9 @@ export function installGhShim(baseDir: string): GhShim {
     shim,
     [
       "#!/bin/sh",
-      "# Drain stdin (the CLI ends it immediately): a shim that exits without\n# reading can make the parent's final write fail with EPIPE.\ncat >/dev/null 2>&1 || true",
+      "# Drain stdin (the CLI ends it immediately): a shim that exits without",
+      "# reading can make the parent's final write fail with EPIPE.",
+      "cat >/dev/null 2>&1 || true",
       'if [ "$1" = "auth" ] && [ "$2" = "token" ]; then',
       '  if [ -n "$MSF_SHIM_FAIL" ]; then',
       '    echo "msf gh-shim: forced boot failure" >&2',
@@ -66,4 +74,53 @@ export function installGhShim(baseDir: string): GhShim {
       };
     },
   };
+}
+
+/** Run the built CLI to completion in `cwd` (synchronous, bounded). */
+export function runCli(
+  cwd: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs = 20_000,
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [cliPath(), ...args], {
+    cwd,
+    encoding: "utf8",
+    env,
+    timeout: timeoutMs,
+  });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+/** Spawn the built CLI, returning the live child. */
+export function spawnCli(cwd: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+  return spawn(process.execPath, [cliPath(), ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** Poll `condition` until it holds, or throw a timeout that names the wait. */
+export async function waitFor(what: string, condition: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/** Resolve when the child's stdout carries `text`; reject on timeout or exit. */
+export function waitForStdout(child: ChildProcess, text: string, timeoutMs = 10_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let out = "";
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for "${text}"; saw: ${out}`)), timeoutMs);
+    child.stdout!.on("data", (chunk) => {
+      out += String(chunk);
+      if (out.includes(text)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`child exited ${code} before "${text}"; saw: ${out}`));
+    });
+  });
 }
