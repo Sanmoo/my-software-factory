@@ -154,7 +154,15 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     const config = makeConfig(2);
     const { tracker, runtime, deps } = makeFactory(config, ["clean-without-pr"]);
 
-    seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    seedIssue(tracker, {
+      repo: REPO,
+      number: 2,
+      title: "Configure worker model",
+      body: "Blocked by #86: do not proceed until it is closed.",
+      createdAt: NOW,
+      labels: [DEFAULT_LABELS.ready],
+    });
+    tracker.addComment({ repo: REPO, number: 2 }, "humano", "this answer predates the blocked marker");
 
     // Two consecutive falls → blocked with the marker comment.
     await runOnce(deps);
@@ -170,6 +178,13 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(third.launched.length, 1, "the retomada was launched");
     assert.equal(third.launched[0]?.request.attempt, 3, "the registry numbered the resumed attempt");
     assert.equal(third.launched[0]?.request.branch, workBranchName(2), "the retomada continues from the existing branch");
+    const resumedMaterial = third.launched[0]?.request.material;
+    assert.ok(resumedMaterial);
+    assert.ok(
+      JSON.stringify(resumedMaterial).includes("the token was rotated — try again"),
+      "the worker receives the human issue reply that resumed it",
+    );
+    assert.ok(!JSON.stringify(resumedMaterial).includes("this answer predates the blocked marker"));
 
     // The fall count restarted with the human's answer: a new fall is a 1st
     // fall (release), not an immediate re-block.

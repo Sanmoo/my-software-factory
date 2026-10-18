@@ -8,12 +8,14 @@ import type { IssueComment, IssueRef } from "../tracker/port.js";
 
 /**
  * The material the worker reads at session start (ticket 17, spec story 37):
- * the issue, the PR conversation when one exists (a feedback round), and the
- * diff of the work branch — every session (new, resume or feedback) starts
- * from the whole context, never from session memory.
+ * the issue, human issue replies on a blocked retomada, the PR conversation
+ * on a feedback round, and the diff of the work branch — every session starts
+ * from the relevant context, never from session memory.
  */
 export interface WorkerMaterial {
   issue: { title: string; body: string };
+  /** Human replies on a blocked issue after the last agent marker; present only on retomada. */
+  issueReplies?: IssueComment[];
   /** The open PR linked to the issue and its conversation; absent on a first launch. */
   pr?: { number: number; comments: IssueComment[] };
   /** Diff of the work branch against its base — the branch's memory so far. */

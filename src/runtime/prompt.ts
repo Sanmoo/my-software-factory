@@ -5,8 +5,8 @@ import type { WorkRequest } from "./port.js";
 /**
  * The worker prompt (ticket 17, policy per ticket 84) — the only "interface"
  * between the factory and the agent inside the container (prototype,
- * runtime/). It carries the whole context of the session (issue, PR
- * conversation, diff of the work branch — never session memory), the
+ * runtime/). It carries the whole context of the session (issue, human issue
+ * replies on a blocked retomada, PR conversation, diff — never session memory), the
  * worker's THREE obligations and, on feedback rounds, the policy for judging
  * review comments instead of obeying them indiscriminately.
  *
@@ -148,6 +148,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
   const repo = request.ref.repo;
   const number = request.ref.number;
   const pr = material.pr;
+  const issueReplies = material.issueReplies ?? [];
 
   return [
     `You are the worker of my-software-factory. The factory reserved issue ${repo}#${number} for you and launched this session to do it.`,
@@ -164,6 +165,19 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     ``,
     material.issue.body,
     ``,
+    ...(issueReplies.length === 0
+      ? []
+      : [
+          `## Human replies on the issue since your last blocked report`,
+          ``,
+          `These replies were posted after your blocked report and are the human context that resumed this work. Read each one and reconcile it with the issue body and current tracker facts. A reply may clarify or correct stale issue text; do not repeat a textual prerequisite as a live blocker without checking whether it still applies. If the blocker remains, explain the current evidence; if the reply is ambiguous, ask a focused question rather than assuming approval.`,
+          ``,
+          ...issueReplies.flatMap((comment, index) => [
+            `--- issue reply ${index + 1} by ${comment.author} ---`,
+            comment.body,
+            ``,
+          ]),
+        ]),
     pr === undefined
       ? [
           `## The pull request`,

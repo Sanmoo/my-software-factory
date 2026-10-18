@@ -96,8 +96,15 @@ export type ReservedDerivation =
   /** New human comment on the PR: a feedback round on the same branch and PR. */
   | { ref: IssueRef; state: "feedback"; pr: PullRequest; createdAt: string }
   /** Human answer on the issue after the marker: the retomada continues from
-   * the existing branch — the sweep swaps blocked→claimed before the launch. */
-  | { ref: IssueRef; state: "resumable"; pr: PullRequest | null; createdAt: string }
+   * the existing branch — the sweep swaps blocked→claimed before the launch.
+   * Only replies after the last agent marker become worker context. */
+  | {
+      ref: IssueRef;
+      state: "resumable";
+      pr: PullRequest | null;
+      createdAt: string;
+      issueReplies: IssueComment[];
+    }
   /** Parked, nothing to decide: waiting for the human (PR open, worker last;
    * blocked without answer) — or a released work the pool owns. */
   | { ref: IssueRef; state: "idle" }
@@ -150,10 +157,11 @@ async function deriveReservedWork(
   // short-circuit also keeps a handled rejection from being re-derived forever.
   if (issue.value.labels.includes(labels.blocked)) {
     const comments = await port.readComments(ref);
-    if (comments.known && hasHumanCommentAfterLastMarker(comments.value)) {
+    const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
+    if (issueReplies.length > 0) {
       const feedback = await port.readPrFeedback(ref);
       const pr = feedback.known ? feedback.value.pr : null;
-      return { ref, state: "resumable", pr, createdAt: issue.value.createdAt };
+      return { ref, state: "resumable", pr, createdAt: issue.value.createdAt, issueReplies };
     }
     return { ref, state: "idle" };
   }
@@ -259,16 +267,20 @@ export function lastPrComment(feedback: PrFeedback | null): IssueComment | null 
 }
 
 /**
- * The rescue answer: a comment that is not itself agent speech AFTER the
- * last comment carrying the marker (ticket 04 Q6, amended in 18). The author
- * may be the worker account. Comment order is chronological.
+ * The human replies that resume blocked work: all non-agent comments AFTER
+ * the last comment carrying the marker (ticket 04 Q6, amended in 18). The
+ * author may be the worker account. Comment order is chronological.
  */
-export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
+export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueComment[] {
   let lastMarkerIndex = -1;
   for (const [index, comment] of comments.entries()) {
     if (isAgentSpeech(comment.body)) lastMarkerIndex = index;
   }
-  return comments.some((comment, index) => index > lastMarkerIndex && !isAgentSpeech(comment.body));
+  return comments.slice(lastMarkerIndex + 1).filter((comment) => !isAgentSpeech(comment.body));
+}
+
+export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
+  return humanCommentsAfterLastMarker(comments).length > 0;
 }
 
 /** The fallback-done comment: short, by decision (ticket 04 Q11). */

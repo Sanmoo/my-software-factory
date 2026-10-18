@@ -55,6 +55,32 @@ describe("worker prompt — the material the session starts from", () => {
     assert.match(prompt, /Add a `greet` endpoint to the API\./);
   });
 
+  test("a blocked-resume prompt includes human issue replies and reconciles them with the issue body", () => {
+    const request = baseRequest({
+      material: {
+        ...baseRequest().material,
+        issue: {
+          title: "Configure worker model",
+          body: "Blocked by #86: do not proceed until it is closed.",
+        },
+        issueReplies: [
+          {
+            id: "reply-1",
+            author: "Sanmoo",
+            body: "The #86 dependency was removed on GitHub; the issue text is stale. Please proceed.",
+            createdAt: "2026-10-18T13:25:07Z",
+          },
+        ],
+      },
+    });
+    const prompt = buildWorkerPrompt(request, { blockedLabel: DEFAULT_LABELS.blocked });
+
+    assert.match(prompt, /Blocked by #86: do not proceed until it is closed\./);
+    assert.match(prompt, /human replies on the issue since your last blocked report/i);
+    assert.match(prompt, /The #86 dependency was removed on GitHub; the issue text is stale\. Please proceed\./);
+    assert.match(prompt, /reconcile.*issue body|issue body.*reconcile/i);
+  });
+
   test("carries the branch facts: branch, base, attempt", () => {
     const prompt = buildWorkerPrompt(
       baseRequest({ attempt: 3 }),

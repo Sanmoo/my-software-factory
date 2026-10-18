@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { TrackerPort, IssueRef, PullRequest } from "./tracker/port.js";
+import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork } from "./git/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
@@ -69,6 +69,8 @@ interface Launchable {
   createdAt: string;
   /** The work's linked PR when the derivation saw one (the retomada reopens a closed one). */
   pr: PullRequest | null;
+  /** Human issue replies after the last agent marker, only for a retomada. */
+  issueReplies?: IssueComment[];
 }
 
 /**
@@ -179,14 +181,17 @@ export class SweepEngine {
           break;
         }
         case "feedback":
-        case "resumable":
-          parked.push({
+        case "resumable": {
+          const launchable: Launchable = {
             ref: decision.ref,
             kind: decision.state === "feedback" ? "feedback" : "resume",
             createdAt: decision.createdAt,
             pr: decision.pr,
-          });
+          };
+          if (decision.state === "resumable") launchable.issueReplies = decision.issueReplies;
+          parked.push(launchable);
           break;
+        }
         default:
           break; // idle / unknown: nothing to decide
       }
@@ -312,7 +317,12 @@ export class SweepEngine {
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(tracker, git, ref);
+    const material = await launchMaterial(
+      tracker,
+      git,
+      ref,
+      kind === "resume" ? launchable.issueReplies : undefined,
+    );
     const result = await runtime.launch({
       ref,
       workDir: dir,
@@ -512,14 +522,15 @@ export async function runForever(
 
 /**
  * Gather the launch material of a work from the port + git host (ticket 17):
- * the issue (title/body), the open PR's conversation when one exists
- * (feedback round), and the diff of the work branch. Unknown reads degrade
+ * the issue (title/body), human issue replies on a blocked retomada, the open
+ * PR's conversation on a feedback round, and the diff. Unknown reads degrade
  * to empty — the prompt still carries whatever is known, never a lie.
  */
 async function launchMaterial(
   tracker: TrackerPort,
   git: GitWork,
   ref: IssueRef,
+  issueReplies?: IssueComment[],
 ): Promise<WorkerMaterial> {
   const issue = await tracker.readIssue(ref);
   const feedback = await tracker.readPrFeedback(ref);
@@ -535,9 +546,11 @@ async function launchMaterial(
         }
       : undefined;
 
-  return {
+  const material: WorkerMaterial = {
     issue: issue.known ? { title: issue.value.title, body: issue.value.body } : { title: "", body: "" },
-    ...(pr === undefined ? {} : { pr }),
     diff,
   };
+  if (pr !== undefined) material.pr = pr;
+  if (issueReplies !== undefined) material.issueReplies = issueReplies;
+  return material;
 }
