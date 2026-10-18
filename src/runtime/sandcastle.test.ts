@@ -41,7 +41,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   let runOptions: RunOptions | undefined;
   let dockerOptions: DockerOptions | undefined;
   let piOptionsCaptured: PiOptions | undefined;
-  let snapshotSeen: { path: string; auth: string | null; hasSessions: boolean } | undefined;
+  let snapshotSeen: { path: string; auth: string | null; hasSessions: boolean; hasSkills: boolean } | undefined;
   let runtime: SandcastleRuntime;
   let request: WorkRequest;
   let workspace: string;
@@ -90,6 +90,9 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
               ? readFileSync(join(snapshotPath, "auth.json"), "utf8")
               : null,
             hasSessions: existsSync(join(snapshotPath, "sessions")),
+            hasSkills:
+              existsSync(join(snapshotPath, "skills", "implement", "SKILL.md")) &&
+              existsSync(join(snapshotPath, "skills", "code-review", "SKILL.md")),
           };
         }
         return dummySandbox();
@@ -160,6 +163,34 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(snapshotSeen!.auth, '{"tokens":{"x":1}}');
     assert.equal(snapshotSeen!.hasSessions, false, "session storage never rides the snapshot");
     assert.ok(!existsSync(snapshotSeen!.path), "the temp snapshot dies with the launch");
+  });
+
+  test("the worker's profile carries the operator's skills: /implement and /code-review reach the container (ticket 85)", async () => {
+    // The profile's skills are the SOURCE of the procedure (ticket 85): the
+    // container mounts a snapshot, so the skills must survive it — real
+    // files in, same paths out. The operator's global skills stay untouched.
+    mkdirSync(join(profileDir, "skills", "implement"), { recursive: true });
+    writeFileSync(join(profileDir, "skills", "implement", "SKILL.md"), "---\nname: implement\n---\nImplement.", "utf8");
+    mkdirSync(join(profileDir, "skills", "code-review"), { recursive: true });
+    writeFileSync(join(profileDir, "skills", "code-review", "SKILL.md"), "---\nname: code-review\n---\nReview.", "utf8");
+
+    await runtime.launch(request);
+
+    assert.equal(snapshotSeen?.hasSkills, true, "both SKILL.md files ride the snapshot into the container");
+  });
+
+  test("the worker's capability set: the pi-subagent tools ride the print command (ticket 85)", async () => {
+    // The tool list alone is not proof of function — but a print command
+    // WITHOUT the subagent tools is proof of absence. The launch must
+    // deliver the capability the /code-review procedure demands.
+    await runtime.launch(request);
+
+    const agent = runOptions?.agent as unknown as {
+      buildPrintCommand(options: { prompt: string }): { command: string };
+    };
+    const command = agent.buildPrintCommand({ prompt: "p" }).command;
+    assert.ok(command.includes("subagent"), "the subagent tool is available to the worker");
+    assert.ok(command.includes("subagents_enable"), "the subagents tool is available to the worker");
   });
 
   test("the agent is the Pi headless template in print mode with the proven closed flags (WORKER_FLAG_ARGS)", async () => {

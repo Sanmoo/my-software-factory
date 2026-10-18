@@ -14,6 +14,16 @@ import type { WorkRequest } from "./port.js";
  *   2. end every feedback round by commenting on the PR what was addressed;
  *   3. self-report blocked (marker + label) and exit when stuck.
  *
+ * Every session that changes code (the initial implementation or a feedback
+ * round — ticket 85) also follows the implementation procedure: the operator's
+ * /implement and /code-review skills, loaded from the profile the container
+ * carries. The prompt adapts those skills to Pi (there is no tool named
+ * "Skill": loading a SKILL.md and executing its instructions IS using the
+ * skill) and fixes the one-way order: pin the round's SHA, implement,
+ * validate, commit LOCALLY, review via two parallel subagents, fix, and only
+ * then publish. The factory never reads this prose back — the review is the
+ * worker's obligation, not the factory's inference.
+ *
  * This is the worker's ruler, in prose for a reader of prose. The factory's
  * ruler (state/outcome.ts) never reads it back: it reads only the structured
  * facts the obligations produce — the schema of desfecho.json, the PR fact,
@@ -56,6 +66,81 @@ function outcomeSchemaExample(request: WorkRequest): string {
     `     "attempt": ${request.attempt}${pr}${paths}   ("pr" only with a PR; "paths" optional)\n` +
     `   }`
   );
+}
+
+/**
+ * Where the round's review reports live (ticket 85): the Standards and Spec
+ * reports of each attempt, distinguishable across attempts, referenced in
+ * the outcome record's "paths". Relative to the work dir.
+ */
+export function reviewReportPath(attempt: number, axis: "standards" | "spec"): string {
+  return `revisao/tentativa-${attempt}-${axis}.md`;
+}
+
+/**
+ * The implementation procedure (ticket 85): the operator's /implement and
+ * /code-review skills, loaded from the profile, adapted to Pi and chained in
+ * a fixed one-way order. Mandatory for every code-changing session; exempt
+ * for purely explanatory ones. The prose is the worker's ruler — the factory
+ * reads only the structured facts (the reports in "paths", the outcome).
+ */
+function implementationProcedure(request: WorkRequest): string {
+  const attempt = request.attempt;
+  const standardsReport = reviewReportPath(attempt, "standards");
+  const specReport = reviewReportPath(attempt, "spec");
+  return [
+    `## The implementation procedure — MANDATORY for this session`,
+    ``,
+    `This session changes code (the initial implementation of the issue, or a feedback round`,
+    `addressing the PR comments above), so the FULL implement–review cycle below is mandatory.`,
+    `Only a session that produces no code change at all (a purely explanatory answer) skips it.`,
+    ``,
+    `Your profile carries the operator's skills, and skills are how procedures reach you:`,
+    ``,
+    `- To use a skill, READ its SKILL.md and EXECUTE its instructions. Reading the file and doing`,
+    `  what it says IS using a skill in Pi — there is no tool named "Skill", and merely mentioning`,
+    `  \`/implement\` without loading it is not following it.`,
+    `- The skills this session must load and obey:`,
+    `  - \`~/.pi/agent/skills/implement/SKILL.md\` — the implementation procedure;`,
+    `  - \`~/.pi/agent/skills/code-review/SKILL.md\` — the two-axis review (Standards + Spec).`,
+    `  Where /implement says to call the "tdd" skill at a seam, load`,
+    `  \`~/.pi/agent/skills/tdd/SKILL.md\` and follow it the same way.`,
+    ``,
+    `The order is fixed and one-way — publishing happens ONLY after the review:`,
+    ``,
+    `1. PIN the round: \`git rev-parse HEAD\` — the round's starting SHA. It stays fixed through`,
+    `   every fix cycle of this round; the review always compares against it.`,
+    `2. IMPLEMENT per /implement: the issue above (plus the applicable PR comments, in a feedback`,
+    `   round) is the ticket. Where /implement says to ask, the ticket is unambiguous: proceed.`,
+    `3. VALIDATE: typecheck and single test files as you go; the FULL test suite at the end.`,
+    `4. COMMIT locally on the branch: commits exist BEFORE the review — /code-review reviews a`,
+    `   committed diff since the starting SHA, and an empty diff fails there.`,
+    `5. REVIEW per /code-review, against the starting SHA of step 1:`,
+    `   - TWO SEPARATE subagent runs, issued IN PARALLEL (the subagent tool): one for the Standards`,
+    `     axis, one for the Spec axis — never one agent doing both, never your own inline review;`,
+    `   - each reviewer's context: the diff \`git diff <starting-sha>...HEAD\`, the commit list, the`,
+    `     spec (the issue and, in a feedback round, the applicable PR comments), the repo's`,
+    `     documented standards files and the smell baseline the skill defines;`,
+    `   - if an axis CANNOT run — a skill file missing from the profile, the subagent tool failing —`,
+    `     that is a mandatory capability being absent: self-report blocked (obligation 3). NEVER`,
+    `     silently replace the subagents with your own review and move on.`,
+    `6. FIX what the review found: violations of documented standards and missing or incorrect`,
+    `   requirements block completion — fix them, validate, commit (new commits on the branch) and`,
+    `   re-run the review against the SAME starting SHA. Code smells are judgement calls, not`,
+    `   violations: apply them or justify, in the round's summary, each one you decline. If a`,
+    `   blocking finding cannot be resolved, self-report blocked (obligation 3).`,
+    `7. ONLY THEN publish: push the branch and open or update the PR, as "The pull request" says.`,
+    ``,
+    `Write each axis's report to the work dir — ${standardsReport} and ${specReport} — and list`,
+    `both files in the "paths" of the outcome record (obligation 1), so the human can inspect the`,
+    `review that was actually run. A failed axis leaves its evidence and the reason; never write a`,
+    `success report for an axis that did not run.`,
+    ``,
+    `Blocked anywhere in this procedure, obligation 3 applies unchanged: keep the local commits and`,
+    `any existing PR, push nothing new, recreate no branch, discard nothing — report the blockage`,
+    `and stop. A human resumes from there.`,
+    ``,
+  ].join("\n");
 }
 
 export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions): string {
@@ -134,6 +219,7 @@ End the round with one consolidated reply on the PR (marked, obligation 2): what
       ? `(empty — this branch has no changes yet)`
       : `\`\`\`diff\n${material.diff}\n\`\`\``,
     ``,
+    implementationProcedure(request),
     `## Your obligations — the factory reads them as structured facts; never skip one`,
     ``,
     `1. BEFORE the session ends, ALWAYS write the structured outcome record to ${desfechoPath} — JSON exactly in this schema:`,

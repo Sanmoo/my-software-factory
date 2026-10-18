@@ -4,7 +4,7 @@ import { test, describe } from "node:test";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
-import { buildWorkerPrompt, WORK_MOUNT } from "./prompt.js";
+import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
 import type { WorkRequest } from "./port.js";
 
 /**
@@ -274,5 +274,112 @@ describe("worker prompt — the initial round carries no feedback obligations (t
       prompt,
       /every feedback round \(a session that judged and answered the PR's comments/,
     );
+  });
+});
+describe("worker prompt — the implementation procedure (ticket 85)", () => {
+  const initial = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+
+  const feedbackRequest = baseRequest({
+    material: {
+      issue: { title: "t", body: "b" },
+      pr: {
+        number: 7,
+        comments: [
+          { id: "1", author: "human", body: "Please split the module.", createdAt: "2026-02-14T00:00:00Z" },
+        ],
+      },
+      diff: "diff --git a/y b/y",
+    },
+  });
+
+  test("the initial implementation carries the mandatory implement–review cycle", () => {
+    assert.match(initial, /## The implementation procedure — MANDATORY for this session/);
+    assert.match(initial, /skills\/implement\/SKILL\.md/);
+    assert.match(initial, /skills\/code-review\/SKILL\.md/);
+  });
+
+  test("a feedback round that changes code carries the SAME cycle (story 2)", () => {
+    const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /## The implementation procedure — MANDATORY for this session/);
+    assert.match(prompt, /skills\/implement\/SKILL\.md/);
+    assert.match(prompt, /applicable PR comments/, "the reviewers' spec context names the feedback comments");
+  });
+
+  test("a purely explanatory session is exempt from the cycle (story 3)", () => {
+    assert.match(initial, /purely explanatory answer\) skips it/);
+  });
+
+  test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded (stories 4, 5)", () => {
+    assert.match(initial, /READ its SKILL\.md and EXECUTE its instructions/);
+    assert.match(initial, /no tool named "Skill"/);
+    assert.match(initial, /merely mentioning[\s\S]*without loading it is not following it/);
+    assert.doesNotMatch(initial, /call the Skill tool/i);
+  });
+
+  test("the order is fixed: pin the round's SHA, implement, validate, commit LOCALLY, review, fix, publish last (stories 7, 8)", () => {
+    const pin = initial.indexOf("PIN the round");
+    const implement = initial.indexOf("IMPLEMENT per /implement");
+    const validate = initial.indexOf("VALIDATE:");
+    const commit = initial.indexOf("COMMIT locally on the branch");
+    const review = initial.indexOf("REVIEW per /code-review");
+    const fix = initial.indexOf("FIX what the review found");
+    const publish = initial.indexOf("ONLY THEN publish");
+    assert.ok(pin > -1 && implement > pin && validate > implement && commit > validate && review > commit && fix > review && publish > fix);
+    assert.match(initial, /git rev-parse HEAD/);
+    assert.match(initial, /stays fixed through[\s\S]*every fix cycle/, "the round's SHA never moves within the round");
+    assert.match(initial, /git diff <starting-sha>\.\.\.HEAD/, "the review compares against the round's SHA");
+    assert.match(initial, /new commits on the branch[\s\S]*re-run the review against the SAME starting SHA/, "fixes are new commits, re-reviewed");
+  });
+
+  test("the review runs as TWO SEPARATE subagents, IN PARALLEL — never one agent, never self-review (stories 9-11, 16)", () => {
+    assert.match(initial, /TWO SEPARATE subagent runs, issued IN PARALLEL/);
+    assert.match(initial, /one for the Standards/);
+    assert.match(initial, /one for the Spec axis/);
+    assert.match(initial, /never your own inline review/);
+  });
+
+  test("a missing axis is a mandatory-capability failure: blocked, not silent self-review (story 16)", () => {
+    assert.match(initial, /if an axis CANNOT run — a skill file missing from the profile, the subagent tool failing —/);
+    assert.match(initial, /mandatory capability being absent: self-report blocked \(obligation 3\)/);
+    assert.match(initial, /NEVER[\s\S]*silently replace the subagents with your own review/);
+  });
+
+  test("documented-standard violations and missing requirements block completion; smells are judgement calls (stories 13, 14)", () => {
+    assert.match(initial, /violations of documented standards and missing or incorrect\s+requirements block completion/);
+    assert.match(initial, /Code smells are judgement calls, not\s+violations/);
+    assert.match(initial, /apply them or justify/);
+  });
+
+  test("the blocked procedure preserves the local work and any existing PR (stories 17, 18)", () => {
+    assert.match(initial, /keep the local commits and\s+any existing PR/);
+    assert.match(initial, /push nothing new, recreate no branch, discard nothing/);
+    assert.match(initial, /obligation 3 applies unchanged/);
+  });
+
+  test("the two axis reports land in the attempt's artifacts and ride the outcome record's paths (stories 19, 20)", () => {
+    assert.match(initial, new RegExp(reviewReportPath(1, "standards").replace(/\//g, "\\/")));
+    assert.match(initial, new RegExp(reviewReportPath(1, "spec").replace(/\//g, "\\/")));
+    assert.match(initial, /list\s+both files in the "paths" of the outcome record/);
+    const attempt2 = buildWorkerPrompt(baseRequest({ attempt: 2 }), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(attempt2, new RegExp(reviewReportPath(2, "standards").replace(/\//g, "\\/")), "reports distinguish attempts");
+  });
+
+  test("a failed axis leaves its evidence, never a fabricated success report", () => {
+    assert.match(initial, /A failed axis leaves its evidence and the reason; never write a/);
+    assert.match(initial, /success report for an axis that did not run/);
+  });
+
+  test("the reviewers receive the spec context: the issue and, in feedback, the applicable comments (story 12)", () => {
+    assert.match(initial, /spec \(the issue and, in a feedback\s+round, the applicable PR comments\)/);
+    const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /applicable PR comments/);
+  });
+
+  test("the procedure is additive: the three obligations and the completion signal survive intact", () => {
+    const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, new RegExp(AGENT_MARKER));
+    assert.match(prompt, /--add-label agent-blocked/);
+    assert.match(prompt, /MSF-RESULT/);
+    assert.match(prompt, /"paths" is optional/);
   });
 });
