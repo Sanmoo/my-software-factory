@@ -198,7 +198,9 @@ const invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
+    // A fatal boot/run failure is an operational error record: it carries the
+    // same UTC prefix as the loop's records (issue 91).
+    console.error(utcStamp(error instanceof Error ? error.message : String(error)));
     process.exit(1);
   });
 }

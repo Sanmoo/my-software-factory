@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -320,6 +320,29 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     assert.equal(summaries(logs).length, 1, "nothing changed again, so nothing is repeated");
   });
 
+  test("an event about another transition does not hide a later change on the same work", async () => {
+    const tracker = new CountingTracker({ workerAccount: "bot" });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    const { deps, logs } = makeFactory(tracker);
+    const engine = new SweepEngine(deps);
+
+    await engine.deriveAndAct();
+    assert.equal(summaries(logs).length, 1);
+
+    // The claim/collection announces "#1 lands reserved"; the human's comment
+    // then moves the work to feedback — a DIFFERENT transition on the same
+    // work, which the reservation announcement must not swallow.
+    await Promise.all(engine.fillSlots());
+    const feedback = await tracker.readPrFeedback({ repo: REPO, number: 1 });
+    assert.ok(feedback.known && feedback.value.pr !== null);
+    tracker.addPrComment({ repo: REPO, prNumber: feedback.value.pr.number }, "humano", "please adjust this");
+
+    await engine.deriveAndAct();
+
+    assert.equal(summaries(logs).length, 2, "the feedback change is not hidden by the claim announcement");
+    assert.match(summaries(logs).at(-1)!, /Sanmoo\/a#1 \(eligible→feedback\)/);
+  });
+
   test("every fresh instance logs its own first observation (restart and independent runs)", async () => {
     const tracker = new CountingTracker({ workerAccount: "bot" });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -349,11 +372,6 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
       const action = logs.find((line) => line.includes("claiming Sanmoo/a#1"));
       assert.ok(action, "the claim is an operational action");
       instantOf(action); // actions are stamped too
-
-
-      seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
-      await waitUntil("the new work claimed", () => tracker.claimedOrder.length === 1);
-
       assert.ok(summaries(logs).length >= 2, "the availability change is logged");
       assert.match(summaries(logs).at(-1)!, /Sanmoo\/a#1 \(eligible\)/);
     } finally {
@@ -401,6 +419,24 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     for (const line of errors) instantOf(line);
   });
 
+  test("the workers' JSONL files keep their own contract — no operational stamp", async () => {
+    const tracker = new CountingTracker({ workerAccount: "bot" });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    const { deps } = makeFactory(tracker);
+    const engine = new SweepEngine(deps);
+
+    await engine.deriveAndAct();
+    await Promise.all(engine.fillSlots());
+
+    const file = join(workDir(layout, REPO, 1), "log-1.jsonl");
+    const lines = readFileSync(file, "utf8").split("\n").filter((line) => line !== "");
+    assert.ok(lines.length >= 2, "the runtime wrote its attempt log");
+    for (const line of lines) {
+      assert.doesNotMatch(line, STAMP, "the JSONL contract never gains the operational prefix");
+      assert.doesNotThrow(() => JSON.parse(line), "the JSONL stays machine-readable");
+    }
+  });
+
   test("the CLI stamps start, summary and end; the status output stays untouched", () => {
     writeFileSync(
       join(dir, "msf.yaml"),
@@ -445,6 +481,34 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /0 eligible/, "the status output is the same contract");
     assert.doesNotMatch(status.stdout, STAMP, "status records never gain the operational stamp");
+  });
+
+  test("a fatal CLI failure is an operational record too — stamped UTC error", () => {
+    // The requested account has no keyring token, so the boot fails locally
+    // (no network): the message is a direct CLI record and carries the stamp.
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: msf-log-test-ghost-account",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${join(dir, "ws")}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const cli = new URL("../cli.js", import.meta.url).pathname;
+
+    const before = Date.now();
+    const result = spawnSync(process.execPath, [cli, "run", "--once", "--runtime", "fake"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    const after = Date.now();
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /no GitHub token in the gh keyring/);
+    const instant = instantOf(result.stderr);
+    assert.ok(instant >= before - 1_500 && instant <= after + 1_500, "the fatal error is stamped");
   });
 
 });
