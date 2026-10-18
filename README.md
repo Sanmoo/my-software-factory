@@ -28,7 +28,7 @@ repos:
 #   - ~/.agents
 #   - ~/.local/share/omarchy
 # profile-skip-dangling-links: false  # stale profile links: fail closed
-# notifications: true             # local Linux desktop notices (see below)
+# notifications: true             # local Linux desktop notices: see the RUNBOOK
 ```
 
 ## Usage
@@ -48,53 +48,7 @@ Move any model previously selected on the command line into `worker-model`.
 The live proof's exact script — commands, what the human does, the REST
 budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
-## Local desktop notifications
-
-A session ending is not the work concluding: an open PR leaves the work
-reserved for the human. `msf` therefore sends a passive `notify-send`
-(libnotify) notice from the CLI on the HOST when a NEW occurrence needs the
-operator — a PR ready for review, a help request or a block. Notifications are
-**on by default** (set `notifications: false` in `msf.yaml` to run silently),
-punctual and best-effort: one per new occurrence, no reminders, no focus
-stealing, no browser window. Review notices point at the PR; help/block
-notices at the issue. A delivery failure only prints
-`local notification failed (...)` — the work's outcome and exit code are
-untouched. The worker container needs no graphical access (ADR-0001). The
-full trigger/silence table, prerequisites, the manual smoke test and the
-unavailable-backend behavior are in the [RUNBOOK](docs/RUNBOOK.md).
-
-## Layout
-
-```
-src/
-├── cli.ts              # `msf run [--once] [--config <path>]` · `msf status`
-├── config.ts           # loads msf.yaml + defaults; a missing optional field is never an error
-├── layout.ts           # workspace: repos/ · trabalhos/ · arquivo/
-├── loop.ts             # the thin loop: owner of time, the --once boundary, waking by event
-├── tracker/
-│   ├── port.ts         # TrackerPort: the 9 operations + rank (honest null)
-│   ├── github-adapter.ts # the real adapter: gh CLI + git push, token from the gh keyring
-│   ├── contract.ts     # the behavior suite every adapter must satisfy (fake + real)
-│   ├── github-smoke.ts # credential-gated smoke: executed, verified, reverted
-│   └── fake-adapter.ts # in-memory fake: deterministic scenarios, no network
-├── git/
-│   ├── port.ts         # GitWork: clone-once + delta fetch + work branch per work
-│   └── local.ts        # the host side over the local git CLI — no network in tests
-├── state/
-│   ├── derive.ts       # stateless re-read → pool of eligibles, ordered by createdAt
-│   └── outcome.ts      # the ruler: classifies desfecho.json — structured facts only
-├── pool/
-│   └── slots.ts        # the y slots in memory; nothing here survives a restart
-├── runtime/
-│   ├── port.ts         # WorkerRuntime: how a session is born
-│   ├── sandcastle.ts   # the REAL runtime: Sandcastle run(), Pi headless, container
-│   ├── prompt.ts       # the worker prompt: issue + PR + diff + the artifact contract
-│   └── fake-runtime.ts # scripted worker outcomes — the ruler's test seam
-└── notify/
-    ├── port.ts         # Notifier: structured notice (review | help) + GitHub addresses
-    ├── linux.ts        # the REAL backend: notify-send (libnotify), host-side
-    └── fake-notifier.ts # the recorder the tests inject (or a simulated failure)
-```
+## Design
 
 Two rulers, one contract: the worker's obligations live in its prompt; the
 factory's classification lives in code and reads only structured facts

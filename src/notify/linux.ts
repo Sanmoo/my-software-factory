@@ -2,23 +2,15 @@ import { execFile } from "node:child_process";
 import type { Notifier, WorkNotification } from "./port.js";
 
 /**
- * The Linux desktop notifier (issue 93): `notify-send` (libnotify) through
- * the running user's notification daemon. It pops a passive notice — no
- * focus stealing, no browser window, no buttons; the desktop decides how
- * long to keep it. It runs on the HOST (the CLI), never inside the worker
- * container.
- *
- * Prerequisites: a Linux desktop session with a notification daemon and the
- * `notify-send` binary (the `libnotify-bin` package on Debian/Ubuntu,
- * `libnotify` on Arch). Without either, the spawn fails and the loop reports
- * it on the terminal — best-effort, never fatal.
+ * Host-side Linux delivery via `notify-send` (libnotify): a passive notice,
+ * no focus stealing or window. Needs a graphical session with a notification
+ * daemon; a spawn failure is reported by the loop, never fatal.
  */
 
-/** Runs the desktop command; injectable so the notice text is tested without a desktop. */
+/** Runs the desktop command; injectable so tests need no desktop. */
 export type SendNotification = (command: string, args: string[]) => Promise<void>;
 
 export interface LinuxNotifierOptions {
-  /** Test seam: replaces the subprocess with a recorder. */
   send?: SendNotification;
 }
 
@@ -32,10 +24,7 @@ export class LinuxNotifier implements Notifier {
   }
 }
 
-/**
- * The notice text: the work, a brief reason and the address to open. The
- * reason is derived from the structured kind — never from agent prose.
- */
+/** The notice text, composed from the structured kind — never agent prose. */
 export function renderNotification(notification: WorkNotification): { title: string; body: string } {
   const work = `${notification.ref.repo}#${notification.ref.number}`;
   if (notification.kind === "review") {

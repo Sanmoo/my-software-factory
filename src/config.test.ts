@@ -186,8 +186,6 @@ describe("config", () => {
     assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
   });
 
-  // ---- the notification key (issue 93) ----
-
   test("notifications can be explicitly disabled — the factory then runs silently", () => {
     const path = writeYaml(
       dir,
