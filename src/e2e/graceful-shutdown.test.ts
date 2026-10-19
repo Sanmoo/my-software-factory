@@ -11,7 +11,7 @@ import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js"
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
-import { installGhShim, isolatedHome, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
+import { installGhShim, isolatedEnv, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
  * End-to-end of issue #90's shutdown contract: Ctrl-C stops new admissions and
@@ -51,7 +51,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", { timeout: 60_000 }, () => {
+describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];
@@ -255,7 +255,7 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
       cwd: dir,
       // The owner builds the fake seams in-process and never calls `gh`; it
       // only needs the suite-owned HOME so its lock file stays in the temp dir.
-      env: { ...process.env, HOME: isolatedHome(dir) },
+      env: isolatedEnv(dir),
       stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(owner);

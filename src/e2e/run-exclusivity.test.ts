@@ -20,12 +20,12 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * the lock acquisition), never the lock module: the contract is observed at
  * the public boundary, not through the mechanism.
  *
- * The suite timeout is generous because every case is a set of real node
- * processes: under a loaded machine (another suite compiling, other tests
- * spawning) their startup — not the behaviour under test — dominates.
+ * The suite runs with the global `--test-timeout` (60 s, `npm test`): every
+ * case is a set of real node processes, and under a loaded machine their
+ * startup — not the behaviour under test — dominates.
  */
 
-describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 60_000 }, () => {
+describe("e2e: msf run exclusivity per real config path (issue #90)", () => {
   let dir: string;
   let shim: GhShim;
   let children: ChildProcess[];

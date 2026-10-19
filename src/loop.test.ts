@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "./tracker/fake-adapter.js";
-import { FakeWorkerRuntime } from "./runtime/fake-runtime.js";
+import { FakeWorkerRuntime, launchOf } from "./runtime/fake-runtime.js";
 import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
 import { workBranchName, type GitWork, type PreparedWork } from "./git/port.js";
@@ -112,7 +112,7 @@ describe("loop wiring — the git host feeds every launch", () => {
 
     // Two launches run concurrently: the ORDER they reach the runtime is not
     // part of the contract, only which work each request carries.
-    const request = launched.find((result) => result.request.ref.number === 7)?.request;
+    const request = launchOf(launched, 7)?.request;
     assert.ok(request, "the launch of issue #7 is among the launched");
     assert.equal(request.material.issue.title, "issue #7");
     assert.equal(request.material.issue.body, "");
