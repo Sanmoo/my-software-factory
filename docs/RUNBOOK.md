@@ -174,7 +174,9 @@ read-only) and one on a marker file keyed by its real path under
 `kill -9`, so a restart never needs manual cleanup. The config-file lock keeps
 the guarantee independent of the environment that started the run (a different
 `HOME`, an elevated shell, another OS user with read access to the config); the
-marker survives an editor that saves by replacing the file with a new inode.
+marker survives an editor that saves by replacing the file with a new inode. A
+hard link to the same config file therefore counts as the same configuration —
+stricter than required, and harmless: copies are new files.
 There is no `--force` and no expiry: a slow or hung run keeps its exclusivity.
 `msf status` takes neither lock and stays available while a run is up. Marker
 files are one per real config path, never deleted, and a stale one costs

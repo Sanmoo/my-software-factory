@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -213,6 +223,30 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", () => {
     const contender = runCli(dir, ["run", "--once", "--runtime", "fake"], shim.env());
     assert.notEqual(contender.status, 0);
     assert.match(contender.stderr, /already has an active msf run/);
+  });
+
+  test("an editor's atomic save (a new inode at the same real path) never releases the active run", async () => {
+    const workspace = join(dir, "ws");
+    const config = writeConfig("msf.yaml", workspace);
+    const before = statSync(config).ino;
+    await spawnHeldOwner(["run", "--runtime", "fake"]);
+
+    // The ordinary atomic save: the editor writes a fresh file and renames it
+    // over the config. The real path keeps its identity, the inode does not —
+    // so the config file's own lock no longer matches and the path-keyed
+    // marker is the one that must refuse the contender.
+    const replacement = join(dir, "msf.yaml.saved");
+    writeFileSync(replacement, readFileSync(config));
+    renameSync(replacement, config);
+    assert.notEqual(statSync(config).ino, before, "the save really produced a new inode");
+
+    const contender = runCli(dir, ["run", "--once", "--runtime", "fake"], shim.env());
+    assert.notEqual(contender.status, 0, `the replaced config still has its owner: ${contender.stderr}`);
+    assert.match(contender.stderr, /already has an active msf run/);
+    assert.ok(
+      contender.stderr.includes(realpathSync(config)),
+      `the diagnostic still identifies the configuration:\n${contender.stderr}`,
+    );
   });
 
   test("copies at distinct real paths are distinct configurations, identical content included", async () => {

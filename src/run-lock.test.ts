@@ -49,10 +49,23 @@ function spawnContender(config: string, env: NodeJS.ProcessEnv): ChildProcess {
   );
 }
 
-/** Resolve with the child's exit code. Attach it BEFORE killing the child:
- * node emits 'exit' once, and a late listener would hang forever. */
+/** Resolve with the child's exit code, or reject when it never started.
+ * Attach it BEFORE killing the child: node emits 'exit' once, and a late
+ * listener would hang forever. */
 function exitOf(child: ChildProcess): Promise<number> {
-  return new Promise((resolve) => child.once("exit", (code) => resolve(code ?? -1)));
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code ?? -1));
+  });
+}
+
+/** Kill a child and wait for it — a no-op (never a hang) when it already
+ * exited on its own. */
+async function killAndWait(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = exitOf(child);
+  child.kill("SIGKILL");
+  await exited;
 }
 
 /** Refuse-expected: exit 7, diagnostic naming the config. */
@@ -97,9 +110,7 @@ test("run exclusivity is process-wide, aliases converge, and abrupt death releas
         await restartedExit;
       }
     } finally {
-      // A kill of an already-exited child is a no-op; nothing leaks if a step
-      // above failed early.
-      owner.kill("SIGKILL");
+      await killAndWait(owner);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -119,7 +130,7 @@ test("the guarantee does not depend on HOME: a different state dir still exclude
       await waitForStdout(owner, "LOCKED");
       await assertRefused(spawnContender(config, isolatedEnv(join(dir, "home-b"))));
     } finally {
-      owner.kill("SIGKILL");
+      await killAndWait(owner);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
