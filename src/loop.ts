@@ -164,7 +164,7 @@ export class SweepEngine {
             `derived ${workKey(decision.ref)}: PR closed without merge — rejected, ` +
               "blocked with a comment pointing at the PR",
           );
-          await this.applyRecoveryBlock(decision.ref, decision.comment);
+          await this.applyBlockWithComment(decision.ref, decision.comment);
           break;
         }
         case "fall": {
@@ -179,7 +179,7 @@ export class SweepEngine {
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
-            await this.applyRecoveryBlock(decision.ref, decision.comment);
+            await this.applyBlockWithComment(decision.ref, decision.comment);
           }
           break;
         }
@@ -441,15 +441,16 @@ export class SweepEngine {
       ruling: { decision: ruling.decision, because: ruling.because },
     });
 
-    // One notice per new occurrence; help (self-report, block) wins over
-    // review, and the ruler's state decision is untouched. The self-report
-    // counts only for THIS attempt — desfecho.json survives between attempts.
-    if (ruling.decision !== "done") {
+    // One notice per new occurrence: an applied block already notified help
+    // (applyBlockWithComment), so here only the label/self-report of a work
+    // the ruler did not block. Help wins over review; the state decision is
+    // untouched. The self-report counts only for THIS attempt — desfecho.json
+    // survives between attempts.
+    if (ruling.decision !== "done" && ruling.decision !== "block") {
       const selfReportedNow =
         record !== null && record.attempt === attempt && record.class === "blocked-self-report";
-      const needsHelp = blockedLabelOnIssue || selfReportedNow || ruling.decision === "block";
       const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
-      if (needsHelp) {
+      if (blockedLabelOnIssue || selfReportedNow) {
         await this.deliverNotice(helpNotice(ref));
       } else if (isReviewLaunch && prConfirmed && pr !== null) {
         await this.deliverNotice(reviewNotice(ref, pr.number));
@@ -469,16 +470,12 @@ export class SweepEngine {
   /** The block transition every 2nd fall and every rejection shares: the
    *  claimed label swaps to blocked (the claim is held until the terminal
    *  state) and the exact outcome is commented on the issue — the human
-   * must SEE why it fell before deciding to resume. One pair, one helper. */
+   * must SEE why it fell before deciding to resume. Applying a block IS the
+   * new occurrence, so the help notice is delivered here, once. */
   private async applyBlockWithComment(ref: IssueRef, comment: string): Promise<void> {
     const { tracker, config } = this.deps;
     await tracker.blockClaim(ref, config.labels);
     await tracker.comment(ref, comment);
-  }
-
-  /** A block applied during recovery also notifies, so a new need stays visible. */
-  private async applyRecoveryBlock(ref: IssueRef, comment: string): Promise<void> {
-    await this.applyBlockWithComment(ref, comment);
     await this.deliverNotice(helpNotice(ref));
   }
 
