@@ -238,7 +238,53 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       "the comment carries the exact outcome class");
     assert.ok(comment.includes(JSON.stringify(JSON.parse(readFileSync(join(workDir(layout, REPO, 1), DESFECHO_FILENAME), "utf8")), null, 2)),
       "the comment carries the exact outcome record");
+    // The evidence is added next to the record (issue 103), probed on disk.
+    assert.match(comment, /relative to the factory workspace on the host/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/ — present/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — absent/);
     assert.equal(runtime.launched.length, 2, "attempt 2 was launched once (no thrash on blocked works)");
+  });
+
+  test("issue 103 — the collection route diagnoses the CURRENT attempt when the record on disk is the previous one's", async () => {
+    const config = makeConfig(1);
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    // Attempt 1 ends clean without a PR (a fall, recorded); attempt 2 dies
+    // abruptly — attempt 1's record is the only desfecho left on disk.
+    const factory = makeFactory(config, tracker, ["clean-without-pr", "abrupt-death"]);
+    factory.runtime.hold = (request) => {
+      if (request.attempt === 2) {
+        // The sandcastle log attempt 2 left behind — killed mid-sentence.
+        mkdirSync(join(request.workDir, "sessao"), { recursive: true });
+        writeFileSync(join(request.workDir, "sessao", "sandcastle-2.log"), "the session ended mid-", "utf8");
+      }
+    };
+
+    const first = await runOnce(factory.deps);
+    assert.equal(first.collected[0]?.ruling?.decision, "release");
+
+    const second = await runOnce(factory.deps);
+    assert.equal(second.launched[0]?.request.attempt, 2);
+    assert.equal(second.collected[0]?.ruling?.decision, "block");
+    assert.equal(second.collected[0]?.ruling?.because, "fall-second");
+
+    const comment = await lastCommentOf(tracker, 1);
+    assert.match(comment, /2 consecutive falls \(attempt 2\)/);
+    assert.match(comment, /abrupt fall: no outcome record was written/);
+    assert.match(comment, /the record on disk belongs to attempt 1/);
+    assert.ok(
+      !comment.includes('"class": "clean-without-pr"'),
+      "the previous attempt's record is never presented as attempt 2's desfecho",
+    );
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — present/);
+
+    // The old record stays as history for numbering and reconciliation.
+    const onDisk = JSON.parse(readFileSync(join(workDir(layout, REPO, 1), DESFECHO_FILENAME), "utf8"));
+    assert.equal(onDisk.attempt, 1);
+    assert.equal(onDisk.class, "clean-without-pr");
   });
 
   // ---- class 4: NO outcome record → abrupt fall, same ruler ----

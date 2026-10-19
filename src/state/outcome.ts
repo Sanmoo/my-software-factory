@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { IssueRef } from "../tracker/port.js";
+import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
+
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
  * tracker transitions (tickets 04/05; fleshed out by tickets 12-14).
@@ -70,7 +73,7 @@ export type OutcomeRuling =
 
 /** The structured facts the ruler reads — nothing else, zero prose (the two-rulers contract). */
 export interface OutcomeFacts {
-  /** desfecho.json of the collected attempt; null = absent = abrupt fall. */
+  /** desfecho.json as read from disk; it may belong to an EARLIER attempt. */
   record: OutcomeRecord | null;
   /** The port's fact: an open PR linked to the issue (recorded now or pre-existing). */
   prOpen: boolean;
@@ -78,10 +81,15 @@ export interface OutcomeFacts {
   blockedLabelOnIssue: boolean;
   /** The registry's fact from launch time: the previous attempt on this branch also fell. */
   consecutiveFall: boolean;
-  /** The attempt being collected (the registry's launch fact) — names the fall in the blocked comment. */
+  /** The attempt being collected (the registry's launch fact) — names the fall in the
+   *  blocked comment, and owns the record: a record of another attempt is absent here. */
   attempt: number;
   /** The port's fact: the issue itself is closed — the terminal state was reached while this claim was held (ticket 14). */
   issueClosed: boolean;
+  /** The work the attempt belonged to — names the evidence dir of the blocked comment. */
+  ref: IssueRef;
+  /** Absolute work dir on the host, probed read-only for the evidence presence. */
+  workDir: string;
 }
 
 /**
@@ -91,8 +99,12 @@ export interface OutcomeFacts {
  *   6. blocked self-report → only recorded (the worker posted marker + label);
  *   then any end without PR is the one fall (ticket 05 Q1): absent record =
  *   abrupt fall — 1st consecutive → release, 2nd consecutive → blocked + comment.
+ *
+ * The record is consulted only when it belongs to the collected attempt (issue
+ * 103): a crash never inherits the previous attempt's verdict — its own
+ * absence is the abrupt fall.
  */
-export function classifyOutcome(facts: OutcomeFacts): OutcomeRuling {
+export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
@@ -102,35 +114,73 @@ export function classifyOutcome(facts: OutcomeFacts): OutcomeRuling {
     return {
       decision: "block",
       because: "fall-second",
-      comment: blockedCommentBody(facts.record, facts.attempt),
+      comment: await blockedCommentBody({
+        attempt: facts.attempt,
+        record: facts.record,
+        ref: facts.ref,
+        workDir: facts.workDir,
+      }),
     };
   }
   return { decision: "release", because: "fall-first" };
 }
 
-/** A self-report is the record class or the label — both are structured facts. */
+/**
+ * The record OF THIS ATTEMPT: a record left by another attempt is absent for
+ * the current attempt's classification and diagnosis (issue 103) — the old
+ * file survives on disk as history and serves numbering/reconciliation, but
+ * it never decides this attempt's transition.
+ */
+function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
+  return record !== null && record.attempt === attempt ? record : null;
+}
+
+/** A self-report is the current attempt's record class, or the label — both structured facts. */
 function isBlockedSelfReport(facts: OutcomeFacts): boolean {
-  return facts.blockedLabelOnIssue || facts.record?.class === "blocked-self-report";
+  return (
+    facts.blockedLabelOnIssue ||
+    ownOutcomeRecord(facts.record, facts.attempt)?.class === "blocked-self-report"
+  );
+}
+
+/** The input of a blocked comment: the fell attempt, the raw record on disk,
+ *  the work and its absolute dir (probed, never shown). */
+export interface BlockedCommentInput {
+  /** The attempt that fell — the header names it, never a record's. */
+  attempt: number;
+  /** The raw record on disk: it may belong to an earlier attempt. */
+  record: OutcomeRecord | null;
+  /** The work, for the workspace-relative evidence paths. */
+  ref: IssueRef;
+  /** Absolute work dir on the host, probed for the evidence presence. */
+  workDir: string;
 }
 
 /**
- * The blocked comment: the exact outcome carried on the issue (ticket 05 Q7:
- * the human must SEE why it fell before deciding to resume). For a recorded
- * fall the record's JSON is embedded verbatim; for an abrupt one the absence
- * itself is the statement. The port mounts the agent marker on top.
+ * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
+ * before deciding to resume. The header names the fallen attempt; the outcome
+ * is the current attempt's own record — a divergent record is named as such
+ * instead of being presented as this fall's desfecho. The evidence of the
+ * attempt follows, independent of the record.
  */
-export function blockedCommentBody(record: OutcomeRecord | null, attempt?: number): string {
-  if (record === null) {
+export async function blockedCommentBody(input: BlockedCommentInput): Promise<string> {
+  const evidence = await readWorkEvidence(input.ref, input.attempt, input.workDir);
+  return (
+    `worker blocked after 2 consecutive falls (attempt ${input.attempt}) — ` +
+    `${describeOutcome(input)}\n\n${renderWorkEvidence(evidence)}`
+  );
+}
+
+/** The outcome of the named attempt: another attempt's record is absence here. */
+function describeOutcome({ attempt, record }: BlockedCommentInput): string {
+  if (record === null) return "abrupt fall: no outcome record was written";
+  if (record.attempt !== attempt) {
     return (
-      `worker blocked after 2 consecutive falls (attempt ${attempt ?? "unknown"}) — ` +
-      "abrupt fall: no outcome record was written"
+      "abrupt fall: no outcome record was written " +
+      `(the record on disk belongs to attempt ${record.attempt})`
     );
   }
-  return (
-    `worker blocked after 2 consecutive falls (attempt ${attempt ?? record.attempt}) — ` +
-    "the exact outcome record:\n\n" +
-    JSON.stringify(record, null, 2)
-  );
+  return `the exact outcome record:\n\n${JSON.stringify(record, null, 2)}`;
 }
 
 /**

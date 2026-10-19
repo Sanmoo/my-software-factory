@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +12,7 @@ import {
 } from "./outcome.js";
 
 /**
- * Factory building the six structured facts the ruler reads: the outcome
+ * Factory building the structured facts the ruler reads: the outcome
  * record (or its absence), the PR fact and the label fact from the port, and
  * the consecutiveness fact from the registry. Nothing else — zero prose.
  */
@@ -24,6 +24,8 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
     consecutiveFall: false,
     attempt: 1,
     issueClosed: false,
+    ref: { repo: "Sanmoo/a", number: 1 },
+    workDir: "/nowhere/trabalhos/Sanmoo/a#1",
     ...overrides,
   };
 }
@@ -81,8 +83,8 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
 
 describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   describe("class 1 — outcome record says pr-open: the claim is held, awaiting the human", () => {
-    test("a pr-open record with the PR confirmed open stays reserved", () => {
-      const ruling = classifyOutcome(
+    test("a pr-open record with the PR confirmed open stays reserved", async () => {
+      const ruling = await classifyOutcome(
         facts({
           record: { class: "pr-open", attempt: 1 },
           prOpen: true,
@@ -94,8 +96,8 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("class 2 — fall without PR, 1st consecutive: release (claimed→ready; branch stays)", () => {
-    test("a clean-without-pr record falls and releases on the 1st consecutive fall", () => {
-      const ruling = classifyOutcome(
+    test("a clean-without-pr record falls and releases on the 1st consecutive fall", async () => {
+      const ruling = await classifyOutcome(
         facts({
           record: { class: "clean-without-pr", attempt: 1 },
           consecutiveFall: false,
@@ -107,25 +109,25 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("class 3 — fall without PR, 2nd consecutive: blocked + comment with the exact outcome", () => {
-    test("the 2nd consecutive fall blocks with a comment", () => {
+    test("the 2nd consecutive fall blocks with a comment", async () => {
       const record = { class: "clean-without-pr" as const, attempt: 2 };
-      const ruling = classifyOutcome(facts({ record, consecutiveFall: true }));
+      const ruling = await classifyOutcome(facts({ record, attempt: 2, consecutiveFall: true }));
       assert.equal(ruling.decision, "block");
       assert.equal(ruling.because, "fall-second");
       assert.match(ruling.comment, /clean-without-pr/);
-      assert.match(ruling.comment, /\"attempt\"\: 2/);
+      assert.match(ruling.comment, /"attempt": 2/);
     });
   });
 
   describe("class 4 — NO outcome record: abrupt fall, the same ruler as 2/3", () => {
-    test("an absent record is a fall — the 1st releases", () => {
-      const ruling = classifyOutcome(facts({ record: null, consecutiveFall: false }));
+    test("an absent record is a fall — the 1st releases", async () => {
+      const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: false }));
       assert.equal(ruling.decision, "release");
       assert.equal(ruling.because, "fall-first");
     });
 
-    test("an absent record after a previous fall blocks, with the abrupt class in the comment", () => {
-      const ruling = classifyOutcome(
+    test("an absent record after a previous fall blocks, with the abrupt class in the comment", async () => {
+      const ruling = await classifyOutcome(
         facts({ record: null, consecutiveFall: true, attempt: 3 }),
       );
       assert.equal(ruling.decision, "block");
@@ -136,20 +138,21 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("class 5 — PR already existing on the issue: reserved, no fall recorded", () => {
-    test("an open PR turns even a fall record into a reserve — no fall recorded, no consecutiveness", () => {
-      const ruling = classifyOutcome(
+    test("an open PR turns even a fall record into a reserve — no fall recorded, no consecutiveness", async () => {
+      const ruling = await classifyOutcome(
         facts({
           record: { class: "clean-without-pr", attempt: 3 },
           prOpen: true,
           consecutiveFall: true,
+          attempt: 3,
         }),
       );
       assert.equal(ruling.decision, "reserve");
       assert.equal(ruling.because, "pr-open");
     });
 
-    test("an open PR turns even an absent record into a reserve —never a fall", () => {
-      const ruling = classifyOutcome(
+    test("an open PR turns even an absent record into a reserve —never a fall", async () => {
+      const ruling = await classifyOutcome(
         facts({ prOpen: true, consecutiveFall: true }),
       );
       assert.equal(ruling.decision, "reserve");
@@ -158,8 +161,8 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("class 6 — blocked self-report (marker + label already posted): the factory only records it", () => {
-    test("a blocked-self-report record is record-only — no transition, no relaunch", () => {
-      const ruling = classifyOutcome(
+    test("a blocked-self-report record is record-only — no transition, no relaunch", async () => {
+      const ruling = await classifyOutcome(
         facts({
           record: { class: "blocked-self-report", attempt: 1 },
           blockedLabelOnIssue: true,
@@ -169,8 +172,8 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
       assert.equal(ruling.because, "blocked-self-report");
     });
 
-    test("the blocked label alone (record lost) is still a self-report — a structured label fact", () => {
-      const ruling = classifyOutcome(
+    test("the blocked label alone (record lost) is still a self-report — a structured label fact", async () => {
+      const ruling = await classifyOutcome(
         facts({
           record: null,
           blockedLabelOnIssue: true,
@@ -182,25 +185,25 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  test("prose is never read: an unknown record class is treated as absent (abrupt fall)", () => {
+  test("prose is never read: an unknown record class is treated as absent (abrupt fall)", async () => {
     // readOutcomeRecord rejected it already — the ruler never even sees it.
-    const ruling = classifyOutcome(facts({ record: null, consecutiveFall: true }));
+    const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: true }));
     assert.equal(ruling.decision, "block");
   });
 
   describe("ticket 14 — the terminal state is read at the act too", () => {
-    test("an issue closed (done by linkage while the claim was held) ends the work: archive, no release, no fall", () => {
+    test("an issue closed (done by linkage while the claim was held) ends the work: archive, no release, no fall", async () => {
       // The human merged while a feedback round was still in flight: the issue
       // is terminal — the claim ends, artifacts are archived, nothing falls.
-      const ruling = classifyOutcome(
-        facts({ record: { class: "pr-open", attempt: 2 }, issueClosed: true }),
+      const ruling = await classifyOutcome(
+        facts({ record: { class: "pr-open", attempt: 2 }, attempt: 2, issueClosed: true }),
       );
       assert.equal(ruling.decision, "done");
       assert.equal(ruling.because, "issue-closed");
     });
 
-    test("issue closed wins over everything — even a fall without PR", () => {
-      const ruling = classifyOutcome(
+    test("issue closed wins over everything — even a fall without PR", async () => {
+      const ruling = await classifyOutcome(
         facts({ record: null, consecutiveFall: true, issueClosed: true }),
       );
       assert.equal(ruling.decision, "done");
@@ -208,21 +211,163 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("the blocked comment carries the exact outcome (the desfecho, verbatim)", () => {
-    test("a recorded fall embeds the exact record JSON", () => {
+    test("a recorded fall embeds the exact record JSON", async () => {
       const record = {
         class: "clean-without-pr" as const,
         attempt: 2,
         paths: { log: "log-2.jsonl" },
       };
-      const comment = blockedCommentBody(record);
+      const comment = await blockedCommentBody({
+        attempt: 2,
+        record,
+        ref: { repo: "Sanmoo/a", number: 1 },
+        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+      });
       assert.match(comment, /2 consecutive falls/i);
       assert.ok(comment.includes(JSON.stringify(record, null, 2)), "the exact desfecho JSON is embedded");
     });
 
-    test("an abrupt fall embeds a structured statement of absence", () => {
-      const comment = blockedCommentBody(null, 3);
+    test("an abrupt fall embeds a structured statement of absence", async () => {
+      const comment = await blockedCommentBody({
+        attempt: 3,
+        record: null,
+        ref: { repo: "Sanmoo/a", number: 1 },
+        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+      });
       assert.match(comment, /attempt 3/);
       assert.match(comment, /no outcome record/i);
     });
+  });
+});
+
+describe("issue 103 — the desfecho belongs to an attempt; the comment points at the evidence", () => {
+  let dir: string;
+  const ref = { repo: "Sanmoo/my-tasks", number: 91 };
+  const relativeDir = "trabalhos/Sanmoo/my-tasks#91";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-outcome-103-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const factsFor = (overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) =>
+    facts({ ref, workDir: dir, ...overrides });
+
+  test("a record of another attempt is absent for this attempt: an old blocked-self-report without the current label is not record-only", async () => {
+    const record = { class: "blocked-self-report" as const, attempt: 1 };
+
+    const second = await classifyOutcome(factsFor({ record, attempt: 3, consecutiveFall: true }));
+    assert.equal(second.decision, "block", "the current attempt fell without a record of its own");
+    assert.equal(second.because, "fall-second");
+
+    const first = await classifyOutcome(factsFor({ record, attempt: 3, consecutiveFall: false }));
+    assert.equal(
+      first.decision,
+      "release",
+      "the old self-report never decides the current attempt — not even record-only",
+    );
+  });
+
+  test("the header names the fallen attempt and explains the divergent record; the old JSON is not embedded", async () => {
+    writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
+
+    const ruling = await classifyOutcome(
+      factsFor({
+        record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
+        attempt: 3,
+        consecutiveFall: true,
+      }),
+    );
+
+    assert.ok(ruling.decision === "block");
+    assert.match(ruling.comment, /2 consecutive falls \(attempt 3\)/);
+    assert.match(ruling.comment, /abrupt fall: no outcome record was written/);
+    assert.match(ruling.comment, /the record on disk belongs to attempt 1/);
+    assert.ok(
+      !ruling.comment.includes('"class": "blocked-self-report"'),
+      "the old record is never presented as this fall's outcome",
+    );
+  });
+
+  test("a valid record of the current attempt keeps its treatment — JSON preserved, evidence appended", async () => {
+    writeFileSync(join(dir, "log-2.jsonl"), "{}\n", "utf8");
+    const record = { class: "clean-without-pr" as const, attempt: 2, paths: {} };
+
+    const ruling = await classifyOutcome(factsFor({ record, attempt: 2, consecutiveFall: true }));
+
+    assert.ok(ruling.decision === "block");
+    assert.match(ruling.comment, /2 consecutive falls \(attempt 2\) — the exact outcome record:/);
+    assert.ok(ruling.comment.includes(JSON.stringify(record, null, 2)), "the record's JSON is preserved");
+    assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/log-2\.jsonl — present/);
+    assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-2\.log — absent/);
+  });
+
+  test("without paths the three locations still show, all relative to the named workspace", async () => {
+    const ruling = await classifyOutcome(
+      factsFor({ record: null, attempt: 3, consecutiveFall: true }),
+    );
+
+    assert.ok(ruling.decision === "block");
+    for (const path of [
+      `${relativeDir}/`,
+      `${relativeDir}/log-3.jsonl`,
+      `${relativeDir}/sessao/sandcastle-3.log`,
+    ]) {
+      assert.ok(ruling.comment.includes(path), `${path} is shown`);
+    }
+    assert.match(ruling.comment, /relative to the factory workspace on the host/);
+    assert.match(ruling.comment, /workspace of msf\.yaml/);
+    assert.ok(!ruling.comment.includes(dir), "no absolute host path is shown");
+  });
+
+  test("an unverifiable location stays in the comment — a query error is not absence", async () => {
+    // A self-referential symlink: the query fails, the location is unknown.
+    symlinkSync("sessao", join(dir, "sessao"));
+
+    const ruling = await classifyOutcome(
+      factsFor({ record: null, attempt: 3, consecutiveFall: true }),
+    );
+
+    assert.ok(ruling.decision === "block");
+    assert.match(
+      ruling.comment,
+      /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-3\.log — could not be verified/,
+    );
+  });
+
+  test("the tracker facts keep their existing priority over a divergent record", async () => {
+    const record = { class: "blocked-self-report" as const, attempt: 1 };
+
+    assert.equal(
+      (await classifyOutcome(factsFor({ record, attempt: 3, blockedLabelOnIssue: true }))).decision,
+      "record-only",
+    );
+    assert.equal(
+      (await classifyOutcome(factsFor({ record, attempt: 3, prOpen: true }))).decision,
+      "reserve",
+    );
+    assert.equal(
+      (await classifyOutcome(factsFor({ record, attempt: 3, issueClosed: true }))).decision,
+      "done",
+    );
+  });
+
+  test("the old record stays on disk as history — preparing the comment never deletes or rewrites it", async () => {
+    const onDisk = { class: "blocked-self-report" as const, attempt: 1 };
+    writeFileSync(join(dir, DESFECHO_FILENAME), JSON.stringify(onDisk), "utf8");
+    writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
+
+    await classifyOutcome(
+      factsFor({
+        record: await readOutcomeRecord(dir),
+        attempt: 3,
+        consecutiveFall: true,
+      }),
+    );
+
+    assert.deepEqual(await readOutcomeRecord(dir), onDisk, "history reading still sees the old record");
   });
 });
