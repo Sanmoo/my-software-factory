@@ -95,7 +95,7 @@ describe("liveness — the real Docker shell", () => {
       mkdirSync(workDir, { recursive: true });
       // A throwaway container of the worker image, no network, one dir bound
       // the way the runtime binds the work — the probe must correlate it back.
-      const container = execFileSync(
+      const containerId = execFileSync(
         "docker",
         ["run", "-d", "--rm", "--network", "none", "--entrypoint", "sleep", "-v", `${workDir}:/msf-work`, WORKER_IMAGE, "60"],
         { encoding: "utf8" },
@@ -107,7 +107,7 @@ describe("liveness — the real Docker shell", () => {
       } finally {
         rmSync(worksRoot, { recursive: true, force: true });
         try {
-          execFileSync("docker", ["rm", "-f", container], { stdio: "ignore" });
+          execFileSync("docker", ["rm", "-f", containerId], { stdio: "ignore" });
         } catch {
           // Already gone (the container's own --rm): nothing to clean up.
         }

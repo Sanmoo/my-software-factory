@@ -24,27 +24,28 @@ export interface RenderOptions {
 
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
+  const liveness = view.liveness;
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
   lines.push(
     ...section(
-      "running (a live worker carries the work)",
-      view.running === null ? null : view.running.map(renderRunning),
+      "running (worker alive)",
+      liveness.state === "known" ? liveness.running.map(renderRunning) : null,
       cap,
     ),
   );
 
   lines.push(
     ...section(
-      "orphaned (attempt ended with no outcome record and no worker alive — the next sweep reconciles)",
-      view.running === null ? null : view.orphaned,
+      "orphaned (no outcome record, no worker alive)",
+      liveness.state === "known" ? liveness.orphaned : null,
       cap,
     ),
   );
 
   // Liveness unknown: the registry can still name the works whose outcome was
   // never recorded — it just cannot say which of them a worker still carries.
-  if (view.running === null && view.registry.attemptsWithoutOutcome.length > 0) {
+  if (liveness.state === "unknown" && view.registry.attemptsWithoutOutcome.length > 0) {
     lines.push(
       ...section(
         "attempts without outcome (Running or Orphaned — only Docker can tell)",
@@ -76,14 +77,16 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
-  if (view.unbackedClaims.length === 0 && view.unmarkedReservations.length === 0) {
-    lines.push("reconciliation: none");
-  } else {
-    for (const claim of view.unbackedClaims) lines.push(renderUnbackedClaim(claim));
-    for (const reservation of view.unmarkedReservations) {
-      lines.push(renderUnmarkedReservation(reservation));
-    }
-  }
+  lines.push(
+    ...section(
+      "reconciliation",
+      [
+        ...view.unbackedClaims.map(renderUnbackedClaim),
+        ...view.unmarkedReservations.map(renderUnmarkedReservation),
+      ],
+      cap,
+    ),
+  );
 
   return lines.join("\n");
 }

@@ -8,7 +8,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
-import { deriveStatus } from "./status.js";
+import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
 
@@ -29,6 +29,12 @@ const fakeProbe =
   (...workers: LiveWorker[]): LivenessProbe =>
   () =>
     Promise.resolve(workers);
+
+/** The known liveness of a view: the tests that assert the states never expect unknown. */
+function known(view: StatusView): Extract<Liveness, { state: "known" }> {
+  if (view.liveness.state !== "known") assert.fail("the probe answered — liveness is known");
+  return view.liveness;
+}
 
 describe("status — derivation on demand + local registry scan", () => {
   let dir: string;
@@ -72,8 +78,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.pool.map((e) => e.ref.number), [1]);
-    assert.deepEqual(view.running, [], "no container listed: no live worker");
-    assert.deepEqual(view.orphaned, []);
+    assert.deepEqual(known(view), { state: "known", running: [], orphaned: [] }, "no container listed: no live worker");
   });
 
   test("the registry view: reserved-without-attempt / attempts without an outcome / last outcome / archived", async () => {
@@ -94,7 +99,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.registry.reservedWithoutAttempt, [`${REPO}#1`], "the bare reservation is not an orphan");
     assert.deepEqual(view.registry.attemptsWithoutOutcome, [`${REPO}#4`]);
-    assert.deepEqual(view.orphaned, [`${REPO}#4`], "no outcome and no live worker: orphaned");
+    assert.deepEqual(known(view).orphaned, [`${REPO}#4`], "no outcome and no live worker: orphaned");
     assert.equal(view.registry.lastOutcome[0]?.key, `${REPO}#2`);
     assert.equal(view.registry.lastOutcome[0]?.record.class, "pr-open");
   });
@@ -110,8 +115,8 @@ describe("status — derivation on demand + local registry scan", () => {
       fakeProbe({ key: `${REPO}#4`, ageMs: 13 * 60_000 }),
     );
 
-    assert.deepEqual(view.running, [{ key: `${REPO}#4`, ageMs: 13 * 60_000, attempt: 2 }]);
-    assert.deepEqual(view.orphaned, [], "a live worker is never orphaned");
+    assert.deepEqual(known(view).running, [{ key: `${REPO}#4`, ageMs: 13 * 60_000, attempt: 2 }]);
+    assert.deepEqual(known(view).orphaned, [], "a live worker is never orphaned");
     const text = renderStatus(view);
     assert.match(text, new RegExp(`running.*\\n\\s+${REPO}#4 \\(13m, attempt 2\\)`));
   });
@@ -132,9 +137,9 @@ describe("status — derivation on demand + local registry scan", () => {
       fakeProbe({ key: `${REPO}#90`, ageMs: 2 * 60_000 }),
     );
 
-    assert.deepEqual(view.running?.map((w) => w.key), [`${REPO}#90`]);
+    assert.deepEqual(known(view).running.map((worker) => worker.key), [`${REPO}#90`]);
     assert.deepEqual(view.registry.lastOutcome.map((e) => e.key), [`${REPO}#90`]);
-    assert.deepEqual(view.orphaned, []);
+    assert.deepEqual(known(view).orphaned, []);
     const text = renderStatus(view);
     assert.match(text, new RegExp(`running[\\s\\S]*${REPO}#90 \\(2m, attempt 1\\)[\\s\\S]*last outcome[\\s\\S]*${REPO}#90 = pr-open \\(attempt 1\\)`));
   });
@@ -148,7 +153,7 @@ describe("status — derivation on demand + local registry scan", () => {
       fakeProbe({ key: `${REPO}#77`, ageMs: 5 * 60_000 }),
     );
 
-    assert.deepEqual(view.running, [{ key: `${REPO}#77`, ageMs: 5 * 60_000, attempt: null }]);
+    assert.deepEqual(known(view).running, [{ key: `${REPO}#77`, ageMs: 5 * 60_000, attempt: null }]);
     const text = renderStatus(view);
     assert.match(text, new RegExp(`${REPO}#77 \\(5m\\)`));
     assert.doesNotMatch(text, /attempt 0/);
@@ -163,8 +168,11 @@ describe("status — derivation on demand + local registry scan", () => {
     const unreachable: LivenessProbe = () => Promise.reject(new Error("docker: command not found"));
     const view = await deriveStatus(tracker, makeConfig(), layout, unreachable);
 
-    assert.equal(view.running, null, "unknown liveness is not a claim of zero workers");
-    assert.deepEqual(view.orphaned, [], "an unreachable probe can never label a work orphaned");
+    assert.deepEqual(
+      view.liveness,
+      { state: "unknown" },
+      "unknown liveness is not a claim of zero workers, and never labels a work orphaned",
+    );
     const text = renderStatus(view);
     assert.match(text, /running[^\n]*: liveness unknown \(docker not reachable\)/);
     assert.match(text, /orphaned[^\n]*: liveness unknown \(docker not reachable\)/);
@@ -203,9 +211,9 @@ describe("status — derivation on demand + local registry scan", () => {
       renderStatus(view),
       [
         "msf status (derived on demand — the factory may be stopped)",
-        "running (a live worker carries the work): 1",
+        "running (worker alive): 1",
         `  ${REPO}#4 (13m, attempt 1)`,
-        "orphaned (attempt ended with no outcome record and no worker alive — the next sweep reconciles): 1",
+        "orphaned (no outcome record, no worker alive): 1",
         `  ${REPO}#5`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
@@ -265,7 +273,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
     assert.match(text, /pool \(eligible\): none/);
-    assert.match(text, /running \(a live worker carries the work\): none/);
+    assert.match(text, /running \(worker alive\): none/);
     assert.match(text, /reconciliation: none/);
   });
 

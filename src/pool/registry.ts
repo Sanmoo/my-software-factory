@@ -107,9 +107,8 @@ export async function readReconciliationFacts(workDir: string): Promise<Reconcil
  * The attempt a work is on right now (issue 102): the highest per-attempt log,
  * or the record's own number when the record is the latest evidence. This is
  * what `msf status` prints next to a live worker — read from the registry that
- * numbers attempts, never guessed from the container. Null when nothing on
- * disk numbers an attempt (a worker whose dir is gone): the registry invents
- * no number.
+ * numbers attempts, never guessed from elsewhere. Null when nothing on disk
+ * numbers an attempt (a work dir that is gone): the registry invents no number.
  */
 export async function readLastAttempt(workDir: string): Promise<number | null> {
   const { logs, record } = await attemptsAndRecord(workDir);
@@ -136,11 +135,6 @@ export interface ReservedWorkEntry {
   ref: IssueRef;
   /** Absolute path of the work's registry dir (launches, archiving). */
   dir: string;
-}
-
-/** The inverse of a work key: the dir the registry's relative key names. */
-export function workDirOfKey(works: string, key: string): string {
-  return join(works, key);
 }
 
 /** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
