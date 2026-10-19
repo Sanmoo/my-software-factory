@@ -64,6 +64,10 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
 describe("e2e: the ruler of outcomes (ticket 13)", () => {

@@ -9,9 +9,11 @@ import {
   type OpenIssue,
   type OpenPrInput,
   type PrFeedback,
+  type PrRepairFacts,
   type PullRequest,
   type PushBranchInput,
   type ReadCost,
+  type RequiredCheckResult,
   type TrackerPort,
   type WriteOutcome,
   known,
@@ -63,6 +65,8 @@ interface FakeIssue {
   reviews: FakeComment[];
   blockers: IssueRef[];
   pr: FakePr | null;
+  /** The merge/CI facts of the PR, when one exists (defaulted at open). */
+  repair: PrRepairFacts | null;
 }
 
 export class FakeTrackerAdapter implements TrackerPort {
@@ -120,6 +124,7 @@ export class FakeTrackerAdapter implements TrackerPort {
       reviews: [],
       blockers: [],
       pr: null,
+      repair: null,
     });
   }
 
@@ -143,6 +148,15 @@ export class FakeTrackerAdapter implements TrackerPort {
       baseBranch: input.baseBranch ?? "main",
       author: input.author ?? this.options.workerAccount,
     };
+    if (issue.repair === null) {
+      issue.repair = {
+        headSha: `head-${input.number}`,
+        baseBranch: issue.pr.baseBranch,
+        baseSha: `base-${input.number}`,
+        mergeState: "mergeable",
+        requiredChecks: [],
+      };
+    }
   }
 
   addBlocker(ref: IssueRef, blocker: IssueRef): void {
@@ -186,6 +200,35 @@ export class FakeTrackerAdapter implements TrackerPort {
     const issue = this.mustGet(found.issueRef);
     issue.pr!.state = "closed";
     issue.pr!.merged = options.merged;
+  }
+
+  /** Test-side: rewrite the PR's structured merge/CI facts (the repair trigger). */
+  setPrRepairFacts(input: {
+    repo: string;
+    prNumber: number;
+    headSha?: string;
+    baseSha?: string;
+    baseBranch?: string;
+    mergeState?: PrRepairFacts["mergeState"];
+    requiredChecks?: RequiredCheckResult[] | null;
+  }): void {
+    const found = this.findPrByNumber(input.repo, input.prNumber);
+    if (found === null) throw new Error(`no PR #${input.prNumber} in ${input.repo}`);
+    const issue = this.mustGet(found.issueRef);
+    const current = issue.repair ?? {
+      headSha: `head-${input.prNumber}`,
+      baseBranch: issue.pr?.baseBranch ?? "main",
+      baseSha: `base-${input.prNumber}`,
+      mergeState: "mergeable" as const,
+      requiredChecks: [],
+    };
+    issue.repair = {
+      headSha: input.headSha ?? current.headSha,
+      baseBranch: input.baseBranch ?? current.baseBranch,
+      baseSha: input.baseSha ?? current.baseSha,
+      mergeState: input.mergeState ?? current.mergeState,
+      requiredChecks: input.requiredChecks === undefined ? current.requiredChecks : input.requiredChecks,
+    };
   }
 
   /** Test-side: close the issue itself (a human act — linkage or not-planned). */
@@ -363,6 +406,12 @@ export class FakeTrackerAdapter implements TrackerPort {
       comments: issue.comments.map((comment) => ({ ...comment })),
       reviews: issue.reviews.map((review) => ({ ...review })),
     });
+  }
+
+  async readPrRepairFacts(ref: IssueRef): Promise<Known<PrRepairFacts>> {
+    const issue = this.issues.get(this.key(ref));
+    if (!issue || issue.pr === null || issue.repair === null) return notKnown;
+    return known({ ...issue.repair, requiredChecks: issue.repair.requiredChecks?.map((check) => ({ ...check })) ?? null });
   }
 
   async openPr(input: OpenPrInput): Promise<PullRequest> {

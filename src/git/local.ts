@@ -159,5 +159,15 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
       // the base's later advances.
       return git(repoDir, ["diff", `refs/remotes/origin/${baseBranch}...${branch}`]);
     },
+
+    async observeRemoteHead(ref) {
+      const repoDir = repoCloneDir(options.reposDir, ref.repo);
+      if (!existsSync(join(repoDir, ".git"))) return null;
+      const branch = workBranchName(ref.number);
+      // Asked of the remote, never of a stale remote-tracking ref (issue 96).
+      const out = await git(repoDir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+      const line = out.trim();
+      return line === "" ? null : (line.split(/\s+/)[0] ?? null);
+    },
   };
 }

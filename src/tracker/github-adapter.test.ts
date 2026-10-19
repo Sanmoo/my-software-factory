@@ -687,6 +687,159 @@ describe("9c. credential bake: a reused clone with accumulated helpers ends with
   });
 });
 
+describe("9e. readPrRepairFacts: the merge state and the required checks of the current head", () => {
+  const pathOf = (call: Call) => call.args.find((a) => a.startsWith("repos/")) ?? "";
+
+  const basePull = {
+    number: 42,
+    state: "open",
+    merged_at: null,
+    mergeable: true,
+    mergeable_state: "clean",
+    head: { ref: "agent-issue-7", sha: "head-sha" },
+    base: { ref: "release/next", sha: "base-sha" },
+    user: { login: "bot" },
+  };
+
+  function repairRoutes(overrides: {
+    pull?: Record<string, unknown>;
+    rules?: unknown;
+    rulesFail?: boolean;
+    checks?: unknown;
+    statuses?: unknown;
+    linked?: boolean;
+  }) {
+    return (call: Call) => {
+      if (call.file !== "gh") return {};
+      const path = pathOf(call);
+      if (path.includes("/timeline")) {
+        return {
+          stdout: JSON.stringify(
+            overrides.linked === false
+              ? []
+              : [{ event: "cross-referenced", source: { issue: { number: 42, pull_request: {} } } }],
+          ),
+        };
+      }
+      if (path.includes("/rules/branches/")) {
+        if (overrides.rulesFail) return { fail: "Not Found", stderr: "gh: Not Found (HTTP 404)" };
+        return { stdout: JSON.stringify(overrides.rules ?? []) };
+      }
+      if (/\/pulls\/42$/.test(path)) {
+        return { stdout: JSON.stringify({ ...basePull, ...(overrides.pull ?? {}) }) };
+      }
+      if (path.includes("/check-runs")) {
+        return { stdout: JSON.stringify(overrides.checks ?? { check_runs: [] }) };
+      }
+      if (path.endsWith("/status")) {
+        return { stdout: JSON.stringify(overrides.statuses ?? { statuses: [] }) };
+      }
+      return { stdout: "{}" };
+    };
+  }
+
+  test("maps dirty to a confirmed conflict and resolves the required checks by the applicable rules", async () => {
+    const { adapter, calls } = await makeAdapter(
+      repairRoutes({
+        pull: { mergeable: false, mergeable_state: "dirty" },
+        rules: [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "build" }, { context: "e2e" }] },
+          },
+        ],
+        checks: {
+          check_runs: [
+            {
+              name: "build",
+              status: "completed",
+              conclusion: "failure",
+              details_url: "https://ci/build",
+              completed_at: "2026-01-01T01:00:00Z",
+            },
+            { name: "e2e", status: "in_progress", conclusion: null },
+            { name: "optional", status: "completed", conclusion: "failure" },
+          ],
+        },
+      }),
+    );
+
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.equal(facts.value.mergeState, "conflicting", "dirty confirms the conflict");
+    assert.equal(facts.value.headSha, "head-sha");
+    assert.equal(facts.value.baseSha, "base-sha");
+    assert.equal(facts.value.baseBranch, "release/next", "the PR's current base, never the default");
+    assert.equal(facts.value.requiredChecks?.length, 2, "only the rule-marked checks, never a name heuristic");
+    const build = facts.value.requiredChecks?.find((check) => check.name === "build");
+    assert.equal(build?.conclusion, "failure");
+    assert.equal(build?.detailsUrl, "https://ci/build", "the evidence for investigating travels");
+    assert.equal(facts.value.requiredChecks?.find((check) => check.name === "e2e")?.status, "in_progress");
+    // The check-runs were read on the CURRENT head, and the rules on the PR base.
+    assert.ok(calls.some((c) => pathOf(c).includes("/commits/head-sha/check-runs")));
+    assert.ok(
+      calls.some((c) => pathOf(c).includes(`/rules/branches/${encodeURIComponent("release/next")}`)),
+      "the rules are read on the PR's base branch (URL-encoded)",
+    );
+  });
+
+  test("an unknown merge state stays unknown — no conflict is inferred", async () => {
+    const { adapter } = await makeAdapter(
+      repairRoutes({ pull: { mergeable: null, mergeable_state: "unknown" }, rules: [] }),
+    );
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.equal(facts.value.mergeState, "unknown");
+    assert.deepEqual(facts.value.requiredChecks, [], "no applicable rule: known none");
+  });
+
+  test("a rules read that cannot be resolved makes the required set unknown, never empty", async () => {
+    const { adapter } = await makeAdapter(
+      repairRoutes({ pull: { mergeable: false, mergeable_state: "dirty" }, rulesFail: true }),
+    );
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.equal(facts.value.mergeState, "conflicting", "the mergeability read still resolves");
+    assert.equal(facts.value.requiredChecks, null, "the required set is unknown");
+  });
+
+  test("a required check with no reported run is pending/unknown, never a failure", async () => {
+    const { adapter } = await makeAdapter(
+      repairRoutes({
+        rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "build" }] } }],
+        checks: { check_runs: [] },
+      }),
+    );
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.deepEqual(facts.value.requiredChecks, [{ name: "build", status: null, conclusion: null }]);
+  });
+
+  test("a legacy commit status serves the required context when no check run reported", async () => {
+    const { adapter } = await makeAdapter(
+      repairRoutes({
+        rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "ci/status" }] } }],
+        checks: { check_runs: [] },
+        statuses: {
+          statuses: [
+            { context: "ci/status", state: "failure", target_url: "https://ci/status", updated_at: "2026-01-01T02:00:00Z" },
+          ],
+        },
+      }),
+    );
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.equal(facts.value.requiredChecks?.[0]?.conclusion, "failure");
+    assert.equal(facts.value.requiredChecks?.[0]?.detailsUrl, "https://ci/status");
+  });
+
+  test("no PR linked to the issue is unknown, not a clean bill", async () => {
+    const { adapter } = await makeAdapter(repairRoutes({ linked: false }));
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(!facts.known);
+  });
+});
+
 // the adapter type must remain a TrackerPort
 const _typeCheck: TrackerPort = undefined as unknown as GitHubTrackerAdapter;
 void _typeCheck;

@@ -62,6 +62,14 @@ export interface GitWork {
   cleanupDoneWork(ref: IssueRef): Promise<void>;
 
   /**
+   * The SHA of the work branch on the remote, or null when the branch is not
+   * there — the value observed BEFORE an intervention, pinned into the
+   * worker's force-with-lease so a concurrent push can never be overwritten.
+   * A later fetch does not silently renew it.
+   */
+  observeRemoteHead(ref: IssueRef): Promise<string | null>;
+
+  /**
    * The diff of the work branch's own changes against its base (merge-base,
    * three-dot) — the prompt's diff material (ticket 17). Empty string when
    * the branch has no changes yet; a later base advance never leaks in.

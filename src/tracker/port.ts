@@ -94,6 +94,55 @@ export interface PrFeedback {
   reviews: IssueComment[];
 }
 
+/**
+ * The merge state of a PR as the tracker reports it. `unknown` is distinct
+ * from `mergeable`: unavailable information never proves a conflict, and only
+ * a confirmed conflict reactivates the worker.
+ */
+export type MergeState = "unknown" | "mergeable" | "conflicting";
+
+/** A check conclusion, check-run and commit-status vocabularies merged (null = not reported). */
+export type CheckConclusion =
+  | "success"
+  | "failure"
+  | "timed_out"
+  | "action_required"
+  | "cancelled"
+  | "skipped"
+  | "neutral"
+  | "stale"
+  | "pending"
+  | null;
+
+/** The result of ONE check the PR's applicable rules mark as required, on the CURRENT head. */
+export interface RequiredCheckResult {
+  name: string;
+  /** Check-run lifecycle; null when only a commit status reported (no lifecycle). */
+  status: "queued" | "in_progress" | "completed" | null;
+  conclusion: CheckConclusion;
+  /** Evidence a human can inspect (the check's details URL); never a secret. */
+  detailsUrl?: string;
+  completedAt?: string | null;
+}
+
+/**
+ * The structured merge/CI facts of a work's open PR — the only facts the
+ * repair derivation reads. `headSha` is the identity that makes a check
+ * result current: an old head's failures never justify a new round.
+ */
+export interface PrRepairFacts {
+  /** The PR's current head commit. */
+  headSha: string;
+  /** The PR's current base branch (never substituted by the repo default). */
+  baseBranch: string;
+  /** The commit the current base branch points at. */
+  baseSha: string;
+  mergeState: MergeState;
+  /** The checks the applicable rules require, with their current result.
+   *  null = the required set could not be determined; [] = known none. */
+  requiredChecks: RequiredCheckResult[] | null;
+}
+
 export interface OpenPrInput {
   repo: string;
   issueNumber: number;
@@ -172,6 +221,14 @@ export interface TrackerPort {
 
   /** 9a. Read the PR feedback of the issue's work. */
   readPrFeedback(ref: IssueRef): Promise<Known<PrFeedback>>;
+
+  /**
+   * 9e. The structured merge/CI facts of the issue's open PR: the current
+   *  head/base identity, mergeability and the results of the checks the
+   *  rules applicable to the PR mark as required. Unknown when the PR or a
+   *  fact cannot be read — unknown is never "without impediment".
+   */
+  readPrRepairFacts(ref: IssueRef): Promise<Known<PrRepairFacts>>;
 
   /** 9b. Open the PR of a work's branch. */
   openPr(input: OpenPrInput): Promise<PullRequest>;

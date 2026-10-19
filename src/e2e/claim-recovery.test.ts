@@ -47,6 +47,10 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
 describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 98)", () => {

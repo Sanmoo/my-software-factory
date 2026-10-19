@@ -54,6 +54,10 @@ class RecordingGitWork implements GitWork {
     return "diff --git a/x b/x\n+work";
   }
 
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
+
   get prepareCount(): number {
     return this.count;
   }

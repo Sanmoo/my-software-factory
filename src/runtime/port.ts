@@ -4,7 +4,22 @@
  * scripts outcomes without a container.
  */
 
-import type { IssueComment, IssueRef } from "../tracker/port.js";
+import type { IssueComment, IssueRef, RequiredCheckResult } from "../tracker/port.js";
+
+/**
+ * The repair context of a reactivated session (issue 107): why the factory
+ * intervened, the remote HEAD observed before intervening (the lease value)
+ * and the evidence of the failing required checks. */
+export interface RepairMaterial {
+  reasons: ("conflicts" | "required-checks")[];
+  /** The remote head observed before the intervention — pin the force-with-lease to it. */
+  observedHeadSha: string;
+  /** The PR's current base branch — the rebase target, never the repo default. */
+  baseBranch: string;
+  conflicting: boolean;
+  /** The required checks that failed or timed out (evidence to investigate). */
+  checks: RequiredCheckResult[];
+}
 
 /**
  * The material the worker reads at session start (ticket 17, spec story 37):
@@ -20,6 +35,8 @@ export interface WorkerMaterial {
   pr?: { number: number; comments: IssueComment[] };
   /** Diff of the work branch against its base — the branch's memory so far. */
   diff: string;
+  /** Present only on a repair round (issue 107). */
+  repair?: RepairMaterial;
 }
 
 export interface WorkRequest {

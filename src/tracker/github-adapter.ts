@@ -7,15 +7,19 @@ import type { Labels } from "../config.js";
 import {
   AGENT_MARKER,
   type Blocker,
+  type CheckConclusion,
   type IssueComment,
   type IssueRef,
   type IssueSnapshot,
   type Known,
+  type MergeState,
   type OpenIssue,
   type OpenPrInput,
   type PrFeedback,
+  type PrRepairFacts,
   type PullRequest,
   type PushBranchInput,
+  type RequiredCheckResult,
   type TrackerPort,
   type WriteOutcome,
   known,
@@ -224,8 +228,10 @@ interface RestPull {
   number: number;
   state: "open" | "closed";
   merged_at: string | null;
-  head: { ref: string };
-  base: { ref: string };
+  mergeable: boolean | null;
+  mergeable_state: string;
+  head: { ref: string; sha: string };
+  base: { ref: string; sha: string };
   user: { login: string };
 }
 
@@ -247,6 +253,35 @@ interface RestInlineComment extends RestComment {
 interface RestTimelineEvent {
   event: string;
   source?: { issue?: { number: number; pull_request?: unknown } };
+}
+
+/** GET /repos/{owner}/{repo}/rules/branches/{branch} — the rules APPLICABLE to the branch. */
+interface RestRule {
+  type: string;
+  parameters?: {
+    required_status_checks?: { context?: string }[];
+  };
+}
+
+/** GET /repos/{owner}/{repo}/commits/{sha}/check-runs */
+interface RestCheckRuns {
+  check_runs: {
+    name: string;
+    status: "queued" | "in_progress" | "completed" | null;
+    conclusion: string | null;
+    details_url?: string | null;
+    completed_at?: string | null;
+  }[];
+}
+
+/** GET /repos/{owner}/{repo}/commits/{sha}/status (the legacy commit statuses). */
+interface RestCombinedStatus {
+  statuses: {
+    context: string;
+    state: "error" | "failure" | "pending" | "success";
+    target_url?: string | null;
+    updated_at?: string | null;
+  }[];
 }
 
 const isNotFound = (stderr: string): boolean => stderr.includes("Not Found") || stderr.includes("HTTP 404");
@@ -611,6 +646,82 @@ export class GitHubTrackerAdapter implements TrackerPort {
     });
   }
 
+  /** 9e. Merge/CI facts of the open PR: head/base identity, mergeability and
+   *  the results of the checks the rules applicable to the PR's base require.
+   *  Every read that fails to resolve returns unknown — never a clean bill. */
+  async readPrRepairFacts(ref: IssueRef): Promise<Known<PrRepairFacts>> {
+    const timeline = await this.apiOrNull<RestTimelineEvent[]>(
+      `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
+    );
+    if (!timeline) return notKnown;
+    const prNumber = linkedPrNumber(timeline);
+    if (prNumber === null) return notKnown;
+    const pull = await this.apiOrNull<RestPull>(`repos/${ref.repo}/pulls/${prNumber}`);
+    if (!pull) return notKnown;
+    return known({
+      headSha: pull.head.sha,
+      baseBranch: pull.base.ref,
+      baseSha: pull.base.sha,
+      mergeState: mergeStateOf(pull),
+      requiredChecks: await this.requiredChecksFor(ref.repo, pull.base.ref, pull.head.sha),
+    });
+  }
+
+  /** The required checks' results on the given head, or null when the required
+   *  set cannot be determined (unknown is never an empty set). */
+  private async requiredChecksFor(
+    repo: string,
+    baseBranch: string,
+    headSha: string,
+  ): Promise<RequiredCheckResult[] | null> {
+    const contexts = await this.requiredCheckContexts(repo, baseBranch);
+    if (contexts === null) return null;
+    if (contexts.length === 0) return [];
+    const [runs, statuses] = await Promise.all([
+      this.apiOrNull<RestCheckRuns>(`repos/${repo}/commits/${headSha}/check-runs?per_page=100`),
+      this.apiOrNull<RestCombinedStatus>(`repos/${repo}/commits/${headSha}/status`),
+    ]);
+    return contexts.map((context) => {
+      const run = runs?.check_runs.find((candidate) => candidate.name === context);
+      if (run) {
+        return {
+          name: context,
+          status: run.status,
+          conclusion: checkConclusion(run.conclusion),
+          ...(run.details_url ? { detailsUrl: run.details_url } : {}),
+          completedAt: run.completed_at ?? null,
+        };
+      }
+      const status = statuses?.statuses.find((candidate) => candidate.context === context);
+      if (status) {
+        return {
+          name: context,
+          status: null,
+          conclusion: statusConclusion(status.state),
+          ...(status.target_url ? { detailsUrl: status.target_url } : {}),
+          completedAt: status.updated_at ?? null,
+        };
+      }
+      return { name: context, status: null, conclusion: null };
+    });
+  }
+
+  /** The contexts the applicable rules require; null when the rules read fails. */
+  private async requiredCheckContexts(repo: string, baseBranch: string): Promise<string[] | null> {
+    const rules = await this.apiOrNull<RestRule[]>(
+      `repos/${repo}/rules/branches/${encodeURIComponent(baseBranch)}?per_page=100`,
+    );
+    if (!rules) return null;
+    const contexts = new Set<string>();
+    for (const rule of rules) {
+      if (rule.type !== "required_status_checks") continue;
+      for (const check of rule.parameters?.required_status_checks ?? []) {
+        if (check.context) contexts.add(check.context);
+      }
+    }
+    return [...contexts];
+  }
+
   /** 9b. Open the PR of a work's branch, linked to the issue ("Closes #N"). */
   async openPr(input: OpenPrInput): Promise<PullRequest> {
     const body = `Closes #${input.issueNumber}\n\n${AGENT_MARKER}`;
@@ -755,6 +866,38 @@ function terminalReason(reason: RestIssue["state_reason"]): IssueSnapshot["state
   if (reason === "completed") return "completed";
   if (reason === "not planned") return "not-planned";
   return null; // reopened (or absent) is not a terminal reason
+}
+
+/** Only `dirty` confirms a conflict; the known non-dirty states are not a
+ *  conflict; anything else is unknown (never "without impediment"). */
+function mergeStateOf(pull: RestPull): MergeState {
+  if (pull.mergeable_state === "dirty") return "conflicting";
+  if (["clean", "unstable", "blocked", "behind", "has_hooks"].includes(pull.mergeable_state)) {
+    return "mergeable";
+  }
+  return "unknown";
+}
+
+const CHECK_CONCLUSIONS: readonly CheckConclusion[] = [
+  "success",
+  "failure",
+  "timed_out",
+  "action_required",
+  "cancelled",
+  "skipped",
+  "neutral",
+  "stale",
+  "pending",
+];
+
+function checkConclusion(conclusion: string | null): CheckConclusion {
+  return CHECK_CONCLUSIONS.find((candidate) => candidate === conclusion) ?? null;
+}
+
+function statusConclusion(state: RestCombinedStatus["statuses"][number]["state"]): CheckConclusion {
+  if (state === "success") return "success";
+  if (state === "pending") return "pending";
+  return "failure"; // error and failure both mean the check did not pass
 }
 
 function mapComment(comment: RestComment): IssueComment {

@@ -1,6 +1,6 @@
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
-import type { WorkRequest } from "./port.js";
+import type { RepairMaterial, WorkRequest } from "./port.js";
 
 /**
  * The worker prompt (ticket 17, policy per ticket 84) — the only "interface"
@@ -145,6 +145,47 @@ function implementationProcedure(request: WorkRequest): string {
   ].join("\n");
 }
 
+/**
+ * The repair procedure (issue 107): the factory reactivated the work because
+ * the open PR has confirmed impediments on its CURRENT head. Conflicts are
+ * resolved first by rebasing onto the PR's current base; the still-relevant
+ * check failures are investigated after. The force-with-lease is pinned to
+ * the head the factory observed — never plain --force, never a refreshed lease.
+ */
+function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber: number): string[] {
+  const reasonLines = [
+    ...(repair.conflicting
+      ? [`- **Conflicts with the PR's current base** (\`${repair.baseBranch}\`): rebase onto \`origin/${repair.baseBranch}\`.`]
+      : []),
+    ...(repair.reasons.includes("required-checks")
+      ? [`- **Required checks failed or timed out** on head \`${repair.observedHeadSha}\`.`]
+      : []),
+  ];
+  const checkLines = repair.checks.map(
+    (check) =>
+      `  - \`${check.name}\` — ${check.conclusion ?? "unknown"}${check.detailsUrl ? ` (${check.detailsUrl})` : ""}`,
+  );
+  return [
+    `## The repair round — the factory reactivated this work`,
+    ``,
+    `The factory reacted to confirmed impediments on the CURRENT head of PR #${prNumber} (no human comment was needed):`,
+    ...reasonLines,
+    ...(checkLines.length > 0 ? [``, `Failing required checks:`, ...checkLines] : []),
+    ``,
+    `Do the work in this order:`,
+    ``,
+    `1. **Update the branch against the PR's current base** — never the repository's default:`,
+    `   \`git fetch origin && git rebase origin/${repair.baseBranch}\`.`,
+    `   Resolve the conflicts within the issue's specification. If a conflict requires a product or architecture decision the issue does not specify, do NOT invent behavior: self-report blocked (obligation 3) with the ambiguity and the concrete options.`,
+    `2. **Investigate the failing checks** — their evidence is above. A timeout is a cause to diagnose (dependency, infrastructure, flakiness, credentials), NEVER a reason to re-run the same check. If the cause is external infrastructure, a service, credentials or a configuration outside your authorization, self-report blocked with the cause and the evidence (no secrets).`,
+    `3. **Validate and review** — keep the full validation and the two independent reviews (step 5 of the implementation procedure above) after resolving the conflicts. Never weaken, skip or hide a required check or protection to reach approval.`,
+    `4. **Publish on the SAME branch and the SAME PR** with an explicit lease pinned to the head the factory observed:`,
+    `   \`git push --force-with-lease=${request.branch}:${repair.observedHeadSha} origin ${request.branch}\``,
+    `   Never use plain \`--force\`. If the lease is rejected, the remote changed concurrently: keep your local commits, do NOT retry with a refreshed lease and do NOT overwrite the other work — self-report blocked so a human reconciles both sides.`,
+    ``,
+  ];
+}
+
 export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions): string {
   const { material } = request;
   const repo = request.ref.repo;
@@ -196,7 +237,11 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           `## The pull request`,
           ``,
           `PR #${pr.number} is already open for this work (same branch, same PR — never open another).`,
-          `This session is a feedback round: read every comment below, judge each one before acting (policy below), push to ${request.branch} (the PR updates itself), and obey the obligations.`,
+          ...(material.repair === undefined
+            ? [
+                `This session is a feedback round: read every comment below, judge each one before acting (policy below), push to ${request.branch} (the PR updates itself), and obey the obligations.`,
+              ]
+            : repairProcedure(material.repair, request, pr.number)),
           ``,
           ...pr.comments.flatMap((comment, index) => [
             `--- comment ${index + 1} by ${comment.author} ---`,

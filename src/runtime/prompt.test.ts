@@ -413,3 +413,61 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(prompt, /"paths" is optional/);
   });
 });
+
+describe("worker prompt — the repair round (issue 107)", () => {
+  const repairRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest =>
+    baseRequest({
+      baseBranch: "release/next",
+      attempt: 2,
+      material: {
+        issue: { title: "t", body: "b" },
+        diff: "",
+        pr: { number: 7, comments: [] },
+        repair: {
+          reasons: ["conflicts", "required-checks"],
+          observedHeadSha: "abc123",
+          baseBranch: "release/next",
+          conflicting: true,
+          checks: [
+            { name: "build", status: "completed", conclusion: "failure", detailsUrl: "https://ci/build" },
+            { name: "e2e", status: "completed", conclusion: "timed_out" },
+          ],
+        },
+      },
+      ...overrides,
+    });
+
+  test("names the confirmed reasons, the current base and the rebase target", () => {
+    const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /## The repair round/);
+    assert.match(prompt, /Conflicts with the PR's current base/);
+    assert.match(prompt, /release\/next/);
+    assert.match(prompt, /git rebase origin\/release\/next/);
+    assert.match(prompt, /Required checks failed or timed out/);
+    assert.match(prompt, /build/);
+    assert.match(prompt, /e2e/);
+  });
+
+  test("pins the force-with-lease to the observed head and forbids plain --force", () => {
+    const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /--force-with-lease=agent-issue-42:abc123/);
+    assert.match(prompt, /Never use plain `--force`/);
+    assert.match(prompt, /lease is rejected[\s\S]*do NOT retry with a refreshed lease/);
+    assert.match(prompt, /keep your local commits/);
+  });
+
+  test("timeout is investigated, never re-run; external causes and product decisions ask for help", () => {
+    const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /timeout is a cause to diagnose/);
+    assert.match(prompt, /NEVER a reason to re-run the same check/);
+    assert.match(prompt, /outside your authorization, self-report blocked/);
+    assert.match(prompt, /product or architecture decision[\s\S]*self-report blocked/);
+  });
+
+  test("keeps validation and the two independent reviews, and never weakens protections", () => {
+    const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /keep the full validation and the two independent reviews/);
+    assert.match(prompt, /Never weaken, skip or hide a required check or protection/);
+    assert.match(prompt, /## The implementation procedure — MANDATORY for this session/);
+  });
+});
