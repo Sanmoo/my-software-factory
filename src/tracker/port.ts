@@ -44,12 +44,10 @@ export interface IssueSnapshot {
 }
 
 /** One open issue, no label semantics: the derivation decides what is a
- *  candidate, and `hasOpenPr` (resolved from the open-PRs listing) keeps
- *  eligibility from re-reading the issue. */
+ *  candidate, and `hasOpenPr` keeps eligibility from re-reading the issue. */
 export interface OpenIssue {
   ref: IssueRef;
   title: string;
-  /** ISO 8601 — age-based priority of the pool. */
   createdAt: string;
   labels: string[];
   assignees: string[];
@@ -134,8 +132,8 @@ export class PartialWriteError extends Error {
  *   +. rank (honest null on GitHub)
  */
 export interface TrackerPort {
-  /** 1. Every open issue of a repo: ref, title, createdAt, labels, assignees
-   *  and whether an OPEN PR links it. Label decisions live in the derivation. */
+  /** 1. The neutral read of a repo's open issues; the derivation owns the
+   *  label decisions. */
   listOpenIssues(repo: string): Promise<OpenIssue[]>;
 
   /** 2. Snapshot of one issue. */
