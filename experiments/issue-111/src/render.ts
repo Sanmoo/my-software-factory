@@ -7,20 +7,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 import type { RunMetrics } from "./metrics.js";
 import { SCENARIOS } from "./orchestrator.js";
 import { renderReport } from "./report.js";
+import { cliArgument } from "./util.js";
 
-const arg = (name: string, fallback: string) => {
-	const index = process.argv.indexOf(`--${name}`);
-	return index >= 0 ? (process.argv[index + 1] ?? fallback) : fallback;
-};
-
-const results = JSON.parse(readFileSync(arg("results", "runs/results.json"), "utf8")) as {
+const results = JSON.parse(readFileSync(cliArgument("results", "runs/results.json"), "utf8")) as {
 	versions: Record<string, string>;
 	factoryCommit: string;
 	bundles: RunMetrics[];
 };
 
 writeFileSync(
-	arg("out", "runs/report.md"),
+	cliArgument("out", "runs/report.md"),
 	renderReport(results.bundles, {
 		factoryCommit: results.factoryCommit,
 		versions: results.versions,

@@ -4,25 +4,25 @@
  *   node dist/run.js --repeats 3 [--scenarios s1,s2] [--variants A,B] [--root <dir>]
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import type { RunMetrics } from "./metrics.js";
+import { ExternalWorld } from "./effects.js";
+import { Journal } from "./journal.js";
+import type { RunConfig } from "./mechanism.js";
+import { computeMetrics, type RunMetrics } from "./metrics.js";
+import type { RecoveryState } from "./recovery.js";
 import { SCENARIOS, VARIANTS, runOnce, type MechanismVariant, type ScenarioSpec } from "./orchestrator.js";
 import { GUARDRAIL_SCENARIOS } from "./orchestrator.js";
 import { renderReport } from "./report.js";
+import { cliArgument } from "./util.js";
 
-function argument(name: string, fallback: string): string {
-	const index = process.argv.indexOf(`--${name}`);
-	return index >= 0 ? (process.argv[index + 1] ?? fallback) : fallback;
-}
-
-const repeats = Number(argument("repeats", "3"));
-const root = resolve(argument("root", join(process.cwd(), "runs")));
-const only = argument("scenarios", "")
+const repeats = Number(cliArgument("repeats", "3"));
+const root = resolve(cliArgument("root", join(process.cwd(), "runs")));
+const only = cliArgument("scenarios", "")
 	.split(",")
 	.filter(Boolean);
-const onlyVariants = argument("variants", "")
+const onlyVariants = cliArgument("variants", "")
 	.split(",")
 	.filter(Boolean);
 
@@ -63,7 +63,42 @@ mkdirSync(root, { recursive: true });
 const bundles: RunMetrics[] = [];
 const startedAt = Date.now();
 
-for (const scenario of scenarios) {
+/** Rebuild the metrics from the journals already on disk, without running anything. */
+async function recompute(): Promise<RunMetrics[]> {
+	const runsDir = join(root, "runs");
+	const rebuilt: RunMetrics[] = [];
+	for (const entry of readdirSync(runsDir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const dir = join(runsDir, entry.name);
+		const config = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as RunConfig & { label?: string };
+		const journal = new Journal(config.journalPath);
+		const recoveryPath = join(config.workDir, "recovery.json");
+		rebuilt.push(
+			computeMetrics({
+				runId: config.runId,
+				scenario: config.scenario,
+				mechanism: config.alternative,
+				label: config.label ?? config.runId,
+				guardrails: config.guardrails,
+				storage: config.storage,
+				replaySafe: config.replaySafe,
+				repeat: Number(config.runId.split("rep")[1] ?? "1"),
+				journal: journal.read(),
+				world: new ExternalWorld(config.worldPath),
+				recovery: existsSync(recoveryPath)
+					? (JSON.parse(readFileSync(recoveryPath, "utf8")) as RecoveryState)
+					: { consumed: 0, events: [] },
+				exitCodes: [],
+			}),
+		);
+	}
+	return rebuilt.sort((left, right) => left.runId.localeCompare(right.runId));
+}
+
+const recomputing = cliArgument("recompute", "") === "true";
+if (recomputing) bundles.push(...(await recompute()));
+
+for (const scenario of recomputing ? [] : scenarios) {
 	for (const variant of variantsFor(scenario)) {
 		for (let repeat = 1; repeat <= repeats; repeat += 1) {
 			const bundle = await runOnce(root, scenario, variant, repeat);

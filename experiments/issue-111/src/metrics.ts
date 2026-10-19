@@ -12,7 +12,10 @@ import { WORKLOAD_STEPS } from "./workload.js";
 export interface RunInput {
 	readonly runId: string;
 	readonly scenario: string;
-	readonly alternative: string;
+	/** The mechanism under test: A, B or C. */
+	readonly mechanism: string;
+	/** The exact configuration label, for citing a run. */
+	readonly label: string;
 	readonly guardrails: boolean;
 	readonly storage?: string;
 	readonly replaySafe?: boolean;
@@ -26,7 +29,8 @@ export interface RunInput {
 export interface RunMetrics {
 	readonly runId: string;
 	readonly scenario: string;
-	readonly alternative: string;
+	readonly mechanism: string;
+	readonly label: string;
 	readonly guardrails: boolean;
 	readonly storage?: string;
 	readonly replaySafe?: boolean;
@@ -38,10 +42,12 @@ export interface RunMetrics {
 	/** True when an infrastructure interruption consumed an attempt (A only). */
 	readonly attemptsConsumedByInterruption: number;
 	readonly recoveriesConsumed: number;
-	/** Steps the mechanism itself confirmed at the start of a recovery attempt. */
+	/** Confirmed steps carried across interruptions, summed over recovery attempts. */
 	readonly stepsReused: number;
-	/** Steps that had to be worked on again after being worked on before. */
+	/** Step executions that repeat a step already executed earlier in the run. */
 	readonly stepsRepeated: number;
+	/** Tool calls the mechanism itself re-ran with the same call id (safe replay). */
+	readonly taskReplays: number;
 	/** Steps whose mutation was skipped because the outside world already had it. */
 	readonly effectsReconciled: number;
 	readonly externalMutations: number;
@@ -49,17 +55,26 @@ export interface RunMetrics {
 	readonly helpRequests: number;
 	/** Most workers alive at the same time: 2 means a duplicate worker ran. */
 	readonly simultaneousWorkers: number;
+	/** The policy wanted a substitute while a worker was alive (refused by the gate). */
+	readonly policyWouldDuplicate: number;
+	/** The controller attached to a worker that outlived its controller. */
+	readonly attachedLiveWorker: number;
 	/** A step was left unconfirmed after an interruption. */
 	readonly interruptedFacts: number;
-	/** The mechanism recorded that interruption itself (durable does). */
-	readonly interruptedRecordedFacts: number;
+	/** The mechanism recorded the interruption as an error result (durable does). */
+	readonly interruptedFactsRecorded: number;
+	/** The interruption was only inferred from a call left without a result (Pi). */
+	readonly interruptedFactsInferred: number;
 	/** A new round really carried the human's feedback in its context. */
 	readonly feedbackInContext: boolean;
 	/** Live durable tasks seen when the state was reopened (durable only). */
 	readonly liveTaskFacts: number;
 	readonly completed: boolean;
 	readonly durationMs: number;
+	/** Configured backoff spent before recoveries. */
 	readonly recoveryWaitMs: number;
+	/** Wall time from an interruption to the next attempt opening, summed. */
+	readonly recoveryTimeMs: number;
 	readonly exitCodes: readonly number[];
 	readonly outcome: "completed" | "help" | "failed";
 }
@@ -68,33 +83,37 @@ export function computeMetrics(input: RunInput): RunMetrics {
 	const spawned = input.journal.filter((entry) => entry.event === "worker-spawned");
 	const attempts = [...new Set(spawned.map((entry) => String(entry.attemptId)))];
 
-	const performedByRound = new Map<string, Set<number>>();
+	// Chronological, not per-attempt: a step executed twice inside one attempt
+	// (a replay-safe tool re-running an interrupted call) is a repeat too.
 	const rounds: string[] = [];
+	let stepsRepeated = 0;
+	const seen = new Set<number>();
 	for (const entry of input.journal) {
 		if (entry.event !== "step-performed" && entry.event !== "effect-performed") continue;
 		const round = `${String(entry.attemptId ?? "unknown")}#${String(entry.round ?? 1)}`;
 		if (!rounds.includes(round)) rounds.push(round);
-		const steps = performedByRound.get(round) ?? new Set<number>();
-		if (typeof entry.step === "number") steps.add(entry.step);
-		performedByRound.set(round, steps);
+		if (typeof entry.step !== "number") continue;
+		if (seen.has(entry.step)) stepsRepeated += 1;
+		seen.add(entry.step);
 	}
 
-	let stepsRepeated = 0;
-	const seen = new Set<number>();
-	for (const round of rounds) {
-		const steps = performedByRound.get(round) ?? new Set<number>();
-		for (const step of steps) {
-			if (seen.has(step)) stepsRepeated += 1;
-			seen.add(step);
-		}
+	let taskReplays = 0;
+	const seenCalls = new Set<string>();
+	for (const entry of input.journal) {
+		if (entry.event !== "tool-task") continue;
+		const callId = String(entry.callId ?? "");
+		if (callId.length > 0 && seenCalls.has(callId)) taskReplays += 1;
+		if (callId.length > 0) seenCalls.add(callId);
 	}
 
+	// Every recovery attempt that opened reports what it carried over; summing
+	// counts the reuse each interruption actually preserved.
 	const recoveryOpens = input.journal.filter(
 		(entry) => entry.event === "attempt-opened" && Number(entry.round) === 1,
 	);
 	const stepsReused = recoveryOpens
 		.slice(1)
-		.reduce((best, entry) => Math.max(best, Array.isArray(entry.confirmed) ? entry.confirmed.length : 0), 0);
+		.reduce((total, entry) => total + (Array.isArray(entry.confirmed) ? entry.confirmed.length : 0), 0);
 
 	const completed = input.journal.some((entry) => entry.event === "attempt-completed");
 	const help = input.journal.some((entry) => entry.event === "help-requested");
@@ -106,7 +125,8 @@ export function computeMetrics(input: RunInput): RunMetrics {
 	return {
 		runId: input.runId,
 		scenario: input.scenario,
-		alternative: input.alternative,
+		mechanism: input.mechanism,
+		label: input.label,
 		guardrails: input.guardrails,
 		...(input.storage === undefined ? {} : { storage: input.storage }),
 		...(input.replaySafe === undefined ? {} : { replaySafe: input.replaySafe }),
@@ -117,11 +137,14 @@ export function computeMetrics(input: RunInput): RunMetrics {
 		recoveriesConsumed: input.recovery.consumed,
 		stepsReused,
 		stepsRepeated,
+		taskReplays,
 		effectsReconciled: input.journal.filter((entry) => entry.event === "effect-reconciled").length,
 		externalMutations: input.world.records().length,
 		duplicatedEffects: input.world.duplicatedEffects(),
 		helpRequests: input.journal.filter((entry) => entry.event === "help-requested").length,
 		simultaneousWorkers: maxConcurrentWorkers(input.journal),
+		policyWouldDuplicate: input.journal.filter((entry) => entry.event === "policy-would-duplicate").length,
+		attachedLiveWorker: input.journal.filter((entry) => entry.event === "attach-live-worker").length,
 		interruptedFacts: input.journal.filter(
 			(entry) =>
 				(entry.event === "attempt-opened" || entry.event === "attempt-settled") &&
@@ -136,10 +159,17 @@ export function computeMetrics(input: RunInput): RunMetrics {
 		feedbackInContext: input.journal.some(
 			(entry) => entry.event === "feedback-in-context" && entry.present === true,
 		),
-		interruptedRecordedFacts: input.journal.filter(
+		interruptedFactsRecorded: input.journal.filter(
 			(entry) =>
 				entry.event === "attempt-settled" &&
-				entry.interruptedRecorded === true &&
+				entry.interruptedFactKind === "recorded" &&
+				Array.isArray(entry.interrupted) &&
+				entry.interrupted.length > 0,
+		).length,
+		interruptedFactsInferred: input.journal.filter(
+			(entry) =>
+				entry.event === "attempt-settled" &&
+				entry.interruptedFactKind === "inferred" &&
 				Array.isArray(entry.interrupted) &&
 				entry.interrupted.length > 0,
 		).length,
@@ -148,9 +178,34 @@ export function computeMetrics(input: RunInput): RunMetrics {
 		recoveryWaitMs: input.journal
 			.filter((entry) => entry.event === "recover-from-confirmed")
 			.reduce((total, entry) => total + (typeof entry.waitMs === "number" ? entry.waitMs : 0), 0),
+		recoveryTimeMs: recoveryTime(input.journal),
 		exitCodes: input.exitCodes,
 		outcome: completed ? "completed" : help ? "help" : lastExit === 0 ? "completed" : "failed",
 	};
+}
+
+/** Wall time from each interruption to the next attempt opening, summed. */
+function recoveryTime(journal: readonly JournalEntry[]): number {
+	const interruptionEvents = new Set([
+		"kill-self",
+		"kill-between-steps",
+		"kill-during-effect",
+		"kill-during-effect-ambiguous",
+		"kill-during-tool",
+		"worker-exit",
+		"attached-worker-exited",
+	]);
+	let lastInterruption: number | undefined;
+	let seenFirstOpen = false;
+	let total = 0;
+	for (const entry of journal) {
+		if (interruptionEvents.has(entry.event)) lastInterruption = entry.at;
+		if (entry.event !== "attempt-opened") continue;
+		if (seenFirstOpen && lastInterruption !== undefined) total += Math.max(0, entry.at - lastInterruption);
+		seenFirstOpen = true;
+		lastInterruption = undefined;
+	}
+	return total;
 }
 
 /** Peak overlap of workers that asked to be launched, by their own events. */
@@ -173,5 +228,3 @@ function maxConcurrentWorkers(journal: readonly JournalEntry[]): number {
 	const killed = journal.filter((entry) => entry.event === "kill-self" || entry.event === "kill-during-effect").length;
 	return killed > 0 ? Math.max(peak, 1) : peak;
 }
-
-export { WORKLOAD_STEPS };

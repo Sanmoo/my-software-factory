@@ -33,11 +33,6 @@ export class Journal {
 			.map((line) => JSON.parse(line) as JournalEntry);
 	}
 
-	/** Entries written by one role, in order. */
-	byRole(role: string): JournalEntry[] {
-		return this.read().filter((entry) => entry.role === role);
-	}
-
 	last(event: string): JournalEntry | undefined {
 		return this.read()
 			.filter((entry) => entry.event === event)

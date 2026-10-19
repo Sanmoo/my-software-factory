@@ -133,16 +133,20 @@ export class Ownership {
 		rmSync(this.ownerPath, { force: true });
 	}
 
-	/** The gate the contract requires before opening persisted state or launching
-	 * a substitute: with another owner or a live worker, stop instead. */
+	/**
+	 * The gate the contract requires before opening persisted state or launching a
+	 * substitute. Two independent refusals: another live owner, and a live worker
+	 * this process is not — a surviving worker whose controller died leaves a stale
+	 * owner record, which is exactly when a substitute must not start.
+	 */
 	guardBeforeOpen(ownerId: string): void {
 		const state = this.inspectOwner();
 		if (state.state === "live" && state.owner.ownerId !== ownerId) {
 			throw new OwnershipConflict(`live owner ${state.owner.ownerId} is conducting this execution`);
 		}
 		const worker = this.worker();
-		if (worker && this.alive(worker.pid) && state.state === "live" && state.owner.ownerId !== ownerId) {
-			throw new OwnershipConflict(`live worker ${worker.pid} is conducting this execution`);
+		if (worker && this.alive(worker.pid) && worker.pid !== process.pid && state.state !== "live") {
+			throw new OwnershipConflict(`live worker ${worker.pid} is still conducting this execution`);
 		}
 	}
 

@@ -24,7 +24,8 @@ test("a clean single attempt reuses nothing and repeats nothing", () => {
 	const metrics = computeMetrics({
 		runId: "r",
 		scenario: "s2",
-		alternative: "B",
+		mechanism: "B",
+		label: "B+guard",
 		guardrails: true,
 		repeat: 1,
 		journal: [
@@ -53,7 +54,8 @@ test("a second attempt without confirmed progress repeats the work and duplicate
 	const metrics = computeMetrics({
 		runId: "r",
 		scenario: "s1",
-		alternative: "A",
+		mechanism: "A",
+		label: "A-noguard",
 		guardrails: false,
 		repeat: 1,
 		journal: [
@@ -85,7 +87,8 @@ test("resuming the same attempt reuses confirmed steps and repeats none", () => 
 	const metrics = computeMetrics({
 		runId: "r",
 		scenario: "s2",
-		alternative: "C",
+		mechanism: "C",
+		label: "C-sqlite+guard",
 		guardrails: true,
 		repeat: 1,
 		journal: [
@@ -107,16 +110,88 @@ test("resuming the same attempt reuses confirmed steps and repeats none", () => 
 	assert.equal(metrics.attemptsConsumedByInterruption, 0);
 	assert.equal(metrics.stepsReused, 2);
 	assert.equal(metrics.stepsRepeated, 0);
+	assert.equal(metrics.taskReplays, 0);
 	assert.deepEqual(metrics.duplicatedEffects, []);
 	assert.equal(metrics.recoveriesConsumed, 1);
 	assert.equal(metrics.interruptedFacts, 1);
+});
+
+test("a step repeated inside the same attempt is still a repeat", () => {
+	const metrics = computeMetrics({
+		runId: "r",
+		scenario: "s2b",
+		mechanism: "C",
+		label: "C-safe+guard",
+		guardrails: true,
+		repeat: 1,
+		journal: [
+			entry(0, "worker-spawned", { attemptId: "attempt-1", pid: 1 }),
+			entry(1, "attempt-opened", { attemptId: "attempt-1", round: 1, confirmed: [], interrupted: [] }),
+			entry(2, "tool-task", { step: 4, callId: "call-a", round: 1 }),
+			entry(3, "step-performed", { attemptId: "attempt-1", round: 1, step: 4 }),
+			entry(4, "tool-task", { step: 4, callId: "call-a", round: 1 }),
+			entry(5, "step-performed", { attemptId: "attempt-1", round: 1, step: 4 }),
+			entry(6, "worker-exit", { code: 0 }),
+			entry(7, "attempt-completed", { attemptId: "attempt-1" }),
+		],
+		world: world(),
+		recovery: { consumed: 0, events: [] },
+		exitCodes: [0],
+	});
+	assert.equal(metrics.stepsRepeated, 1, "the second execution of step 4 is a repeat");
+	assert.equal(metrics.taskReplays, 1, "the same call id running twice is a replay");
+});
+
+test("recovery time is the wall time from the interruption to the next attempt", () => {
+	const metrics = computeMetrics({
+		runId: "r",
+		scenario: "s2",
+		mechanism: "B",
+		label: "B+guard",
+		guardrails: true,
+		repeat: 1,
+		journal: [
+			entry(0, "worker-spawned", { attemptId: "attempt-1", pid: 1 }),
+			entry(10, "attempt-opened", { attemptId: "attempt-1", round: 1, confirmed: [], interrupted: [] }),
+			entry(100, "kill-between-steps", { step: 5 }),
+			entry(1_000, "recover-from-confirmed", { waitMs: 1000 }),
+			entry(1_500, "attempt-opened", { attemptId: "attempt-1", round: 1, confirmed: [1, 2, 3, 4], interrupted: [] }),
+		],
+		world: world(),
+		recovery: { consumed: 1, events: [] },
+		exitCodes: [0],
+	});
+	assert.equal(metrics.recoveryWaitMs, 1000);
+	assert.equal(metrics.recoveryTimeMs, 1_400);
+	assert.equal(metrics.stepsReused, 4);
+});
+
+test("a recorded interruption and an inferred one are counted apart", () => {
+	const metrics = computeMetrics({
+		runId: "r",
+		scenario: "s3",
+		mechanism: "C",
+		label: "C-sqlite+guard",
+		guardrails: true,
+		repeat: 1,
+		journal: [
+			entry(0, "attempt-settled", { attemptId: "attempt-1", round: 1, interrupted: [6], interruptedFactKind: "recorded" }),
+			entry(1, "attempt-settled", { attemptId: "attempt-1", round: 1, interrupted: [6], interruptedFactKind: "inferred" }),
+		],
+		world: world(),
+		recovery: { consumed: 0, events: [] },
+		exitCodes: [0],
+	});
+	assert.equal(metrics.interruptedFactsRecorded, 1);
+	assert.equal(metrics.interruptedFactsInferred, 1);
 });
 
 test("two overlapping workers and a help request are both visible", () => {
 	const metrics = computeMetrics({
 		runId: "r",
 		scenario: "s1",
-		alternative: "A",
+		mechanism: "A",
+		label: "A-noguard",
 		guardrails: false,
 		repeat: 1,
 		journal: [

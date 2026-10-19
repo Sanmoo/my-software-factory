@@ -94,6 +94,14 @@ test("the during-effect fault kills after the mutation and before the result", a
 	assert.equal(journal.last("kill-during-effect")?.step, 6);
 });
 
+test("the during-tool fault also lands on a step with no external effect", async () => {
+	const dir = scratch();
+	const { hooks: h, world, journal } = hooks(dir, { fault: { atStep: 4, point: "during-tool" } });
+	await assert.rejects(() => runStep(stepAt(4), h), Killed);
+	assert.equal(journal.last("kill-during-tool")?.step, 4);
+	assert.equal(world.records().length, 0, "no effect is involved");
+});
+
 test("the ambiguous fault leaves torn evidence behind", async () => {
 	const dir = scratch();
 	const { hooks: h, world } = hooks(dir, { fault: { atStep: 3, point: "during-effect-ambiguous" } });

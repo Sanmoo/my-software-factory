@@ -54,6 +54,27 @@ test("a surviving worker is recognized, and blocks opening the state as a new ow
 	ownership.guardBeforeOpen("owner-1");
 });
 
+test("a live worker with a stale owner blocks opening the state as a substitute", () => {
+	const dir = fresh();
+	// The controller died; its worker is still running. This is scenario 1.
+	const ownership = new Ownership(dir, () => 1000, (pid) => pid === 4242);
+	ownership.acquire("owner-1", "attempt-1");
+	ownership.recordWorker("attempt-1", 4242);
+	assert.equal(ownership.inspectOwner().state, "stale");
+	assert.throws(() => ownership.guardBeforeOpen("owner-1"), OwnershipConflict);
+	assert.match(
+		(() => {
+			try {
+				ownership.guardBeforeOpen("owner-1");
+				return "";
+			} catch (error) {
+				return (error as Error).message;
+			}
+		})(),
+		/live worker 4242/,
+	);
+});
+
 test("a worker whose process is gone is not a live worker", () => {
 	const dir = fresh();
 	const alive = (pid: number) => pid === process.pid;

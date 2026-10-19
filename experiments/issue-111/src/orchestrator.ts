@@ -7,16 +7,18 @@
  * (3 recoveries, 1s/4s/16s) and the repeats per configuration.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ExternalWorld } from "./effects.js";
 import { Journal } from "./journal.js";
+import { Ownership } from "./ownership.js";
 import type { RunConfig } from "./mechanism.js";
 import { computeMetrics, type RunMetrics } from "./metrics.js";
 import type { RecoveryState } from "./recovery.js";
 import { NO_FAULT, type FaultSpec } from "./workload.js";
+import { sleep } from "./util.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const controllerPath = join(here, "controller.js");
@@ -25,7 +27,7 @@ export interface ScenarioSpec {
 	readonly id: string;
 	readonly name: string;
 	readonly fault: FaultSpec;
-	readonly corruptState: "none" | "session" | "storage" | "storage-torn";
+	readonly corruptState: "none" | "session" | "storage" | "torn-tail";
 	readonly feedback?: string;
 	readonly killControllerAfterMilestone: boolean;
 	readonly holdOwner: boolean;
@@ -55,6 +57,15 @@ export const SCENARIOS: readonly ScenarioSpec[] = [
 		killControllerAfterMilestone: false,
 		holdOwner: false,
 		expected: "mesma tentativa; passos confirmados reaproveitados; nenhum efeito duplicado",
+	},
+	{
+		id: "s2b",
+		name: "worker interrompido dentro de ferramenta sem efeito externo",
+		fault: { atStep: 4, point: "during-tool" },
+		corruptState: "none",
+		killControllerAfterMilestone: false,
+		holdOwner: false,
+		expected: "retomar a mesma tentativa sem presumir que repetir a ferramenta é seguro",
 	},
 	{
 		id: "s3",
@@ -96,11 +107,11 @@ export const SCENARIOS: readonly ScenarioSpec[] = [
 		id: "g2b",
 		name: "última escrita parcial (tail truncado)",
 		fault: { atStep: 5, point: "between-steps" },
-		corruptState: "storage-torn",
+		corruptState: "torn-tail",
 		killControllerAfterMilestone: false,
 		holdOwner: false,
 		expected: "registrar o que ficou sem prova: uma cauda parcial pode ser descartada em silêncio",
-		variantsOnly: ["C-jsonl+guard"],
+		variantsOnly: ["B+guard", "C-jsonl+guard"],
 	},
 	{
 		id: "g3",
@@ -191,6 +202,7 @@ export async function runOnce(
 
 	const config: RunConfig = {
 		runId,
+		label: variant.label,
 		scenario: scenario.id,
 		alternative: variant.alternative,
 		guardrails: variant.guardrails,
@@ -208,12 +220,7 @@ export async function runOnce(
 		attemptId: "attempt-1",
 		reconstructedContext:
 			"Contexto reconstruído: issue #111, conversa do PR e diff do branch de trabalho.",
-		corruptState:
-			scenario.corruptState === "session" && variant.alternative === "C"
-				? "storage"
-				: scenario.corruptState === "storage-torn" && variant.alternative !== "C"
-					? "session"
-					: scenario.corruptState,
+		corruptState: scenario.corruptState === "session" && variant.alternative === "C" ? "storage" : scenario.corruptState,
 		killControllerAfterMilestone: scenario.killControllerAfterMilestone,
 		repeatFault: scenario.id === "g1",
 		stepDelayMs: scenario.killControllerAfterMilestone ? 600 : 150,
@@ -241,12 +248,18 @@ export async function runOnce(
 	for (let phase = 0; phase < recoveries; phase += 1) {
 		if (journalHas(dir, "attempt-completed") && !scenario.feedback) break;
 		if (journalHas(dir, "help-requested")) break;
+		// A feedback round is a new round, not an interruption to recover from.
+		if (scenario.feedback !== undefined && journalHas(dir, "feedback-in-context")) break;
 		const result = await runPhase(configPath, "recover");
 		if (result.code !== null) exitCodes.push(result.code);
 		if (result.code === 0 || result.code === 30) break;
 	}
 
 	if (hold) hold.kill("SIGKILL");
+
+	// Promise on a worker can outlive the controller's exit (A relaunches while the
+	// first worker still runs), so wait until nothing is writing before counting.
+	await quiesce(dir, workDir);
 
 	const journal = new Journal(join(dir, "journal.jsonl"));
 	const recoveryPath = join(workDir, "recovery.json");
@@ -257,7 +270,8 @@ export async function runOnce(
 	const metrics = computeMetrics({
 		runId,
 		scenario: scenario.id,
-		alternative: variant.label,
+		mechanism: variant.alternative,
+		label: variant.label,
 		guardrails: config.guardrails,
 		storage: variant.storage,
 		replaySafe: variant.replaySafe,
@@ -270,10 +284,29 @@ export async function runOnce(
 	return { metrics, dir, exitCodes };
 }
 
+/** Wait until no worker is alive and the journal has stopped growing. */
+async function quiesce(dir: string, workDir: string, stableMs = 750, maxMs = 30_000): Promise<void> {
+	const journalPath = join(dir, "journal.jsonl");
+	const ownership = new Ownership(workDir);
+	const deadline = Date.now() + maxMs;
+	let lastSize = -1;
+	let stableSince = 0;
+	while (Date.now() < deadline) {
+		const size = existsSync(journalPath) ? statSync(journalPath).size : 0;
+		const alive = ownership.liveWorker() !== undefined;
+		if (!alive && size === lastSize) {
+			if (stableSince === 0) stableSince = Date.now();
+			if (Date.now() - stableSince >= stableMs) return;
+		} else {
+			stableSince = 0;
+			lastSize = size;
+		}
+		await sleep(50);
+	}
+}
+
 function journalHas(dir: string, event: string): boolean {
 	const path = join(dir, "journal.jsonl");
 	if (!existsSync(path)) return false;
 	return readFileSync(path, "utf8").includes(`"event":"${event}"`);
 }
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

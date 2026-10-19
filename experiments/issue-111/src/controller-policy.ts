@@ -77,12 +77,3 @@ export function decideRecovery(state: ControllerState): RecoveryAction {
 
 	return { action: "rebuild-from-confirmed", waitMs: state.budget.waitMs };
 }
-
-/** A's recovery consumes an attempt; B and C consume the recovery budget. */
-export function consumesAttempt(action: RecoveryAction, mechanism: MechanismKind): boolean {
-	return mechanism === "A" && action.action === "relaunch-new-attempt";
-}
-
-export function consumesRecovery(action: RecoveryAction): boolean {
-	return action.action === "rebuild-from-confirmed";
-}

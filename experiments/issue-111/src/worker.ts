@@ -99,9 +99,7 @@ async function main(): Promise<number> {
 			round: config.round,
 			confirmed: await mechanism.confirmedSteps(),
 			interrupted: await mechanism.interruptedSteps(),
-			// Durable records an interruption itself (an error tool result); the
-			// native session only allows inferring it from a missing result.
-			interruptedRecorded: config.alternative === "C",
+			interruptedFactKind: mechanism.interruptedFactKind(),
 		});
 		journal.append({
 			role,

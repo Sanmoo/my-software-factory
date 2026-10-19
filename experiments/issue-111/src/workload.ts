@@ -42,6 +42,8 @@ export type FaultPoint =
 	| "none"
 	/** Killed before the step starts; every earlier result is recorded. */
 	| "between-steps"
+	/** Killed inside a step that performs no external effect, before its result. */
+	| "during-tool"
 	/** Killed inside the step, after the external mutation, before its result. */
 	| "during-effect"
 	/** Killed after a torn external write: the evidence cannot decide. */
@@ -62,9 +64,7 @@ export type Disposition =
 	| "performed"
 	/** Not recorded, but external evidence said it was already done: the mutation
 	 * was NOT repeated. */
-	| "reconciled"
-	/** Not enough evidence to continue: the worker paused and asked for help. */
-	| "help";
+	| "reconciled";
 
 export interface StepRunResult {
 	readonly step: number;

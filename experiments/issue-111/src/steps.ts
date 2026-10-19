@@ -13,6 +13,7 @@
 import type { ExternalWorld } from "./effects.js";
 import type { Journal } from "./journal.js";
 import { FaultSpec, Step, StepRunResult } from "./workload.js";
+import { sleep } from "./util.js";
 
 export interface StepRunHooks {
 	readonly attemptId: string;
@@ -32,8 +33,6 @@ export interface StepRunHooks {
 	readonly round: number;
 }
 
-const sleep = (ms: number) => (ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
-
 export async function runStep(step: Step, hooks: StepRunHooks): Promise<StepRunResult> {
 	if (hooks.confirmed.has(step.index)) {
 		hooks.journal.append({ role: "worker", event: "step-reused", attemptId: hooks.attemptId, round: hooks.round, step: step.index });
@@ -43,6 +42,12 @@ export async function runStep(step: Step, hooks: StepRunHooks): Promise<StepRunR
 	if (step.kind === "analyze") {
 		if (hooks.fault.atStep === step.index && hooks.fault.point === "between-steps") {
 			hooks.journal.append({ role: "worker", event: "kill-between-steps", attemptId: hooks.attemptId, round: hooks.round, step: step.index });
+			hooks.kill();
+		}
+		// An interruption inside a tool that performs no external effect: the call
+		// has no result, and nothing says replay would be safe.
+		if (hooks.fault.atStep === step.index && hooks.fault.point === "during-tool") {
+			hooks.journal.append({ role: "worker", event: "kill-during-tool", attemptId: hooks.attemptId, round: hooks.round, step: step.index });
 			hooks.kill();
 		}
 		await sleep(hooks.stepDelayMs);

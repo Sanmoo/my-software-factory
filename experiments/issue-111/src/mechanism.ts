@@ -37,10 +37,12 @@ import type { MechanismKind } from "./controller-policy.js";
 import type { ExternalWorld } from "./effects.js";
 import type { Journal } from "./journal.js";
 import { runStep, type StepRunHooks } from "./steps.js";
-import { type FaultSpec, WORKLOAD, type Step } from "./workload.js";
+import { type FaultSpec, WORKLOAD, type Step, stepAt } from "./workload.js";
 
 export interface RunConfig {
 	readonly runId: string;
+	/** The configuration label, for citing this run in the report. */
+	readonly label: string;
 	readonly scenario: string;
 	readonly alternative: MechanismKind;
 	readonly guardrails: boolean;
@@ -50,7 +52,7 @@ export interface RunConfig {
 	readonly round: number;
 	readonly feedback?: string;
 	/** Corrupt the mechanism's persisted state before the next recovery. */
-	readonly corruptState: "none" | "session" | "storage" | "storage-torn";
+	readonly corruptState: "none" | "session" | "storage" | "torn-tail";
 	/** Scenario 1: hard-stop the controller once the worker has opened the attempt. */
 	readonly killControllerAfterMilestone: boolean;
 	/** Re-arm the fault on every recovery (the exhausted-budget guardrail). */
@@ -73,6 +75,9 @@ export interface Mechanism {
 	confirmedSteps(): Promise<number[]>;
 	/** Step indices whose tool call was interrupted and never confirmed. */
 	interruptedSteps(): Promise<number[]>;
+	/** How this mechanism reports an interruption: a recorded fact, or an
+	 * inference from a call left without a result. */
+	interruptedFactKind(): "recorded" | "inferred";
 	/** A list of what the resume left in place, for the report. */
 	resumeFacts(): Promise<Record<string, unknown>>;
 	/** The text the model would see next, so a new round's context can be checked. */
@@ -186,12 +191,6 @@ function messageText(message: unknown): string {
 		.join("\n");
 }
 
-function stepOf(index: number): Step {
-	const step = WORKLOAD.find((candidate) => candidate.index === index);
-	if (!step) throw new Error(`no workload step ${index}`);
-	return step;
-}
-
 function stepHooks(deps: MechanismDeps, confirmed: ReadonlySet<number>): StepRunHooks {
 	return {
 		attemptId: deps.config.attemptId,
@@ -244,7 +243,7 @@ async function openPi(deps: MechanismDeps): Promise<Mechanism> {
 						parameters: Type.Object({ step: Type.Number() }),
 						execute: async (_id, params) => {
 							const facts = factsFromMessages(branchMessages(manager));
-							const result = await runStep(stepOf(params.step), stepHooks(deps, new Set(facts.confirmed)));
+							const result = await runStep(stepAt(params.step), stepHooks(deps, new Set(facts.confirmed)));
 							return {
 								content: [{ type: "text", text: result.text }],
 								details: { disposition: result.disposition },
@@ -311,6 +310,9 @@ async function openPi(deps: MechanismDeps): Promise<Mechanism> {
 		confirmedSteps: async () => confirmed(),
 		interruptedSteps: async () =>
 			config.alternative === "A" ? [] : factsFromMessages(branchMessages(manager)).unconfirmed,
+		// The native session has no interrupted marker: a call without a result is
+		// all it offers, so anything read from it is an inference.
+		interruptedFactKind: () => "inferred",
 		resumeFacts: async () => ({
 			mechanism: config.alternative,
 			sessionFile: session.sessionFile ?? null,
@@ -365,7 +367,7 @@ async function openDurable(deps: MechanismDeps): Promise<Mechanism> {
 				taskId: api.taskId,
 				replay: config.replaySafe ? "safe" : "unsafe",
 			});
-			const result = await runStep(stepOf(args.step), stepHooks(deps, known));
+			const result = await runStep(stepAt(args.step), stepHooks(deps, known));
 			return { output: [{ type: "text" as const, text: result.text }] };
 		},
 	});
@@ -456,6 +458,8 @@ async function openDurable(deps: MechanismDeps): Promise<Mechanism> {
 		kind: "C",
 		confirmedSteps: confirmed,
 		interruptedSteps: interrupted,
+		// Durable commits an error tool result for the interrupted call: a fact.
+		interruptedFactKind: () => "recorded",
 		resumeFacts: async () => {
 			const inspection = await harness.inspect(BACKGROUND_CONTEXT);
 			return {

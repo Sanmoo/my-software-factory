@@ -8,28 +8,19 @@
  * attempt identity and the recovery ledger are the only things it writes.
  */
 import { spawn } from "node:child_process";
-import {
-	appendFileSync,
-	closeSync,
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	rmSync,
-	truncateSync,
-	writeFileSync,
-	writeSync,
-} from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { corruptState } from "./corrupt.js";
 import { decideRecovery, type RecoveryAction } from "./controller-policy.js";
 import { ExternalWorld } from "./effects.js";
 import { Journal } from "./journal.js";
 import type { RunConfig } from "./mechanism.js";
-import { Ownership } from "./ownership.js";
+import { Ownership, isProcessAlive } from "./ownership.js";
 import { DEFAULT_RECOVERY_POLICY, RecoveryLedger } from "./recovery.js";
 import { NO_FAULT } from "./workload.js";
+import { sleep } from "./util.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerPath = join(here, "worker.js");
@@ -45,8 +36,6 @@ const ownership = new Ownership(config.workDir);
 const ledger = new RecoveryLedger(join(config.workDir, "recovery.json"), DEFAULT_RECOVERY_POLICY);
 const attemptsDir = join(config.workDir, "attempts");
 const dropsPath = join(config.workDir, "a-attempt-drops.json");
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 interface Exit {
 	readonly code: number | null;
@@ -133,57 +122,6 @@ function recoveryFault(): RunConfig["fault"] {
 	return config.repeatFault ? config.fault : NO_FAULT;
 }
 
-function corruptState(): void {
-	if (config.corruptState === "none") return;
-	if (config.corruptState === "storage-torn") {
-		// A partial last write: the tail of the append-only log never landed.
-		const jsonl = join(config.workDir, "storage-jsonl");
-		const main = join(jsonl, "main.jsonl");
-		if (existsSync(main)) {
-			appendFileSync(main, '{"format":1,"type":"commit","seq":9');
-			journal.append({ role: "controller", event: "state-corrupted", target: `${main} (tail)` });
-		}
-		return;
-	}
-	const pathFile = join(config.workDir, "session-path.txt");
-	if (config.corruptState === "session") {
-		if (existsSync(pathFile)) {
-			const sessionFile = readFileSync(pathFile, "utf8").trim();
-			if (existsSync(sessionFile)) truncateSync(sessionFile, 64);
-			journal.append({ role: "controller", event: "state-corrupted", target: sessionFile });
-		}
-		return;
-	}
-	const sqlite = join(config.workDir, "storage.sqlite");
-	const jsonl = join(config.workDir, "storage-jsonl");
-	if (existsSync(sqlite)) {
-		// Destroy the header and drop the WAL: no SQLite recovery path is left.
-		const handle = openSync(sqlite, "r+");
-		writeSync(handle, Buffer.alloc(100, 0x7f), 0, 100, 0);
-		closeSync(handle);
-		rmSync(`${sqlite}-wal`, { force: true });
-		rmSync(`${sqlite}-shm`, { force: true });
-		journal.append({ role: "controller", event: "state-corrupted", target: sqlite });
-	} else if (existsSync(jsonl)) {
-		// Destroy the first commit record: the append-only header is unreadable.
-		const main = join(jsonl, "main.jsonl");
-		if (existsSync(main)) {
-			const handle = openSync(main, "r+");
-			writeSync(handle, Buffer.alloc(32, 0x7f), 0, 32, 0);
-			closeSync(handle);
-		}
-		journal.append({ role: "controller", event: "state-corrupted", target: jsonl });
-	} else if (existsSync(pathFile)) {
-		const sessionFile = readFileSync(pathFile, "utf8").trim();
-		if (existsSync(sessionFile)) truncateSync(sessionFile, 64);
-		journal.append({ role: "controller", event: "state-corrupted", target: sessionFile });
-	}
-}
-
-function helpAlreadyRequested(): boolean {
-	return journal.read().some((entry) => entry.event === "help-requested" || entry.event === "worker-paused");
-}
-
 function pauseHelp(reason: string): number {
 	journal.append({ role: "controller", event: "help-requested", reason, attemptId: config.attemptId });
 	return 30;
@@ -195,7 +133,7 @@ async function attachToLiveWorker(pid: number): Promise<number> {
 	ownership.guardBeforeOpen(config.ownerId);
 	const deadline = Date.now() + 60_000;
 	while (Date.now() < deadline) {
-		if (!isAlive(pid)) {
+		if (!isProcessAlive(pid)) {
 			const worker = ownership.worker();
 			const done = worker ? attemptCompleted(worker.attemptId, 1) : false;
 			journal.append({ role: "controller", event: "attached-worker-exited", pid, completed: done });
@@ -206,13 +144,8 @@ async function attachToLiveWorker(pid: number): Promise<number> {
 	return 31;
 }
 
-function isAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
+function helpAlreadyRequested(): boolean {
+	return journal.read().some((entry) => entry.event === "help-requested" || entry.event === "worker-paused");
 }
 
 /**
@@ -220,6 +153,14 @@ function isAlive(pid: number): boolean {
  * cycle should run (the attempt was interrupted again).
  */
 async function cycle(round: number): Promise<number | undefined> {
+	// The missing/invalid state guardrail: damage the persisted state once, before
+	// the first recovery, so every mechanism faces it (A included, which simply
+	// never opens what was damaged).
+	const corruptedMarker = join(config.workDir, ".state-corrupted");
+	if (config.corruptState !== "none" && !existsSync(corruptedMarker)) {
+		corruptState(config, journal);
+		writeFileSync(corruptedMarker, "1\n");
+	}
 	if (helpAlreadyRequested()) {
 		// The worker stopped on purpose: this is a pause, not an interruption to
 		// recover from, and it must not consume the recovery budget.
@@ -251,6 +192,19 @@ async function cycle(round: number): Promise<number | undefined> {
 
 	if (action.action === "relaunch-new-attempt") {
 		// A: the interruption releases a new attempt; branch and artifacts stay.
+		if (live) {
+			// The policy wants a substitute while a worker is still conducting the
+			// work. The policy failure is recorded, and the ownership gate refuses
+			// the launch rather than running two workers over the same execution.
+			journal.append({
+				role: "controller",
+				event: "policy-would-duplicate",
+				liveWorkerPid: live.pid,
+				mechanism: config.alternative,
+			});
+			journal.append({ role: "controller", event: "launch-refused-live-worker", liveWorkerPid: live.pid });
+			return pauseHelp("substitute refused: a live worker is still conducting this execution");
+		}
 		const attemptId = nextAttemptId();
 		journal.append({
 			role: "controller",
@@ -279,7 +233,6 @@ async function cycle(round: number): Promise<number | undefined> {
 		consumed: decision.consumed,
 	});
 	await sleep(decision.waitMs);
-	corruptState();
 	const child = spawnWorker(config.attemptId, round, { fault: recoveryFault() });
 	const exit = await waitForExit(child);
 	journal.append({ role: "controller", event: "worker-exit", ...exit, attemptId: config.attemptId });
