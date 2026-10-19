@@ -93,10 +93,9 @@ msf run --once
 The sweep derives the pool from the tracker and claims the issue
 (`ready-for-agent` → `agent-claimed`) BEFORE any launch, clones the repo,
 creates the work branch `agent-issue-<n>` and launches ONE real worker (Pi,
-container, using the configured `worker-model`). A claimed work is excluded by
-the presence of `agent-claimed`, never by the absence of `ready-for-agent`.
-When the worker opens the PR from the bot account and writes `desfecho.json`,
-the sweep collects it and exits.
+container, using the configured `worker-model`). When the worker opens the PR
+from the bot account and writes `desfecho.json`, the sweep collects it and
+exits.
 
 ## (b) Continuous: the feedback rounds
 
