@@ -47,6 +47,10 @@ class FakeGitWork implements GitWork {
   async diffWork(ref: IssueRef): Promise<string> {
     return this.diffs.get(ref.number) ?? "";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
 describe("loop wiring — the git host feeds every launch", () => {

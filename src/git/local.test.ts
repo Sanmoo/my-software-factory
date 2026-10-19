@@ -120,6 +120,71 @@ describe("git host — one clone per target repo", () => {
     assert.equal(deleted.branchOnOrigin, false, "a deleted remote branch is not on origin");
   });
 
+  test("observeRemoteHead reports the remote branch SHA — the lease value observed before a repair", async () => {
+    const git = gitWork();
+    const ref = { repo: "Sanmoo/my-tasks", number: 7 };
+    await git.prepareWork(ref);
+    assert.equal(await git.observeRemoteHead(ref), null, "not yet published: nothing to lease against");
+
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    await execFile("git", ["config", "user.email", "worker@example.com"], { cwd: cloneDir });
+    await execFile("git", ["config", "user.name", "worker"], { cwd: cloneDir });
+    await execFile("git", ["checkout", "-q", workBranchName(7)], { cwd: cloneDir });
+    await commitFileIn(cloneDir, "work.txt", "round 1\n", "round 1");
+    const firstHead = (await execFile("git", ["rev-parse", "HEAD"], { cwd: cloneDir })).stdout.trim();
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+
+    assert.equal(await git.observeRemoteHead(ref), firstHead, "the observed head is the pinned lease value");
+
+    // A concurrent collaborator pushes: the remote moves, so the pinned value
+    // is stale — the very mismatch the repair launch checks before acting.
+    await commitFileIn(cloneDir, "other.txt", "concurrent\n", "concurrent");
+    const movedHead = (await execFile("git", ["rev-parse", "HEAD"], { cwd: cloneDir })).stdout.trim();
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+
+    const observedNow = await git.observeRemoteHead(ref);
+    assert.equal(observedNow, movedHead, "the remote moved");
+    assert.notEqual(observedNow, firstHead, "the stale lease would no longer match");
+  });
+
+  test("a force-with-lease pinned to the OBSERVED head never overwrites a concurrent push (issue 107)", async () => {
+    const git = gitWork();
+    const ref = { repo: "Sanmoo/my-tasks", number: 7 };
+    await git.prepareWork(ref);
+
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    await execFile("git", ["config", "user.email", "worker@example.com"], { cwd: cloneDir });
+    await execFile("git", ["config", "user.name", "worker"], { cwd: cloneDir });
+    await execFile("git", ["checkout", "-q", workBranchName(7)], { cwd: cloneDir });
+    await commitFileIn(cloneDir, "work.txt", "round 1\n", "round 1");
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+    const observed = await git.observeRemoteHead(ref);
+    assert.ok(observed);
+
+    // A concurrent collaborator rewrites the remote branch.
+    await commitFileIn(cloneDir, "other.txt", "concurrent\n", "concurrent");
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+
+    // The worker's rebase produced a rewritten history; it pushes with the
+    // lease pinned to the observed SHA — the push MUST be rejected.
+    await execFile("git", ["reset", "--hard", observed], { cwd: cloneDir });
+    await commitFileIn(cloneDir, "rebase.txt", "rebased\n", "rebased");
+    await assert.rejects(
+      execFile(
+        "git",
+        ["push", `--force-with-lease=${workBranchName(7)}:${observed}`, "origin", workBranchName(7)],
+        { cwd: cloneDir },
+      ),
+      "the lease rejects the push — the concurrent commit is never overwritten",
+    );
+
+    // The concurrent commit is intact on the remote.
+    const { stdout } = await execFile("git", ["ls-remote", "origin", `refs/heads/${workBranchName(7)}`], {
+      cwd: cloneDir,
+    });
+    assert.notEqual(stdout.trim().split(/\s+/)[0], observed, "the remote still holds the concurrent work");
+  });
+
   test("the base advanced between rounds — the work branch is untouched, no rebase, no merge", async () => {
     const git = gitWork();
     await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });

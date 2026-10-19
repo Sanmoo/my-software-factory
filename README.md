@@ -52,7 +52,8 @@ budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
 Two rulers, one contract: the worker's obligations live in its prompt; the
 factory's classification lives in code and reads only structured facts
-(`desfecho.json` schema, labels, PR existence) — never LLM prose.
+(`desfecho.json` schema, labels, PR existence, PR mergeability and required
+check results) — never LLM prose.
 
 ## Tests
 

@@ -13,6 +13,7 @@
 | Notification | A passive local desktop notice about a new occurrence: the work, a brief reason and the relevant GitHub address. |
 | Notice | The short form of Notification, used in code and docs. |
 | Review notice | A notification that a confirmed-open PR waits for the operator; it points at the PR. |
+| Repair | An automatic reactivation of a reserved work whose open PR has confirmed conflicts with its base or required checks concluded with failure/timeout; at most two rounds without recovery. |
 | Help notice | A notification that a work needs the operator on the issue (help request, block, rejection); it points at the issue. |
 
 ||||||| original

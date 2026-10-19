@@ -58,15 +58,19 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
-/** Counts the pool listings, proving the factory keeps querying during silence. */
+/** Counts the neutral open-issues listings, proving the factory keeps querying during silence. */
 class CountingTracker extends FakeTrackerAdapter {
   listCalls = 0;
 
-  override async listCandidates(repo: string, readyLabel: string) {
+  override async listOpenIssues(repo: string) {
     this.listCalls += 1;
-    return super.listCandidates(repo, readyLabel);
+    return super.listOpenIssues(repo);
   }
 }
 

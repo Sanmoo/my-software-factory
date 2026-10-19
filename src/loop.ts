@@ -4,13 +4,14 @@ import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/por
 import type { GitWork } from "./git/port.js";
 import { helpNotice, reviewNotice, type Notifier, type WorkNotification } from "./notify/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
-import { derivePool, deriveReserved, type PoolEntry, type ReservedDerivation } from "./state/derive.js";
+import { derivePool, deriveReserved, type PoolEntry, type RepairTrigger, type ReservedDerivation } from "./state/derive.js";
 import {
   readOutcomeRecord,
   classifyOutcome,
   type OutcomeRuling,
 } from "./state/outcome.js";
 import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
+import { readRepairCycle, repairEvidenceSignature, writeRepairCycle } from "./pool/repair.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -80,6 +81,9 @@ const RESERVED_OPERATIONAL_CLASS = {
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
+  repair: "reserved",
+  "repair-recovered": "reserved",
+  "repair-blocked": "reserved",
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
 /** In-flight counts as reserved. Titles and order never enter — the schedule order stays untouched. */
@@ -145,8 +149,8 @@ function renderPoolSummary(
   return detail === "" ? head : `${head} — ${detail}`;
 }
 
-/** What a launch starts as: a new claim, a parked feedback round or a retomada. */
-type LaunchKind = "claim" | "feedback" | "resume";
+/** What a launch starts as: a new claim, a parked feedback round, a retomada or a repair. */
+type LaunchKind = "claim" | "feedback" | "resume" | "repair";
 
 interface Launchable {
   ref: IssueRef;
@@ -157,6 +161,8 @@ interface Launchable {
   pr: PullRequest | null;
   /** Human issue replies after the last agent marker, only for a retomada. */
   issueReplies?: IssueComment[];
+  /** The confirmed impediments, only for a repair round. */
+  repair?: RepairTrigger;
 }
 
 /**
@@ -284,6 +290,35 @@ export class SweepEngine {
           };
           if (decision.state === "resumable") launchable.issueReplies = decision.issueReplies;
           parked.push(launchable);
+          break;
+        }
+        case "repair": {
+          parked.push({
+            ref: decision.ref,
+            kind: "repair",
+            createdAt: decision.createdAt,
+            pr: decision.pr,
+            repair: decision.trigger,
+          });
+          break;
+        }
+        case "repair-recovered": {
+          this.log(
+            `derived ${workKey(decision.ref)}: PR recovered — no conflicts and all required checks approved; repair budget reset`,
+          );
+          await writeRepairCycle(workDir(workspace, decision.ref.repo, decision.ref.number), {
+            failedRounds: 0,
+            lastEvidence: null,
+          });
+          break;
+        }
+        case "repair-blocked": {
+          this.log(
+            `derived ${workKey(decision.ref)}: ${decision.failedRounds} automatic repair rounds without recovery — ` +
+              "blocked with the reason on the issue",
+          );
+          await this.applyBlockWithComment(decision.ref, decision.comment);
+          this.announce(decision.ref, "reserved");
           break;
         }
         default:
@@ -445,6 +480,11 @@ export class SweepEngine {
       if (launchable.pr !== null && launchable.pr.state === "closed") {
         await tracker.reopenPr(ref);
       }
+    } else if (kind === "repair") {
+      this.log(
+        `repair round for ${key}: ${launchable.repair?.reasons.join(" + ") ?? "confirmed"} reactivated the worker — ` +
+          "same branch, same PR, no human comment needed",
+      );
     } else {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
     }
@@ -454,9 +494,27 @@ export class SweepEngine {
     // Git host (ticket 15): clone once + delta fetch + work branch born from
     // the default the clone reveals; relaunches reuse the branch untouched.
     const prepared = await this.serializePrepare(ref.repo, () => git.prepareWork(ref));
+
+    // A repair targets the PR's CURRENT base — never the repo default (story 8)
+    // — and is pinned to the head the facts were read on. If the remote moved
+    // since, the evidence is stale: skip the round (the next tick re-derives).
+    const repairTrigger = launchable.repair;
+    let baseBranch = prepared.baseBranch;
+    if (repairTrigger !== undefined) {
+      baseBranch = repairTrigger.facts.baseBranch;
+      const observed = await git.observeRemoteHead(ref);
+      if (observed === null || observed !== repairTrigger.facts.headSha) {
+        this.log(
+          `repair round for ${key} skipped: the remote head ${observed ?? "(absent)"} no longer matches the ` +
+            `observed ${repairTrigger.facts.headSha} — the evidence is stale, nothing is launched`,
+        );
+        return;
+      }
+    }
+
     this.log(
       `launching worker for ${key} (branch ${prepared.branch}, ` +
-        `${prepared.branchCreated ? "created" : "reused"} from base ${prepared.baseBranch})`,
+        `${prepared.branchCreated ? "created" : "reused"} from base ${baseBranch})`,
     );
     // A work branch reaches the remote only when the worker publishes it
     // (push + PR): a relaunch of a work that fell before publishing reuses a
@@ -480,6 +538,16 @@ export class SweepEngine {
       // a new fall starts a fresh count (1st → release again).
       facts.previousFall = false;
     }
+    if (kind === "resume") {
+      // A human answer that unblocks the work also renews the automatic
+      // repair budget (issue 107 story 23); new commits never do.
+      await writeRepairCycle(dir, { failedRounds: 0, lastEvidence: null });
+    }
+    if (repairTrigger !== undefined) {
+      // The round is consumed BEFORE the session: a death mid-round must not
+      // renew the budget nor repeat the same evidence (issue 107).
+      await this.recordRepairRound(dir, ref, repairTrigger);
+    }
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
@@ -488,19 +556,36 @@ export class SweepEngine {
       git,
       ref,
       kind === "resume" ? launchable.issueReplies : undefined,
+      repairTrigger,
     );
     const result = await runtime.launch({
       ref,
       workDir: dir,
       branch: prepared.branch,
       repoDir: prepared.repoDir,
-      baseBranch: prepared.baseBranch,
+      baseBranch,
       attempt: facts.attempt,
       material,
     });
     this.launched.push(result);
 
     await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
+  }
+
+  /** Consume one automatic repair round before its session: the budget and
+   *  the consumed evidence signature persist on disk, so a restart neither
+   *  renews the cap nor repeats the same round. */
+  private async recordRepairRound(dir: string, ref: IssueRef, trigger: RepairTrigger): Promise<void> {
+    const cycle = await readRepairCycle(dir);
+    await writeRepairCycle(dir, {
+      failedRounds: cycle.failedRounds + 1,
+      lastEvidence: repairEvidenceSignature({
+        ref,
+        headSha: trigger.facts.headSha,
+        conflicting: trigger.facts.mergeState === "conflicting",
+        failingChecks: trigger.failingChecks,
+      }),
+    });
   }
 
   /**
@@ -727,6 +812,7 @@ async function launchMaterial(
   git: GitWork,
   ref: IssueRef,
   issueReplies?: IssueComment[],
+  repair?: RepairTrigger,
 ): Promise<WorkerMaterial> {
   const issue = await tracker.readIssue(ref);
   const feedback = await tracker.readPrFeedback(ref);
@@ -748,5 +834,14 @@ async function launchMaterial(
   };
   if (pr !== undefined) material.pr = pr;
   if (issueReplies !== undefined) material.issueReplies = issueReplies;
+  if (repair !== undefined) {
+    material.repair = {
+      reasons: repair.reasons,
+      observedHeadSha: repair.facts.headSha,
+      baseBranch: repair.facts.baseBranch,
+      conflicting: repair.facts.mergeState === "conflicting",
+      checks: repair.failingChecks,
+    };
+  }
   return material;
 }

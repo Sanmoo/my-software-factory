@@ -53,6 +53,10 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "diff --git a/x b/x\n+work";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
 describe("e2e: the continuous run — tick forever, wake by event, clean exit (ticket 14)", () => {

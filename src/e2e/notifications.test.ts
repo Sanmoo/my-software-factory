@@ -39,6 +39,10 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
   }
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 }
 
 class PrAndHelpRuntime implements WorkerRuntime {

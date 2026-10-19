@@ -1,8 +1,18 @@
 import type { Labels } from "../config.js";
-import type { IssueComment, IssueRef, OpenIssue, PrFeedback, PullRequest, TrackerPort } from "../tracker/port.js";
+import type {
+  IssueComment,
+  IssueRef,
+  OpenIssue,
+  PrFeedback,
+  PrRepairFacts,
+  PullRequest,
+  RequiredCheckResult,
+  TrackerPort,
+} from "../tracker/port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
+import { MAX_REPAIR_ROUNDS, readRepairCycle, repairEvidenceSignature } from "../pool/repair.js";
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
@@ -77,6 +87,41 @@ async function hasNoOpenBlocker(port: TrackerPort, ref: IssueRef): Promise<boole
 
 // ---- the reserved states — the tick's full derivation (ticket 14) ----
 
+/** The reasons a confirmed impediment reactivates the worker. */
+export type RepairReason = "conflicts" | "required-checks";
+
+/** A confirmed impediment of an open PR, read from structured facts alone. */
+export interface RepairTrigger {
+  reasons: RepairReason[];
+  facts: PrRepairFacts;
+  /** The required checks that concluded with failure or timeout on this head. */
+  failingChecks: RequiredCheckResult[];
+}
+
+/** A check only reacts when it concluded, and failed or timed out — never
+ *  pending, cancelled, skipped, neutral or an optional one. */
+export function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
+  return check.status === "completed" && (check.conclusion === "failure" || check.conclusion === "timed_out");
+}
+
+/** The trigger of an open PR, or null when nothing is confirmed. */
+export function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
+  const reasons: RepairReason[] = [];
+  if (facts.mergeState === "conflicting") reasons.push("conflicts");
+  const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
+  if (failingChecks.length > 0) reasons.push("required-checks");
+  if (reasons.length === 0) return null;
+  return { reasons, facts, failingChecks };
+}
+
+/** Confirmed recovery (story 22): no conflicts and every required check
+ *  approved. Unknown facts never count as recovery. */
+export function repairRecovered(facts: PrRepairFacts): boolean {
+  if (facts.mergeState !== "mergeable") return false;
+  if (facts.requiredChecks === null) return false;
+  return facts.requiredChecks.every((check) => check.conclusion === "success");
+}
+
 /**
  * The states of ALL reserved works, derived per tick statelessly (ticket 07
  * phase 2): done (issue closed — the terminal state), the merge-without-close
@@ -96,6 +141,24 @@ export type ReservedDerivation =
   | { ref: IssueRef; state: "rejected"; pr: PullRequest; comment: string }
   /** New human comment on the PR: a feedback round on the same branch and PR. */
   | { ref: IssueRef; state: "feedback"; pr: PullRequest; createdAt: string }
+  /**
+   * Confirmed impediments of the open PR (conflicts with the current base or
+   * required checks concluded with failure/timeout) reactivate the worker in
+   * ONE round (issue 107) — the repair budget permits it. Same branch, same PR.
+   */
+  | { ref: IssueRef; state: "repair"; pr: PullRequest; createdAt: string; trigger: RepairTrigger }
+  /** The PR is confirmed clean (no conflicts, every required check approved):
+   *  the repair budget resets (issue 107 story 22). */
+  | { ref: IssueRef; state: "repair-recovered"; pr: PullRequest }
+  /** A confirmed trigger after the two automatic rounds: block and ask help. */
+  | {
+      ref: IssueRef;
+      state: "repair-blocked";
+      pr: PullRequest;
+      trigger: RepairTrigger;
+      failedRounds: number;
+      comment: string;
+    }
   /** Human answer on the issue after the marker: the retomada continues from
    * the existing branch — the sweep swaps blocked→claimed before the launch.
    * Only replies after the last agent marker become worker context. */
@@ -177,6 +240,41 @@ async function deriveReservedWork(
     if (pr.state === "closed") {
       return { ref, state: "rejected", pr, comment: rejectionComment(pr) };
     }
+
+    // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
+    // trigger — conflicts with the current base, or required checks concluded
+    // with failure/timeout. Unknown mergeability and pending/optional checks
+    // never do, and the Block above already won over all of it.
+    const repairFacts = await port.readPrRepairFacts(ref);
+    const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
+    const cycle = await readRepairCycle(work.dir);
+    if (trigger !== null) {
+      const signature = repairEvidenceSignature({
+        ref,
+        headSha: trigger.facts.headSha,
+        conflicting: trigger.facts.mergeState === "conflicting",
+        failingChecks: trigger.failingChecks,
+      });
+      // Story 19: re-finding the same failure without new evidence is never a
+      // new session; the exhausted cap still blocks.
+      if (cycle.lastEvidence === signature) {
+        if (cycle.failedRounds >= MAX_REPAIR_ROUNDS) {
+          return repairBlocked(ref, pr, trigger, cycle.failedRounds);
+        }
+        return { ref, state: "idle" };
+      }
+      if (cycle.failedRounds >= MAX_REPAIR_ROUNDS) {
+        return repairBlocked(ref, pr, trigger, cycle.failedRounds);
+      }
+      return { ref, state: "repair", pr, createdAt: issue.value.createdAt, trigger };
+    }
+
+    // Confirmed recovery (story 22): no conflicts and every required check
+    // approved — the only thing besides a human unblock that resets the cap.
+    if (repairFacts.known && cycle.failedRounds > 0 && repairRecovered(repairFacts.value)) {
+      return { ref, state: "repair-recovered", pr };
+    }
+
     const last = lastPrComment(feedback.known ? feedback.value : null);
     // Speech, not login (v0.1): the worker account may be the operator's.
     // A closing comment carries the marker; a comment without it is the human.
@@ -287,6 +385,22 @@ export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolea
 /** The fallback-done comment: short, by decision (ticket 04 Q11). */
 export function fallbackDoneComment(): string {
   return "the PR was merged without closing this issue — the factory closes it (done)";
+}
+
+/** The block after the two automatic repair rounds, naming what persists. */
+function repairBlocked(
+  ref: IssueRef,
+  pr: PullRequest,
+  trigger: RepairTrigger,
+  failedRounds: number,
+): ReservedDerivation {
+  const reasons = trigger.reasons
+    .map((reason) => (reason === "conflicts" ? "the conflict with the base" : "the failing required checks"))
+    .join(" and ");
+  const comment =
+    `automatic repair stopped after ${failedRounds} rounds without recovering PR #${pr.number}: ` +
+    `${reasons} persist on the current HEAD. A human decision, authorization or fix is needed.`;
+  return { ref, state: "repair-blocked", pr, trigger, failedRounds, comment };
 }
 
 /** The rejection comment: points at the PR (ticket 04 Q5). */
