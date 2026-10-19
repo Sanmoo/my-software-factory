@@ -390,7 +390,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     const facts = await readLaunchFacts(workDir(layout, REPO, 1));
     assert.deepEqual(facts, { attempt: 2, previousFall: true });
     const view = await scanRegistry(layout);
-    assert.deepEqual(view.inFlight, []);
+    assert.deepEqual(view.attemptsWithoutOutcome, []);
     assert.equal(view.lastOutcome.length, 1);
     assert.equal(view.lastOutcome[0]!.key, `${REPO}#1`);
     assert.equal(view.lastOutcome[0]!.record.class, "clean-without-pr");
@@ -454,7 +454,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     return runCli(dir, ["status"], installGhShim(dir).env());
   }
 
-  test("status never creates the workspace and answers reserved-without-attempt / in flight / last outcome / archived from disk alone", () => {
+  test("status never creates the workspace and answers reserved-without-attempt / running-or-orphaned / last outcome / archived from disk alone", () => {
     seedRegistry();
     const before = existsSync(join(dir, "ws", "repos"));
     const result = runStatus();
@@ -462,17 +462,21 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.ok(!before, "status created nothing before the run");
     assert.ok(!existsSync(join(dir, "ws", "repos")), "status never ensures the workspace (read-only)");
-    assert.match(result.stdout, /reserved without attempt.*Sanmoo\/my-tasks#3/);
-    assert.match(result.stdout, /in flight.*Sanmoo\/my-tasks#1/);
-    assert.match(result.stdout, /last outcome: Sanmoo\/my-tasks#2 = pr-open \(attempt 1\)/);
-    assert.match(result.stdout, /archived.*my-tasks#2-2026-02-01/);
+    assert.match(result.stdout, /reserved without attempt[^\n]*: 1\n\s+Sanmoo\/my-tasks#3/);
+    // #1 carries attempt evidence: where Docker answers the temp workspace has no
+    // worker bind, so the work is Orphaned; without Docker liveness is unknown.
+    if (!result.stdout.includes("liveness unknown (docker not reachable)")) {
+      assert.match(result.stdout, /orphaned \([^\n]*\): 1\n\s+Sanmoo\/my-tasks#1/);
+    }
+    assert.match(result.stdout, /last outcome: 1\n\s+Sanmoo\/my-tasks#2 = pr-open \(attempt 1\)/);
+    assert.match(result.stdout, /archived \(dones\): 1\n\s+\S+my-tasks#2-2026-02-01/);
   });
 
   test("status before any run is a legal state: empty pool, empty registry, exit 0", () => {
     const result = runStatus();
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.match(result.stdout, /0 eligible/);
-    assert.match(result.stdout, /in flight: none/);
+    assert.match(result.stdout, /pool \(eligible\): none/);
+    assert.match(result.stdout, /reserved without attempt[^\n]*: none/);
     assert.match(result.stdout, /last outcome: none/);
   });
 });

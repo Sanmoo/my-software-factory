@@ -505,7 +505,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
 
     const status = run(["status"]);
     assert.equal(status.status, 0, status.stderr);
-    assert.match(status.stdout, /0 eligible/, "the status output is the same contract");
+    assert.match(status.stdout, /pool \(eligible\): none/, "the status output is the same contract");
     assert.doesNotMatch(status.stdout, STAMP, "status records never gain the operational stamp");
   });
 

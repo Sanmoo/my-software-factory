@@ -94,14 +94,36 @@ export interface ReconciliationFacts {
  * The ruler applies from there — 1st fall releases, 2nd consecutive blocks.
  */
 export async function readReconciliationFacts(workDir: string): Promise<ReconciliationFacts> {
-  const logs = await attemptNumbers(workDir);
-  const record = await readOutcomeRecord(workDir);
+  const { logs, record } = await attemptsAndRecord(workDir);
   const lastRecorded = record?.attempt ?? 0;
-  const lastAttempt = Math.max(logs.at(-1) ?? 0, lastRecorded);
+  const lastAttempt = lastAttemptOf(logs, record);
   const abruptCount = lastAttempt - lastRecorded;
   const lastRecordedFall = record?.class === "clean-without-pr";
   const consecutiveFall = abruptCount >= 2 || (abruptCount === 1 && lastRecordedFall);
   return { lastAttempt, consecutiveFall };
+}
+
+/**
+ * The attempt a work is on right now (issue 102): the highest per-attempt log,
+ * or the record's own number when the record is the latest evidence. This is
+ * what `msf status` prints next to a live worker — the attempt in flight, read
+ * from the registry that numbers attempts, never guessed from the container.
+ */
+export async function readLastAttempt(workDir: string): Promise<number> {
+  const { logs, record } = await attemptsAndRecord(workDir);
+  return lastAttemptOf(logs, record);
+}
+
+function lastAttemptOf(logs: readonly number[], record: OutcomeRecord | null): number {
+  return Math.max(logs.at(-1) ?? 0, record?.attempt ?? 0);
+}
+
+async function attemptsAndRecord(workDir: string): Promise<{
+  logs: number[];
+  record: OutcomeRecord | null;
+}> {
+  const [logs, record] = await Promise.all([attemptNumbers(workDir), readOutcomeRecord(workDir)]);
+  return { logs, record };
 }
 
 // ---- the derivation's reserved-works scan + the done archive (ticket 14) ----
@@ -178,16 +200,17 @@ export interface LastOutcomeEntry {
 }
 
 /**
- * The local registry as seen with the factory stopped (ticket 07 Q7): a work
- * dir with attempt evidence but no desfecho is in flight (orphan when the run
- * is not up); a dir created before any attempt evidence is reserved without
- * attempt (the claim landed, the worker has not — common now that the
- * reservation lands before the launch); with a desfecho, the outcome of the
- * last attempt; the archive holds the dones.
+ * The local registry as seen with the factory stopped (ticket 07 Q7): a dir
+ * with attempt evidence but no desfecho is an attempt whose outcome was never
+ * recorded — Running while a live worker carries it, Orphaned otherwise (only
+ * the liveness probe can tell the two apart); a dir created before any attempt
+ * evidence is reserved without attempt (the claim landed, the worker has not —
+ * common now that the reservation lands before the launch); with a desfecho,
+ * the outcome of the last attempt; the archive holds the dones.
  */
 export interface RegistryView {
   /** Dirs with attempt evidence (a log or the session dir) and no outcome record. */
-  inFlight: string[];
+  attemptsWithoutOutcome: string[];
   /** Dirs with no outcome record and no attempt evidence — the reservation alone. */
   reservedWithoutAttempt: string[];
   lastOutcome: LastOutcomeEntry[];
@@ -208,7 +231,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         }
       : workspace;
 
-  const inFlight: string[] = [];
+  const attemptsWithoutOutcome: string[] = [];
   const reservedWithoutAttempt: string[] = [];
   const lastOutcome: LastOutcomeEntry[] = [];
   for (const dir of await workDirs(works)) {
@@ -216,18 +239,18 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     if (record) {
       lastOutcome.push({ key: relativeKey(works, dir), workDir: dir, record });
     } else if (hasAttemptEvidence(dir, await attemptNumbers(dir))) {
-      inFlight.push(relativeKey(works, dir));
+      attemptsWithoutOutcome.push(relativeKey(works, dir));
     } else {
       reservedWithoutAttempt.push(relativeKey(works, dir));
     }
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
-  inFlight.sort(byKey);
+  attemptsWithoutOutcome.sort(byKey);
   reservedWithoutAttempt.sort(byKey);
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
-  return { inFlight, reservedWithoutAttempt, lastOutcome, archived };
+  return { attemptsWithoutOutcome, reservedWithoutAttempt, lastOutcome, archived };
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */
