@@ -10,8 +10,8 @@ import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 /**
  * The evidence the blocked comment points at (issue 103): three locations of
  * the attempt under the factory workspace, probed on the real filesystem.
- * Every shown path is the workspace-relative form of the directory actually
- * probed — one derivation, so the comment can only name what it consulted.
+ * Each shown path is the probed dir's workspace-relative form, so the comment
+ * can only name what it consulted.
  */
 describe("evidence — the three locations of a fell attempt, probed on disk", () => {
   let root: string;
@@ -98,7 +98,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
 
     assert.match(rendered, /relative to the factory workspace on the host/i);
     assert.match(rendered, /not the repository, the work dir or the container/i);
-    assert.match(rendered, /work dir:\s+trabalhos\/Sanmoo\/a#1\/ — present/);
+    assert.match(rendered, /reservation:\s+trabalhos\/Sanmoo\/a#1\/ — present/);
     assert.match(rendered, /event log:\s+trabalhos\/Sanmoo\/a#1\/log-2\.jsonl — present/);
     assert.match(rendered, /sandcastle log:\s+trabalhos\/Sanmoo\/a#1\/sessao\/sandcastle-2\.log — present/);
   });

@@ -13,7 +13,7 @@ import {
   DESFECHO_FILENAME,
 } from "./outcome.js";
 
-/** A layout nothing is probed against — for tests that assert no evidence. */
+/** A layout outside the filesystem — the evidence probes it and answers absent. */
 const FAKE_WORKSPACE: WorkspaceLayout = {
   root: "/nowhere",
   repos: "/nowhere/repos",

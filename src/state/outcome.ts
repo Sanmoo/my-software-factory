@@ -72,7 +72,10 @@ export type OutcomeRuling =
    *  attempt's outcome (or its explicit absence) and the attempt's evidence. */
   | { decision: "block"; because: "fall-second"; comment: string };
 
-/** The structured facts the ruler reads — nothing else, zero prose (the two-rulers contract). */
+/** The structured facts the ruler reads — no prose, ever (the two-rulers
+ *  contract). The block branch also probes the attempt's evidence locations
+ *  read-only; a failed query degrades to "could not be verified", never to a
+ *  different decision. */
 export interface OutcomeFacts {
   /** desfecho.json as read from disk; it may belong to an EARLIER attempt. */
   record: OutcomeRecord | null;
@@ -144,7 +147,7 @@ function isBlockedSelfReport(facts: OutcomeFacts): boolean {
 
 /** What a blocked comment needs from the ruler's facts — the attempt that
  *  fell, its raw record (possibly another attempt's) and its evidence. */
-export type BlockedCommentInput = Pick<
+type BlockedCommentInput = Pick<
   OutcomeFacts,
   "attempt" | "record" | "workDir" | "workspace"
 >;

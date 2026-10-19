@@ -78,7 +78,7 @@ export function renderWorkEvidence(evidence: WorkEvidence): string {
   return [
     "evidence — every path is relative to the factory workspace on the host " +
       "(the workspace of msf.yaml; not the repository, the work dir or the container):",
-    `  work dir:       ${evidence.workDir.path} — ${evidence.workDir.presence}`,
+    `  reservation:    ${evidence.workDir.path} — ${evidence.workDir.presence}`,
     `  event log:      ${evidence.eventLog.path} — ${evidence.eventLog.presence}`,
     `  sandcastle log: ${evidence.sandcastleLog.path} — ${evidence.sandcastleLog.presence}`,
   ].join("\n");
