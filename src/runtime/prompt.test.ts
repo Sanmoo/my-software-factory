@@ -469,4 +469,18 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /Never weaken, skip or hide a required check or protection/);
     assert.match(prompt, /## The implementation procedure — MANDATORY for this session/);
   });
+
+  test("when human review comments coexist, the repair round also points at the feedback policy", () => {
+    const request = repairRequest();
+    request.material.pr = {
+      number: 7,
+      comments: [
+        { id: "1", author: "humano", body: "please rename it", createdAt: "2026-02-14T00:00:00Z" },
+      ],
+    };
+    const prompt = buildWorkerPrompt(request, { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /Human review comments are also present/);
+    assert.match(prompt, /## The feedback-round policy/);
+    assert.match(prompt, /please rename it/);
+  });
 });

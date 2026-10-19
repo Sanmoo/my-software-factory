@@ -755,7 +755,6 @@ describe("9e. readPrRepairFacts: the merge state and the required checks of the 
               status: "completed",
               conclusion: "failure",
               details_url: "https://ci/build",
-              completed_at: "2026-01-01T01:00:00Z",
             },
             { name: "e2e", status: "in_progress", conclusion: null },
             { name: "optional", status: "completed", conclusion: "failure" },
@@ -831,7 +830,7 @@ describe("9e. readPrRepairFacts: the merge state and the required checks of the 
         checks: { check_runs: [] },
         statuses: {
           statuses: [
-            { context: "ci/status", state: "failure", target_url: "https://ci/status", updated_at: "2026-01-01T02:00:00Z" },
+            { context: "ci/status", state: "failure", target_url: "https://ci/status" },
           ],
         },
       }),

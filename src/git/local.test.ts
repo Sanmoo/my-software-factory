@@ -185,6 +185,35 @@ describe("git host — one clone per target repo", () => {
     assert.notEqual(stdout.trim().split(/\s+/)[0], observed, "the remote still holds the concurrent work");
   });
 
+  test("a rebase onto the advanced base publishes with the lease when the observed head is unchanged (issue 107)", async () => {
+    const git = gitWork();
+    const ref = { repo: "Sanmoo/my-tasks", number: 7 };
+    await git.prepareWork(ref);
+
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    await execFile("git", ["config", "user.email", "worker@example.com"], { cwd: cloneDir });
+    await execFile("git", ["config", "user.name", "worker"], { cwd: cloneDir });
+    await execFile("git", ["checkout", "-q", workBranchName(7)], { cwd: cloneDir });
+    await commitFileIn(cloneDir, "work.txt", "round 1\n", "round 1");
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+    const observed = await git.observeRemoteHead(ref);
+    assert.ok(observed);
+
+    // The base advances; the worker rebases onto the PR's current base.
+    await remote.commitFile("main", "file.txt", "v2\n", "advance base");
+    await execFile("git", ["fetch", "-q", "origin"], { cwd: cloneDir });
+    await execFile("git", ["rebase", "-q", "origin/main"], { cwd: cloneDir });
+
+    // The remote did not move: the lease pinned to the observed head is accepted.
+    await execFile(
+      "git",
+      ["push", `--force-with-lease=${workBranchName(7)}:${observed}`, "origin", workBranchName(7)],
+      { cwd: cloneDir },
+    );
+    const published = await git.observeRemoteHead(ref);
+    assert.ok(published && published !== observed, "the rebased head is published on the same branch");
+  });
+
   test("the base advanced between rounds — the work branch is untouched, no rebase, no merge", async () => {
     const git = gitWork();
     await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
