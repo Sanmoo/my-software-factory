@@ -12,6 +12,7 @@ import {
   renderUnmarkedReservation,
 } from "./derive.js";
 import { DEFAULT_LABELS } from "../config.js";
+import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
 
 /** The pool-only view over the single derivation, for the tests of the pool's rules. */
@@ -279,13 +280,20 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
   const REPO = "Sanmoo/a";
   const ref = (number: number) => ({ repo: REPO, number });
   const entry = (number: number) => ({ ref: ref(number), dir: `/ws/trabalhos/${REPO}#${number}` });
+  /** The layout the fake dirs live under; the non-fall states never probe it. */
+  const layout: WorkspaceLayout = {
+    root: "/ws",
+    repos: "/ws/repos",
+    works: "/ws/trabalhos",
+    archive: "/ws/arquivo",
+  };
 
   beforeEach(() => {
     adapter = new FakeTrackerAdapter({ workerAccount: "bot" });
   });
 
   async function deriveOne(number: number) {
-    const [derived] = await deriveReserved(adapter, [entry(number)], DEFAULT_LABELS, "bot");
+    const [derived] = await deriveReserved(adapter, [entry(number)], DEFAULT_LABELS, "bot", layout);
     assert.ok(derived, "the work was derived");
     return derived;
   }
@@ -412,24 +420,32 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
   });
 
   describe("ticket 05 Q3 — the unreconciled fall (a factory death is an abrupt fall by definition)", () => {
-    let dir: string;
+    let root: string;
+    let layout: WorkspaceLayout;
 
     beforeEach(() => {
-      dir = mkdtempSync(join(tmpdir(), "msf-derive-fall-"));
+      root = mkdtempSync(join(tmpdir(), "msf-derive-fall-"));
+      layout = ensureWorkspace(join(root, "ws"));
     });
 
     afterEach(() => {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
     });
 
     function workDirFor(number: number): string {
-      const path = join(dir, `a#${number}`);
+      const path = workDir(layout, REPO, number);
       mkdirSync(path, { recursive: true });
       return path;
     }
 
     async function deriveFrom(path: string, number: number) {
-      const [derived] = await deriveReserved(adapter, [{ ref: ref(number), dir: path }], DEFAULT_LABELS, "bot");
+      const [derived] = await deriveReserved(
+        adapter,
+        [{ ref: ref(number), dir: path }],
+        DEFAULT_LABELS,
+        "bot",
+        layout,
+      );
       assert.ok(derived);
       return derived;
     }
@@ -452,6 +468,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
         [{ ref: ref(24), dir: path }],
         DEFAULT_LABELS,
         "bot",
+        layout,
         new Set([`${REPO}#24`]),
       );
       assert.ok(derived);

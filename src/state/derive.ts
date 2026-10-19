@@ -11,6 +11,7 @@ import type {
   TrackerPort,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
+import { workDir, type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
 import { MAX_REPAIR_ROUNDS, readRepairCycle, repairEvidenceSignature } from "../pool/repair.js";
@@ -306,7 +307,7 @@ export type ReservedDerivation =
   | { ref: IssueRef; state: "idle" }
   /** An unreconciled fall: the claimed work's session ended without the
    * factory acting on it (a factory death) — release, or block with the
-   * exact outcome on the 2nd consecutive fall (ticket 05 Q3). */
+   * attempt's diagnosis on the 2nd consecutive fall (ticket 05 Q3). */
   | { ref: IssueRef; state: "fall"; decision: "release" }
   | { ref: IssueRef; state: "fall"; decision: "block"; comment: string; attempt: number }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
@@ -323,9 +324,12 @@ export async function deriveReserved(
   reserved: ReservedWorkInput[],
   labels: Labels,
   workerAccount: string,
+  workspace: WorkspaceLayout,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
-  return Promise.all(reserved.map((work) => deriveReservedWork(port, work, labels, workerAccount, inFlight)));
+  return Promise.all(
+    reserved.map((work) => deriveReservedWork(port, work, labels, workerAccount, workspace, inFlight)),
+  );
 }
 
 async function deriveReservedWork(
@@ -333,6 +337,7 @@ async function deriveReservedWork(
   work: ReservedWorkInput,
   labels: Labels,
   _workerAccount: string,
+  workspace: WorkspaceLayout,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -419,7 +424,7 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
-    return deriveUnreconciledFall(ref, work.dir, inFlight);
+    return deriveUnreconciledFall(ref, workspace, inFlight);
   }
   return { ref, state: "idle" };
 }
@@ -429,7 +434,7 @@ async function deriveReservedWork(
  * claimed work with no PR and no worker in flight is a session that ended
  * without the factory acting on it — a factory death is an abrupt fall by
  * definition. The ruler applies from the crash footprint alone: 1st fall →
- * release; 2nd consecutive → blocked with the exact outcome.
+ * release; 2nd consecutive → blocked with the attempt's diagnosis.
  *
  * Ticket 18 (story 22): the derivation itself cannot see the process, so
  * the engine hands its in-flight set in. A claim with ZERO attempt evidence
@@ -441,9 +446,12 @@ async function deriveReservedWork(
  */
 async function deriveUnreconciledFall(
   ref: IssueRef,
-  dir: string,
+  workspace: WorkspaceLayout,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
+  // One derivation of the attempt's dir: the record read, the reconciliation
+  // facts and the evidence all name the same location.
+  const dir = workDir(workspace, ref.repo, ref.number);
   const recon = await readReconciliationFacts(dir);
   if (recon.lastAttempt === 0) {
     // A claim with zero attempt evidence: no session ever started (a death
@@ -470,7 +478,7 @@ async function deriveUnreconciledFall(
       attempt: recon.lastAttempt,
       record,
       ref,
-      workDir: dir,
+      workspace,
     }),
     attempt: recon.lastAttempt,
   };

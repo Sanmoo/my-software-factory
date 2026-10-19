@@ -4,37 +4,48 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**
  * The evidence the blocked comment points at (issue 103): three locations of
- * the attempt under the factory workspace, probed on the real filesystem. The
- * relative path is derived from the ref alone — the base of every shown path
- * is the workspace, never the host's absolute dir.
+ * the attempt under the factory workspace, probed on the real filesystem.
+ * Every shown path is the workspace-relative form of the directory actually
+ * probed — one derivation, so the comment can only name what it consulted.
  */
 describe("evidence — the three locations of a fell attempt, probed on disk", () => {
-  let dir: string;
+  let root: string;
+  let layout: WorkspaceLayout;
   const ref = { repo: "Sanmoo/a", number: 1 };
   const relativeDir = "trabalhos/Sanmoo/a#1";
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "msf-evidence-"));
+    root = mkdtempSync(join(tmpdir(), "msf-evidence-"));
+    layout = ensureWorkspace(join(root, "ws"));
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   });
 
+  /** The attempt's real dir in the workspace — the shown path names it. */
+  function workDirOf(): string {
+    const dir = workDir(layout, ref.repo, ref.number);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   function writeEvidence(attempt: number): void {
+    const dir = workDirOf();
     writeFileSync(join(dir, `log-${attempt}.jsonl`), "{}\n", "utf8");
     mkdirSync(join(dir, "sessao"), { recursive: true });
     writeFileSync(join(dir, "sessao", `sandcastle-${attempt}.log`), "session output\n", "utf8");
   }
 
-  test("the three locations use the attempt's number and the workspace-relative base", async () => {
+  test("the shown paths name exactly the dir and files that were probed", async () => {
     writeEvidence(2);
 
-    const evidence = await readWorkEvidence(ref, 2, dir);
+    const evidence = await readWorkEvidence(layout, ref, 2);
 
     assert.deepEqual(evidence.workDir, { path: `${relativeDir}/`, presence: "present" });
     assert.deepEqual(evidence.eventLog, { path: `${relativeDir}/log-2.jsonl`, presence: "present" });
@@ -44,26 +55,37 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
     });
     for (const location of Object.values(evidence)) {
       assert.ok(!location.path.startsWith("/"), "no host absolute path is ever shown");
-      assert.ok(!location.path.includes(dir), "the absolute work dir never leaks into a shown path");
+      assert.ok(!location.path.includes(root), "the absolute workspace path never leaks into a shown path");
     }
   });
 
   test("a location that does not exist is absent — never omitted", async () => {
-    const evidence = await readWorkEvidence(ref, 3, dir);
+    workDirOf(); // the work dir exists; attempt 3 left no files behind
 
-    assert.equal(evidence.workDir.presence, "present", "the dir itself exists");
+    const evidence = await readWorkEvidence(layout, ref, 3);
+
+    assert.equal(evidence.workDir.presence, "present");
     assert.equal(evidence.eventLog.presence, "absent");
     assert.equal(evidence.eventLog.path, `${relativeDir}/log-3.jsonl`);
     assert.equal(evidence.sandcastleLog.presence, "absent", "the sandcastle log was never created");
     assert.equal(evidence.sandcastleLog.path, `${relativeDir}/sessao/sandcastle-3.log`);
   });
 
+  test("an absent work dir is reported absent — never invented", async () => {
+    const evidence = await readWorkEvidence(layout, { repo: "Sanmoo/b", number: 7 }, 1);
+
+    assert.deepEqual(evidence.workDir, { path: "trabalhos/Sanmoo/b#7/", presence: "absent" });
+    assert.equal(evidence.eventLog.presence, "absent");
+    assert.equal(evidence.sandcastleLog.presence, "absent");
+  });
+
   test("a failed query is 'could not be verified', never absent (issue 103)", async () => {
     // A self-referential symlink makes the query fail with ELOOP: the answer
     // is unknown, and unknown is never absence.
-    symlinkSync("sessao", join(dir, "sessao"));
+    symlinkSync("sessao", join(workDirOf(), "sessao"));
 
-    const broken = await readWorkEvidence(ref, 1, dir);
+    const broken = await readWorkEvidence(layout, ref, 1);
+
     assert.equal(broken.workDir.presence, "present");
     assert.equal(broken.eventLog.presence, "absent");
     assert.equal(broken.sandcastleLog.presence, "could not be verified");
@@ -72,7 +94,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
   test("the rendering names the workspace as the base and shows every location with its state", async () => {
     writeEvidence(2);
 
-    const rendered = renderWorkEvidence(await readWorkEvidence(ref, 2, dir));
+    const rendered = renderWorkEvidence(await readWorkEvidence(layout, ref, 2));
 
     assert.match(rendered, /relative to the factory workspace on the host/i);
     assert.match(rendered, /not the repository, the work dir or the container/i);

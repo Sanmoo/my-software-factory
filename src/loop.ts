@@ -246,6 +246,7 @@ export class SweepEngine {
       reservedWorks,
       config.labels,
       config.workerGhAccount,
+      workspace,
       inFlight,
     );
 
@@ -290,7 +291,7 @@ export class SweepEngine {
           } else {
             this.log(
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
-                "blocked with the exact outcome on the issue",
+                "blocked with the attempt's diagnosis on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
             this.announce(decision.ref, "reserved");
@@ -629,7 +630,7 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
+    await this.collect(launchable, result, facts.attempt, facts.previousFall);
   }
 
   /** Consume one automatic repair round before its session: the budget and
@@ -652,13 +653,15 @@ export class SweepEngine {
   private async collect(
     launchable: Launchable,
     result: SessionResult,
-    dir: string,
     attempt: number,
     consecutiveFall: boolean,
   ): Promise<void> {
-    const { config, tracker } = this.deps;
+    const { config, tracker, workspace } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
+    // One derivation of the attempt's dir: the record read and the evidence
+    // probed by the blocked comment can never name different locations.
+    const dir = workDir(workspace, ref.repo, ref.number);
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -674,7 +677,7 @@ export class SweepEngine {
       attempt,
       issueClosed: issue.known && issue.value.state === "closed",
       ref,
-      workDir: dir,
+      workspace,
     });
 
     let resulting: OperationalClass | null;
@@ -739,8 +742,8 @@ export class SweepEngine {
 
   /** The block transition every 2nd fall and every rejection shares: the
    *  claimed label swaps to blocked (the claim is held until the terminal
-   *  state) and the exact outcome is commented on the issue — the human
-   * must SEE why it fell before deciding to resume. Applying a block IS the
+   *  state) and the diagnosis is commented on the issue — the human must
+   * SEE why it fell before deciding to resume. Applying a block IS the
    * new occurrence, so the help notice is delivered here, once. */
   private async applyBlockWithComment(ref: IssueRef, comment: string): Promise<void> {
     const { tracker, config } = this.deps;
