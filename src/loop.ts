@@ -67,14 +67,15 @@ export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
 
 /**
- * The class a reserved decision contributes to the observed state. A done
- * work is archived by this tick's action — it LEAVES the state rather than
- * becoming a class, so its removal is visible to the same observation (and
- * the action that explains it suppresses the summary). The spec names four
- * operational classes (eligible · reserved · feedback · resumable), so an
- * idle, rejected or unknown work stays under the parked "reserved" umbrella.
- * This table therefore covers only works the tick does not act on: an action
- * announces the class it LANDS a work in (a released fall lands eligible).
+ * The class each reserved derivation state contributes to the observed
+ * state. A done work is archived by this tick's action — it LEAVES the state
+ * rather than becoming a class, so its removal is visible to the same
+ * observation (and the action that explains it suppresses the summary). The
+ * spec names four operational classes (eligible · reserved · feedback ·
+ * resumable), so an idle, rejected or unknown work stays under the parked
+ * "reserved" umbrella. The actions below announce the class they LAND a work
+ * in, which can differ from this derivation class: a released fall lands
+ * eligible even though its derivation state maps to reserved.
  */
 const RESERVED_OPERATIONAL_CLASS = {
   done: null,
