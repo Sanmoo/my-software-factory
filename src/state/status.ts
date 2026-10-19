@@ -53,16 +53,16 @@ export interface StatusView {
   liveness: Liveness;
 }
 
-/** The production liveness probe: the real Docker probe over this workspace. */
-export function statusLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
-  return dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: layout.works });
-}
-
+/**
+ * The status derivation. The probe is the one test-only seam: production gets
+ * the real read-only Docker probe over this workspace, and only a test passes
+ * another one — never a CLI flag.
+ */
 export async function deriveStatus(
   tracker: TrackerPort,
   config: Config,
   layout: WorkspaceLayout,
-  probe: LivenessProbe = statusLivenessProbe(layout),
+  probe: LivenessProbe = dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: layout.works }),
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
