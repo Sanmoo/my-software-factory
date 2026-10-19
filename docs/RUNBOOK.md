@@ -134,9 +134,10 @@ Linux desktop session with a notification daemon, and the factory running
 inside it. If delivery is unavailable the sweep warns in the terminal and
 carries on: outcome, state and exit code unchanged.
 
-Smoke: verify one review notice after the initial PR, a new one after a PR
-comment, a help notice for a help request or a block, and silence after a
-restart.
+Smoke: a review notice after the initial PR and after a PR comment, a help
+notice for a help request or a block, silence after a restart — and every
+notice carrying the work and its address, with no window opened and no focus
+taken.
 
 ## What the human does in the proof
 
