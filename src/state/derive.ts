@@ -30,40 +30,160 @@ export interface PoolEntry {
   createdAt: string;
 }
 
+/** The key every seam shares for a work: "<repo>#<n>". */
+export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
+
 /**
- * Derive the pool: per target repo, the neutral open-issues read filtered by
- * the pool's own label rules and by the blockers read, oldest first.
+ * A work the tracker marks as claimed (the claim or the blocked label) but
+ * whose registry dir does not exist in this workspace: the factory marked it
+ * and left no reservation here (issues 93/97). The command is the operator's
+ * safe way back to the pool; the caveat warns that ANOTHER factory or
+ * workspace may be the one holding the claim.
  */
-export async function derivePool(
+export interface UnbackedClaim {
+  ref: IssueRef;
+  /** The copy-paste `gh` invocation that returns the issue to the pool. */
+  command: string;
+}
+
+/**
+ * A reservation on disk whose work carries NO factory mark at all (no claim,
+ * no block, no pool label): possibly lost work. Reported as a fact only — the
+ * decision is human, and there is no safe command.
+ */
+export interface UnmarkedReservation {
+  ref: IssueRef;
+}
+
+/** The two leftovers of the tracker↔workspace reconciliation. */
+export interface Leftovers {
+  unbackedClaims: UnbackedClaim[];
+  unmarkedReservations: UnmarkedReservation[];
+}
+
+/** The whole derivation of one tick: the pool AND the leftovers, one read per repo. */
+export interface TrackerState extends Leftovers {
+  pool: PoolEntry[];
+}
+
+export const UNBACKED_CLAIM_CAVEAT =
+  "another factory or workspace may hold this claim — confirm before releasing";
+
+/**
+ * The single derivation that returns the pool and the leftovers from ONE
+ * open-issues read per target repo (issue 100): the neutral listing is
+ * filtered by the pool's own rules and cross-referenced with the workspace's
+ * reservations and the in-flight set. Reads only; never acts.
+ *
+ * - `reservations` are the work keys with a registry dir in this workspace.
+ * - `inFlight` are the keys this process is launching right now — never
+ *   reported, so the report is reliable.
+ */
+export async function deriveTrackerState(
   port: TrackerPort,
   repos: string[],
   labels: Labels,
-): Promise<PoolEntry[]> {
-  const perRepo = await Promise.all(repos.map((repo) => deriveRepoPool(port, repo, labels)));
-  return perRepo
-    .flat()
-    .sort(
-      (a, b) =>
-        a.createdAt.localeCompare(b.createdAt) ||
-        a.ref.repo.localeCompare(b.ref.repo) ||
-        a.ref.number - b.ref.number,
-    );
+  workerAccount: string,
+  reservations: ReadonlySet<string> = new Set(),
+  inFlight: ReadonlySet<string> = new Set(),
+): Promise<TrackerState> {
+  const listings = await Promise.all(repos.map((repo) => port.listOpenIssues(repo)));
+  const byKey = new Map<string, OpenIssue>();
+  for (const issues of listings) for (const issue of issues) byKey.set(workKey(issue.ref), issue);
+
+  const pool: PoolEntry[] = [];
+  const unbackedClaims: UnbackedClaim[] = [];
+  for (const issues of listings) {
+    for (const issue of issues) {
+      const key = workKey(issue.ref);
+      // A work this process is launching right now is never reported.
+      if (inFlight.has(key)) continue;
+      if (hasClaimMark(issue, labels)) {
+        // A mark without a reservation: the tracker claims it, this workspace
+        // never registered it. A mark WITH a reservation is a normal reserved
+        // work — the reserved derivation owns it.
+        if (!reservations.has(key)) {
+          unbackedClaims.push({ ref: issue.ref, command: releaseCommand(issue, labels, workerAccount) });
+        }
+        continue;
+      }
+      if (!isEligible(issue, labels)) continue;
+      if (!(await hasNoOpenBlocker(port, issue.ref))) continue;
+      pool.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
+    }
+  }
+
+  // A reservation whose open work carries no factory mark (not even the pool
+  // label): the dir exists, the tracker says nothing about it. The listing is
+  // the only read — a closed/unknown issue is the done derivation's business.
+  const unmarkedReservations: UnmarkedReservation[] = [];
+  for (const key of reservations) {
+    if (inFlight.has(key)) continue;
+    const issue = byKey.get(key);
+    if (issue === undefined) continue;
+    if (hasAnyFactoryLabel(issue, labels)) continue;
+    unmarkedReservations.push({ ref: issue.ref });
+  }
+
+  return {
+    pool: pool.sort(comparePoolEntries),
+    unbackedClaims: unbackedClaims.sort(compareLeftoverRefs),
+    unmarkedReservations: unmarkedReservations.sort(compareLeftoverRefs),
+  };
 }
 
-async function deriveRepoPool(
-  port: TrackerPort,
-  repo: string,
-  labels: Labels,
-): Promise<PoolEntry[]> {
-  const issues = await port.listOpenIssues(repo);
-  const entries: PoolEntry[] = [];
+/** The report line `msf status` and the sweep log share — the derivation never acts. */
+export function renderUnbackedClaim(claim: UnbackedClaim): string {
+  return (
+    `unbacked claim: ${workKey(claim.ref)} — a factory mark on an open issue with no reservation in this workspace ` +
+    `(${UNBACKED_CLAIM_CAVEAT}); return it to the pool with: ${claim.command}`
+  );
+}
 
-  for (const issue of issues) {
-    if (!isEligible(issue, labels)) continue;
-    if (!(await hasNoOpenBlocker(port, issue.ref))) continue;
-    entries.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
-  }
-  return entries;
+/** The fact-only line: an unmarked reservation has no safe command. */
+export function renderUnmarkedReservation(reservation: UnmarkedReservation): string {
+  return (
+    `unmarked reservation: ${workKey(reservation.ref)} — the work dir exists but the tracker carries no factory mark ` +
+    "(no claim, no block, no pool label); the decision is human, nothing was touched"
+  );
+}
+
+function comparePoolEntries(a: PoolEntry, b: PoolEntry): number {
+  return (
+    a.createdAt.localeCompare(b.createdAt) ||
+    a.ref.repo.localeCompare(b.ref.repo) ||
+    a.ref.number - b.ref.number
+  );
+}
+
+function compareLeftoverRefs(a: { ref: IssueRef }, b: { ref: IssueRef }): number {
+  return a.ref.repo.localeCompare(b.ref.repo) || a.ref.number - b.ref.number;
+}
+
+/** The claim mark that makes a tracker entry a reservation: claim or block. */
+function hasClaimMark(issue: OpenIssue, labels: Labels): boolean {
+  return issue.labels.includes(labels.claimed) || issue.labels.includes(labels.blocked);
+}
+
+/** Any of the three factory labels — the pool label alone still marks a work. */
+function hasAnyFactoryLabel(issue: OpenIssue, labels: Labels): boolean {
+  return (
+    issue.labels.includes(labels.ready) ||
+    issue.labels.includes(labels.claimed) ||
+    issue.labels.includes(labels.blocked)
+  );
+}
+
+/** The copy-paste command that returns an unbacked claim to the pool: add the
+ *  pool label when missing, drop the factory mark(s) present, release the
+ *  worker assignee. */
+function releaseCommand(issue: OpenIssue, labels: Labels, workerAccount: string): string {
+  const parts = [`gh issue edit ${issue.ref.number}`, `--repo ${issue.ref.repo}`];
+  if (!issue.labels.includes(labels.ready)) parts.push(`--add-label ${labels.ready}`);
+  if (issue.labels.includes(labels.claimed)) parts.push(`--remove-label ${labels.claimed}`);
+  if (issue.labels.includes(labels.blocked)) parts.push(`--remove-label ${labels.blocked}`);
+  if (issue.assignees.includes(workerAccount)) parts.push(`--remove-assignee ${workerAccount}`);
+  return parts.join(" ");
 }
 
 /** The pool's label rules, over the neutral read — never in the adapter. An

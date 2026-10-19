@@ -386,7 +386,13 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
 
     const result = await runOnce(deps);
 
-    assert.deepEqual(result, { pool: [], reserved: [], launched: [], collected: [] });
+    assert.deepEqual(result, {
+      pool: [],
+      reserved: [],
+      leftovers: { unbackedClaims: [], unmarkedReservations: [] },
+      launched: [],
+      collected: [],
+    });
     assert.equal(runtime.launched.length, 0);
   });
 });

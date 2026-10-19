@@ -91,10 +91,15 @@ describe("registry — the status view (worked on by msf status, factory stopped
     layout = ensureWorkspace(join(dir, "ws"));
   });
 
-  test("in flight = work dir without desfecho; last outcome = with desfecho; archivo = dones", async () => {
-    // In flight: an attempt started, no outcome record yet.
-    const flying = join(layout.works, "Sanmoo/a#3");
+  test("reserved-without-attempt = bare dir; in flight = dir with attempt evidence; last outcome = with desfecho; archivo = dones", async () => {
+    // Reserved without a recorded attempt: the claim landed, the worker has not.
+    const bare = join(layout.works, "Sanmoo/a#3");
+    mkdirSync(bare, { recursive: true });
+
+    // In flight: an attempt started (evidence on disk), no outcome record yet.
+    const flying = join(layout.works, "Sanmoo/d#4");
     mkdirSync(flying, { recursive: true });
+    writeFileSync(join(flying, "log-1.jsonl"), "{}\n", "utf8");
 
     // Last outcome: a concluded attempt, record on disk.
     const ended = join(layout.works, "Sanmoo/b#7");
@@ -111,7 +116,8 @@ describe("registry — the status view (worked on by msf status, factory stopped
 
     const view = await scanRegistry(layout);
 
-    assert.deepEqual(view.inFlight, ["Sanmoo/a#3"]);
+    assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/a#3"]);
+    assert.deepEqual(view.inFlight, ["Sanmoo/d#4"]);
     assert.equal(view.lastOutcome.length, 1);
     assert.equal(view.lastOutcome[0]?.key, "Sanmoo/b#7");
     assert.equal(view.lastOutcome[0]?.record.class, "pr-open");
@@ -122,19 +128,21 @@ describe("registry — the status view (worked on by msf status, factory stopped
   test("a workspace that was never created (status before any run) reads empty", async () => {
     const view = await scanRegistry(join("/nowhere/nonexistent-msf-ws"));
     assert.deepEqual(view.inFlight, []);
+    assert.deepEqual(view.reservedWithoutAttempt, []);
     assert.deepEqual(view.lastOutcome, []);
     assert.deepEqual(view.archived, []);
   });
 
-  test("a corrupt record does not lie about status: it is an abrupt fall (last outcome shows it absent... in flight)", async () => {
+  test("a corrupt record does not lie about status: it is an abrupt fall (last outcome shows it absent... reserved without attempt)", async () => {
     const corrupt = join(layout.works, "Sanmoo/c#9");
     mkdirSync(corrupt, { recursive: true });
     writeFileSync(join(corrupt, DESFECHO_FILENAME), "{not json", "utf8");
 
     const view = await scanRegistry(layout);
-    // The invalid record is treated as absent — the abrupt fall class — the
-    // status shows the work still in flight rather than a fake outcome.
-    assert.deepEqual(view.inFlight, ["Sanmoo/c#9"]);
+    // The invalid record is treated as absent — the abrupt fall class — and
+    // with no attempt evidence the dir is a bare reservation, never a fake outcome.
+    assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/c#9"]);
+    assert.deepEqual(view.inFlight, []);
     assert.deepEqual(view.lastOutcome, []);
   });
 });

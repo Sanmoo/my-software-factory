@@ -118,8 +118,21 @@ parked; a merge you already did becomes done → archive).
 msf status
 ```
 
-Derives on demand from the tracker + the workspace disk (read-only): works
-in flight, last outcomes, archived dones. Works with the factory stopped.
+Derives on demand from the tracker + the workspace disk (read-only): the
+pool, the reservations (with or without a recorded attempt), last outcomes,
+archived dones — and the two reconciliation leftovers when tracker and
+workspace disagree:
+
+- an **unbacked claim** (a factory mark with no reservation in this
+  workspace) carries the copyable `gh issue edit …` that returns the issue to
+  the pool, with the caveat that ANOTHER factory or workspace may be holding
+  the claim;
+- an **unmarked reservation** (a dir whose work carries no factory mark at
+  all) is reported as a fact only — the decision is human and there is no
+  safe command.
+
+The report never deletes, moves or archives anything; a released work
+(reservation + pool label) is normal and is never reported.
 
 ## (d) Local desktop notifications (issue 93)
 
