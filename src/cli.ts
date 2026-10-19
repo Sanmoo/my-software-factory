@@ -134,8 +134,8 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
     process.exit(1);
   }
 
-  // Issue #90: one `run` per REAL config path, established before ANY
-  // operational activity (the workspace below included). A second run for the
+  // One `run` per REAL config path (issue 90), established before ANY
+  // operational activity — the workspace below included. A second run for the
   // same configuration is refused here and never touches the factory.
   const lock = await acquireRunLock(config.configPath);
   try {
