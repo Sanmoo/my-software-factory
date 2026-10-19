@@ -1,4 +1,4 @@
-import { AGENT_MARKER } from "../tracker/port.js";
+import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
 
@@ -166,7 +166,7 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
       `  - \`${check.name}\` — ${check.conclusion ?? "unknown"}${check.detailsUrl ? ` (${check.detailsUrl})` : ""}`,
   );
   const humanComments = (request.material.pr?.comments ?? []).filter(
-    (comment) => !comment.body.includes(AGENT_MARKER),
+    (comment) => !isAgentSpeech(comment.body),
   );
   return [
     `## The repair round — the factory reactivated this work`,
