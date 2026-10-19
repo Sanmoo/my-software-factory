@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, realpath } from "node:fs/promises";
+import { chmod, mkdir, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
@@ -50,12 +50,13 @@ export interface RunLock {
   close(): Promise<void>;
 }
 
-/** Per-user state directory for the lock files (mode 0700 — the identity of
- * a run is the operator's business). Stable across shell sessions (unlike
- * TMPDIR), so the identity of a run never depends on the environment that
- * happened to start it. Not next to the config file: a deployment can keep
- * `msf.yaml` in a read-only checkout, and the run must not need write access
- * to the directory it reads from. */
+/** Per-user state directory for the lock files, created with mode 0700 (see
+ * the chmod at the acquisition: the identity of a run is the operator's
+ * business). Stable across shell sessions (unlike TMPDIR), so the identity of
+ * a run never depends on the environment that happened to start it. Not next
+ * to the config file: a deployment can keep `msf.yaml` in a read-only
+ * checkout, and the run must not need write access to the directory it reads
+ * from. */
 const LOCK_DIR = join(homedir(), ".local", "state", "msf", "locks");
 
 export async function acquireRunLock(configPath: string): Promise<RunLock> {
@@ -77,7 +78,11 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
 
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    await mkdir(LOCK_DIR, { recursive: true, mode: 0o700 });
+    // The mode only applies to directories THIS call creates and is masked by
+    // the umask, so the directory the run owns is chmod'ed explicitly; an
+    // existing one keeps whatever the operator's umask already gave it.
+    const created = await mkdir(LOCK_DIR, { recursive: true, mode: 0o700 });
+    if (created !== undefined) await chmod(LOCK_DIR, 0o700);
     handle = await open(lockPath, "a+");
   } catch (error) {
     throw new Error(

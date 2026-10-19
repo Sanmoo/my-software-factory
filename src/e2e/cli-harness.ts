@@ -15,7 +15,7 @@ function cliPath(): string {
  * test bug, not something to swallow. This keeps the CLI process tests free of
  * GitHub, credentials and the network (issue #90, Testing Decisions).
  *
- * `env` also points the child's HOME inside the suite's temp dir: the run's
+ * `env` also points the child's HOME at {@link isolatedHome}: the run's
  * per-user state (the run lock of issue #90 — never the real keyring, the shim
  * answers that) then stays with the suite, so the tests neither depend on the
  * operator's HOME being writable nor leave lock files behind in it.
@@ -31,18 +31,27 @@ function cliPath(): string {
 export interface GhShim {
   /** Directory holding the `gh` shim; prepend it to the child's PATH. */
   binDir: string;
-  /** The isolated HOME of the child (inside the suite's temp dir). */
-  home: string;
-  /** The child environment: the shim on PATH, the isolated HOME and any
-   * markers given. */
+  /** The child environment: the shim on PATH, the isolated HOME
+   * ({@link isolatedHome}) and any markers given. */
   env(markers?: { ready?: string; hold?: string; fail?: boolean }): NodeJS.ProcessEnv;
+}
+
+/**
+ * A HOME for a spawned CLI, inside the suite's temp dir: the factory keeps its
+ * per-user state there (the run lock of issue #90), so the suite owns it. Every
+ * CLI-spawning suite uses it — including the ones that deliberately keep the
+ * REAL `gh` (a temp HOME also means no real credential store is consulted).
+ */
+export function isolatedHome(baseDir: string): string {
+  const home = join(baseDir, "home");
+  mkdirSync(home, { recursive: true });
+  return home;
 }
 
 export function installGhShim(baseDir: string): GhShim {
   const binDir = join(baseDir, "bin");
-  const home = join(baseDir, "home");
+  const home = isolatedHome(baseDir);
   mkdirSync(binDir, { recursive: true });
-  mkdirSync(home, { recursive: true });
   const shim = join(binDir, "gh");
   writeFileSync(
     shim,
@@ -74,7 +83,6 @@ export function installGhShim(baseDir: string): GhShim {
   chmodSync(shim, 0o755);
   return {
     binDir,
-    home,
     env(markers = {}) {
       return {
         ...process.env,

@@ -184,7 +184,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         "all three launched",
       );
       assert.deepEqual(
-        [...runtime.launched.map((r) => r.ref.number)].sort(),
+        runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
         [1, 2, 3],
         "every claimed work launched",
       );

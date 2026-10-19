@@ -169,14 +169,15 @@ exclusive per REAL path of the config file (symlinks resolved). A second run
 for the same file fails immediately with a clear message and a nonzero exit,
 before any operational activity; the active run is untouched. The exclusivity
 is held for the whole process and released by the kernel on exit — including a
-`kill -9` — so a restart never needs manual cleanup. It cannot be disabled
-(`--force`) and does not expire: a slow or hung run keeps it. `msf status`
-does not take it and stays available while a run is up. The lock state lives
-under `~/.local/state/msf/locks/` (one file per real config path, permanent
-and harmless); it is therefore local to this machine **and this OS user** —
-two users are two operators with separate `gh` keyrings. If the lock cannot
-be established at all (unwritable state dir, unsupported platform), the run
-refuses to start rather than run unprotected.
+`kill -9` — so a restart never needs manual cleanup. There is no `--force` and
+no expiry: a slow or hung run keeps it. `msf status` does not take it and
+stays available while a run is up. The lock state lives under
+`~/.local/state/msf/locks/` — one small file per real config path, never
+deleted, and a stale one costs nothing (the kernel, not the file, decides
+ownership); the guarantee is therefore local to this machine **and this OS
+user**, since two users are two operators with separate `gh` keyrings. If the
+lock cannot be established at all (unusable state dir, unsupported platform),
+the run refuses to start rather than run unprotected.
 - **Ctrl-C waits for the workers in flight**: it closes admissions at once
 (no new launches, no slot replenishment from a finishing worker), then lets
 the admitted workers finish and records their results before the process
