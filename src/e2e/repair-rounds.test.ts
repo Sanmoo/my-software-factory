@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runOnce, type LoopDeps } from "../loop.js";
+import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
@@ -141,7 +141,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     assert.equal(request.branch, workBranchName(1), "the SAME branch");
     assert.equal(await openPrOf(tracker, 1), pr, "the SAME PR");
     assert.ok(request.material.repair, "the repair context travels to the worker");
-    assert.equal(request.material.repair.conflicting, true);
+    assert.equal(request.material.repair.reasons.includes("conflicts"), true);
     assert.equal(request.material.repair.observedHeadSha, PR_HEAD, "the observed head is pinned for the lease");
     assert.deepEqual(request.material.repair.reasons, ["conflicts"]);
   });
@@ -195,8 +195,33 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const repair = sweep.launched[0]!.request.material.repair;
     assert.ok(repair);
     assert.deepEqual(repair.reasons, ["conflicts", "required-checks"]);
-    assert.equal(repair.conflicting, true);
+    assert.equal(repair.reasons.includes("conflicts"), true);
     assert.deepEqual(repair.checks.map((check) => check.name), ["build"]);
+  });
+
+  test("a human PR comment coexists with a trigger in ONE round addressing both", async () => {
+    const config = makeConfig();
+    const { tracker, runtime, git, deps } = makeFactory(config);
+    const pr = await seedOpenPr(tracker, runtime, git, deps, 30);
+    // A human review comment AND a confirmed conflict arrive before the tick.
+    tracker.addPrComment({ repo: REPO, prNumber: pr }, "humano", "please also rename the helper");
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "head-co",
+      mergeState: "conflicting",
+      requiredChecks: [],
+    });
+    git.remoteHead = "head-co";
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "one session, never a feedback round plus a repair");
+    const material = sweep.launched[0]!.request.material;
+    assert.ok(material.repair, "the repair context is present");
+    assert.ok(
+      material.pr?.comments.some((comment) => comment.body === "please also rename the helper"),
+      "the human comment still reaches the same session",
+    );
   });
 
   test("the repair rebases against the PR's CURRENT base, never the repository default", async () => {
@@ -322,7 +347,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 0, "stale evidence is not acted on");
     const cycle = await readRepairCycle(workDir(layout, REPO, 7));
-    assert.equal(cycle.failedRounds, 0, "a skipped round never spends the budget");
+    assert.equal(cycle.usedRounds, 0, "a skipped round never spends the budget");
   });
 
   // ---- the budget: two rounds, then block and ask for help ----
@@ -348,7 +373,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     await failOn("head-2"); // new head → new evidence
     assert.equal((await runOnce(deps)).launched.length, 1, "round 2");
     assert.equal(
-      (await readRepairCycle(workDir(layout, REPO, 8))).failedRounds,
+      (await readRepairCycle(workDir(layout, REPO, 8))).usedRounds,
       2,
       "a new commit/head never resets the cap",
     );
@@ -383,7 +408,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
 
     // A fresh engine (a restart) reads the same budget from disk.
     const persisted = await readRepairCycle(workDir(layout, REPO, 9));
-    assert.equal(persisted.failedRounds, 1);
+    assert.equal(persisted.usedRounds, 1);
     assert.ok(persisted.lastEvidence);
 
     // The rebuilt engine still sees the consumed evidence: no duplicate round.
@@ -407,7 +432,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     });
     git.remoteHead = "head-i";
     await runOnce(deps);
-    assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).failedRounds, 1);
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).usedRounds, 1);
 
     // Recovery: no conflicts and every required check approved.
     tracker.setPrRepairFacts({
@@ -423,7 +448,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
       recovered.reserved.some((decision) => decision.ref.number === 10 && decision.state === "repair-recovered"),
       "the derivation reports the confirmed recovery",
     );
-    assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).failedRounds, 0, "the cap resets");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).usedRounds, 0, "the cap resets");
     assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).lastEvidence, null);
 
     // A new failure after recovery opens a fresh cycle (round 1 again).
@@ -466,7 +491,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
 
     const resumed = await runOnce(deps);
     assert.equal(resumed.launched.length, 1, "the resumable work is launched");
-    assert.equal((await readRepairCycle(workDir(layout, REPO, 11))).failedRounds, 0, "the human unblock renewed the cap");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 11))).usedRounds, 0, "the human unblock renewed the cap");
   });
 
   // ---- precedences: Block, closed/merged PR ----
@@ -516,5 +541,39 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
 
     // Re-open the scenario on a fresh factory: a closed-without-merge PR is rejected/blocked.
     tracker.closeIssue({ repo: REPO, number: 13 }, "completed");
+  });
+
+  test("a repair already in flight is never relaunched by a concurrent tick", async () => {
+    const config = makeConfig(1);
+    const { tracker, runtime, git, deps } = makeFactory(config);
+    const pr = await seedOpenPr(tracker, runtime, git, deps, 31);
+
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "head-inflight",
+      mergeState: "conflicting",
+      requiredChecks: [],
+    });
+    git.remoteHead = "head-inflight";
+
+    // Park the repair session mid-flight, then tick again on the same engine.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    runtime.hold = () => held;
+
+    const engine = new SweepEngine(deps);
+    await engine.deriveAndAct();
+    const started = engine.fillSlots();
+    assert.equal(started.length, 1, "the repair launched");
+
+    // The in-flight work is excluded from the derivation: no duplicate session.
+    await engine.deriveAndAct();
+    assert.equal(engine.fillSlots().length, 0, "the same work is never launched twice");
+
+    release();
+    await Promise.all(started);
   });
 });
