@@ -419,10 +419,10 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
   function seedRegistry(): void {
     const works = join(dir, "ws", "trabalhos");
     const archive = join(dir, "ws", "arquivo");
-    // In flight: an attempt started (evidence on disk), no outcome record.
-    const flying = join(works, "Sanmoo", "my-tasks#1");
-    mkdirSync(flying, { recursive: true });
-    writeFileSync(join(flying, "log-1.jsonl"), "{}\n", "utf8");
+    // An attempt started (evidence on disk), no outcome record.
+    const uncontcluded = join(works, "Sanmoo", "my-tasks#1");
+    mkdirSync(uncontcluded, { recursive: true });
+    writeFileSync(join(uncontcluded, "log-1.jsonl"), "{}\n", "utf8");
     // Reserved without attempt: the claim landed, the worker has not.
     mkdirSync(join(works, "Sanmoo", "my-tasks#3"), { recursive: true });
     // Last outcome: a concluded attempt on disk.
@@ -454,7 +454,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     return runCli(dir, ["status"], installGhShim(dir).env());
   }
 
-  test("status never creates the workspace and answers reserved-without-attempt / running-or-orphaned / last outcome / archived from disk alone", () => {
+  test("status never creates the workspace and answers reserved-without-attempt / running-or-orphaned / last outcome / archived from disk (+ the probe when Docker answers)", () => {
     seedRegistry();
     const before = existsSync(join(dir, "ws", "repos"));
     const result = runStatus();

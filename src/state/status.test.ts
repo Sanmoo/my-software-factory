@@ -257,7 +257,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(all, /more$/);
   });
 
-  test("status writes nothing: the workspace is byte-identical before and after the derivation", async () => {
+  test("status writes nothing: the workspace tree is unchanged before and after the derivation", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
     seedAttempt(4, 1);

@@ -105,10 +105,10 @@ export async function readReconciliationFacts(workDir: string): Promise<Reconcil
 
 /**
  * The attempt a work is on right now (issue 102): the highest per-attempt log,
- * or the record's own number when the record is the latest evidence. This is
- * what `msf status` prints next to a live worker — read from the registry that
- * numbers attempts, never guessed from elsewhere. Null when nothing on disk
- * numbers an attempt (a work dir that is gone): the registry invents no number.
+ * or the record's own number when the record is the latest evidence — read
+ * from the registry that numbers attempts, never guessed from elsewhere. Null
+ * when nothing on disk numbers an attempt (a work dir that is gone): the
+ * registry invents no number.
  */
 export async function readLastAttempt(workDir: string): Promise<number | null> {
   const { logs, record } = await attemptsAndRecord(workDir);

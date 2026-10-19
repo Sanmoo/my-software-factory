@@ -96,9 +96,9 @@ describe("registry — the status view (worked on by msf status, factory stopped
     mkdirSync(bare, { recursive: true });
 
     // An attempt started (evidence on disk), no outcome record yet.
-    const flying = join(layout.works, "Sanmoo/d#4");
-    mkdirSync(flying, { recursive: true });
-    writeFileSync(join(flying, "log-1.jsonl"), "{}\n", "utf8");
+    const unconcluded = join(layout.works, "Sanmoo/d#4");
+    mkdirSync(unconcluded, { recursive: true });
+    writeFileSync(join(unconcluded, "log-1.jsonl"), "{}\n", "utf8");
 
     // Last outcome: a concluded attempt, record on disk.
     const ended = join(layout.works, "Sanmoo/b#7");

@@ -7,7 +7,7 @@ import { join } from "node:path";
  * Disk names are decided in tickets 05/10 and stay in PT-BR — layout of disk
  * is a taken decision, not code:
  *   <workspace>/repos/      — single clone per target repo
- *   <workspace>/trabalhos/  — in-flight per-work artifacts (sessao/, log-<n>.jsonl, desfecho.json)
+ *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs (sessao/, log-<n>.jsonl, desfecho.json)
  *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
  */
 
