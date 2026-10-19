@@ -315,7 +315,6 @@ export class SweepEngine {
   ): void {
     const next = operationalState(pool, reserved, inFlight);
     if (this.lastState === null) {
-      // The execution's starting point is always a record, empty or not.
       this.log(renderPoolSummary(next, null, []));
     } else {
       const changed = changedWorkKeys(this.lastState, next);
@@ -433,7 +432,6 @@ export class SweepEngine {
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      this.announce(ref, "reserved");
       // The reservation on disk comes FIRST (issue 98): a claim whose tracker
       // write fails then leaves a directory the next sweep re-claims and
       // reuses — never a mark with no footprint, which is the limbo issues
@@ -444,7 +442,6 @@ export class SweepEngine {
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
-      this.announce(ref, "reserved");
       await tracker.resumeClaim(ref, config.labels);
       // The rejection's retomada: the SAME PR is reopened, never a new one.
       if (launchable.pr !== null && launchable.pr.state === "closed") {
@@ -452,8 +449,9 @@ export class SweepEngine {
       }
     } else {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
-      this.announce(ref, "reserved");
     }
+    // Every launch kind holds the claim, so the work is reserved from here.
+    this.announce(ref, "reserved");
 
     // Git host (ticket 15): clone once + delta fetch + work branch born from
     // the default the clone reveals; relaunches reuse the branch untouched.
