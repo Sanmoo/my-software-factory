@@ -479,7 +479,7 @@ export class SweepEngine {
       }
     } else if (kind === "repair") {
       this.log(
-        `repair round for ${key}: ${launchable.repair?.reasons.join(" + ") ?? "confirmed"} reactivated the worker — ` +
+        `repair round for ${key}: ${launchable.repair?.reasons.join(" + ") ?? "a confirmed impediment"} reactivated the worker — ` +
           "same branch, same PR, no human comment needed",
       );
     } else {

@@ -6,6 +6,7 @@ import type {
   PrFeedback,
   PrRepairFacts,
   PullRequest,
+  RepairReason,
   RequiredCheckResult,
   TrackerPort,
 } from "../tracker/port.js";
@@ -87,14 +88,9 @@ async function hasNoOpenBlocker(port: TrackerPort, ref: IssueRef): Promise<boole
 
 // ---- the reserved states — the tick's full derivation (ticket 14) ----
 
-/** The reasons a confirmed impediment reactivates the worker. */
-export type RepairReason = "conflicts" | "required-checks";
-
 /** A confirmed impediment of an open PR, read from structured facts alone. */
 export interface RepairTrigger {
   reasons: RepairReason[];
-  /** True when the confirmed impediment is a conflict (the reasons carry it). */
-  conflicting: boolean;
   facts: PrRepairFacts;
   /** The required checks that concluded with failure or timeout on this head. */
   failingChecks: RequiredCheckResult[];
@@ -107,13 +103,13 @@ function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
 }
 
 /** The trigger of an open PR, or null when nothing is confirmed. */
-export function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
+function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
   const reasons: RepairReason[] = [];
   if (facts.mergeState === "conflicting") reasons.push("conflicts");
   const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
   if (failingChecks.length > 0) reasons.push("required-checks");
   if (reasons.length === 0) return null;
-  return { reasons, conflicting: facts.mergeState === "conflicting", facts, failingChecks };
+  return { reasons, facts, failingChecks };
 }
 
 /** The consumed-evidence signature of a trigger — one authority for the
@@ -129,7 +125,7 @@ export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
 
 /** Confirmed recovery (story 22): no conflicts and every required check
  *  approved. Unknown facts never count as recovery. */
-export function repairRecovered(facts: PrRepairFacts): boolean {
+function repairRecovered(facts: PrRepairFacts): boolean {
   if (facts.mergeState !== "mergeable") return false;
   if (facts.requiredChecks === null) return false;
   return facts.requiredChecks.every((check) => check.conclusion === "success");
