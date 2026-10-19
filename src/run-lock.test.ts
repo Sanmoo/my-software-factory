@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -68,14 +68,15 @@ async function killAndWait(child: ChildProcess): Promise<void> {
   await exited;
 }
 
-/** Refuse-expected: exit 7, diagnostic naming the config. */
-async function assertRefused(contender: ChildProcess): Promise<void> {
+/** Refuse-expected: exit 7, diagnostic naming the config and the active run. */
+async function assertRefused(contender: ChildProcess, config: string): Promise<void> {
   let stderr = "";
   contender.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
   assert.equal(await exitOf(contender), 7, "the contender is refused");
   assert.match(stderr, /already has an active msf run/);
+  assert.ok(stderr.includes(realpathSync(config)), `the diagnostic names the config: ${stderr}`);
 }
 
 test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", async () => {
@@ -94,7 +95,7 @@ test("run exclusivity is process-wide, aliases converge, and abrupt death releas
       await waitForStdout(owner, "LOCKED");
 
       // The symlinked spelling of the same real file is the same identity.
-      await assertRefused(spawnContender(alias, env));
+      await assertRefused(spawnContender(alias, env), alias);
 
       // Abrupt death: no close(), no handler — the kernel releases the locks.
       const ownerExit = exitOf(owner);
@@ -128,7 +129,7 @@ test("the guarantee does not depend on HOME: a different state dir still exclude
     const owner = spawnLockHolder(config, isolatedEnv(join(dir, "home-a")));
     try {
       await waitForStdout(owner, "LOCKED");
-      await assertRefused(spawnContender(config, isolatedEnv(join(dir, "home-b"))));
+      await assertRefused(spawnContender(config, isolatedEnv(join(dir, "home-b"))), config);
     } finally {
       await killAndWait(owner);
     }

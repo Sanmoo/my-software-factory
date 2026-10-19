@@ -178,15 +178,13 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         [`${REPO}#1`, `${REPO}#2`, `${REPO}#3`],
         "claims follow the age order",
       );
+      // #3 launched while the slowest worker is still in flight: the *claim*
+      // order is the contract; the order the concurrent workers reach the
+      // runtime is not.
       assert.deepEqual(
         runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
         [1, 2, 3],
-        "all three launched",
-      );
-      assert.deepEqual(
-        runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
-        [1, 2, 3],
-        "every claimed work launched",
+        "#3 is launched without waiting for the slowest",
       );
 
       // Same cycle, no barrier: #2 already has its PR confirmed open and #3

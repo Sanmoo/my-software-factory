@@ -35,7 +35,7 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * startup — not the behaviour under test — dominates.
  */
 
-describe("e2e: msf run exclusivity per real config path (issue #90)", () => {
+describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 60_000 }, () => {
   let dir: string;
   let shim: GhShim;
   let children: ChildProcess[];
