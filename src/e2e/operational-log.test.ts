@@ -14,9 +14,8 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 
 /**
- * Issue 91: the operational log keeps the first observation (even empty), then
- * only relevant changes, each with a UTC timestamp. Observed through the loop's
- * log callback and the built CLI; `status` and the workers' JSONL stay untouched.
+ * Observed through the loop's log callback and the built CLI; `status` and the
+ * workers' JSONL are separate contracts and stay untouched.
  */
 
 const REPO = "Sanmoo/a";
@@ -178,11 +177,11 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     const { deps, logs } = makeFactory(tracker);
     const engine = new SweepEngine(deps);
 
-    await engine.deriveAndAct(); // empty
+    await engine.deriveAndAct();
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
-    await engine.deriveAndAct(); // available
+    await engine.deriveAndAct();
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [] });
-    await engine.deriveAndAct(); // empty again
+    await engine.deriveAndAct();
 
     const lines = summaries(logs);
     assert.equal(lines.length, 3);
@@ -351,8 +350,8 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     assert.equal(summaries(logs).length, 1);
 
     // Same tick: #1 is claimed (the action announces eligible→reserved) while
-    // #10 receives a human review comment (zyg reserved→feedback) with no
-    // action line. The summary must carry only the change nothing explained.
+    // #10 receives a human review comment (reserved→feedback) with no action
+    // line. The summary must carry only the change nothing explained.
     await Promise.all(engine.fillSlots());
     const feedback = await tracker.readPrFeedback({ repo: REPO, number: 10 });
     assert.ok(feedback.known && feedback.value.pr !== null);
@@ -386,14 +385,14 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     try {
       await waitUntil("several silent ticks", () => tracker.listCalls >= 4);
       assert.equal(summaries(logs).length, 1, "the idle factory emits no periodic summary");
-      instantOf(summaries(logs)[0]!); // the start of the execution is stamped
+      instantOf(summaries(logs)[0]!);
 
       seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
       await waitUntil("the new work claimed", () => tracker.claimedOrder.length === 1);
 
       const action = logs.find((line) => line.includes("claiming Sanmoo/a#1"));
       assert.ok(action, "the claim is an operational action");
-      instantOf(action); // actions are stamped too
+      instantOf(action);
       assert.ok(summaries(logs).length >= 2, "the availability change is logged");
       assert.match(summaries(logs).at(-1)!, /Sanmoo\/a#1 \(eligible\)/);
     } finally {
