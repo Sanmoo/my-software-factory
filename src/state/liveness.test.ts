@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -68,32 +68,49 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
 
 /**
  * The real path, in the tracker-smoke pattern (issue 102): it runs inside
- * `npm test` where Docker is up, and SKIPS WITH A REASON where it is not —
- * never a silent pass, never a false positive.
+ * `npm test` where Docker and the worker image are there, and SKIPS WITH A
+ * REASON where they are not — never a silent pass, never a false positive.
  */
-const dockerUnavailableReason: string | undefined = (() => {
+const dockerSkipReason: string | undefined = (() => {
   try {
     execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], { stdio: "ignore" });
-    return undefined;
   } catch {
     return "docker is not reachable on this machine — the real probe has no daemon to read (the pure parser covers the correlation)";
   }
+  try {
+    execFileSync("docker", ["image", "inspect", WORKER_IMAGE], { stdio: "ignore" });
+  } catch {
+    return `the worker image ${WORKER_IMAGE} is not built here (npm run build:image) — the real probe has nothing to list`;
+  }
+  return undefined;
 })();
 
 describe("liveness — the real Docker shell", () => {
   test(
-    "the real probe over the worker image reads the daemon and returns well-formed workers (or none)",
-    { skip: dockerUnavailableReason },
+    "a real worker-image container carrying a work dir is read back as that work",
+    { skip: dockerSkipReason, timeout: 60_000 },
     async () => {
       const worksRoot = mkdtempSync(join(tmpdir(), "msf-liveness-"));
+      const workDir = join(worksRoot, "Sanmoo", "my-tasks#7");
+      mkdirSync(workDir, { recursive: true });
+      // A throwaway container of the worker image, no network, one dir bound
+      // the way the runtime binds the work — the probe must correlate it back.
+      const container = execFileSync(
+        "docker",
+        ["run", "-d", "--rm", "--network", "none", "--entrypoint", "sleep", "-v", `${workDir}:/msf-work`, WORKER_IMAGE, "60"],
+        { encoding: "utf8" },
+      ).trim();
       try {
         const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
-        for (const worker of workers) {
-          assert.match(worker.key, /#\d+$/, "every live worker carries a work key");
-          assert.ok(worker.ageMs >= 0, "the age is never negative");
-        }
+        assert.deepEqual(workers.map((worker) => worker.key), ["Sanmoo/my-tasks#7"]);
+        assert.ok(workers[0]!.ageMs >= 0, "the age comes from the container's start");
       } finally {
         rmSync(worksRoot, { recursive: true, force: true });
+        try {
+          execFileSync("docker", ["rm", "-f", container], { stdio: "ignore" });
+        } catch {
+          // Already gone (the container's own --rm): nothing to clean up.
+        }
       }
     },
   );

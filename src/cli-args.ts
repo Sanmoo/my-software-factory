@@ -1,7 +1,7 @@
 export interface CliArgs {
   command: "run" | "status";
   once: boolean;
-  /** `msf status --all`: lift the render caps of every list section. */
+  /** `msf status --all`: no caps. */
   all: boolean;
   configPath?: string;
   runtime?: string;

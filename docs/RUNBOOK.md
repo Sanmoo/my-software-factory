@@ -135,8 +135,9 @@ disagree:
 
 The report never deletes, moves or archives anything; a released work
 (reservation + pool label) is normal and is never reported. Without Docker the
-liveness line reads `liveness unknown (docker not reachable)` and the rest of
-the report is unchanged.
+two liveness lines read `liveness unknown (docker not reachable)`; the works
+carrying attempt evidence are still listed, unclassified, and the rest of the
+report is unchanged.
 
 ## (d) Local desktop notifications (issue 93)
 
