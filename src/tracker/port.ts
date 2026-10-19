@@ -206,7 +206,7 @@ export interface TrackerPort {
    *  tolerated; any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the claim mark when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the padlock leaves last. */
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the padlock when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the padlock leaves last. */
   releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
   /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (ticket 13) — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the padlock leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */

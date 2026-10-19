@@ -392,7 +392,8 @@ export class GitHubTrackerAdapter implements TrackerPort {
    *  leaves last, so an interruption leaves the work claimed and recoverable by
    *  the next derivation's 1st fall (issue 98); the reverse order left it in
    *  neither the pool nor the reserved set. Only an absent label is tolerated;
-   *  any other failure propagates as a failed launch. */
+   *  any other failure propagates as a failed launch, the work stays in the
+   *  pool and the next tick retries it. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -434,7 +435,7 @@ export class GitHubTrackerAdapter implements TrackerPort {
   }
 
   /** 5. Release: swaps claimed→ready back (the ruler's 1st fall — the work
-   *  re-enters the pool) or removes only the claim mark when no ready label is
+   *  re-enters the pool) or removes only the padlock when no ready label is
    *  given. Mirrors the claim (issue 98): the pool label comes back first, the
    *  padlock leaves last. */
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {

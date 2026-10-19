@@ -91,12 +91,10 @@ export class FakeTrackerAdapter implements TrackerPort {
 
   constructor(private readonly options: { workerAccount: string }) {}
 
-  /** Throws the failure armed for this step, if any. */
   private armed(key: string): void {
     if (this.failAt.delete(key)) throw new Error(`fake: injected failure at ${key}`);
   }
 
-  /** Throws the failure armed for removing this label, if any. */
   private armedRemoval(label: string): void {
     this.armed(`remove:${label}`);
   }
