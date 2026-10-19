@@ -153,20 +153,23 @@ export async function bakeCredentialHelper(
   await runner("git", ["config", "--local", CREDENTIAL_URL_HELPER_KEY, GIT_CREDENTIAL_HELPER], { cwd: cloneDir, env });
 }
 
+/** The ambient token env vars that must never shadow the keyring (v1's
+ * createGhCliBoundary pattern). One list: the boot check strips them from the
+ * `gh` call, and the e2e harness adds gh's config-dir override on top. */
+export const AMBIENT_TOKEN_ENV_VARS = ["GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_TOKEN"] as const;
+
 /**
  * Boot check (ticket 16): read the bot token from the gh keyring. Fails the
  * boot with a clear message when the account has no token. The read strips
- * ambient GH_TOKEN from the env so an environment token never shadows the
- * keyring (v1's createGhCliBoundary pattern).
+ * the ambient token vars from the env so an environment token never shadows
+ * the keyring.
  */
 export async function readGhToken(
   account: string,
   runner: CommandRunner = defaultCommandRunner,
 ): Promise<string> {
   const env = { ...process.env } as Record<string, string | undefined>;
-  delete env.GH_TOKEN;
-  delete env.GH_ENTERPRISE_TOKEN;
-  delete env.GITHUB_TOKEN;
+  for (const name of AMBIENT_TOKEN_ENV_VARS) delete env[name];
   try {
     const { stdout } = await runner("gh", ["auth", "token", "--user", account], { env });
     const token = stdout.trim();

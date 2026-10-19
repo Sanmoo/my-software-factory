@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { AMBIENT_TOKEN_ENV_VARS } from "../tracker/github-adapter.js";
 
 /** The built CLI entry, resolved from this module's compiled location. */
 function cliPath(): string {
@@ -40,15 +41,9 @@ export interface GhShim {
 }
 
 /** The env vars that would point `gh` at a credential source outside the
- * suite's temp dir (its config dir, or a token handed in by the shell) — the
- * same ambient tokens the boot check itself strips (github-adapter.ts). */
-const CREDENTIAL_ENV_VARS = new Set([
-  "GH_CONFIG_DIR",
-  "GH_TOKEN",
-  "GH_ENTERPRISE_TOKEN",
-  "GITHUB_TOKEN",
-  "GITHUB_ENTERPRISE_TOKEN",
-]);
+ * suite's temp dir: the ambient tokens the boot check strips (one shared list,
+ * github-adapter.ts) plus gh's config-dir override. */
+const CREDENTIAL_ENV_VARS = new Set<string>([...AMBIENT_TOKEN_ENV_VARS, "GH_CONFIG_DIR"]);
 
 /**
  * The environment of a spawned CLI, owned by the suite's temp dir: HOME, the

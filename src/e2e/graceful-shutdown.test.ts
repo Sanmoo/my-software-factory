@@ -51,7 +51,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", () => {
+describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];

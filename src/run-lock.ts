@@ -96,7 +96,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
   try {
     await tryLockExclusive(configHandle.fd);
   } catch (error) {
-    await configHandle.close().catch(() => {});
+    await closeQuietly(configHandle);
     throw lockFailure(canonicalConfig, "config-file", error);
   }
 
@@ -116,7 +116,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
     if (created !== undefined) await chmod(LOCK_DIR, 0o700);
     markerHandle = await open(lockPath, "a+");
   } catch (error) {
-    await configHandle.close().catch(() => {});
+    await closeQuietly(configHandle);
     throw new Error(
       `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
     );
@@ -125,17 +125,11 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
   try {
     await tryLockExclusive(markerHandle.fd);
   } catch (error) {
-    await markerHandle.close().catch(() => {});
-    await configHandle.close().catch(() => {});
+    await closeQuietly(markerHandle, configHandle);
     throw lockFailure(canonicalConfig, "marker", error);
   }
 
-  return {
-    close: async () => {
-      await markerHandle.close().catch(() => {});
-      await configHandle.close().catch(() => {});
-    },
-  };
+  return { close: () => closeQuietly(markerHandle, configHandle) };
 }
 
 /** One diagnostic for every failed acquisition: contention is the operator's
@@ -144,17 +138,22 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
  * file's flock can also be held by a process that is not an `msf run`. */
 function lockFailure(canonicalConfig: string, via: "config-file" | "marker", error: unknown): Error {
   const code = (error as NodeJS.ErrnoException).code;
-  if (code === "EAGAIN" || code === "EWOULDBLOCK") {
-    const holder =
-      via === "marker" ? "" : " (its file is flock'ed by another process)";
+  if (code !== "EAGAIN" && code !== "EWOULDBLOCK") {
     return new Error(
-      `configuration ${canonicalConfig} already has an active msf run${holder} — ` +
-        "refusing to start a second one for the same configuration",
+      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
     );
   }
+  const refusing = `configuration ${canonicalConfig} already has an active msf run`;
+  const tail = "refusing to start a second one for the same configuration";
+  // The config file's flock can also be held by a process that is not a run.
   return new Error(
-    `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
+    via === "marker" ? `${refusing} — ${tail}` : `${refusing} (its file is flock'ed by another process) — ${tail}`,
   );
+}
+
+/** Close what was opened, ignoring a close that has nothing left to do. */
+async function closeQuietly(...handles: FileHandle[]): Promise<void> {
+  for (const handle of handles) await handle.close().catch(() => {});
 }
 
 function reason(error: unknown): string {
