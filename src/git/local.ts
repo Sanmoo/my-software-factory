@@ -59,6 +59,22 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
     }
   }
 
+  /** The paths of every worktree that currently holds `branch` checked out,
+   *  read from `git worktree list --porcelain` (the main clone never counts:
+   *  the work branch is only ever born, never checked out, there). */
+  async function worktreesHolding(repoDir: string, branch: string): Promise<string[]> {
+    const out = await git(repoDir, ["worktree", "list", "--porcelain"]);
+    const holding: string[] = [];
+    let path: string | null = null;
+    for (const line of out.split("\n")) {
+      if (line.startsWith("worktree ")) path = line.slice("worktree ".length).trim();
+      else if (line.startsWith("branch ") && line.slice("branch ".length).trim() === `refs/heads/${branch}` && path) {
+        holding.push(path);
+      } else if (line === "") path = null;
+    }
+    return holding;
+  }
+
   /** The default branch, revealed by the clone itself — never an API call. */
   async function detectDefaultBranch(repoDir: string): Promise<string> {
     try {
@@ -117,8 +133,16 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
         await git(repoDir, ["push", "origin", "--delete", branch]);
       }
 
-      // Local branch.
+      // Local branch. The worker ran in Sandcastle's own worktree on this
+      // branch (.sandcastle/worktrees/<branch>); a dirty round makes
+      // Sandcastle PRESERVE it, so the branch is still checked out here and
+      // a plain `git branch -D` refuses. The worktree goes first — the done
+      // duty already archived its artifacts, and `remove --force` also
+      // clears a registration whose directory a hand deleted.
       if (await localBranchExists(repoDir, branch)) {
+        for (const worktreePath of await worktreesHolding(repoDir, branch)) {
+          await git(repoDir, ["worktree", "remove", "--force", worktreePath]);
+        }
         await git(repoDir, ["branch", "-D", branch]);
       }
 

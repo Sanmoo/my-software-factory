@@ -233,6 +233,30 @@ describe("git host — cleanup only on done", () => {
     assert.ok(!localAfter.stdout.includes(workBranchName(7)), "local branch deleted");
   });
 
+  test("done with the worktree Sandcastle left behind: the branch is checked out there, cleanup still lands", async () => {
+    const git = gitWork();
+    await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+
+    // The launch runs the worker in Sandcastle's own worktree on the work
+    // branch (branchStrategy "branch"); the worker pushed the branch (the PR)
+    // and left the worktree DIRTY, which makes Sandcastle PRESERVE it — the
+    // branch stays checked out after the run, so a plain `git branch -D`
+    // refuses to delete it.
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    const worktreeDir = join(cloneDir, ".sandcastle", "worktrees", workBranchName(7));
+    await execFile("git", ["worktree", "add", "-q", worktreeDir, workBranchName(7)], { cwd: cloneDir });
+    writeFileSync(join(worktreeDir, "uncommitted.txt"), "dirty round\n", "utf8");
+    await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
+
+    await git.cleanupDoneWork({ repo: "Sanmoo/my-tasks", number: 7 });
+
+    const localAfter = await execFile("git", ["for-each-ref", "refs/heads"], { cwd: cloneDir });
+    assert.ok(!localAfter.stdout.includes(workBranchName(7)), "local branch deleted despite the worktree");
+    assert.ok(!existsSync(worktreeDir), "the preserved worktree is gone too");
+    const remoteAfter = await execFile("git", ["ls-remote", "--heads", "origin"], { cwd: cloneDir });
+    assert.ok(!remoteAfter.stdout.includes(workBranchName(7)), "remote branch deleted");
+  });
+
   test("cleanup on a repo that was never cloned is a no-op — nothing created, no error", async () => {
     const git = gitWork();
 
