@@ -181,7 +181,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       assert.deepEqual(
         runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
         [1, 2, 3],
-        "#3 is launched without waiting for the slowest",
+        "all three launched",
       );
 
       // Same cycle, no barrier: #2 already has its PR confirmed open and #3
