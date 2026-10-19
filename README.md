@@ -64,7 +64,7 @@ npm test
 Deterministic and hermetic: the tracker and the worker runtime are fakes; the
 workspace uses a real temp dir — the disk is never mocked. The git host side
 is exercised with local bare remotes as fixtures. No GitHub, no credentials,
-no network — each spawned CLI runs on a suite-owned HOME.
+no network.
 
 ## Real smoke (credential-gated)
 

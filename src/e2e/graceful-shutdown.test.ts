@@ -14,8 +14,8 @@ import { DEFAULT_LABELS, type Config } from "../config.js";
 import { installGhShim, isolatedEnv, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
- * End-to-end of issue #90's shutdown contract: Ctrl-C stops new admissions and
- * slot replenishment, the admitted workers still finish and their results are
+ * End-to-end of issue #90's shutdown contract: Ctrl-C stops new launches and
+ * slot replenishment, the started workers still finish and their results are
  * registered, and the run's exclusivity holds until the process (the whole
  * `run`) is over — a contender is refused while a pending worker concludes and
  * is admitted only after the process exits. The loop effects are driven
@@ -28,7 +28,7 @@ const NOW = "2026-01-01T00:00:00Z";
 
 class FakeGitWork implements GitWork {
   /** Runs inside prepareWork, before it answers — the seam a test uses to park
-   * an admission after its reservation and before its launch. */
+   * a launch after its reservation and before its worker starts. */
   constructor(private readonly beforePrepare?: () => Promise<void>) {}
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -61,7 +61,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude (issue #90)", { timeout: 60_000 }, () => {
+describe("e2e: Ctrl-C shutdown — no new launches, in-flight workers conclude (issue #90)", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];
@@ -106,7 +106,7 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     });
 
     // Worker #1 parks mid-flight; #2 would be the replenishment the moment the
-    // slot frees — exactly the admission Ctrl-C must suppress.
+    // slot frees — exactly the launch Ctrl-C must suppress.
     const release = deferred();
     runtime.hold = async (request) => {
       if (request.ref.number === 1) await release.promise;
@@ -124,13 +124,13 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
 
       controller.abort();
       // A bounded observation: several ticks would have replenished the slot
-      // by now if Ctrl-C had not closed admissions.
+      // by now if Ctrl-C had not closed new launches.
       await new Promise((resolve) => setTimeout(resolve, 60));
       assert.equal(settled, false, "the loop is still up while the admitted worker runs");
       assert.deepEqual(
         runtime.launched.map((r) => r.ref.number),
         [1],
-        "no replenishment and no new admission while the worker is pending",
+        "no replenishment and no new launch while the worker is pending",
       );
 
       release.resolve();
@@ -159,13 +159,13 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     }
   });
 
-  test("an admission past the reservation but before its worker starts launches nothing after Ctrl-C", async () => {
+  test("a launch past the reservation but before its worker starts launches nothing after Ctrl-C", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    // Park the admission inside git.prepareWork — after the reservation (the
+    // Park the launch inside git.prepareWork — after the reservation (the
     // claim and the registry dir) and before runtime.launch.
     const entered = deferred();
     const release = deferred();
