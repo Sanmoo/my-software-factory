@@ -10,50 +10,37 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
  *
  * The protected identity is the canonical (symlink-resolved) real path of the
  * config file — never its content, the name given on the command line or the
- * workspace. Copies at distinct real paths are distinct identities. The
- * guarantee is local to the machine and covers every combination of the
- * continuous run and `--once`.
+ * workspace. Copies at distinct real paths are distinct identities.
  *
  * Two exclusive `flock`s are held on open descriptors for the whole run: one
- * on the config file itself, one on a per-identity marker file. The first
- * follows the file's inode, so it holds whatever environment started the run
- * (a different HOME, an elevated shell, a systemd unit) and even excludes a
- * second OS user who can read the same config. The second is keyed by the
- * real path in the user's state dir (see LOCK_DIR) and survives the file
- * being replaced — the ordinary atomic save of an editor — which gives the
- * next run a new inode. Either one being taken refuses the run.
+ * on the config file itself, one on a per-identity marker file. The config
+ * file's lock follows its inode, so the guarantee holds whatever environment
+ * started the run (a different HOME, an elevated shell) and even excludes a
+ * second OS user who can read the config. The marker is keyed by the real
+ * path in the user's state dir (see LOCK_DIR) and survives the file being
+ * replaced — the ordinary atomic save of an editor, which gives the next run
+ * a new inode. Either one being taken refuses the run.
  *
- * Each acquisition is one non-blocking `flock` — a single syscall, so there is
- * no check-then-create window (a "does the marker exist? then create it" pair
- * would not be atomic). The config file's lock is taken first and is the
- * barrier: any second run of the same config contends on that inode before
- * touching its marker, so a simultaneous dispute admits at most one. (The two
- * differ when both the inode and the state dir differ — a copy of the config
- * under another HOME — which is a different configuration by construction.)
- * Contention rejects immediately; there is no timeout, so a slow or hung owner
- * never loses exclusivity. The kernel releases the locks when the process dies
- * — abrupt death included — so a new run needs no manual cleanup and nothing
+ * Each acquisition is one non-blocking `flock`: a single syscall, so there is
+ * no check-then-create window a "does the marker exist? then create it" pair
+ * would open. Both are taken in a fixed order (config file first), and
+ * contention rejects immediately — no timeout, so a slow or hung owner never
+ * loses exclusivity. The kernel releases the locks when the process dies,
+ * abrupt death included, so a new run needs no manual cleanup and nothing
  * depends on a signal handler running first.
  *
- * The binding (`@deepseek-ai/node-addon-system`, pinned exact, prebuilt — no
- * install-time compilation) is imported lazily by the package, so an
+ * The binding (`@deepseek-ai/node-addon-system`) loads lazily, so an
  * unsupported platform or a missing binary rejects the ACQUISITION, not the
  * module load: `msf status` keeps working and the run refuses to start.
  *
- * Fail closed: any failure to establish the exclusivity — the config cannot
- * be resolved or read, the lock storage cannot be created, flock rejects for
- * an unsupported platform or any errno other than the contention one — ends
- * the run with a diagnostic. There is no unprotected fallback and no
- * `--force`.
+ * Fail closed: any failure to establish the exclusivity ends the run with a
+ * diagnostic. There is no unprotected fallback and no `--force`.
  *
- * Scope: the machine and the local filesystem's `flock` semantics. The marker
- * lives in the invoking user's state dir rather than in a shared world-
- * writable place (two OS users are two operators, with separate `gh` keyrings
- * and per-user state), while the config file's own lock is not tied to it.
- * One consequence of locking the inode: two paths hard-linked to the same file
- * count as the same configuration (stricter than required — hard-link aliases
- * need no recognition, and copies are new inodes). Cross-machine coordination
- * is out of scope.
+ * Scope: the machine and the local filesystem's `flock` semantics. One
+ * consequence of locking the inode: two paths hard-linked to the same file
+ * count as one configuration — stricter than the identity above requires, and
+ * harmless, since copies are new inodes. Cross-machine coordination is out of
+ * scope.
  */
 export interface RunLock {
   /** Release the exclusivity. Normal completion and error paths must call it;
@@ -62,15 +49,17 @@ export interface RunLock {
 }
 
 /**
- * The per-user state directory of the marker files. A directory this run
- * creates is chmod'ed 0700 (see the acquisition), keeping other OS users out of
- * this user's markers; one that already existed keeps the operator's umask.
- * The directory follows the user's home: the config file's own lock is what
- * makes the guarantee independent of it. Not next to the config file: a
- * deployment can keep `msf.yaml` in a read-only checkout, and the run must not
- * need write access to the directory it reads from.
+ * The marker files' directory in the user's state dir (XDG_STATE_HOME when
+ * set). A directory this run creates is chmod'ed 0700 — see the acquisition —
+ * keeping other OS users out; an existing one keeps the operator's umask. Not
+ * next to the config file: a deployment can keep `msf.yaml` in a read-only
+ * checkout, and the run must not need write access to the directory it reads.
  */
-const LOCK_DIR = join(homedir(), ".local", "state", "msf", "locks");
+const LOCK_DIR = join(
+  process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"),
+  "msf",
+  "locks",
+);
 
 export async function acquireRunLock(configPath: string): Promise<RunLock> {
   let canonicalConfig: string;

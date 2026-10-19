@@ -611,10 +611,10 @@ export class SweepEngine {
     );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
-    // and the registry dir) stays for the next run's reconciliation.
+    // and the registry dir) stays for the next run's reconciliation; the
+    // caller releases the slot.
     if (this.stopping) {
       this.log(`admission for ${key} stopped before the worker started — the reservation stays for reconciliation`);
-      this.endAdmission(key);
       return;
     }
     const result = await runtime.launch({
@@ -628,11 +628,7 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    try {
-      await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
-    } finally {
-      this.endAdmission(key);
-    }
+    await this.collect(launchable, result, dir, facts.attempt, facts.previousFall);
   }
 
   /** Consume one automatic repair round before its session: the budget and
@@ -644,19 +640,6 @@ export class SweepEngine {
       usedRounds: cycle.usedRounds + 1,
       lastEvidence: repairSignature(ref, trigger),
     });
-  }
-
-  /** The admitted work leaves the in-flight accounting — including an
-   * admission stopped by Ctrl-C before its worker started, which still holds
-   * the slot it acquired. The slot is released even when the collection's
-   * transition fails: the work stays reconcilable by the next derivation (the
-   * claim or its swap is already on the tracker; a failed write leaves it
-   * auditable). */
-  private endAdmission(key: string): void {
-    this.slots.release(key);
-    this.discardFromCacheAndParked(key);
-    this.fillSlots();
-    this.notifyWorkerEnded();
   }
 
   /**

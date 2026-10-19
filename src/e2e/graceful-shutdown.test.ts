@@ -27,7 +27,12 @@ const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
 class FakeGitWork implements GitWork {
+  /** Runs inside prepareWork, before it answers — the seam a test uses to park
+   * an admission after its reservation and before its launch. */
+  constructor(private readonly beforePrepare?: () => Promise<void>) {}
+
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
+    await this.beforePrepare?.();
     return {
       repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
       branch: workBranchName(ref.number),
@@ -164,22 +169,10 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     // claim and the registry dir) and before runtime.launch.
     const entered = deferred();
     const release = deferred();
-    const git: GitWork = {
-      prepareWork: async (ref) => {
-        entered.resolve();
-        await release.promise;
-        return {
-          repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
-          branch: workBranchName(ref.number),
-          baseBranch: "main",
-          branchCreated: true,
-          branchOnOrigin: false,
-        };
-      },
-      cleanupDoneWork: async () => {},
-      observeRemoteHead: async () => null,
-      diffWork: async () => "",
-    };
+    const git = new FakeGitWork(async () => {
+      entered.resolve();
+      await release.promise;
+    });
 
     const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
     const controller = new AbortController();
