@@ -454,16 +454,17 @@ export class SweepEngine {
     return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
   }
 
-  /** Ctrl-C: stop admitting launches and replacing finished slots. The
-   * already-admitted launches are NOT cancelled — their collection and result
+  /** Ctrl-C: stop launching and stop replenishing finished slots. The
+   * launches already started are NOT cancelled — their collection and result
    * registration still complete (below). */
-  stopAdmissions(): void {
+  stopLaunches(): void {
     this.stopping = true;
   }
 
   /** The --once/shutdown boundary: wait for every launched worker,
    * transitively — each collection replenishes the slot within the same
-   * cycle. Once {@link stopAdmissions} ran, no replenishment is admitted. */
+   * cycle. Once {@link stopLaunches} ran, no replenishment takes the freed
+   * slot. */
   async awaitAllLaunched(): Promise<void> {
     while (this.pending.size > 0) {
       await Promise.all([...this.pending]);
@@ -614,7 +615,7 @@ export class SweepEngine {
     // and the registry dir) stays for the next run's reconciliation; the
     // caller releases the slot.
     if (this.stopping) {
-      this.log(`admission for ${key} stopped before the worker started — the reservation stays for reconciliation`);
+      this.log(`the launch of ${key} stopped before the worker started — the reservation stays for reconciliation`);
       return;
     }
     const result = await runtime.launch({
@@ -839,10 +840,10 @@ export async function runForever(
   const tickMs = options.tickMs ?? TICK_MS;
   const signal = options.signal;
 
-  // Ctrl-C stops admissions the instant it is perceived — even during a
-  // derivation, before the wait for the next event. The already-admitted
-  // launches are preserved: the loop below still awaits their collection.
-  const onAbort = (): void => engine.stopAdmissions();
+  // Ctrl-C stops launching the instant it is perceived — even during a
+  // derivation, before the wait for the next event. The launches already
+  // started are preserved: the loop below still awaits their collection.
+  const onAbort = (): void => engine.stopLaunches();
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
@@ -852,9 +853,9 @@ export async function runForever(
     for (;;) {
       const event = await engine.waitForWake(tickMs, signal);
       if (event === "abort" || signal?.aborted) {
-        // No new admission from here on; the run retains ownership until every
-        // admitted worker has completed collection and result registration.
-        engine.stopAdmissions();
+        // No new launch from here on; the run retains ownership until every
+        // started worker has completed collection and result registration.
+        engine.stopLaunches();
         await engine.awaitAllLaunched();
         break;
       }

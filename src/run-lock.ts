@@ -36,11 +36,8 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
  * Fail closed: any failure to establish the exclusivity ends the run with a
  * diagnostic. There is no unprotected fallback and no `--force`.
  *
- * Scope: the machine and the local filesystem's `flock` semantics. One
- * consequence of locking the inode: two paths hard-linked to the same file
- * count as one configuration — stricter than the identity above requires, and
- * harmless, since copies are new inodes. Cross-machine coordination is out of
- * scope.
+ * Scope: this machine's local filesystem. A cross-machine guarantee is not
+ * attempted.
  */
 export interface RunLock {
   /** Release the exclusivity. Normal completion and error paths must call it;

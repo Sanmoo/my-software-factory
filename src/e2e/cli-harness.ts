@@ -9,19 +9,17 @@ function cliPath(): string {
 }
 
 /**
- * Hermetic `gh` for the CLI e2e suites: the binary under test spawns `gh` for
- * its boot check and its REST calls. A shim on PATH answers the boot check
- * (`gh auth token --user …`) with a fixed token and fails LOUD on any REST
- * call — the suites that use it run with `repos: []`, so any API call is a
- * test bug, not something to swallow. This keeps the CLI process tests free of
- * GitHub, credentials and the network (issue #90, Testing Decisions).
+ * Hermetic `gh` for the tests that spawn the CLI: the binary under test spawns
+ * `gh` for its boot check and its REST calls. A shim on PATH answers the boot
+ * check (`gh auth token --user …`) with a fixed token and fails LOUD on any
+ * REST call — the suites that use it run with `repos: []`, so an API call is a
+ * test bug, not something to swallow.
  *
  * `env` is {@link isolatedEnv}: the child's HOME and XDG dirs point into the
- * suite, so the factory's per-user state (the run lock of issue #90) stays
- * with the suite, and the ambient token vars plus `GH_CONFIG_DIR` are cleared,
- * so a child can never reach the operator's credential store. That keeps the CLI process tests independent of the
- * operator's HOME being writable and free of GitHub, credentials and the
- * network (issue #90, Testing Decisions).
+ * suite, so the factory's per-user state stays with the suite, and the ambient
+ * token vars plus `GH_CONFIG_DIR` are cleared, so a child never reaches the
+ * operator's credential store. That keeps the tests off GitHub, credentials,
+ * the network and the operator's dirs (issue #90, Testing Decisions).
  *
  * Markers let a test observe and hold the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
