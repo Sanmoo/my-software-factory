@@ -8,12 +8,12 @@ import { pi, type PiOptions, type RunOptions, type RunResult, type SandboxProvid
 import type { DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import {
   SandcastleRuntime,
   SESSIONS_CONTAINER_DIR,
   AGENT_DIR_ENV,
-  WORKER_IMAGE,
   MISE_CONTAINER_DIR,
   NPM_CONTAINER_DIR,
   TOOLCHAIN_SUBPATHS,

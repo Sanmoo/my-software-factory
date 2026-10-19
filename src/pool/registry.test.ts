@@ -116,7 +116,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
     const view = await scanRegistry(layout);
 
     assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/a#3"]);
-    assert.deepEqual(view.inFlight, ["Sanmoo/d#4"]);
+    assert.deepEqual(view.attemptsWithoutOutcome, ["Sanmoo/d#4"]);
     assert.equal(view.lastOutcome.length, 1);
     assert.equal(view.lastOutcome[0]?.key, "Sanmoo/b#7");
     assert.equal(view.lastOutcome[0]?.record.class, "pr-open");
@@ -126,7 +126,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
 
   test("a workspace that was never created (status before any run) reads empty", async () => {
     const view = await scanRegistry(join("/nowhere/nonexistent-msf-ws"));
-    assert.deepEqual(view.inFlight, []);
+    assert.deepEqual(view.attemptsWithoutOutcome, []);
     assert.deepEqual(view.reservedWithoutAttempt, []);
     assert.deepEqual(view.lastOutcome, []);
     assert.deepEqual(view.archived, []);
@@ -141,7 +141,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
     // The invalid record is treated as absent — the abrupt fall class — and
     // with no attempt evidence the dir is a bare reservation, never a fake outcome.
     assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/c#9"]);
-    assert.deepEqual(view.inFlight, []);
+    assert.deepEqual(view.attemptsWithoutOutcome, []);
     assert.deepEqual(view.lastOutcome, []);
   });
 });

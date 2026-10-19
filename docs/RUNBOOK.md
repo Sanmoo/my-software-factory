@@ -116,11 +116,14 @@ parked; a merge you already did becomes done → archive).
 ## (c) Status — the trail, factory stopped
 
 ```sh
-msf status
+msf status        # the short report: 10 entries per list, then "… and N more"
+msf status --all  # every entry, no cap
 ```
 
-Derives on demand from the tracker + the workspace disk (read-only): the
-pool, the reservations (with or without an attempt), last outcomes, archived
+Derives on demand from the tracker, the workspace disk and a read-only Docker
+probe: live workers (**running**, with their age and attempt), works whose
+attempt died with no outcome record and no worker alive (**orphaned**), the
+reservations (with or without an attempt), last outcomes, the pool, archived
 dones — and the two reconciliation leftovers when tracker and workspace
 disagree:
 
@@ -131,7 +134,9 @@ disagree:
   offers no command.
 
 The report never deletes, moves or archives anything; a released work
-(reservation + pool label) is normal and is never reported.
+(reservation + pool label) is normal and is never reported. Without Docker the
+liveness line reads `liveness unknown (docker not reachable)` and the rest of
+the report is unchanged.
 
 ## (d) Local desktop notifications (issue 93)
 

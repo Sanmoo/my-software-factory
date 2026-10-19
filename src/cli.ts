@@ -19,7 +19,7 @@ import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
 /**
- * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status` — the minimal CLI
+ * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal CLI
  * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
  * from the gh keyring (boot check, ticket 16: no token → clear failure),
  * guarantees the workspace and hands the thin loop its four seams.
@@ -197,8 +197,10 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // writes NOTHING to the tracker. Without the bot credential in the
   // keyring, status fails with the same clear boot message as run.
   const tracker = await createGitHubAdapter({ account: config.workerGhAccount });
+  // The liveness probe is the composition's default (the real read-only Docker
+  // probe, issue 102) — injectable in tests only, never through a flag.
   const view = await deriveStatus(tracker, config, layout);
-  console.log(renderStatus(view));
+  console.log(renderStatus(view, { all: args.all }));
 }
 
 // The binary runs main(); the module imported (by the tests of the wiring)

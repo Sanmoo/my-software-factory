@@ -8,6 +8,7 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
@@ -41,9 +42,6 @@ const execFile = promisify(execFileCallback);
  * session manages (the worker writes it through the /msf-work mount; its
  * absence is the class "abrupt-death" and nothing writes it for it).
  */
-
-/** The factory's worker image; built from this repo's docker/Dockerfile. */
-export const WORKER_IMAGE = "msf-v2-worker:local";
 
 /** Inside the container: the agent dir is the writable COPY of the snapshot. */
 export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
