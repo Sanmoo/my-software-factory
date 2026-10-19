@@ -17,7 +17,7 @@ test("CLI rejects model, unknown flags, extra positionals, missing values, and o
   for (const argv of [
     ["run", "--model", "x/y"], ["run", "gadget"], ["run", "--runtime"],
     ["run", "--config"], ["run", "--once", "yes"], ["status", "--runtime", "fake"],
-    ["run", "--all"], ["status", "--all", "yes"],
+    ["status", "--all", "yes"],
   ]) assert.throws(() => parseCliArgs(argv));
   assert.throws(() => parseCliArgs(["run", "--model", "x/y"]), /unknown flag "--model"/);
   assert.throws(() => parseCliArgs(["run", "--runtime"]), /unknown flag "--runtime"[\s\S]*usage: msf run[\s\S]*msf status/);

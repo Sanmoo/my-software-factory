@@ -8,7 +8,8 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
-import { deriveStatus, renderStatus } from "./status.js";
+import { deriveStatus } from "./status.js";
+import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
 
 /**
@@ -138,6 +139,21 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, new RegExp(`running[\\s\\S]*${REPO}#90 \\(2m, attempt 1\\)[\\s\\S]*last outcome[\\s\\S]*${REPO}#90 = pr-open \\(attempt 1\\)`));
   });
 
+  test("a live worker whose work dir is gone shows no attempt number — the registry never invents one", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const view = await deriveStatus(
+      tracker,
+      makeConfig(),
+      layout,
+      fakeProbe({ key: `${REPO}#77`, ageMs: 5 * 60_000 }),
+    );
+
+    assert.deepEqual(view.running, [{ key: `${REPO}#77`, ageMs: 5 * 60_000, attempt: null }]);
+    const text = renderStatus(view);
+    assert.match(text, new RegExp(`${REPO}#77 \\(5m\\)`));
+    assert.doesNotMatch(text, /attempt 0/);
+  });
+
   test("without Docker the status degrades: liveness unknown, the rest of the answers intact", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
@@ -152,6 +168,11 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
     assert.match(text, /running[^\n]*: liveness unknown \(docker not reachable\)/);
     assert.match(text, /orphaned[^\n]*: liveness unknown \(docker not reachable\)/);
+    assert.match(
+      text,
+      /attempts without outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4/,
+      "the registry-only view is still complete — the works are named, just not classified",
+    );
     assert.match(text, /pool \(eligible\): 1/);
     assert.match(text, new RegExp(`archived \\(dones\\): 1[\\s\\S]*${REPO}#3-2026-02-01`));
   });
@@ -243,7 +264,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
-    assert.match(text, /0 eligible|pool \(eligible\): none/);
+    assert.match(text, /pool \(eligible\): none/);
     assert.match(text, /running \(a live worker carries the work\): none/);
     assert.match(text, /reconciliation: none/);
   });

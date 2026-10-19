@@ -44,11 +44,17 @@ export interface DockerProbeOptions {
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   return async () => {
     const listing = await docker(["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"]);
-    if (listing.trim() === "") return [];
-    const ids = listing.trim().split(/\s+/);
+    const ids = parseContainerIds(listing);
+    // Nothing running: no inspect to pay for, no workers to correlate.
+    if (ids.length === 0) return [];
     const inspect = await docker(["inspect", ...ids]);
     return parseWorkerContainers(listing, inspect, options.worksRoot, new Date());
   };
+}
+
+/** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
+export function parseContainerIds(listing: string): string[] {
+  return listing.split(/\s+/).filter((id) => id !== "");
 }
 
 async function docker(args: string[]): Promise<string> {
@@ -73,7 +79,7 @@ export function parseWorkerContainers(
   worksRoot: string,
   now: Date,
 ): LiveWorker[] {
-  const listed = psListing.trim().split(/\s+/).filter((id) => id !== "");
+  const listed = parseContainerIds(psListing);
   if (listed.length === 0) return [];
 
   const containers = parseInspectOutput(inspectJson);

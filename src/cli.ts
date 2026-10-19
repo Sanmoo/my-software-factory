@@ -9,7 +9,8 @@ import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { utcStamp } from "./log.js";
-import { deriveStatus, renderStatus } from "./state/status.js";
+import { deriveStatus, statusLivenessProbe } from "./state/status.js";
+import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
@@ -197,8 +198,8 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // writes NOTHING to the tracker. Without the bot credential in the
   // keyring, status fails with the same clear boot message as run.
   const tracker = await createGitHubAdapter({ account: config.workerGhAccount });
-  // The liveness probe is the composition's default (the real read-only Docker
-  // probe, issue 102) — injectable in tests only, never through a flag.
+  // The liveness probe is deriveStatus's own default (the real read-only
+  // Docker probe, issue 102) — injectable in tests only, never through a flag.
   const view = await deriveStatus(tracker, config, layout);
   console.log(renderStatus(view, { all: args.all }));
 }
