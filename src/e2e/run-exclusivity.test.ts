@@ -135,10 +135,7 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
     first.owner.kill("SIGKILL");
 
     // --once owner (held at boot, so it stays alive) → continuous contender.
-    const onceReady = join(dir, "once-ready");
-    const onceHold = newHold("once-hold");
-    const onceOwner = spawnOwner(["run", "--once", "--runtime", "fake"], shim.env({ ready: onceReady, hold: onceHold }));
-    await waitFor("the --once owner to hold exclusivity", () => existsSync(onceReady));
+    const { owner: onceOwner } = await spawnHeldOwner(["run", "--once", "--runtime", "fake"]);
 
     const continuousContender = runCli(dir, ["run", "--runtime", "fake"], shim.env());
     assert.notEqual(continuousContender.status, 0);
@@ -264,20 +261,16 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
     assert.notEqual(realpathSync(configA), realpathSync(join(dir, "b.yaml")));
 
     await spawnHeldOwner(["run", "--runtime", "fake", "--config", "a.yaml"]);
-    const readyB = join(dir, "ready-b");
-    const ownerB = spawnOwner(["run", "--runtime", "fake", "--config", "b.yaml"], shim.env({ ready: readyB }));
-    await waitFor("the byte-identical copy to be admitted", () => existsSync(readyB));
-    assert.ok(existsSync(readyB), "identical content at a distinct real path is not blocked");
-    ownerB.kill("SIGKILL");
+    const heldB = await spawnHeldOwner(["run", "--runtime", "fake", "--config", "b.yaml"]);
+    assert.ok(existsSync(heldB.ready), "identical content at a distinct real path is not blocked");
+    heldB.owner.kill("SIGKILL");
 
     // An independent configuration with its own workspace is likewise not
     // blocked by the first (the spec's independent-workspace scenario).
     writeConfig("c.yaml", join(dir, "ws-c"));
-    const readyC = join(dir, "ready-c");
-    const ownerC = spawnOwner(["run", "--runtime", "fake", "--config", "c.yaml"], shim.env({ ready: readyC }));
-    await waitFor("the independent-workspace configuration to be admitted", () => existsSync(readyC));
-    assert.ok(existsSync(readyC), "independent workspaces are not blocked by this rule");
-    ownerC.kill("SIGKILL");
+    const heldC = await spawnHeldOwner(["run", "--runtime", "fake", "--config", "c.yaml"]);
+    assert.ok(existsSync(heldC.ready), "independent workspaces are not blocked by this rule");
+    heldC.owner.kill("SIGKILL");
   });
 
   // ---- status and failure modes ----
@@ -296,12 +289,15 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
   test("a failure to establish the protection prevents the run, with a clear diagnostic and no workspace", () => {
     const workspace = join(dir, "ws-never");
     writeConfig("msf.yaml", workspace);
-    // The per-user lock storage cannot be created under a HOME that is a
-    // regular file: exclusivity cannot be established, so the run must refuse
-    // instead of running unprotected.
+    // The lock storage cannot be created when the state dir path is a regular
+    // file: exclusivity cannot be established, so the run must refuse instead
+    // of running unprotected.
     const notADir = join(dir, "not-a-dir");
     writeFileSync(notADir, "", "utf8");
-    const result = runCli(dir, ["run", "--once", "--runtime", "fake"], { ...shim.env(), HOME: notADir });
+    const result = runCli(dir, ["run", "--once", "--runtime", "fake"], {
+      ...shim.env(),
+      XDG_STATE_HOME: notADir,
+    });
 
     assert.notEqual(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
     assert.match(result.stderr, /cannot establish run exclusivity/);

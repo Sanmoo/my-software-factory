@@ -9,6 +9,7 @@
 | Pool | The set of work currently available for the factory to pick up. |
 | Claim | The factory mark on the tracker that reserves a work: the claim label plus the worker assignee. |
 | Padlock | The claim label (`agent-claimed`). It lands before the pool label (`ready-for-agent`) leaves, so the claim label's presence — never the pool label's absence — is the exclusion guarantee. |
+| Admission | The factory taking a reserved work into a free slot and launching its worker. Ctrl-C closes admissions — the already-admitted workers still finish. |
 | Reservation | The workspace registry dir of a work (`<workspace>/trabalhos/<repo>#<n>/`) — where its attempts and outcome records live. |
 | Unbacked claim | A factory claim mark on the tracker with no reservation in this workspace. |
 | Unmarked reservation | A reservation whose work carries no factory mark at all. |

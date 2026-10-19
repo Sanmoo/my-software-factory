@@ -168,13 +168,12 @@ taken.
 exclusive per real path of the config file (symlinks resolved). A second run
 for the same file fails immediately, nonzero, before any operational activity,
 and leaves the active run untouched. There is no `--force`, no waiting and no
-expiry. Process death — `kill -9` included — releases it, so a restart never
-needs cleanup, and `msf status` stays available while a run is up. If the
-protection cannot be established, the run refuses to start rather than run
-unprotected.
+expiry; process death (`kill -9` included) releases it, so a restart needs no
+cleanup, and `msf status` stays available. If the protection cannot be
+established, the run refuses to start rather than run unprotected.
 - **Ctrl-C waits for the workers in flight**: it closes admissions at once
 (no new launches, no slot replenishment), then lets the admitted workers finish
-and records their results. The exclusivity above holds through that window.
+and records their results; the exclusivity above holds through that window.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target
