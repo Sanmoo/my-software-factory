@@ -20,10 +20,9 @@ import {
  * the outcome of the last attempt; the archive holds the dones. No IPC: the
  * per-work artifacts are the interface.
  *
- * Issue 100: the SAME single derivation returns the pool and the two
- * leftovers (unbacked claim, unmarked reservation) — one open-issues read per
- * repo, from which the reconciliation against the workspace reservations and
- * the registry view are rendered.
+ * Issue 100: the SAME single derivation returns the pool and the
+ * reconciliation (unbacked claim, unmarked reservation) from one open-issues
+ * read per repo.
  */
 
 export interface StatusView {
@@ -53,7 +52,6 @@ export async function deriveStatus(
     tracker,
     config.repos,
     config.labels,
-    config.workerGhAccount,
     reservations,
   );
   return {

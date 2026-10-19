@@ -123,13 +123,11 @@ pool, the reservations (with or without a recorded attempt), last outcomes,
 archived dones — and the two reconciliation leftovers when tracker and
 workspace disagree:
 
-- an **unbacked claim** (a factory mark with no reservation in this
-  workspace) carries the copyable `gh issue edit …` that returns the issue to
-  the pool, with the caveat that ANOTHER factory or workspace may be holding
-  the claim;
-- an **unmarked reservation** (a dir whose work carries no factory mark at
-  all) is reported as a fact only — the decision is human and there is no
-  safe command.
+- an **unbacked claim** carries the copyable `gh issue edit …` that returns the
+  issue to the pool, with the caveat that ANOTHER factory or workspace may be
+  holding the claim;
+- an **unmarked reservation** is reported as a fact only — the decision is
+  human and there is no safe command.
 
 The report never deletes, moves or archives anything; a released work
 (reservation + pool label) is normal and is never reported.

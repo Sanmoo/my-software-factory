@@ -108,8 +108,8 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     await engine.deriveAndAct();
 
     // The derivation returned both leftovers (the same single-read seam runOnce reports).
-    assert.equal(engine.lastLeftovers.unbackedClaims.length, 1);
-    assert.equal(engine.lastLeftovers.unmarkedReservations.length, 1);
+    assert.equal(engine.lastReconciliation.unbackedClaims.length, 1);
+    assert.equal(engine.lastReconciliation.unmarkedReservations.length, 1);
 
     const first = leftoverLines(logs);
     assert.equal(first.length, 2, "exactly the two leftovers, once each");
@@ -158,8 +158,8 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
 
     const result = await runOnce(deps);
 
-    assert.equal(result.leftovers.unbackedClaims.length, 1);
-    assert.equal(result.leftovers.unbackedClaims[0]?.ref.number, 5);
-    assert.equal(result.leftovers.unmarkedReservations.length, 0);
+    assert.equal(result.reconciliation.unbackedClaims.length, 1);
+    assert.equal(result.reconciliation.unbackedClaims[0]?.ref.number, 5);
+    assert.equal(result.reconciliation.unmarkedReservations.length, 0);
   });
 });
