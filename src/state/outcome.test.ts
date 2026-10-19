@@ -34,7 +34,7 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
     consecutiveFall: false,
     attempt: 1,
     issueClosed: false,
-    ref: { repo: "Sanmoo/a", number: 1 },
+    workDir: "/nowhere/trabalhos/Sanmoo/a#1",
     workspace: FAKE_WORKSPACE,
     ...overrides,
   };
@@ -230,7 +230,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
       const comment = await blockedCommentBody({
         attempt: 2,
         record,
-        ref: { repo: "Sanmoo/a", number: 1 },
+        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
         workspace: FAKE_WORKSPACE,
       });
       assert.match(comment, /2 consecutive falls/i);
@@ -241,7 +241,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
       const comment = await blockedCommentBody({
         attempt: 3,
         record: null,
-        ref: { repo: "Sanmoo/a", number: 1 },
+        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
         workspace: FAKE_WORKSPACE,
       });
       assert.match(comment, /attempt 3/);
@@ -272,17 +272,20 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     return dir;
   }
 
-  const factsFor = (overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) =>
-    facts({ ref, workspace: layout, ...overrides });
+  const factsFor = (
+    attemptDir: string,
+    overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {},
+  ) => facts({ workDir: attemptDir, workspace: layout, ...overrides });
 
   test("a record of another attempt is absent for this attempt: an old blocked-self-report without the current label is not record-only", async () => {
+    const dir = makeWorkDir();
     const record = { class: "blocked-self-report" as const, attempt: 1 };
 
-    const second = await classifyOutcome(factsFor({ record, attempt: 3, consecutiveFall: true }));
+    const second = await classifyOutcome(factsFor(dir, { record, attempt: 3, consecutiveFall: true }));
     assert.equal(second.decision, "block", "the current attempt fell without a record of its own");
     assert.equal(second.because, "fall-second");
 
-    const first = await classifyOutcome(factsFor({ record, attempt: 3, consecutiveFall: false }));
+    const first = await classifyOutcome(factsFor(dir, { record, attempt: 3, consecutiveFall: false }));
     assert.equal(
       first.decision,
       "release",
@@ -291,10 +294,11 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("the header names the fallen attempt and explains the divergent record; the old JSON is not embedded", async () => {
-    writeFileSync(join(makeWorkDir(), "log-3.jsonl"), "{}\n", "utf8");
+    const dir = makeWorkDir();
+    writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
 
     const ruling = await classifyOutcome(
-      factsFor({
+      factsFor(dir, {
         record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
         attempt: 3,
         consecutiveFall: true,
@@ -312,10 +316,11 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("a valid record of the current attempt keeps its treatment — JSON preserved, evidence appended", async () => {
-    writeFileSync(join(makeWorkDir(), "log-2.jsonl"), "{}\n", "utf8");
+    const dir = makeWorkDir();
+    writeFileSync(join(dir, "log-2.jsonl"), "{}\n", "utf8");
     const record = { class: "clean-without-pr" as const, attempt: 2, paths: {} };
 
-    const ruling = await classifyOutcome(factsFor({ record, attempt: 2, consecutiveFall: true }));
+    const ruling = await classifyOutcome(factsFor(dir, { record, attempt: 2, consecutiveFall: true }));
 
     assert.equal(ruling.decision, "block");
     assert.match(ruling.comment, /2 consecutive falls \(attempt 2\) — the exact outcome record:/);
@@ -325,9 +330,9 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("without paths the three locations still show, all relative to the named workspace", async () => {
-    makeWorkDir();
+    const dir = makeWorkDir();
     const ruling = await classifyOutcome(
-      factsFor({ record: null, attempt: 3, consecutiveFall: true }),
+      factsFor(dir, { record: null, attempt: 3, consecutiveFall: true }),
     );
 
     assert.equal(ruling.decision, "block");
@@ -348,7 +353,11 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     symlinkSync("sessao", join(makeWorkDir(), "sessao"));
 
     const ruling = await classifyOutcome(
-      factsFor({ record: null, attempt: 3, consecutiveFall: true }),
+      factsFor(workDir(layout, ref.repo, ref.number), {
+        record: null,
+        attempt: 3,
+        consecutiveFall: true,
+      }),
     );
 
     assert.equal(ruling.decision, "block");
@@ -359,18 +368,19 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("the tracker facts keep their existing priority over a divergent record", async () => {
+    const dir = makeWorkDir();
     const record = { class: "blocked-self-report" as const, attempt: 1 };
 
     assert.equal(
-      (await classifyOutcome(factsFor({ record, attempt: 3, blockedLabelOnIssue: true }))).decision,
+      (await classifyOutcome(factsFor(dir, { record, attempt: 3, blockedLabelOnIssue: true }))).decision,
       "record-only",
     );
     assert.equal(
-      (await classifyOutcome(factsFor({ record, attempt: 3, prOpen: true }))).decision,
+      (await classifyOutcome(factsFor(dir, { record, attempt: 3, prOpen: true }))).decision,
       "reserve",
     );
     assert.equal(
-      (await classifyOutcome(factsFor({ record, attempt: 3, issueClosed: true }))).decision,
+      (await classifyOutcome(factsFor(dir, { record, attempt: 3, issueClosed: true }))).decision,
       "done",
     );
   });
@@ -382,7 +392,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
 
     await classifyOutcome(
-      factsFor({
+      factsFor(dir, {
         record: await readOutcomeRecord(dir),
         attempt: 3,
         consecutiveFall: true,

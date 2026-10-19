@@ -11,7 +11,7 @@ import type {
   TrackerPort,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
-import { workDir, type WorkspaceLayout } from "../layout.js";
+import type { WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
 import { MAX_REPAIR_ROUNDS, readRepairCycle, repairEvidenceSignature } from "../pool/repair.js";
@@ -424,7 +424,7 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
-    return deriveUnreconciledFall(ref, workspace, inFlight);
+    return deriveUnreconciledFall(ref, work.dir, workspace, inFlight);
   }
   return { ref, state: "idle" };
 }
@@ -446,12 +446,10 @@ async function deriveReservedWork(
  */
 async function deriveUnreconciledFall(
   ref: IssueRef,
+  dir: string,
   workspace: WorkspaceLayout,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
-  // One derivation of the attempt's dir: the record read, the reconciliation
-  // facts and the evidence all name the same location.
-  const dir = workDir(workspace, ref.repo, ref.number);
   const recon = await readReconciliationFacts(dir);
   if (recon.lastAttempt === 0) {
     // A claim with zero attempt evidence: no session ever started (a death
@@ -477,7 +475,7 @@ async function deriveUnreconciledFall(
     comment: await blockedCommentBody({
       attempt: recon.lastAttempt,
       record,
-      ref,
+      workDir: dir,
       workspace,
     }),
     attempt: recon.lastAttempt,

@@ -1,8 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import { workDir, type WorkspaceLayout } from "../layout.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { WorkspaceLayout } from "../layout.js";
 
 /**
  * The evidence of one fell attempt, pointed at by the blocked comment (issue
@@ -11,9 +10,10 @@ import type { IssueRef } from "../tracker/port.js";
  * record's `paths` is never the source, because it may be empty, incomplete
  * or belong to another attempt.
  *
- * Every SHOWN path is workspace-relative and names exactly the dir/file that
- * was probed: both come from the same `workDir()` of the layout, so a comment
- * can never point at a location whose presence was not consulted.
+ * `dir` is the attempt's dir as the runtime/registry used it: the same dir is
+ * probed and shown (workspace-relative), so the comment can only name what it
+ * consulted. Every SHOWN path is workspace-relative — the host's absolute
+ * paths never leave the process.
  */
 
 /** What a filesystem query says about one location — an unknown answer is never absence. */
@@ -32,14 +32,13 @@ export interface WorkEvidence {
   sandcastleLog: EvidenceLocation;
 }
 
-/** Probe the three locations of one attempt of `ref` in the workspace. */
+/** Probe the three locations of one attempt: `dir` inside the workspace. */
 export async function readWorkEvidence(
-  layout: WorkspaceLayout,
-  ref: IssueRef,
+  workspace: WorkspaceLayout,
+  dir: string,
   attempt: number,
 ): Promise<WorkEvidence> {
-  const dir = workDir(layout, ref.repo, ref.number);
-  const shownDir = relative(layout.root, dir).split(sep).join("/");
+  const shownDir = relative(workspace.root, dir).split(sep).join("/");
   const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
     presenceOf(dir),
     presenceOf(join(dir, `log-${attempt}.jsonl`)),
