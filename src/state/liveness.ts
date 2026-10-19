@@ -88,8 +88,7 @@ export function parseWorkerContainers(
     if (!listed.some((id) => container.Id.startsWith(id))) continue;
     const key = workKeyOfMounts(container.Mounts ?? [], worksRoot);
     if (key === null) continue;
-    const startedAt = Date.parse(container.State?.StartedAt ?? "");
-    const ageMs = Number.isNaN(startedAt) ? 0 : Math.max(0, now.getTime() - startedAt);
+    const ageMs = ageOf(container, now);
     // One work, one row: the oldest container is the worker that carries it.
     const seen = workers.get(key);
     if (seen === undefined || ageMs > seen.ageMs) workers.set(key, { key, ageMs });
@@ -105,6 +104,17 @@ function parseInspectOutput(inspectJson: string): InspectedContainer[] {
   } catch {
     throw new Error("docker inspect output is not JSON — liveness unknown");
   }
+}
+
+/** A live container's age, from its own start time — an unreadable start is a
+ *  probe failure, never a fabricated "0s" the operator would read as "just
+ *  started". */
+function ageOf(container: InspectedContainer, now: Date): number {
+  const startedAt = Date.parse(container.State?.StartedAt ?? "");
+  if (Number.isNaN(startedAt)) {
+    throw new Error(`container ${container.Id} carries no readable start time — liveness unknown`);
+  }
+  return Math.max(0, now.getTime() - startedAt);
 }
 
 /** The shape of `docker inspect` the correlation reads — nothing more. */
