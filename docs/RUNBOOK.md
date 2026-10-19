@@ -167,17 +167,21 @@ taken.
 - **One `run` per configuration**: `msf run` (continuous or `--once`) is
 exclusive per REAL path of the config file (symlinks resolved). A second run
 for the same file fails immediately with a clear message and a nonzero exit,
-before any operational activity; the active run is untouched. The exclusivity
-is held for the whole process and released by the kernel on exit — including a
-`kill -9` — so a restart never needs manual cleanup. There is no `--force` and
-no expiry: a slow or hung run keeps it. `msf status` does not take it and
-stays available while a run is up. The lock state lives under
-`~/.local/state/msf/locks/` — one small file per real config path, never
-deleted, and a stale one costs nothing (the kernel, not the file, decides
-ownership); the guarantee is therefore local to this machine **and this OS
-user**, since two users are two operators with separate `gh` keyrings. If the
-lock cannot be established at all (unusable state dir, unsupported platform),
-the run refuses to start rather than run unprotected.
+before any operational activity; the active run is untouched. Two kernel locks
+are held for the whole process — one on the config file itself (opened
+read-only) and one on a marker file keyed by its real path under
+`~/.local/state/msf/locks/` — and the kernel releases both on exit, including a
+`kill -9`, so a restart never needs manual cleanup. The config-file lock keeps
+the guarantee independent of the environment that started the run (a different
+`HOME`, an elevated shell, another OS user with read access to the config); the
+marker survives an editor that saves by replacing the file with a new inode.
+There is no `--force` and no expiry: a slow or hung run keeps its exclusivity.
+`msf status` takes neither lock and stays available while a run is up. Marker
+files are one per real config path, never deleted, and a stale one costs
+nothing — the kernel, not the file, decides ownership. If the lock cannot be
+established at all (config unreadable, unusable state dir, unsupported
+platform), the run refuses to start rather than run unprotected. Coordination
+between machines is out of scope.
 - **Ctrl-C waits for the workers in flight**: it closes admissions at once
 (no new launches, no slot replenishment from a finishing worker), then lets
 the admitted workers finish and records their results before the process

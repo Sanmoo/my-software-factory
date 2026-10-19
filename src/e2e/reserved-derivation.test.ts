@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
-import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
+import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
@@ -346,7 +346,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       "the parked feedback round is reserved first, then new claims by age",
     );
     assert.equal(second.launched.length, 3, "y=2: the feedback round and the oldest claim first, #3 renews a freed slot");
-    assert.equal(second.launched.find((r) => r.request.ref.number === 10)?.request.attempt, 2, "the registry numbered the round");
+    assert.equal(launchOf(second.launched, 10)?.request.attempt, 2, "the registry numbered the round");
   });
 
   // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an abrupt fall ----

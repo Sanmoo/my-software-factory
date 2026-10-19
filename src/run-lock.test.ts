@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { isolatedHome, waitForStdout } from "./e2e/cli-harness.js";
+import { isolatedEnv, waitForStdout } from "./e2e/cli-harness.js";
 
 const moduleUrl = new URL("./run-lock.js", import.meta.url).href;
 
@@ -55,34 +55,38 @@ function exitOf(child: ChildProcess): Promise<number> {
   return new Promise((resolve) => child.once("exit", (code) => resolve(code ?? -1)));
 }
 
-test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", { timeout: 60_000 }, async () => {
+/** Refuse-expected: exit 7, diagnostic naming the config. */
+async function assertRefused(contender: ChildProcess): Promise<void> {
+  let stderr = "";
+  contender.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  assert.equal(await exitOf(contender), 7, "the contender is refused");
+  assert.match(stderr, /already has an active msf run/);
+}
+
+test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "msf-run-lock-"));
   try {
-    // The suite-owned HOME: the lock files of this test stay in the temp dir.
-    const env = { ...process.env, HOME: isolatedHome(dir) };
+    // The suite-owned environment: the marker files of this test stay in the
+    // temp dir instead of the operator's state dir.
+    const env = isolatedEnv(dir);
     const config = join(dir, "msf.yaml");
     const alias = join(dir, "alias.yaml");
     writeFileSync(config, "worker-gh-account: test\nrepos: []\n");
     symlinkSync(config, alias);
 
-    let owner: ChildProcess | undefined = spawnLockHolder(config, env);
+    const owner = spawnLockHolder(config, env);
     try {
       await waitForStdout(owner, "LOCKED");
 
       // The symlinked spelling of the same real file is the same identity.
-      const contender = spawnContender(alias, env);
-      let stderr = "";
-      contender.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-      assert.equal(await exitOf(contender), 7);
-      assert.match(stderr, /already has an active msf run/);
+      await assertRefused(spawnContender(alias, env));
 
-      // Abrupt death: no close(), no handler — the kernel releases the lock.
+      // Abrupt death: no close(), no handler — the kernel releases the locks.
       const ownerExit = exitOf(owner);
       owner.kill("SIGKILL");
       await ownerExit;
-      owner = undefined;
 
       const restarted = spawnLockHolder(alias, env);
       try {
@@ -93,7 +97,29 @@ test("run exclusivity is process-wide, aliases converge, and abrupt death releas
         await restartedExit;
       }
     } finally {
-      owner?.kill("SIGKILL");
+      // A kill of an already-exited child is a no-op; nothing leaks if a step
+      // above failed early.
+      owner.kill("SIGKILL");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the guarantee does not depend on HOME: a different state dir still excludes the same config", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "msf-run-lock-home-"));
+  try {
+    const config = join(dir, "msf.yaml");
+    writeFileSync(config, "worker-gh-account: test\nrepos: []\n");
+
+    // Two state dirs, as an elevated shell, a systemd unit or a `docker exec
+    // -e HOME=…` would produce for the SAME operator and the SAME config.
+    const owner = spawnLockHolder(config, isolatedEnv(join(dir, "home-a")));
+    try {
+      await waitForStdout(owner, "LOCKED");
+      await assertRefused(spawnContender(config, isolatedEnv(join(dir, "home-b"))));
+    } finally {
+      owner.kill("SIGKILL");
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

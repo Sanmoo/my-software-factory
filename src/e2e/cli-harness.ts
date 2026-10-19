@@ -15,10 +15,13 @@ function cliPath(): string {
  * test bug, not something to swallow. This keeps the CLI process tests free of
  * GitHub, credentials and the network (issue #90, Testing Decisions).
  *
- * `env` also points the child's HOME at {@link isolatedHome}: the run's
- * per-user state (the run lock of issue #90 — never the real keyring, the shim
- * answers that) then stays with the suite, so the tests neither depend on the
- * operator's HOME being writable nor leave lock files behind in it.
+ * `env` is {@link isolatedEnv}: the child's HOME and XDG dirs point into the
+ * suite, so the factory's per-user state (the run lock of issue #90) stays
+ * with the suite, and the env-supplied credentials (`GH_CONFIG_DIR`,
+ * `GH_TOKEN`, `GITHUB_TOKEN`) are cleared, so a child can never reach the
+ * operator's store. That keeps the CLI process tests independent of the
+ * operator's HOME being writable and free of GitHub, credentials and the
+ * network (issue #90, Testing Decisions).
  *
  * Markers let a test observe and hold the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
@@ -31,26 +34,41 @@ function cliPath(): string {
 export interface GhShim {
   /** Directory holding the `gh` shim; prepend it to the child's PATH. */
   binDir: string;
-  /** The child environment: the shim on PATH, the isolated HOME
-   * ({@link isolatedHome}) and any markers given. */
+  /** The child environment: the shim on PATH, {@link isolatedEnv} and any
+   * markers given. */
   env(markers?: { ready?: string; hold?: string; fail?: boolean }): NodeJS.ProcessEnv;
 }
 
+/** The env vars that would point `gh` at a credential source outside the
+ * suite's temp dir (its config dir, or a token handed in by the shell). */
+const CREDENTIAL_ENV_VARS = new Set(["GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN"]);
+
 /**
- * A HOME for a spawned CLI, inside the suite's temp dir: the factory keeps its
- * per-user state there (the run lock of issue #90), so the suite owns it. Every
- * CLI-spawning suite uses it — including the ones that deliberately keep the
- * REAL `gh` (a temp HOME also means no real credential store is consulted).
+ * The environment of a spawned CLI, owned by the suite's temp dir: HOME, the
+ * XDG config and state dirs all live there (the factory keeps its per-user
+ * state — the run lock of issue #90 — under them), and the variables that
+ * would point `gh` at the operator's credential store carried by the parent
+ * environment are cleared. Every CLI-spawning suite uses it.
+ *
+ * `extra` is merged last (the shim's markers and PATH).
  */
-export function isolatedHome(baseDir: string): string {
+export function isolatedEnv(baseDir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const home = join(baseDir, "home");
   mkdirSync(home, { recursive: true });
-  return home;
+  const inherited = Object.entries(process.env).filter(
+    ([name]) => !CREDENTIAL_ENV_VARS.has(name),
+  );
+  return {
+    ...Object.fromEntries(inherited),
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    ...extra,
+  };
 }
 
 export function installGhShim(baseDir: string): GhShim {
   const binDir = join(baseDir, "bin");
-  const home = isolatedHome(baseDir);
   mkdirSync(binDir, { recursive: true });
   const shim = join(binDir, "gh");
   writeFileSync(
@@ -84,14 +102,12 @@ export function installGhShim(baseDir: string): GhShim {
   return {
     binDir,
     env(markers = {}) {
-      return {
-        ...process.env,
-        HOME: home,
+      return isolatedEnv(baseDir, {
         PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
         ...(markers.ready === undefined ? {} : { MSF_SHIM_READY: markers.ready }),
         ...(markers.hold === undefined ? {} : { MSF_SHIM_HOLD: markers.hold }),
         ...(markers.fail === true ? { MSF_SHIM_FAIL: "1" } : {}),
-      };
+      });
     },
   };
 }

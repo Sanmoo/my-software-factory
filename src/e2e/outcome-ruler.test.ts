@@ -3,7 +3,6 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
@@ -16,7 +15,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
-import { installGhShim } from "./cli-harness.js";
+import { installGhShim, runCli } from "./cli-harness.js";
 
 /**
  * End-to-end of ticket 13: the ruler of outcomes applied at collection, the
@@ -403,14 +402,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
       ].join("\n"),
       "utf8",
     );
-    const shim = installGhShim(dir);
-    const cli = new URL("../cli.js", import.meta.url).pathname;
-    const result = spawnSync(process.execPath, [cli, "status"], {
-      cwd: dir,
-      encoding: "utf8",
-      env: shim.env(),
-    });
-    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+    return runCli(dir, ["status"], installGhShim(dir).env());
   }
 
   test("status never creates the workspace and answers reserved-without-attempt / in flight / last outcome / archived from disk alone", () => {

@@ -28,6 +28,16 @@ export interface FakeWorkerRuntimeOptions {
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
 }
 
+/** The launch of one work among a run's results, by issue number. Concurrent
+ * admissions reach the runtime in no contractual order, so a test asks for the
+ * work it means instead of indexing by position. */
+export function launchOf(
+  launched: readonly SessionResult[],
+  number: number,
+): SessionResult | undefined {
+  return launched.find((result) => result.request.ref.number === number);
+}
+
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
   /** Instance-level hold hook — settable by tests after construction. */

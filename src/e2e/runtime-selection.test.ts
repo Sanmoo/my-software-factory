@@ -3,22 +3,19 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isolatedHome, runCli as runCliProcess } from "./cli-harness.js";
+import { isolatedEnv, runCli as runCliProcess } from "./cli-harness.js";
 
-/**
- * Strict CLI parsing and the configured worker model: bad flags and a missing
- * `worker-model` fail before the keyring boot check and before the workspace.
- * This suite stays offline: the child runs with an isolated HOME
- * ({@link isolatedHome}), never the operator's.
- */
 describe("e2e: strict CLI parsing and configured worker model", () => {
   let dir: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "msf-e2e-runtime-")); });
+  let env: NodeJS.ProcessEnv;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-runtime-"));
+    env = isolatedEnv(dir);
+  });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  /** The built CLI in the suite's temp dir, with the suite-owned HOME. */
   function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-    return runCliProcess(dir, args, { ...process.env, HOME: isolatedHome(dir) });
+    return runCliProcess(dir, args, env);
   }
   function config(model = "opencode-go/glm-5.3-flash"): void {
     writeFileSync(join(dir, "msf.yaml"), [

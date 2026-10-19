@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +12,7 @@ import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js"
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
-import { installGhShim } from "./cli-harness.js";
+import { installGhShim, spawnCli } from "./cli-harness.js";
 
 /**
  * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
@@ -262,12 +261,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       ].join("\n"),
       "utf8",
     );
-    const shim = installGhShim(dir);
-    const cli = new URL("../cli.js", import.meta.url).pathname;
-    const child = spawn(process.execPath, [cli, "run", "--runtime", "fake"], {
-      cwd: dir,
-      env: shim.env(),
-    });
+    const child = spawnCli(dir, ["run", "--runtime", "fake"], installGhShim(dir).env());
 
     let stdout = "";
     child.stdout!.on("data", (chunk) => {
