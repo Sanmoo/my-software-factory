@@ -73,7 +73,6 @@ export interface ContractHarness {
   readCost?(): ReadCost;
 }
 
-/** What a fault-injecting harness can arm (issue 98). */
 export interface ContractFaults {
   /** Make the NEXT removal of this label fail with a real error. */
   failRemovingLabel(label: string): void;

@@ -274,7 +274,7 @@ describe("the 9 operations over gh", () => {
     const { adapter } = await makeAdapter(() => ({ stdout: "{ not json" }));
     await assert.rejects(
       adapter.readIssue({ repo: "Sanmoo/a", number: 1 }),
-      /invalid JSON/,
+      /gh api .* returned invalid JSON/,
     );
   });
 
