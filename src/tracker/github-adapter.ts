@@ -388,21 +388,15 @@ export class GitHubTrackerAdapter implements TrackerPort {
     );
   }
 
-  /** 4. Claim (issue 98): the reservation's marker on the tracker. The ORDER is
-   *  the decision — the claim label (the padlock) lands FIRST and the pool
-   *  label leaves LAST, with the assignee in between as decoration. An
-   *  interruption in any point therefore leaves the work claimed, which the
-   *  next derivation releases on the 1st fall; the reverse order (pool label
-   *  first) left the work in neither the pool nor the reserved set — the limbo
-   *  issues 93/97/98 fell into. Only an ABSENT label is tolerated anywhere in
-   *  the swap: any other failure propagates as a failed launch, the work stays
-   *  in the pool and the next tick retries it. */
+  /** 4. Claim: the padlock (the claim label) lands first and the pool label
+   *  leaves last, so any interruption leaves the work claimed and recoverable by
+   *  the next derivation's 1st fall (issue 98). Only an absent label is
+   *  tolerated; any other failure propagates as a failed launch. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
-    // ensureLabelExists, the label POST and the assignees POST all run before
-    // the pool label leaves, so the padlock is on before the work stops being
-    // visible to a neighbouring sweep.
+    // Everything below runs before the pool label leaves: the padlock is on
+    // before the work stops being visible to a neighbouring sweep.
     try {
       await this.ensureLabelExists(ref.repo, this.claimedLabel);
       await this.api(`${issuePath}/labels`, {
@@ -438,12 +432,10 @@ export class GitHubTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters
-   *  the pool; the ready label is given) or remove only the claim mark when no ready
-   *  label is given. Mirrors the claim's discipline (issue 98): the pool label comes
-   *  back FIRST and the claim mark (the padlock) leaves LAST, so an interrupted
-   *  release leaves the work still claimed — the next derivation releases it again —
-   *  instead of showing it as ready while the claim mark lingers. */
+  /** 5. Release: swaps claimed→ready back (the ruler's 1st fall — the work
+   *  re-enters the pool) or removes only the claim mark when no ready label is
+   *  given. Mirrors the claim (issue 98): the pool label comes back first, the
+   *  padlock leaves last. */
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -483,10 +475,10 @@ export class GitHubTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of
-   *  ticket 13) — the claim is held until the terminal state, so the assignee
-   *  stays. Same discipline as the claim (issue 98): the blocked label lands
-   *  first, the claim mark (the padlock) leaves last. */
+  /** 5b. Block: swaps claimed→blocked on the 2nd consecutive fall (ticket 13) —
+   *  the claim is held until the terminal state, so the assignee stays. Same
+   *  order as the claim (issue 98): the blocked label lands first, the padlock
+   *  leaves last. */
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -513,10 +505,10 @@ export class GitHubTrackerAdapter implements TrackerPort {
     return { performed };
   }
 
-  /** 5c. Resume (ticket 14): swap blocked→claimed on the retomada — a human
-   *  answered after the marker, the claim is held again. Same discipline as the
-   *  claim (issue 98): the claim mark (the padlock) returns first, the blocked
-   *  mark leaves last (tolerated when absent), the assignee never left. */
+  /** 5c. Resume (ticket 14): swaps blocked→claimed on the retomada — a human
+   *  answered after the marker, the claim is held again. Same order as the claim:
+   *  the padlock returns first, the blocked mark leaves last (tolerated when
+   *  absent); the assignee never left. */
   async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;

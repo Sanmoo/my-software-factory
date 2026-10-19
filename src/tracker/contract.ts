@@ -63,19 +63,17 @@ export interface ContractHarness {
   defaultBranch(): Promise<string>;
   /** Full reversion of every artifact the harness created (idempotent). */
   cleanup(): Promise<void>;
-  /** Optional fault injection: the harnesses that wrap the adapter in a seam
-   *  they control (the in-memory fake, the simulated REST repo) can make ONE
-   *  write fail with a REAL error — never the tolerated "label absent" case.
-   *  The live harness of the credential-gated smoke cannot force a server
-   *  failure and omits it; the interruption checks are skipped there. */
+  /** Optional fault injection: harnesses that control the adapter's seam can
+   *  make ONE write fail with a REAL error — never the tolerated absent-label
+   *  case. The live smoke harness cannot and omits it; its interruption checks
+   *  are skipped. */
   faults?(): ContractFaults;
   /** Optional read-cost surface (issue 99): whole-repo listings and per-issue
    *  reads served since reset; a harness that cannot count omits it. */
   readCost?(): ReadCost;
 }
 
-/** What a fault-injecting harness can arm (issue 98: the swaps must never
- *  half-apply silently). */
+/** What a fault-injecting harness can arm (issue 98). */
 export interface ContractFaults {
   /** Make the NEXT removal of this label fail with a real error. */
   failRemovingLabel(label: string): void;
@@ -345,12 +343,9 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
     {
       name: "4. claim: a pool-label removal that fails for a REAL reason is never swallowed",
       run: async () => {
-        // The interruption row that issue 93/97/98 fell into: the swap
-        // half-applied (claim mark on, pool label on) with no trace. The
-        // order is what makes the interruption recoverable — the claim mark
-        // must land BEFORE the pool label is removed, so a failure here leaves
-        // the work claimed WITH its reservation (the derivation releases it on
-        // the next tick) instead of in neither the pool nor the reserved set.
+        // The padlock must land BEFORE the pool label leaves (issue 98), so a
+        // failure here leaves the work claimed with its reservation — where the
+        // next derivation releases it — instead of invisible.
         const faults = harness.faults?.();
         if (!faults) return; // the live harness cannot inject; the offline ones can
         const a = await harness.createIssue({ title: `interrupted claim ${harness.name}`, labels: [ready] });

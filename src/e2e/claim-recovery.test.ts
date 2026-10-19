@@ -13,15 +13,10 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 
 /**
- * The interruption rows of the claim swap (issue 98), at the sweep seam with a
- * real workspace on disk and the fake tracker/runtime seams: a claim that fails
- * at ANY write must leave a state the NEXT sweep understands and heals.
- *
- * The two decisions proven here: the reservation on disk is written BEFORE the
- * tracker is touched, and the claim label is the padlock (it lands first and
- * leaves last). The failure is never swallowed: it reaches the caller as a
- * failed launch, the work stays in the pool or is released by the existing
- * orphan rule, and the factory keeps sweeping.
+ * The interruption matrix of the claim swap (issue 98) at the sweep seam, with
+ * a real workspace on disk: a claim failing at ANY write must leave a state the
+ * NEXT sweep heals. The failure is never swallowed — it reaches the caller as a
+ * failed launch and the factory keeps sweeping.
  */
 
 const REPO = "Sanmoo/my-tasks";
@@ -131,7 +126,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
   });
 
   test("a claim that fails at the assignee write keeps the claim mark with its reservation — the orphan rule releases it", async () => {
-    const { deps, tracker, runtime } = makeDeps(makeConfig());
+    const { deps, tracker } = makeDeps(makeConfig());
     const reservation = workDir(layout, REPO, 7);
 
     tracker.failAt.add("claim:assignee");
@@ -158,7 +153,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
   });
 
   test("a claim that fails removing the pool label keeps claim + pool label — the next sweeps release and re-claim", async () => {
-    const { deps, tracker, runtime } = makeDeps(makeConfig());
+    const { deps, tracker } = makeDeps(makeConfig());
     const reservation = workDir(layout, REPO, 7);
 
     tracker.failAt.add(`remove:${DEFAULT_LABELS.ready}`);

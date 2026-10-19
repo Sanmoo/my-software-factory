@@ -83,21 +83,20 @@ export class FakeTrackerAdapter implements TrackerPort {
   private readonly readCounts: ReadCost = { issueListings: 0, pullListings: 0, issueReads: 0 };
 
   /** Test-only fault injection (the interruption rows of the swaps, issue 98):
-   *  an armed key makes the NEXT matching step of a transition fail with a real
-   *  error — never the tolerated "label absent" case. Keys: "claim:label",
-   *  "claim:assignee", "release:relabel", "release:unassign", "block:label",
-   *  "resume:label" and "remove:<label>" for whichever removal of that label
-   *  happens next. One-shot: the key is consumed when it fires. */
+   *  an armed key makes the NEXT matching step fail with a real error — never
+   *  the tolerated absent-label case. Keys: "claim:label", "claim:assignee",
+   *  "release:relabel", "release:unassign", "block:label", "resume:label" and
+   *  "remove:<label>". One-shot: the key is consumed when it fires. */
   readonly failAt = new Set<string>();
 
   constructor(private readonly options: { workerAccount: string }) {}
 
-  /** The injected failure of one step, when armed. */
+  /** Throws the failure armed for this step, if any. */
   private armed(key: string): void {
     if (this.failAt.delete(key)) throw new Error(`fake: injected failure at ${key}`);
   }
 
-  /** The injected failure of removing one label, when armed ("remove:<label>"). */
+  /** Throws the failure armed for removing this label, if any. */
   private armedRemoval(label: string): void {
     this.armed(`remove:${label}`);
   }
@@ -284,10 +283,9 @@ export class FakeTrackerAdapter implements TrackerPort {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
     this.claimedOrder.push(this.key(ref));
-    // The order is the decision (issue 98): the claim label is the padlock — it
-    // lands FIRST and the pool label leaves LAST, so an interruption leaves the
-    // work claimed with its reservation (the next tick releases it on the 1st
-    // fall) instead of in neither the pool nor the reserved set.
+    // The order is the decision (issue 98): the padlock lands first, the pool
+    // label leaves last, so an interruption leaves the work claimed with its
+    // reservation.
     this.armed("claim:label");
     issue.labels.add("agent-claimed");
     performed.push(`label+agent-claimed on ${ref.repo}#${ref.number}`);
@@ -306,9 +304,8 @@ export class FakeTrackerAdapter implements TrackerPort {
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // Mirrored discipline (issue 98): the pool label returns FIRST, the claim
-    // mark (the padlock) leaves LAST — an interrupted release keeps the work
-    // claimed, so the next derivation releases it again.
+    // Mirrored order (issue 98): the pool label returns first, the padlock
+    // leaves last — an interrupted release stays recoverable.
     if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
       this.armed("release:relabel");
       issue.labels.add(readyLabel);
@@ -328,8 +325,8 @@ export class FakeTrackerAdapter implements TrackerPort {
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // Same discipline as the claim (issue 98): the blocked label lands first,
-    // the claim mark (the padlock) leaves last.
+    // Same order as the claim (issue 98): the blocked label lands first, the
+    // padlock leaves last.
     this.armed("block:label");
     issue.labels.add(labels.blocked);
     performed.push(`label+${labels.blocked} on ${ref.repo}#${ref.number}`);
@@ -343,7 +340,7 @@ export class FakeTrackerAdapter implements TrackerPort {
   async resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // The claim mark (the padlock) returns first, the blocked mark leaves last.
+    // The padlock returns first, the blocked mark leaves last.
     this.armed("resume:label");
     issue.labels.add(labels.claimed);
     performed.push(`label+${labels.claimed} on ${ref.repo}#${ref.number}`);
