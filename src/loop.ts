@@ -63,19 +63,13 @@ export interface SweepResult {
 
 export const workKey = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
-/** The operational classes the periodic summary tracks (issue 91). */
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
 
 /**
- * The class each reserved derivation state contributes to the observed
- * state. A done work is archived by this tick's action — it LEAVES the state
- * rather than becoming a class, so its removal is visible to the same
- * observation (and the action that explains it suppresses the summary). The
- * spec names four operational classes (eligible · reserved · feedback ·
- * resumable), so an idle, rejected or unknown work stays under the parked
- * "reserved" umbrella. The actions below announce the class they LAND a work
- * in, which can differ from this derivation class: a released fall lands
- * eligible even though its derivation state maps to reserved.
+ * The class each reserved derivation state contributes to the observed state;
+ * `null` means the work leaves it (a done work is archived by the same tick).
+ * An action's announced class can differ from this derivation class — a
+ * released fall lands eligible.
  */
 const RESERVED_OPERATIONAL_CLASS = {
   done: null,
@@ -88,12 +82,8 @@ const RESERVED_OPERATIONAL_CLASS = {
   resumable: "resumable",
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
-/**
- * The relevant operational state of one observation: the identity of every
- * work (repo#number, never just the count) and its class. Titles and order
- * never enter — the pool's effective scheduling order stays untouched. Works
- * in flight count as reserved so a launch is not mistaken for a disappearance.
- */
+/** The class of every work (repo#number, never just the count); in-flight counts
+ * as reserved. Titles and order never enter — the schedule order stays untouched. */
 function operationalState(
   pool: readonly PoolEntry[],
   reserved: readonly ReservedDerivation[],
@@ -110,7 +100,6 @@ function operationalState(
   return state;
 }
 
-/** The works whose class changed between two observations (added, removed, reclassified). */
 function changedWorkKeys(
   previous: ReadonlyMap<string, OperationalClass>,
   next: ReadonlyMap<string, OperationalClass>,
@@ -127,11 +116,9 @@ function changedWorkKeys(
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
 /**
- * The periodic summary: the totals plus what changed since the previous
- * observation — entered, left and reclassified works, each by its full
- * reference. On the first observation the whole composition is shown (the
- * execution's starting point). Titles and order never enter the text, so a
- * swap with equal counts still names both works involved.
+ * The first observation renders the whole composition (the execution's
+ * starting point); later ones only what changed. A swap with equal counts
+ * still names both works involved.
  */
 function renderPoolSummary(
   state: ReadonlyMap<string, OperationalClass>,
@@ -191,13 +178,9 @@ export class SweepEngine {
   private parkedQueue: Launchable[] = [];
   private readonly pending = new Set<Promise<void>>();
   private readonly endedWaiters: Array<{ fire: (event: WakeEvent) => void }> = [];
-  /** The last observed operational state (issue 91) — process-local, never persisted. */
+  /** The previous observation only — process-local, never persisted. */
   private lastState: Map<string, OperationalClass> | null = null;
-  /**
-   * The class each action/event already announced this interval, per work
-   * (`null` = the work leaves the state). The observation suppresses a change
-   * only when it lands the work exactly where the event said.
-   */
+  /** The class each action/event announced this interval (`null` = left); cleared after each observation. */
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
@@ -245,9 +228,7 @@ export class SweepEngine {
       inFlight,
     );
 
-    // The actions state/ decided — executed here, in the loop's IO duty. The
-    // works they touch are announced to the observation below (issue 91):
-    // the action already says what changed, so the summary need not repeat it.
+    // The actions state/ decided — executed here, in the loop's IO duty.
     const parked: Launchable[] = [];
     for (const decision of derived) {
       switch (decision.state) {
@@ -318,19 +299,14 @@ export class SweepEngine {
     // draws from it; a cache drained empty waits for the next tick).
     this.lastPool = await derivePool(tracker, config.repos, config.labels);
     this.cache = [...this.lastPool];
-    // The actions above already announced the changes they made, so the
-    // observation consumes those announcements and stays silent about them.
     this.observeOperationalState(this.lastPool, derived, inFlight);
     return derived;
   }
 
   /**
-   * Issue 91: log the operational state on the first observation and then
-   * only when the composition or classification changes. A change every
-   * action/event already announced is not repeated as a summary; the first
-   * summary is always preserved, and a state that reappears after another is
-   * logged again (the memory is only the previous observation, never a set
-   * of all states ever seen).
+   * Log the first observation (even empty), then only changes no action/event
+   * already announced. Memory is the previous observation only, so a state
+   * that reappears after another is logged again.
    */
   private observeOperationalState(
     pool: readonly PoolEntry[],
@@ -343,8 +319,6 @@ export class SweepEngine {
       this.log(renderPoolSummary(next, null, []));
     } else {
       const changed = changedWorkKeys(this.lastState, next);
-      // Only the changes no action/event already announced reach the summary:
-      // a change an event explained in full is not restated (issue 91).
       const unexplained = changed.filter(
         (key) => this.announced.get(key) !== (next.get(key) ?? null),
       );
@@ -356,12 +330,7 @@ export class SweepEngine {
     this.announced.clear();
   }
 
-  /**
-   * A transition this action/event already reports, with the class it lands
-   * the work in (`null` = removed). The summary stays silent about a change
-   * only when the observation lands the work exactly there — an event about a
-   * different transition on the same work never hides the new one.
-   */
+  /** Record the class an action/event lands a work in (`null` = it leaves). */
   private announce(ref: IssueRef, resulting: OperationalClass | null): void {
     this.announced.set(workKey(ref), resulting);
   }

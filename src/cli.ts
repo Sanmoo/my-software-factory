@@ -129,8 +129,6 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const workspace = ensureWorkspace(config.workspace);
 
   if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
-    // A direct CLI error record emitted during the run: it carries the same
-    // UTC prefix as every other operational record (issue 91).
     console.error(
       utcStamp(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`),
     );
@@ -202,8 +200,6 @@ const invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((error: unknown) => {
-    // A fatal boot/run failure is an operational error record: it carries the
-    // same UTC prefix as the loop's records (issue 91).
     console.error(utcStamp(error instanceof Error ? error.message : String(error)));
     process.exit(1);
   });

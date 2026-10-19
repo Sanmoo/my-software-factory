@@ -72,6 +72,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }

@@ -14,13 +14,9 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 
 /**
- * Issue 91 — the operational log stops repeating an identical state:
- * the first observation is always logged (even empty), then only relevant
- * changes in the composition/classification of the works, and every record
- * carries a UTC date-time. The main seam is the existing log callback of the
- * loop driven by the fake tracker/runtime over a real temp workspace; the
- * CLI output is checked through the built command, and `status` is proven
- * untouched.
+ * Issue 91: the operational log keeps the first observation (even empty), then
+ * only relevant changes, each with a UTC timestamp. Observed through the loop's
+ * log callback and the built CLI; `status` and the workers' JSONL stay untouched.
  */
 
 const REPO = "Sanmoo/a";
@@ -98,6 +94,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
   }
