@@ -33,10 +33,15 @@ class FakeGitWork implements GitWork {
       branch: workBranchName(ref.number),
       baseBranch: "main",
       branchCreated: true,
+      branchOnOrigin: false,
     };
   }
 
   async cleanupDoneWork(_ref: IssueRef): Promise<void> {}
+
+  async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
+    return null;
+  }
 
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
@@ -71,12 +76,14 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
   function makeConfig(concurrency: number): Config {
     return {
       workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
       repos: [REPO],
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      notifications: false,
       configPath: join(dir, "msf.yaml"),
     };
   }
@@ -166,9 +173,11 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
           branch: workBranchName(ref.number),
           baseBranch: "main",
           branchCreated: true,
+          branchOnOrigin: false,
         };
       },
       cleanupDoneWork: async () => {},
+      observeRemoteHead: async () => null,
       diffWork: async () => "",
     };
 
@@ -199,7 +208,12 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
     const configPath = join(dir, "msf.yaml");
     writeFileSync(
       configPath,
-      ["worker-gh-account: bot-do-samuca", "repos: []", `workspace: ${layout.root}`].join("\n"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${layout.root}`,
+      ].join("\n"),
       "utf8",
     );
     const shim: GhShim = installGhShim(dir);
@@ -228,11 +242,11 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
         "const [configPath, workspaceRoot, launchedFile, holdFile, resultFile] = process.argv.slice(2);",
         "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
         "const workspace = ensureWorkspace(workspaceRoot);",
-        "const config = { workerGhAccount: 'bot-do-samuca', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, configPath };",
+        "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, notifications: false, configPath };",
         "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
         "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
         "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 2, createdAt: '2026-01-02T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
-        "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true }), cleanupDoneWork: async () => {}, diffWork: async () => '' };",
+        "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '' };",
         "const runtime = new FakeWorkerRuntime({ tracker, outcomes: ['pr-open'] });",
         "runtime.hold = async (request) => {",
         "  appendFileSync(launchedFile, `${request.ref.number}\\n`);",

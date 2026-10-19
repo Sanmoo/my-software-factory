@@ -62,7 +62,13 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
     const path = join(dir, name);
     writeFileSync(
       path,
-      ["worker-gh-account: bot-do-samuca", "repos: []", `workspace: ${workspace}`, ...extra].join("\n"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${workspace}`,
+        ...extra,
+      ].join("\n"),
       "utf8",
     );
     return path;

@@ -165,29 +165,16 @@ taken.
 ## Notes
 
 - **One `run` per configuration**: `msf run` (continuous or `--once`) is
-exclusive per REAL path of the config file (symlinks resolved). A second run
-for the same file fails immediately with a clear message and a nonzero exit,
-before any operational activity; the active run is untouched. Two kernel locks
-are held for the whole process — one on the config file itself (opened
-read-only) and one on a marker file keyed by its real path under
-`~/.local/state/msf/locks/` — and the kernel releases both on exit, including a
-`kill -9`, so a restart never needs manual cleanup. The config-file lock keeps
-the guarantee independent of the environment that started the run (a different
-`HOME`, an elevated shell, another OS user with read access to the config); the
-marker survives an editor that saves by replacing the file with a new inode. A
-hard link to the same config file therefore counts as the same configuration —
-stricter than required, and harmless: copies are new files.
-There is no `--force` and no expiry: a slow or hung run keeps its exclusivity.
-`msf status` takes neither lock and stays available while a run is up. Marker
-files are one per real config path, never deleted, and a stale one costs
-nothing — the kernel, not the file, decides ownership. If the lock cannot be
-established at all (config unreadable, unusable state dir, unsupported
-platform), the run refuses to start rather than run unprotected. Coordination
-between machines is out of scope.
+exclusive per real path of the config file (symlinks resolved). A second run
+for the same file fails immediately, nonzero, before any operational activity,
+and leaves the active run untouched. There is no `--force`, no waiting and no
+expiry. Process death — `kill -9` included — releases it, so a restart never
+needs cleanup, and `msf status` stays available while a run is up. If the
+protection cannot be established, the run refuses to start rather than run
+unprotected.
 - **Ctrl-C waits for the workers in flight**: it closes admissions at once
-(no new launches, no slot replenishment from a finishing worker), then lets
-the admitted workers finish and records their results before the process
-exits. The exclusivity above is held through that whole window.
+(no new launches, no slot replenishment), then lets the admitted workers finish
+and records their results. The exclusivity above holds through that window.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target
