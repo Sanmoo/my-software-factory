@@ -119,15 +119,15 @@ msf status
 ```
 
 Derives on demand from the tracker + the workspace disk (read-only): the
-pool, the reservations (with or without a recorded attempt), last outcomes,
-archived dones — and the two reconciliation leftovers when tracker and
-workspace disagree:
+pool, the reservations (with or without an attempt), last outcomes, archived
+dones — and the two reconciliation leftovers when tracker and workspace
+disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns the
-  issue to the pool, with the caveat that ANOTHER factory or workspace may be
-  holding the claim;
-- an **unmarked reservation** is reported as a fact only — the decision is
-  human and there is no safe command.
+  issue to the pool; its report warns that another factory or workspace may be
+  the one holding the claim, so confirm before releasing;
+- an **unmarked reservation** is a fact for a human decision — the report
+  offers no command.
 
 The report never deletes, moves or archives anything; a released work
 (reservation + pool label) is normal and is never reported.

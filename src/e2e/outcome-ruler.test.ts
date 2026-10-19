@@ -374,7 +374,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     const flying = join(works, "Sanmoo", "my-tasks#1");
     mkdirSync(flying, { recursive: true });
     writeFileSync(join(flying, "log-1.jsonl"), "{}\n", "utf8");
-    // Reserved without a recorded attempt: the claim landed, the worker has not.
+    // Reserved without attempt: the claim landed, the worker has not.
     mkdirSync(join(works, "Sanmoo", "my-tasks#3"), { recursive: true });
     // Last outcome: a concluded attempt on disk.
     mkdirSync(join(works, "Sanmoo", "my-tasks#2"), { recursive: true });
@@ -422,7 +422,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.ok(!before, "status created nothing before the run");
     assert.ok(!existsSync(join(dir, "ws", "repos")), "status never ensures the workspace (read-only)");
-    assert.match(result.stdout, /reserved without recorded attempt.*Sanmoo\/my-tasks#3/);
+    assert.match(result.stdout, /reserved without attempt.*Sanmoo\/my-tasks#3/);
     assert.match(result.stdout, /in flight.*Sanmoo\/my-tasks#1/);
     assert.match(result.stdout, /last outcome: Sanmoo\/my-tasks#2 = pr-open \(attempt 1\)/);
     assert.match(result.stdout, /archived.*my-tasks#2-2026-02-01/);

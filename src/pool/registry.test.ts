@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { archiveDoneWork, parseWorkKey, readLaunchFacts, scanRegistry, scanReservedWorks } from "./registry.js";
-import type { IssueRef } from "../tracker/port.js";
 
 /**
  * The registry (pool/registry.ts, ticket 13): reads back the per-work
@@ -92,7 +91,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
   });
 
   test("reserved-without-attempt = bare dir; in flight = dir with attempt evidence; last outcome = with desfecho; archivo = dones", async () => {
-    // Reserved without a recorded attempt: the claim landed, the worker has not.
+    // Reserved without attempt: the claim landed, the worker has not.
     const bare = join(layout.works, "Sanmoo/a#3");
     mkdirSync(bare, { recursive: true });
 

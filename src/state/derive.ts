@@ -116,7 +116,10 @@ export async function deriveTrackerState(
 
   // A reservation whose open work carries no factory mark (not even the pool
   // label): the dir exists, the tracker says nothing about it. The listing is
-  // the only read — a closed/unknown issue is the done derivation's business.
+  // the only read, so a reservation missing from `byKey` stays out: a
+  // closed/unknown issue is the done derivation's business, and a reservation
+  // whose repo is not a target has no listing at all (its dir still shows in
+  // the registry section of `msf status`).
   const unmarkedReservations: UnmarkedReservation[] = [];
   for (const key of reservations) {
     if (inFlight.has(key)) continue;
@@ -447,7 +450,7 @@ async function deriveUnreconciledFall(
     // between the claim and the spawn). In this process's in-flight set the
     // claim is legitimately held — a worker is between the claim and its
     // first write; the sweep's own derivation must not release it.
-    if (inFlight?.has(`${ref.repo}#${ref.number}`)) return { ref, state: "idle" };
+    if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
     // An orphan: nothing fell on disk (no logs, no session, no record), but
     // no process holds the claim either — held forever would contradict the
     // ruler. The empty registry reads as attempt 1, no previous fall: the

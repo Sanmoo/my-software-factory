@@ -11,6 +11,7 @@
 | Reservation | The workspace registry dir of a work (`<workspace>/trabalhos/<repo>#<n>/`) — where its attempts and outcome records live. |
 | Unbacked claim | A factory claim mark on the tracker with no reservation in this workspace. |
 | Unmarked reservation | A reservation whose work carries no factory mark at all. |
+| Reserved without attempt | A reservation whose dir carries no attempt evidence yet — the claim landed, the worker has not. |
 | Attempt | One try by a worker to carry out a work, counted per work. |
 | Outcome | The verdict of how an attempt ended. |
 | Running | A work whose attempt is being carried out by a live worker right now. |
