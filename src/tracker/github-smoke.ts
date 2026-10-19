@@ -67,11 +67,9 @@ const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanu
  *        PR comment + readPrFeedback (5 reads) ........ 6
  *        comment + human comment + readComments ....... 3
  *        derive (open-issues listing + the open-PRs linkage
- *        listing — ticket 12/99: the seeded issue's OWN open PR
- *        (op9b, "Closes #N") flags it, so the derivation excludes it in
- *        memory (no per-candidate readIssue); the old isEligible
- *        readIssue early-returned on the blocked label — became the linkage
- *        listing, net 0) ............................. 2
+ *        listing — the seeded issue's own open PR (op9b, "Closes #N")
+ *        flags hasOpenPr, so it is excluded in memory, no per-candidate
+ *        readIssue) .................................. 2
  *        markDone + re-read ........................... 2
  *        rank ......................................... 0
  *        the LATE open-issues re-check ................ 1

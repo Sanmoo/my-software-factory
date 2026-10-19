@@ -47,8 +47,7 @@ class SimulatedRepoHarness implements ContractHarness {
     };
   }
 
-  /** The REST-based read cost: the sim records every `gh api` call, so the
-   *  whole-repo listings and per-issue reads are counted from it. */
+  /** The REST-based read cost, counted from the recorded `gh api` calls. */
   readCost(): ReadCost {
     const getPaths = this.calls
       .filter((call) => call.startsWith("GET "))

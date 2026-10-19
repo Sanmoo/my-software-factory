@@ -69,10 +69,8 @@ export interface ContractHarness {
    *  The live harness of the credential-gated smoke cannot force a server
    *  failure and omits it; the interruption checks are skipped there. */
   faults?(): ContractFaults;
-  /** Optional read-cost surface (issue 99): the whole-repo listings and
-   *  per-issue reads served since reset. The real/sim harness derives it from
-   *  the `gh api` calls it records; the in-memory fake counts the port reads
-   *  it serves. A harness that cannot count omits it; the cost check skips. */
+  /** Optional read-cost surface (issue 99): whole-repo listings and per-issue
+   *  reads served since reset; a harness that cannot count omits it. */
   readCost?(): ReadCost;
 }
 
@@ -100,8 +98,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
         const open = await harness.createIssue({ title: `open one ${harness.name}`, labels: [ready, other] });
         const unlabeled = await harness.createIssue({ title: `open two ${harness.name}` });
         await harness.createIssue({ title: `closed one ${harness.name}`, labels: [ready], closed: true });
-        // a linked PR is still an issue in the listing — the derivation decides;
-        // the PR itself is never an issue item
+        // a linked PR is still an issue in the listing — the derivation decides
         await harness.createPullRequest(open.ref);
 
         const issues = await adapter().listOpenIssues(harness.repo);
@@ -153,11 +150,8 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
     {
       name: "1. listOpenIssues: the open-PR linkage is resolved per issue — hasOpenPr, not a filtered listing",
       run: async () => {
-        // Ticket 12's pool rule moves into the derivation: the listing itself
-        // cannot tell PR linkage, so the adapter resolves it (the open-PRs
-        // bodies) and flags each issue; the derivation excludes it. The fake
-        // knows the linkage structurally; the real adapter reads it from the
-        // open-PRs listing.
+        // The derivation owns ticket 12's rule; the adapter only resolves the
+        // linkage (structurally in the fake, from the open PRs in the real one).
         const withPr = await harness.createIssue({ title: `has a PR ${harness.name}`, labels: [ready] });
         const withoutPr = await harness.createIssue({ title: `no PR ${harness.name}`, labels: [ready] });
         await harness.createPullRequest(withPr.ref);

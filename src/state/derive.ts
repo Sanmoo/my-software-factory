@@ -20,12 +20,8 @@ export interface PoolEntry {
 }
 
 /**
- * Derive the pool: per target repo, the neutral open-issues read is filtered
- * by the derivation's own label rules (ready in, claimed/blocked/assigned/PR-
- * linked out) and by the blockers read. Ordered by createdAt, oldest first.
- *
- * Issue 99: the read is ONE whole-repo listing per repo (plus its open-PRs
- * linkage read); eligibility no longer re-reads each candidate's issue.
+ * Derive the pool: per target repo, the neutral open-issues read filtered by
+ * the pool's own label rules and by the blockers read, oldest first.
  */
 export async function derivePool(
   port: TrackerPort,
@@ -59,10 +55,9 @@ async function deriveRepoPool(
   return entries;
 }
 
-/** The label rules of the pool live HERE, over the neutral read — never in the
- *  adapter. Already-claimed and blocked works are the factory's; an assigned
- *  issue is claimed by decoration; an issue with an open PR is already in the
- *  PR channel (ticket 12: only sem-PR issues enter the pool). */
+/** The pool's label rules, over the neutral read — never in the adapter. An
+ *  assigned issue is claimed by decoration; a linked PR is already in the PR
+ *  channel (ticket 12). */
 function isEligible(issue: OpenIssue, labels: Labels): boolean {
   if (!issue.labels.includes(labels.ready)) return false;
   if (issue.labels.includes(labels.claimed)) return false;

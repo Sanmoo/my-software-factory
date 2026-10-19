@@ -74,9 +74,8 @@ export class FakeTrackerAdapter implements TrackerPort {
   readonly pushedBranches: PushBranchInput[] = [];
   /** The reservation sequence: every claim's "<repo>#<n>", in order. */
   readonly claimedOrder: string[] = [];
-  /** The read cost of the neutral read (issue 99): whole-repo listings and
-   *  per-issue snapshots, for the contract's budget pin. The fake resolves the
-   *  open-PR linkage structurally, so `pullListings` stays 0. */
+  /** Read cost of the neutral read; the fake resolves linkage structurally,
+   *  so `pullListings` stays 0. */
   private readonly readCounts: ReadCost = { issueListings: 0, pullListings: 0, issueReads: 0 };
 
   /** Test-only fault injection (the interruption rows of the swaps, issue 98):
