@@ -73,6 +73,8 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
  * the action that explains it suppresses the summary). The spec names four
  * operational classes (eligible · reserved · feedback · resumable), so an
  * idle, rejected or unknown work stays under the parked "reserved" umbrella.
+ * This table therefore covers only works the tick does not act on: an action
+ * announces the class it LANDS a work in (a released fall lands eligible).
  */
 const RESERVED_OPERATIONAL_CLASS = {
   done: null,
@@ -245,14 +247,13 @@ export class SweepEngine {
     // The actions state/ decided — executed here, in the loop's IO duty. The
     // works they touch are announced to the observation below (issue 91):
     // the action already says what changed, so the summary need not repeat it.
-    const acted: Array<{ key: string; resulting: OperationalClass | null }> = [];
     const parked: Launchable[] = [];
     for (const decision of derived) {
       switch (decision.state) {
         case "done": {
           this.log(`derived ${workKey(decision.ref)}: issue closed — done; archiving artifacts, cleaning branches`);
           await this.finishWork(decision.ref);
-          acted.push({ key: workKey(decision.ref), resulting: null });
+          this.announce(decision.ref, null);
           break;
         }
         case "done-fallback": {
@@ -263,7 +264,7 @@ export class SweepEngine {
           await tracker.markDone(decision.ref);
           await tracker.comment(decision.ref, decision.comment);
           await this.finishWork(decision.ref);
-          acted.push({ key: workKey(decision.ref), resulting: null });
+          this.announce(decision.ref, null);
           break;
         }
         case "rejected": {
@@ -272,7 +273,7 @@ export class SweepEngine {
               "blocked with a comment pointing at the PR",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
-          acted.push({ key: workKey(decision.ref), resulting: "reserved" });
+          this.announce(decision.ref, "reserved");
           break;
         }
         case "fall": {
@@ -282,14 +283,14 @@ export class SweepEngine {
                 "release (claimed→ready back; the branch stays)",
             );
             await this.applyRelease(decision.ref);
-            acted.push({ key: workKey(decision.ref), resulting: "eligible" });
+            this.announce(decision.ref, "eligible");
           } else {
             this.log(
               `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
                 "blocked with the exact outcome on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
-            acted.push({ key: workKey(decision.ref), resulting: "reserved" });
+            this.announce(decision.ref, "reserved");
           }
           break;
         }
@@ -316,9 +317,8 @@ export class SweepEngine {
     // draws from it; a cache drained empty waits for the next tick).
     this.lastPool = await derivePool(tracker, config.repos, config.labels);
     this.cache = [...this.lastPool];
-    // Added BEFORE the observation: the action line explains this very change,
-    // so the observation consumes the announcement and stays silent about it.
-    for (const { key, resulting } of acted) this.announced.set(key, resulting);
+    // The actions above already announced the changes they made, so the
+    // observation consumes those announcements and stays silent about them.
     this.observeOperationalState(this.lastPool, derived, inFlight);
     return derived;
   }
