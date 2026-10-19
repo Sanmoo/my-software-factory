@@ -463,9 +463,12 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     assert.ok(!before, "status created nothing before the run");
     assert.ok(!existsSync(join(dir, "ws", "repos")), "status never ensures the workspace (read-only)");
     assert.match(result.stdout, /reserved without attempt[^\n]*: 1\n\s+Sanmoo\/my-tasks#3/);
-    // #1 carries attempt evidence: where Docker answers the temp workspace has no
-    // worker bind, so the work is Orphaned; without Docker liveness is unknown.
-    if (!result.stdout.includes("liveness unknown (docker not reachable)")) {
+    // #1 carries attempt evidence: where Docker answers, the temp workspace has
+    // no worker bind, so the work is Orphaned; without Docker liveness is
+    // unknown and the registry-only line still names it, unclassified.
+    if (result.stdout.includes("liveness unknown (docker not reachable)")) {
+      assert.match(result.stdout, /attempts without outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1/);
+    } else {
       assert.match(result.stdout, /orphaned \([^\n]*\): 1\n\s+Sanmoo\/my-tasks#1/);
     }
     assert.match(result.stdout, /last outcome: 1\n\s+Sanmoo\/my-tasks#2 = pr-open \(attempt 1\)/);

@@ -30,6 +30,11 @@ export function workDir(layout: WorkspaceLayout, repo: string, number: number): 
   return join(layout.works, `${repo}#${number}`);
 }
 
+/** The work dir a registry key ("<repo>#<n>", the registry's relative key) names. */
+export function workDirOfKey(layout: WorkspaceLayout, key: string): string {
+  return join(layout.works, key);
+}
+
 /** Guarantee the workspace and its derived subpaths exist (idempotent). */
 export function ensureWorkspace(root: string): WorkspaceLayout {
   const layout: WorkspaceLayout = {

@@ -53,7 +53,7 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
 }
 
 /** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
-export function parseContainerIds(listing: string): string[] {
+function parseContainerIds(listing: string): string[] {
   return listing.split(/\s+/).filter((id) => id !== "");
 }
 

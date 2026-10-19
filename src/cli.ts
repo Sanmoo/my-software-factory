@@ -198,9 +198,9 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // writes NOTHING to the tracker. Without the bot credential in the
   // keyring, status fails with the same clear boot message as run.
   const tracker = await createGitHubAdapter({ account: config.workerGhAccount });
-  // The liveness probe is deriveStatus's own default (the real read-only
-  // Docker probe, issue 102) — injectable in tests only, never through a flag.
-  const view = await deriveStatus(tracker, config, layout);
+  // The liveness probe rides the composition beside the tracker: the real
+  // read-only Docker probe, replaced by a fake in tests only.
+  const view = await deriveStatus(tracker, config, layout, statusLivenessProbe(layout));
   console.log(renderStatus(view, { all: args.all }));
 }
 

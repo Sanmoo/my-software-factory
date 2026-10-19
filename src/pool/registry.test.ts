@@ -90,12 +90,12 @@ describe("registry — the status view (worked on by msf status, factory stopped
     layout = ensureWorkspace(join(dir, "ws"));
   });
 
-  test("reserved-without-attempt = bare dir; in flight = dir with attempt evidence; last outcome = with desfecho; archivo = dones", async () => {
+  test("reserved-without-attempt = bare dir; attempts without outcome = dir with attempt evidence; last outcome = with desfecho; archivo = dones", async () => {
     // Reserved without attempt: the claim landed, the worker has not.
     const bare = join(layout.works, "Sanmoo/a#3");
     mkdirSync(bare, { recursive: true });
 
-    // In flight: an attempt started (evidence on disk), no outcome record yet.
+    // An attempt started (evidence on disk), no outcome record yet.
     const flying = join(layout.works, "Sanmoo/d#4");
     mkdirSync(flying, { recursive: true });
     writeFileSync(join(flying, "log-1.jsonl"), "{}\n", "utf8");
