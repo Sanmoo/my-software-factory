@@ -19,6 +19,13 @@ import type { Labels } from "../config.js";
 /** Marks everything the factory or the worker publishes; adapters never remove it. */
 export const AGENT_MARKER = "<!-- msf:agent -->";
 
+/** Agent speech carries the marker. The author is not the signal: v0.1 uses
+ *  the operator account as the worker account (GitHub hides a fresh bot
+ *  account), so the same login speaks on both sides. */
+export function isAgentSpeech(body: string): boolean {
+  return body.includes(AGENT_MARKER);
+}
+
 /** Unknown is never absent: a value not consulted is `known: false`. */
 export type Known<T> = { known: true; value: T } | { known: false };
 

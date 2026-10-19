@@ -10,7 +10,7 @@ import type {
   RequiredCheckResult,
   TrackerPort,
 } from "../tracker/port.js";
-import { AGENT_MARKER } from "../tracker/port.js";
+import { isAgentSpeech } from "../tracker/port.js";
 import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
 import { MAX_REPAIR_ROUNDS, readRepairCycle, repairEvidenceSignature } from "../pool/repair.js";
@@ -343,15 +343,6 @@ async function deriveUnreconciledFall(
     comment: blockedCommentBody(record, recon.lastAttempt),
     attempt: recon.lastAttempt,
   };
-}
-
-/**
- * Agent speech carries the marker. The author is not the signal: v0.1 uses
- * the operator account as the worker account (GitHub hides a fresh bot
- * account), so the same login speaks on both sides.
- */
-export function isAgentSpeech(body: string): boolean {
-  return body.includes(AGENT_MARKER);
 }
 
 /**
