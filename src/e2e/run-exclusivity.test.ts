@@ -282,7 +282,7 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
     const status = runCli(dir, ["status"], shim.env());
     assert.equal(status.status, 0, `stderr: ${status.stderr}`);
     assert.match(status.stdout, /msf status/);
-    assert.match(status.stdout, /0 eligible/);
+    assert.match(status.stdout, /pool \(eligible\): none/);
     assert.equal(owner.exitCode, null, "status never disturbs the active run");
   });
 
