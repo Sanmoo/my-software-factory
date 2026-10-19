@@ -3,8 +3,9 @@ import type { IssueRef } from "../tracker/port.js";
 export type NotificationKind = "review" | "help";
 
 /**
- * The factory's boundary with the operator's desktop, delivered by the CLI on
- * the host — never by the worker or Pi (docs/adr/0001-factory-owned-agent-resources.md).
+ * The factory's boundary with the operator's desktop: the CLI on the host
+ * delivers, never the worker or Pi, so the container gains no graphical
+ * capability (issue 93).
  */
 export interface WorkNotification {
   ref: IssueRef;
