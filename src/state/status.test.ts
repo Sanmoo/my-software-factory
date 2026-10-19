@@ -57,7 +57,7 @@ describe("status — derivation on demand + local registry scan", () => {
   test("the registry view: reserved-without-attempt / in flight (attempt evidence) / last outcome / archived", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
 
-    // Reserved without a recorded attempt: the claim landed, the worker has not.
+    // Reserved without attempt: the claim landed, the worker has not.
     mkdirSync(workDir(layout, REPO, 1), { recursive: true });
     // In flight: attempt evidence on disk (a log), no outcome record.
     const flying = workDir(layout, REPO, 4);
@@ -99,7 +99,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
 
     assert.match(text, /pool.*1 eligible/s);
-    assert.match(text, new RegExp(`reserved without recorded attempt.*${REPO}#1`));
+    assert.match(text, new RegExp(`reserved without attempt.*${REPO}#1`));
     assert.match(text, new RegExp(`in flight.*${REPO}#4`));
     assert.match(text, new RegExp(`last outcome.*${REPO}#2.*clean-without-pr`));
     assert.match(text, new RegExp(`archived.*${REPO}#3-2026-02-01`));

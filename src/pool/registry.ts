@@ -3,7 +3,7 @@ import { readdir, rename } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import { workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
-import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -180,10 +180,10 @@ export interface LastOutcomeEntry {
 /**
  * The local registry as seen with the factory stopped (ticket 07 Q7): a work
  * dir with attempt evidence but no desfecho is in flight (orphan when the run
- * is not up); a dir created before any attempt evidence is a reservation
- * without a recorded attempt (the claim landed, the worker has not — common
- * now that the reservation lands before the launch); with a desfecho, the
- * outcome of the last attempt; the archive holds the dones.
+ * is not up); a dir created before any attempt evidence is reserved without
+ * attempt (the claim landed, the worker has not — common now that the
+ * reservation lands before the launch); with a desfecho, the outcome of the
+ * last attempt; the archive holds the dones.
  */
 export interface RegistryView {
   /** Dirs with attempt evidence (a log or the session dir) and no outcome record. */

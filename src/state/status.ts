@@ -6,6 +6,7 @@ import {
   deriveTrackerState,
   renderUnbackedClaim,
   renderUnmarkedReservation,
+  workKey,
   type PoolEntry,
   type UnbackedClaim,
   type UnmarkedReservation,
@@ -69,14 +70,14 @@ export function renderStatus(view: StatusView): string {
   if (view.pool.length === 0) {
     lines.push("pool: 0 eligible — nothing waiting in the pool");
   } else {
-    const refs = view.pool.map((e) => `${e.ref.repo}#${e.ref.number}`).join(", ");
+    const refs = view.pool.map((e) => workKey(e.ref)).join(", ");
     lines.push(`pool: ${view.pool.length} eligible — ${refs}`);
   }
 
   lines.push(
     view.registry.reservedWithoutAttempt.length === 0
-      ? "reserved without recorded attempt: none"
-      : `reserved without recorded attempt (the claim landed, no attempt on disk): ${view.registry.reservedWithoutAttempt.join(", ")}`,
+      ? "reserved without attempt: none"
+      : `reserved without attempt (the claim landed, no attempt evidence on disk): ${view.registry.reservedWithoutAttempt.join(", ")}`,
   );
 
   lines.push(
