@@ -199,9 +199,11 @@ export interface TrackerPort {
   readBlockers(ref: IssueRef): Promise<Known<Blocker[]>>;
 
   /** 4. Claim: the reservation lands on the tracker BEFORE any launch. The
-   *  claim label is the padlock — it lands first and the pool label leaves last,
-   *  so an interrupted claim stays recoverable (issue 98). Only an absent label
-   *  is tolerated; any other failure propagates. */
+   *  claim label (the padlock) lands first and the pool label leaves last, so a
+   *  neighbouring sweep excludes by the padlock's presence, never by the pool
+   *  label's absence (issue 98); the reverse order once left an interrupted
+   *  claim in neither the pool nor the reserved set. Only an absent label is
+   *  tolerated; any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
   /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the claim mark when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the padlock leaves last. */

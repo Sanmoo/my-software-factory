@@ -389,9 +389,10 @@ export class GitHubTrackerAdapter implements TrackerPort {
   }
 
   /** 4. Claim: the padlock (the claim label) lands first and the pool label
-   *  leaves last, so any interruption leaves the work claimed and recoverable by
-   *  the next derivation's 1st fall (issue 98). Only an absent label is
-   *  tolerated; any other failure propagates as a failed launch. */
+   *  leaves last, so an interruption leaves the work claimed and recoverable by
+   *  the next derivation's 1st fall (issue 98); the reverse order left it in
+   *  neither the pool nor the reserved set. Only an absent label is tolerated;
+   *  any other failure propagates as a failed launch. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;

@@ -170,10 +170,20 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       openGate2.resolve();
       await launched3.promise;
 
+      // The load-bearing guarantee is the CLAIM order: the pool is drained by
+      // age and each claim lands before its launch. The fake records
+      // `runtime.launch` after the asynchronous material read, so its array
+      // order is not deterministic (asserting it flaked); what matters is that
+      // all three launched without waiting for the slowest.
       assert.deepEqual(
-        runtime.launched.map((r) => r.ref.number),
+        tracker.claimedOrder,
+        [`${REPO}#1`, `${REPO}#2`, `${REPO}#3`],
+        "claims follow the age order",
+      );
+      assert.deepEqual(
+        runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
         [1, 2, 3],
-        "claims follow the age order; #3 is launched without waiting for the slowest",
+        "#3 is launched without waiting for the slowest",
       );
 
       // Same cycle, no barrier: #2 already has its PR confirmed open and #3
