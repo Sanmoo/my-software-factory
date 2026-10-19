@@ -18,7 +18,7 @@ const results = JSON.parse(readFileSync(cliArgument("results", "runs/results.jso
 writeFileSync(
 	cliArgument("out", "runs/report.md"),
 	renderReport(results.bundles, {
-		factoryCommit: results.factoryCommit,
+		factoryCommit: cliArgument("base", results.factoryCommit),
 		versions: results.versions,
 		repeats: new Set(results.bundles.map((bundle) => bundle.repeat)).size,
 		scenarios: SCENARIOS,

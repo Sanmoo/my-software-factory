@@ -57,7 +57,16 @@ const versions = (): Record<string, string> => {
 	return out;
 };
 
-const factoryCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: resolve(import.meta.dirname, "../../.."), encoding: "utf8" }).trim();
+// The factory commit this experiment was branched from: the merge base with main,
+// never the experiment branch tip.
+const factoryCommit = (() => {
+	const repo = resolve(import.meta.dirname, "../../..");
+	try {
+		return execFileSync("git", ["merge-base", "HEAD", "main"], { cwd: repo, encoding: "utf8" }).trim();
+	} catch {
+		return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	}
+})();
 
 mkdirSync(root, { recursive: true });
 const bundles: RunMetrics[] = [];
