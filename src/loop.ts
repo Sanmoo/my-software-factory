@@ -82,8 +82,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   resumable: "resumable",
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
-/** The class of every work (repo#number, never just the count); in-flight counts
- * as reserved. Titles and order never enter — the schedule order stays untouched. */
+/** In-flight counts as reserved. Titles and order never enter — the schedule order stays untouched. */
 function operationalState(
   pool: readonly PoolEntry[],
   reserved: readonly ReservedDerivation[],
@@ -116,9 +115,8 @@ function changedWorkKeys(
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
 /**
- * The first observation renders the whole composition (the execution's
- * starting point); later ones only what changed. A swap with equal counts
- * still names both works involved.
+ * The first observation renders the whole composition; later ones only what
+ * changed. A swap with equal counts still names both works involved.
  */
 function renderPoolSummary(
   state: ReadonlyMap<string, OperationalClass>,
