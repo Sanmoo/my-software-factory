@@ -499,7 +499,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.match(
         derived.comment,
         /the record on disk belongs to attempt 1/,
-        "the previous attempt's record is named as divergent, never as this fall's desfecho (issue 103)",
+        "the previous attempt's record is named as divergent, never as this fall's outcome (issue 103)",
       );
       assert.ok(
         !derived.comment.includes(JSON.stringify({ class: "clean-without-pr", attempt: 1 }, null, 2)),
@@ -549,7 +549,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.match(derived.comment, /the record on disk belongs to attempt 1/);
       assert.ok(
         !derived.comment.includes('"class": "blocked-self-report"'),
-        "the answered attempt-1 self-report is not presented as attempt 3's desfecho",
+        "the answered attempt-1 self-report is not presented as attempt 3's outcome",
       );
       assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/log-3\.jsonl — present/);
       assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/sessao\/sandcastle-3\.log — present/);

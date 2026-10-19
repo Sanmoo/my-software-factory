@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { WORKSPACE_SUBPATHS } from "../layout.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -25,11 +26,8 @@ export interface EvidenceLocation {
 
 /** The three locations the operator opens by hand after a fall. */
 export interface WorkEvidence {
-  /** `trabalhos/<repo>#<n>/` — the work's dir. */
   workDir: EvidenceLocation;
-  /** `trabalhos/<repo>#<n>/log-<attempt>.jsonl` — the attempt's event log. */
   eventLog: EvidenceLocation;
-  /** `trabalhos/<repo>#<n>/sessao/sandcastle-<attempt>.log` — the sandcastle log. */
   sandcastleLog: EvidenceLocation;
 }
 
@@ -42,7 +40,7 @@ export async function readWorkEvidence(
   attempt: number,
   dir: string,
 ): Promise<WorkEvidence> {
-  const workDir = `trabalhos/${ref.repo}#${ref.number}`;
+  const workDir = `${WORKSPACE_SUBPATHS.works}/${ref.repo}#${ref.number}`;
   const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
     presenceOf(dir),
     presenceOf(join(dir, `log-${attempt}.jsonl`)),

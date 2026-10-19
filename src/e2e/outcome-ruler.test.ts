@@ -252,7 +252,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     // Attempt 1 ends clean without a PR (a fall, recorded); attempt 2 dies
-    // abruptly — attempt 1's record is the only desfecho left on disk.
+    // abruptly — attempt 1's record is the only outcome record left on disk.
     const factory = makeFactory(config, tracker, ["clean-without-pr", "abrupt-death"]);
     factory.runtime.hold = (request) => {
       if (request.attempt === 2) {
@@ -276,7 +276,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.match(comment, /the record on disk belongs to attempt 1/);
     assert.ok(
       !comment.includes('"class": "clean-without-pr"'),
-      "the previous attempt's record is never presented as attempt 2's desfecho",
+      "the previous attempt's record is never presented as attempt 2's outcome",
     );
     assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
     assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — present/);
