@@ -151,7 +151,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.ok((await tracker.readPrFeedback({ repo: REPO, number: 1 })).known);
   });
 
-  test("boot reconciliation after a crash: the 2nd consecutive fall blocks with the exact outcome on the issue", async () => {
+  test("boot reconciliation after a crash: the 2nd consecutive fall blocks with this attempt's diagnosis on the issue", async () => {
     writeConfig();
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -172,12 +172,22 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const deps = await wiredDeps(tracker, runtime);
     const result = await runOnce(deps);
 
-    // The valve (ticket 05 Q3): blocked + the exact outcome on the issue,
-    // and NOTHING launched — a blocked work listens to the issue channel.
+    // The valve (ticket 05 Q3): blocked with attempt 2's diagnosis on the
+    // issue, and NOTHING launched — a blocked work listens to the issue
+    // channel. The record on disk belongs to attempt 1, so it is named as
+    // divergent and never presented as this fall's outcome (issue 103).
     assert.equal(result.launched.length, 0);
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.blocked]);
     const comments = await tracker.readComments({ repo: REPO, number: 1 });
     assert.ok(comments.known && comments.value.some((c) => c.body.includes("attempt 2")));
+    const body = comments.value.at(-1)!.body;
+    assert.match(body, /the record on disk belongs to attempt 1/);
+    assert.match(body, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
+    assert.match(body, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — absent/);
+
+    // The old record survives as history — numbering and reconciliation keep reading it.
+    const record = await readOutcomeRecord(work);
+    assert.ok(record && record.attempt === 1 && record.class === "clean-without-pr");
   });
 
   test("boot reconciliation with a PR waiting for the human: a restart launches nothing and holds the claim", async () => {

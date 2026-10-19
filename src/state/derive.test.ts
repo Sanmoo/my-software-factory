@@ -12,7 +12,7 @@ import {
   renderUnmarkedReservation,
 } from "./derive.js";
 import { DEFAULT_LABELS } from "../config.js";
-import { DESFECHO_FILENAME } from "./outcome.js";
+import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
 
 /** The pool-only view over the single derivation, for the tests of the pool's rules. */
 const derivePool = async (
@@ -495,6 +495,70 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.state, "fall");
       assert.equal(derived.decision, "block");
       assert.match(derived.comment, /attempt 2/);
+      assert.match(derived.comment, /no outcome record was written/);
+      assert.match(
+        derived.comment,
+        /the record on disk belongs to attempt 1/,
+        "the previous attempt's record is named as divergent, never as this fall's desfecho (issue 103)",
+      );
+      assert.ok(
+        !derived.comment.includes(JSON.stringify({ class: "clean-without-pr", attempt: 1 }, null, 2)),
+        "the old record's JSON is not embedded",
+      );
+    });
+
+    test("issue 103 — a real absence still shows all three locations, absent ones included", async () => {
+      seedIssue(adapter, { repo: REPO, number: 25, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(25);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+
+      const derived = await deriveFrom(path, 25);
+
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "block");
+      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/ — present/);
+      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/log-2\.jsonl — present/);
+      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/sessao\/sandcastle-2\.log — absent/);
+      assert.ok(!derived.comment.includes(path), "no absolute host path is shown");
+    });
+
+    test("issue 103 — reproduces #91: attempt 3 fell with attempt 1's blocked-self-report on disk", async () => {
+      seedIssue(adapter, { repo: REPO, number: 91, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(91);
+      // The truth of #91: attempts 1-3 ran; only attempt 1 wrote a record (a
+      // self-report the operator already answered); attempts 2 and 3 died
+      // abruptly — attempt 3 with a partial sandcastle log.
+      for (const attempt of [1, 2, 3]) {
+        writeFileSync(join(path, `log-${attempt}.jsonl`), '{}\n', "utf8");
+      }
+      mkdirSync(join(path, "sessao"), { recursive: true });
+      writeFileSync(join(path, "sessao", "sandcastle-3.log"), "the session ended mid-", "utf8");
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "blocked-self-report", attempt: 1, paths: {} }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 91);
+
+      assert.equal(derived.state, "fall");
+      assert.equal(derived.decision, "block", "two consecutive falls with no tracker fact of higher priority");
+      assert.match(derived.comment, /2 consecutive falls \(attempt 3\)/);
+      assert.match(derived.comment, /abrupt fall: no outcome record was written/);
+      assert.match(derived.comment, /the record on disk belongs to attempt 1/);
+      assert.ok(
+        !derived.comment.includes('"class": "blocked-self-report"'),
+        "the answered attempt-1 self-report is not presented as attempt 3's desfecho",
+      );
+      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/log-3\.jsonl — present/);
+      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/sessao\/sandcastle-3\.log — present/);
+      // History survives: the old record is still readable on disk.
+      assert.deepEqual(await readOutcomeRecord(path), {
+        class: "blocked-self-report",
+        attempt: 1,
+        paths: {},
+      });
     });
 
     test("claimed, no PR, an attempt recorded pr-open… impossible here (a PR fact would have handled it) — a stale pr-open record with no PR heals as a 1st fall", async () => {

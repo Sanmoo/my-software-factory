@@ -666,13 +666,15 @@ export class SweepEngine {
     const issue = await tracker.readIssue(ref);
     const blockedLabelOnIssue = issue.known && issue.value.labels.includes(config.labels.blocked);
     const record = await readOutcomeRecord(dir);
-    const ruling = classifyOutcome({
+    const ruling = await classifyOutcome({
       record,
       prOpen: prConfirmed,
       blockedLabelOnIssue,
       consecutiveFall,
       attempt,
       issueClosed: issue.known && issue.value.state === "closed",
+      ref,
+      workDir: dir,
     });
 
     let resulting: OperationalClass | null;

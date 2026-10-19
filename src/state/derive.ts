@@ -458,12 +458,20 @@ async function deriveUnreconciledFall(
     return { ref, state: "fall", decision: "release" };
   }
   if (!recon.consecutiveFall) return { ref, state: "fall", decision: "release" };
+  // The record on disk may belong to an earlier attempt (issue 103): the
+  // comment only names it as divergent — its absence for THIS attempt is the
+  // abrupt fall — and always points at this attempt's own evidence.
   const record = await readOutcomeRecord(dir);
   return {
     ref,
     state: "fall",
     decision: "block",
-    comment: blockedCommentBody(record, recon.lastAttempt),
+    comment: await blockedCommentBody({
+      attempt: recon.lastAttempt,
+      record,
+      ref,
+      workDir: dir,
+    }),
     attempt: recon.lastAttempt,
   };
 }
