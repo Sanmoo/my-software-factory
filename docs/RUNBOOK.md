@@ -169,8 +169,9 @@ taken.
   for the same file fails immediately, nonzero, before any operational
   activity, and leaves the active run untouched. There is no `--force`, no
   waiting and no expiry; process death (`kill -9` included) releases it, so a
-  restart needs no cleanup, and `msf status` stays available. If the protection
-  cannot be established, the run refuses to start rather than run unprotected.
+  restart needs no cleanup, and `msf status` stays available. Two names for the
+  same file (a hard link) count as one configuration. If the protection cannot
+  be established, the run refuses to start rather than run unprotected.
 - **Ctrl-C waits for the workers in flight**: it closes new launches at once
   (no slot replenishment), then lets the started workers finish and records
   their results; the exclusivity above holds through that window.
