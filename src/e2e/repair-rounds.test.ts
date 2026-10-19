@@ -431,6 +431,50 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     assert.equal((await readRepairCycle(workDir(layout, REPO, 32))).usedRounds, 0, "full recovery resets");
   });
 
+  test("after a repair publishes, the factory waits for the new head's required checks", async () => {
+    const config = makeConfig();
+    const { tracker, runtime, git, deps } = makeFactory(config);
+    const pr = await seedOpenPr(tracker, runtime, git, deps, 33);
+
+    // Round 1: a confirmed conflict reactivates the worker.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "c1",
+      mergeState: "conflicting",
+      requiredChecks: [],
+    });
+    git.remoteHead = "c1";
+    assert.equal((await runOnce(deps)).launched.length, 1, "round 1");
+
+    // The worker pushed a new head; its required checks are still running.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "c2",
+      mergeState: "mergeable",
+      requiredChecks: [{ name: "build", status: "in_progress", conclusion: null }],
+    });
+    git.remoteHead = "c2";
+    assert.equal((await runOnce(deps)).launched.length, 0, "pending CI never relaunches the worker");
+    assert.equal(
+      (await readRepairCycle(workDir(layout, REPO, 33))).usedRounds,
+      1,
+      "waiting for CI does not spend another round",
+    );
+
+    // The check concludes failing on that same new head: new evidence → round 2.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "c2",
+      mergeState: "mergeable",
+      requiredChecks: [failing("build", "failure")],
+    });
+    assert.equal((await runOnce(deps)).launched.length, 1, "the concluded failure reactivates");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 33))).usedRounds, 2);
+  });
+
   test("the repair budget persists across sweeps and factory restarts (disk, not process memory)", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
