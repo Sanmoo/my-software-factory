@@ -45,7 +45,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
   test("the shown paths name exactly the dir and files that were probed", async () => {
     writeEvidence(2);
 
-    const evidence = await readWorkEvidence(layout, ref, 2);
+    const evidence = await readWorkEvidence(layout, workDirOf(), 2);
 
     assert.deepEqual(evidence.workDir, { path: `${relativeDir}/`, presence: "present" });
     assert.deepEqual(evidence.eventLog, { path: `${relativeDir}/log-2.jsonl`, presence: "present" });
@@ -60,9 +60,9 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
   });
 
   test("a location that does not exist is absent — never omitted", async () => {
-    workDirOf(); // the work dir exists; attempt 3 left no files behind
+    const dir = workDirOf(); // the work dir exists; attempt 3 left no files behind
 
-    const evidence = await readWorkEvidence(layout, ref, 3);
+    const evidence = await readWorkEvidence(layout, dir, 3);
 
     assert.equal(evidence.workDir.presence, "present");
     assert.equal(evidence.eventLog.presence, "absent");
@@ -72,7 +72,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
   });
 
   test("an absent work dir is reported absent — never invented", async () => {
-    const evidence = await readWorkEvidence(layout, { repo: "Sanmoo/b", number: 7 }, 1);
+    const evidence = await readWorkEvidence(layout, workDir(layout, "Sanmoo/b", 7), 1);
 
     assert.deepEqual(evidence.workDir, { path: "trabalhos/Sanmoo/b#7/", presence: "absent" });
     assert.equal(evidence.eventLog.presence, "absent");
@@ -84,7 +84,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
     // is unknown, and unknown is never absence.
     symlinkSync("sessao", join(workDirOf(), "sessao"));
 
-    const broken = await readWorkEvidence(layout, ref, 1);
+    const broken = await readWorkEvidence(layout, workDirOf(), 1);
 
     assert.equal(broken.workDir.presence, "present");
     assert.equal(broken.eventLog.presence, "absent");
@@ -94,7 +94,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
   test("the rendering names the workspace as the base and shows every location with its state", async () => {
     writeEvidence(2);
 
-    const rendered = renderWorkEvidence(await readWorkEvidence(layout, ref, 2));
+    const rendered = renderWorkEvidence(await readWorkEvidence(layout, workDirOf(), 2));
 
     assert.match(rendered, /relative to the factory workspace on the host/i);
     assert.match(rendered, /not the repository, the work dir or the container/i);

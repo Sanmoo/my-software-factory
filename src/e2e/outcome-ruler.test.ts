@@ -307,6 +307,9 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     const comment = await lastCommentOf(t, 1);
     assert.match(comment, /attempt 2/);
     assert.match(comment, /no outcome record/i, "the absence of the record is the exact outcome");
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/ — present/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
+    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — absent/);
 
     // The runtime left the launch evidence: session dir + per-attempt logs,
     // but no desfecho — the registry's own footprint of the abrupt fall.

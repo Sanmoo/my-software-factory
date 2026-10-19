@@ -21,6 +21,7 @@ import {
 import {
   readOutcomeRecord,
   classifyOutcome,
+  selfReportedBlocked,
   type OutcomeRuling,
 } from "./state/outcome.js";
 import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
@@ -640,9 +641,9 @@ export class SweepEngine {
     const { config, tracker, workspace } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
-    // One derivation of the attempt's dir: the record read and the evidence
-    // probed by the blocked comment can never name different locations.
-    const dir = workDir(workspace, ref.repo, ref.number);
+    // The dir the session actually used: the record read and the evidence of
+    // the blocked comment name that one dir.
+    const dir = result.request.workDir;
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -657,7 +658,7 @@ export class SweepEngine {
       consecutiveFall,
       attempt,
       issueClosed: issue.known && issue.value.state === "closed",
-      ref,
+      workDir: dir,
       workspace,
     });
 
@@ -683,7 +684,10 @@ export class SweepEngine {
       await this.applyRelease(ref);
       resulting = "eligible";
     } else {
-      this.log(`collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome (or its absence) goes to the issue`);
+      this.log(
+        `collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome ` +
+          "(or its absence) goes to the issue",
+      );
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";
     }
@@ -701,8 +705,7 @@ export class SweepEngine {
     // untouched. The self-report counts only for THIS attempt — desfecho.json
     // survives between attempts.
     if (ruling.decision !== "done" && ruling.decision !== "block") {
-      const selfReportedNow =
-        record !== null && record.attempt === attempt && record.class === "blocked-self-report";
+      const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
       if (blockedLabelOnIssue || selfReportedNow) {
         await this.deliverNotice(helpNotice(ref));
