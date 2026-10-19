@@ -154,7 +154,7 @@ function implementationProcedure(request: WorkRequest): string {
  */
 function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber: number): string[] {
   const reasonLines = [
-    ...(repair.conflicting
+    ...(repair.reasons.includes("conflicts")
       ? [`- **Conflicts with the PR's current base** (\`${repair.baseBranch}\`): rebase onto \`origin/${repair.baseBranch}\`.`]
       : []),
     ...(repair.reasons.includes("required-checks")

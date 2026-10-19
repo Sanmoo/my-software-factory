@@ -270,7 +270,6 @@ interface RestCheckRuns {
     status: "queued" | "in_progress" | "completed" | null;
     conclusion: string | null;
     details_url?: string | null;
-    completed_at?: string | null;
   }[];
 }
 
@@ -280,7 +279,6 @@ interface RestCombinedStatus {
     context: string;
     state: "error" | "failure" | "pending" | "success";
     target_url?: string | null;
-    updated_at?: string | null;
   }[];
 }
 
@@ -689,7 +687,6 @@ export class GitHubTrackerAdapter implements TrackerPort {
           status: run.status,
           conclusion: checkConclusion(run.conclusion),
           ...(run.details_url ? { detailsUrl: run.details_url } : {}),
-          completedAt: run.completed_at ?? null,
         };
       }
       const status = statuses?.statuses.find((candidate) => candidate.context === context);
@@ -699,7 +696,6 @@ export class GitHubTrackerAdapter implements TrackerPort {
           status: null,
           conclusion: statusConclusion(status.state),
           ...(status.target_url ? { detailsUrl: status.target_url } : {}),
-          completedAt: status.updated_at ?? null,
         };
       }
       return { name: context, status: null, conclusion: null };
@@ -819,7 +815,15 @@ export class GitHubTrackerAdapter implements TrackerPort {
         ...(init.tolerate ? { tolerate: init.tolerate } : {}),
       },
     );
-    return (stdout.trim() === "" ? null : JSON.parse(stdout)) as T;
+    if (stdout.trim() === "") return null as T;
+    // A malformed body is a real adapter failure, not an absent fact.
+    try {
+      return JSON.parse(stdout) as T;
+    } catch (error) {
+      throw new Error(
+        `gh api ${path} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** The REST call or null when GitHub answers 404 (unknown is never absent). */

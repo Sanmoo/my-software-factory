@@ -4,14 +4,14 @@ import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/por
 import type { GitWork } from "./git/port.js";
 import { helpNotice, reviewNotice, type Notifier, type WorkNotification } from "./notify/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
-import { derivePool, deriveReserved, type PoolEntry, type RepairTrigger, type ReservedDerivation } from "./state/derive.js";
+import { derivePool, deriveReserved, repairSignature, type PoolEntry, type RepairTrigger, type ReservedDerivation } from "./state/derive.js";
 import {
   readOutcomeRecord,
   classifyOutcome,
   type OutcomeRuling,
 } from "./state/outcome.js";
 import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
-import { readRepairCycle, repairEvidenceSignature, writeRepairCycle } from "./pool/repair.js";
+import { readRepairCycle, writeRepairCycle, EMPTY_REPAIR_CYCLE } from "./pool/repair.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -306,15 +306,12 @@ export class SweepEngine {
           this.log(
             `derived ${workKey(decision.ref)}: PR recovered — no conflicts and all required checks approved; repair budget reset`,
           );
-          await writeRepairCycle(workDir(workspace, decision.ref.repo, decision.ref.number), {
-            failedRounds: 0,
-            lastEvidence: null,
-          });
+          await writeRepairCycle(workDir(workspace, decision.ref.repo, decision.ref.number), EMPTY_REPAIR_CYCLE);
           break;
         }
         case "repair-blocked": {
           this.log(
-            `derived ${workKey(decision.ref)}: ${decision.failedRounds} automatic repair rounds without recovery — ` +
+            `derived ${workKey(decision.ref)}: ${decision.usedRounds} automatic repair rounds without recovery — ` +
               "blocked with the reason on the issue",
           );
           await this.applyBlockWithComment(decision.ref, decision.comment);
@@ -541,7 +538,7 @@ export class SweepEngine {
     if (kind === "resume") {
       // A human answer that unblocks the work also renews the automatic
       // repair budget (issue 107 story 23); new commits never do.
-      await writeRepairCycle(dir, { failedRounds: 0, lastEvidence: null });
+      await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
     if (repairTrigger !== undefined) {
       // The round is consumed BEFORE the session: a death mid-round must not
@@ -578,13 +575,8 @@ export class SweepEngine {
   private async recordRepairRound(dir: string, ref: IssueRef, trigger: RepairTrigger): Promise<void> {
     const cycle = await readRepairCycle(dir);
     await writeRepairCycle(dir, {
-      failedRounds: cycle.failedRounds + 1,
-      lastEvidence: repairEvidenceSignature({
-        ref,
-        headSha: trigger.facts.headSha,
-        conflicting: trigger.facts.mergeState === "conflicting",
-        failingChecks: trigger.failingChecks,
-      }),
+      usedRounds: cycle.usedRounds + 1,
+      lastEvidence: repairSignature(ref, trigger),
     });
   }
 
@@ -839,7 +831,6 @@ async function launchMaterial(
       reasons: repair.reasons,
       observedHeadSha: repair.facts.headSha,
       baseBranch: repair.facts.baseBranch,
-      conflicting: repair.facts.mergeState === "conflicting",
       checks: repair.failingChecks,
     };
   }

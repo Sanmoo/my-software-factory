@@ -122,7 +122,6 @@ export interface RequiredCheckResult {
   conclusion: CheckConclusion;
   /** Evidence a human can inspect (the check's details URL); never a secret. */
   detailsUrl?: string;
-  completedAt?: string | null;
 }
 
 /**
@@ -131,11 +130,9 @@ export interface RequiredCheckResult {
  * result current: an old head's failures never justify a new round.
  */
 export interface PrRepairFacts {
-  /** The PR's current head commit. */
   headSha: string;
   /** The PR's current base branch (never substituted by the repo default). */
   baseBranch: string;
-  /** The commit the current base branch points at. */
   baseSha: string;
   mergeState: MergeState;
   /** The checks the applicable rules require, with their current result.

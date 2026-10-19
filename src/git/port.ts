@@ -12,9 +12,10 @@ import type { IssueRef } from "../tracker/port.js";
  *   - clone at `<workspace>/repos/<owner>#<nome>/`, created on the first
  *     work of the repo and never re-cloned (delta `git fetch` instead);
  *   - branch `agent-issue-<n>` created from `origin/<default>` on the first
- *     launch, reused on every relaunch (retomada / feedback) — never
- *     recreated; the base advancing between rounds is never touched (no
- *     rebase, no merge — the human asks on the PR);
+ *     launch, reused on every relaunch (retomada / feedback / repair) — never
+ *     recreated; a mere base advance is never touched (the human asks on the
+ *     PR), and the branch is rebased onto the PR's current base only when a
+ *     confirmed conflict reactivates the worker (issue 107);
  *   - the same branch cannot be checked out in two worktrees — git itself
  *     guarantees uniqueness across parallel works of the same repo;
  *   - done is the only state that cleans: remote branch deleted, local

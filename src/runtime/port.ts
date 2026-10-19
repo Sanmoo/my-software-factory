@@ -16,7 +16,6 @@ export interface RepairMaterial {
   observedHeadSha: string;
   /** The PR's current base branch — the rebase target, never the repo default. */
   baseBranch: string;
-  conflicting: boolean;
   /** The required checks that failed or timed out (evidence to investigate). */
   checks: RequiredCheckResult[];
 }

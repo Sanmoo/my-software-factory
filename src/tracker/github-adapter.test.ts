@@ -793,6 +793,15 @@ describe("9e. readPrRepairFacts: the merge state and the required checks of the 
     assert.deepEqual(facts.value.requiredChecks, [], "no applicable rule: known none");
   });
 
+  test("a blocked merge state (review/check pending) is not a conflict", async () => {
+    const { adapter } = await makeAdapter(
+      repairRoutes({ pull: { mergeable: false, mergeable_state: "blocked" }, rules: [] }),
+    );
+    const facts = await adapter.readPrRepairFacts({ repo: "Sanmoo/a", number: 7 });
+    assert.ok(facts.known);
+    assert.equal(facts.value.mergeState, "mergeable", "blocked means pending approval/checks, never a conflict");
+  });
+
   test("a rules read that cannot be resolved makes the required set unknown, never empty", async () => {
     const { adapter } = await makeAdapter(
       repairRoutes({ pull: { mergeable: false, mergeable_state: "dirty" }, rulesFail: true }),

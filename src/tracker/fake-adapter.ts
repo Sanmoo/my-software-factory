@@ -149,13 +149,7 @@ export class FakeTrackerAdapter implements TrackerPort {
       author: input.author ?? this.options.workerAccount,
     };
     if (issue.repair === null) {
-      issue.repair = {
-        headSha: `head-${input.number}`,
-        baseBranch: issue.pr.baseBranch,
-        baseSha: `base-${input.number}`,
-        mergeState: "mergeable",
-        requiredChecks: [],
-      };
+      issue.repair = defaultRepairFacts(input.number, issue.pr.baseBranch);
     }
   }
 
@@ -215,13 +209,7 @@ export class FakeTrackerAdapter implements TrackerPort {
     const found = this.findPrByNumber(input.repo, input.prNumber);
     if (found === null) throw new Error(`no PR #${input.prNumber} in ${input.repo}`);
     const issue = this.mustGet(found.issueRef);
-    const current = issue.repair ?? {
-      headSha: `head-${input.prNumber}`,
-      baseBranch: issue.pr?.baseBranch ?? "main",
-      baseSha: `base-${input.prNumber}`,
-      mergeState: "mergeable" as const,
-      requiredChecks: [],
-    };
+    const current = issue.repair ?? defaultRepairFacts(input.prNumber, issue.pr?.baseBranch ?? "main");
     issue.repair = {
       headSha: input.headSha ?? current.headSha,
       baseBranch: input.baseBranch ?? current.baseBranch,
@@ -465,4 +453,15 @@ export class FakeTrackerAdapter implements TrackerPort {
 /** Seed helper free-standing for test ergonomics. */
 export function seedIssue(adapter: FakeTrackerAdapter, input: FakeIssueInput): void {
   adapter.seedIssue(input);
+}
+
+/** A PR with no known impediment until the test scripts one. */
+function defaultRepairFacts(prNumber: number, baseBranch: string): PrRepairFacts {
+  return {
+    headSha: `head-${prNumber}`,
+    baseBranch,
+    baseSha: `base-${prNumber}`,
+    mergeState: "mergeable",
+    requiredChecks: [],
+  };
 }

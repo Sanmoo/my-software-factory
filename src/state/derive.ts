@@ -93,6 +93,8 @@ export type RepairReason = "conflicts" | "required-checks";
 /** A confirmed impediment of an open PR, read from structured facts alone. */
 export interface RepairTrigger {
   reasons: RepairReason[];
+  /** True when the confirmed impediment is a conflict (the reasons carry it). */
+  conflicting: boolean;
   facts: PrRepairFacts;
   /** The required checks that concluded with failure or timeout on this head. */
   failingChecks: RequiredCheckResult[];
@@ -100,7 +102,7 @@ export interface RepairTrigger {
 
 /** A check only reacts when it concluded, and failed or timed out — never
  *  pending, cancelled, skipped, neutral or an optional one. */
-export function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
+function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
   return check.status === "completed" && (check.conclusion === "failure" || check.conclusion === "timed_out");
 }
 
@@ -111,7 +113,18 @@ export function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
   const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
   if (failingChecks.length > 0) reasons.push("required-checks");
   if (reasons.length === 0) return null;
-  return { reasons, facts, failingChecks };
+  return { reasons, conflicting: facts.mergeState === "conflicting", facts, failingChecks };
+}
+
+/** The consumed-evidence signature of a trigger — one authority for the
+ *  derivation and the launch's durable record. */
+export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
+  return repairEvidenceSignature({
+    ref,
+    headSha: trigger.facts.headSha,
+    reasons: trigger.reasons,
+    failingChecks: trigger.failingChecks,
+  });
 }
 
 /** Confirmed recovery (story 22): no conflicts and every required check
@@ -156,7 +169,7 @@ export type ReservedDerivation =
       state: "repair-blocked";
       pr: PullRequest;
       trigger: RepairTrigger;
-      failedRounds: number;
+      usedRounds: number;
       comment: string;
     }
   /** Human answer on the issue after the marker: the retomada continues from
@@ -249,29 +262,24 @@ async function deriveReservedWork(
     const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
     const cycle = await readRepairCycle(work.dir);
     if (trigger !== null) {
-      const signature = repairEvidenceSignature({
-        ref,
-        headSha: trigger.facts.headSha,
-        conflicting: trigger.facts.mergeState === "conflicting",
-        failingChecks: trigger.failingChecks,
-      });
+      const signature = repairSignature(ref, trigger);
       // Story 19: re-finding the same failure without new evidence is never a
       // new session; the exhausted cap still blocks.
       if (cycle.lastEvidence === signature) {
-        if (cycle.failedRounds >= MAX_REPAIR_ROUNDS) {
-          return repairBlocked(ref, pr, trigger, cycle.failedRounds);
+        if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
+          return repairBlocked(ref, pr, trigger, cycle.usedRounds);
         }
         return { ref, state: "idle" };
       }
-      if (cycle.failedRounds >= MAX_REPAIR_ROUNDS) {
-        return repairBlocked(ref, pr, trigger, cycle.failedRounds);
+      if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
+        return repairBlocked(ref, pr, trigger, cycle.usedRounds);
       }
       return { ref, state: "repair", pr, createdAt: issue.value.createdAt, trigger };
     }
 
     // Confirmed recovery (story 22): no conflicts and every required check
     // approved — the only thing besides a human unblock that resets the cap.
-    if (repairFacts.known && cycle.failedRounds > 0 && repairRecovered(repairFacts.value)) {
+    if (repairFacts.known && cycle.usedRounds > 0 && repairRecovered(repairFacts.value)) {
       return { ref, state: "repair-recovered", pr };
     }
 
@@ -292,7 +300,7 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
-    return deriveUnreconciledFall(port, ref, work.dir, inFlight);
+    return deriveUnreconciledFall(ref, work.dir, inFlight);
   }
   return { ref, state: "idle" };
 }
@@ -313,7 +321,6 @@ async function deriveReservedWork(
  * fall, so the 1st fall releases (story 17: the work devolves to the pool).
  */
 async function deriveUnreconciledFall(
-  port: TrackerPort,
   ref: IssueRef,
   dir: string,
   inFlight?: ReadonlySet<string>,
@@ -392,15 +399,15 @@ function repairBlocked(
   ref: IssueRef,
   pr: PullRequest,
   trigger: RepairTrigger,
-  failedRounds: number,
+  usedRounds: number,
 ): ReservedDerivation {
   const reasons = trigger.reasons
     .map((reason) => (reason === "conflicts" ? "the conflict with the base" : "the failing required checks"))
     .join(" and ");
   const comment =
-    `automatic repair stopped after ${failedRounds} rounds without recovering PR #${pr.number}: ` +
+    `automatic repair stopped after ${usedRounds} rounds without recovering PR #${pr.number}: ` +
     `${reasons} persist on the current HEAD. A human decision, authorization or fix is needed.`;
-  return { ref, state: "repair-blocked", pr, trigger, failedRounds, comment };
+  return { ref, state: "repair-blocked", pr, trigger, usedRounds, comment };
 }
 
 /** The rejection comment: points at the PR (ticket 04 Q5). */

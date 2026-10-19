@@ -427,7 +427,6 @@ describe("worker prompt — the repair round (issue 107)", () => {
           reasons: ["conflicts", "required-checks"],
           observedHeadSha: "abc123",
           baseBranch: "release/next",
-          conflicting: true,
           checks: [
             { name: "build", status: "completed", conclusion: "failure", detailsUrl: "https://ci/build" },
             { name: "e2e", status: "completed", conclusion: "timed_out" },
