@@ -23,12 +23,16 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
  * being replaced — the ordinary atomic save of an editor — which gives the
  * next run a new inode. Either one being taken refuses the run.
  *
- * The acquisition is atomic across processes: a non-blocking `flock` is ONE
- * syscall, so a simultaneous dispute can never admit two runs (a ``does the
- * marker exist? then create it'' pair would not be atomic). Contention
- * rejects immediately; there is no timeout, so a slow or hung owner never
- * loses exclusivity. The kernel releases the locks when the process dies —
- * abrupt death included — so a new run needs no manual cleanup and nothing
+ * Each acquisition is one non-blocking `flock` — a single syscall, so there is
+ * no check-then-create window (a "does the marker exist? then create it" pair
+ * would not be atomic). The config file's lock is taken first and is the
+ * barrier: any second run of the same config contends on that inode before
+ * touching its marker, so a simultaneous dispute admits at most one. (The two
+ * differ when both the inode and the state dir differ — a copy of the config
+ * under another HOME — which is a different configuration by construction.)
+ * Contention rejects immediately; there is no timeout, so a slow or hung owner
+ * never loses exclusivity. The kernel releases the locks when the process dies
+ * — abrupt death included — so a new run needs no manual cleanup and nothing
  * depends on a signal handler running first.
  *
  * The binding (`@deepseek-ai/node-addon-system`, pinned exact, prebuilt — no
@@ -46,7 +50,10 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
  * lives in the invoking user's state dir rather than in a shared world-
  * writable place (two OS users are two operators, with separate `gh` keyrings
  * and per-user state), while the config file's own lock is not tied to it.
- * Cross-machine coordination is out of scope.
+ * One consequence of locking the inode: two paths hard-linked to the same file
+ * count as the same configuration (stricter than required — hard-link aliases
+ * need no recognition, and copies are new inodes). Cross-machine coordination
+ * is out of scope.
  */
 export interface RunLock {
   /** Release the exclusivity. Normal completion and error paths must call it;
@@ -55,8 +62,9 @@ export interface RunLock {
 }
 
 /**
- * The per-user state directory of the marker files. 0700 (see the chmod at the
- * acquisition) keeps other OS users out of this user's marker files entirely.
+ * The per-user state directory of the marker files. A directory this run
+ * creates is chmod'ed 0700 (see the acquisition), keeping other OS users out of
+ * this user's markers; one that already existed keeps the operator's umask.
  * The directory follows the user's home: the config file's own lock is what
  * makes the guarantee independent of it. Not next to the config file: a
  * deployment can keep `msf.yaml` in a read-only checkout, and the run must not
@@ -89,7 +97,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
     await tryLockExclusive(configHandle.fd);
   } catch (error) {
     await configHandle.close().catch(() => {});
-    throw lockFailure(canonicalConfig, error);
+    throw lockFailure(canonicalConfig, "config-file", error);
   }
 
   // The marker keyed by the real path. The hash keeps the identity (a full
@@ -119,7 +127,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
   } catch (error) {
     await markerHandle.close().catch(() => {});
     await configHandle.close().catch(() => {});
-    throw lockFailure(canonicalConfig, error);
+    throw lockFailure(canonicalConfig, "marker", error);
   }
 
   return {
@@ -132,12 +140,15 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
 
 /** One diagnostic for every failed acquisition: contention is the operator's
  * mistake (a second run), anything else is an environment fault that must not
- * be mistaken for it. */
-function lockFailure(canonicalConfig: string, error: unknown): Error {
+ * be mistaken for it. `via` keeps the contention sentence honest: the config
+ * file's flock can also be held by a process that is not an `msf run`. */
+function lockFailure(canonicalConfig: string, via: "config-file" | "marker", error: unknown): Error {
   const code = (error as NodeJS.ErrnoException).code;
   if (code === "EAGAIN" || code === "EWOULDBLOCK") {
+    const holder =
+      via === "marker" ? "" : " (its file is flock'ed by another process)";
     return new Error(
-      `configuration ${canonicalConfig} already has an active msf run — ` +
+      `configuration ${canonicalConfig} already has an active msf run${holder} — ` +
         "refusing to start a second one for the same configuration",
     );
   }

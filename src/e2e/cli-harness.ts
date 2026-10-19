@@ -40,8 +40,15 @@ export interface GhShim {
 }
 
 /** The env vars that would point `gh` at a credential source outside the
- * suite's temp dir (its config dir, or a token handed in by the shell). */
-const CREDENTIAL_ENV_VARS = new Set(["GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN"]);
+ * suite's temp dir (its config dir, or a token handed in by the shell) — the
+ * same ambient tokens the boot check itself strips (github-adapter.ts). */
+const CREDENTIAL_ENV_VARS = new Set([
+  "GH_CONFIG_DIR",
+  "GH_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+]);
 
 /**
  * The environment of a spawned CLI, owned by the suite's temp dir: HOME, the
