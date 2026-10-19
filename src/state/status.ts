@@ -102,7 +102,7 @@ export function renderStatus(view: StatusView): string {
   );
 
   if (view.unbackedClaims.length === 0 && view.unmarkedReservations.length === 0) {
-    lines.push("leftovers: none");
+    lines.push("reconciliation: none");
   } else {
     for (const claim of view.unbackedClaims) lines.push(renderUnbackedClaim(claim));
     for (const reservation of view.unmarkedReservations) {

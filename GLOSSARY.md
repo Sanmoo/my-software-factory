@@ -8,7 +8,7 @@
 | Worker model | The configured AI model the worker uses to do its work. |
 | Pool | The set of work currently available for the factory to pick up. |
 | Claim | The factory mark on the tracker that reserves a work: the claim label plus the worker assignee. |
-| Reservation | The workspace registry dir of a work (`<workspace>/trabalhos/<repo>#<n>/`) — where its attempts and outcome records live; the claim is held while the human reviews. |
+| Reservation | The workspace registry dir of a work (`<workspace>/trabalhos/<repo>#<n>/`) — where its attempts and outcome records live. |
 | Unbacked claim | A factory claim mark on the tracker with no reservation in this workspace. |
 | Unmarked reservation | A reservation whose work carries no factory mark at all. |
 | Attempt | One try by a worker to carry out a work, counted per work. |

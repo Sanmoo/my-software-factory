@@ -111,7 +111,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
     assert.match(text, /0 eligible/);
     assert.match(text, /none/);
-    assert.match(text, /leftovers: none/);
+    assert.match(text, /reconciliation: none/);
   });
 
   test("status reports an unbacked claim: the mark without a reservation, the command and the caveat", async () => {
@@ -154,6 +154,6 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.deepEqual(view.unbackedClaims, []);
     assert.deepEqual(view.unmarkedReservations, []);
     const text = renderStatus(view);
-    assert.match(text, /leftovers: none/);
+    assert.match(text, /reconciliation: none/);
   });
 });
