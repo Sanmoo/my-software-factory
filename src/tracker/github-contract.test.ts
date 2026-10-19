@@ -32,13 +32,12 @@ class SimulatedRepoHarness implements ContractHarness {
   readonly claimedLabel = "agent-claimed";
   /** The adapter's gh api calls, recorded as "METHOD path" (budget accounting). */
   calls: string[] = [];
-  /** The next real failure to inject (issue 98's interruption rows), when armed. */
+  /** The next real server failure to inject (issue 98), when armed. */
   private armedFailure: { method: string; pathIncludes: string } | null = null;
   private sim: GitHubSim = new GitHubSim();
   private adapter: GitHubTrackerAdapter | undefined;
 
-  /** The real adapter can be made to hit a server failure the same way the fake
-   *  can — the seam is this harness's runner, never the live GitHub. */
+  /** Injects the failure at this harness's runner seam, never at live GitHub. */
   faults(): ContractFaults {
     return {
       failRemovingLabel: (label: string) => {
@@ -80,8 +79,8 @@ class SimulatedRepoHarness implements ContractHarness {
         const armed = this.armedFailure;
         if (armed !== null && armed.method === method && path.includes(armed.pathIncludes)) {
           this.armedFailure = null;
-          // gh-shaped: the adapter's tolerances read stderr, and this failure
-          // is deliberately NOT the tolerated absent-label case.
+          // gh-shaped: the adapter's tolerances read stderr; this failure is
+          // deliberately not the tolerated absent-label case.
           const injected = new Error("gh: injected server failure (HTTP 500)");
           Object.assign(injected, { stderr: "gh: injected server failure (HTTP 500)" });
           throw injected;

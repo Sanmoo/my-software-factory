@@ -198,20 +198,19 @@ export interface TrackerPort {
   /** 3. Native blocked_by dependencies with each blocker's terminal state. */
   readBlockers(ref: IssueRef): Promise<Known<Blocker[]>>;
 
-  /** 4. Claim: the reservation lands on the tracker BEFORE any launch, and the
-   *  swap is ordered (issue 98): the claim label is the padlock — it lands
-   *  FIRST and the pool label leaves LAST, so an interrupted claim leaves the
-   *  work claimed with its reservation (recoverable) instead of in neither the
-   *  pool nor the reserved set (invisible). Only an ABSENT label is tolerated. */
+  /** 4. Claim: the reservation lands on the tracker BEFORE any launch. The
+   *  claim label is the padlock — it lands first and the pool label leaves last,
+   *  so an interrupted claim stays recoverable (issue 98). Only an absent label
+   *  is tolerated; any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool; the ready label is given) or remove only the claim mark when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the claim mark leaves last. */
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the claim mark when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the padlock leaves last. */
   releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (the ruler of ticket 13) — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the claim mark (the padlock) leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (ticket 13) — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the padlock leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
   blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14) — the claim is held again, and the claim mark returns before the blocked mark leaves. Same bundled `Labels`. */
+  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14). The padlock returns first, the blocked mark leaves last. Same bundled `Labels`. */
   resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
   /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one (ticket 04 Q9). Tolerated when no PR exists. */
