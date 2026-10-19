@@ -55,35 +55,36 @@ export interface UnmarkedReservation {
   ref: IssueRef;
 }
 
-/** The two leftovers of the tracker↔workspace reconciliation. */
-export interface Leftovers {
+/** The two leftover kinds of the tracker↔workspace reconciliation. */
+export interface Reconciliation {
   unbackedClaims: UnbackedClaim[];
   unmarkedReservations: UnmarkedReservation[];
 }
 
-/** The whole derivation of one tick: the pool AND the leftovers, one read per repo. */
-export interface TrackerState extends Leftovers {
+/** The whole derivation of one tick: the pool AND the reconciliation, one read per repo. */
+export interface TrackerState extends Reconciliation {
   pool: PoolEntry[];
 }
 
 export const UNBACKED_CLAIM_CAVEAT =
   "another factory or workspace may hold this claim — confirm before releasing";
 
+/** Stable identity of one leftover for the once-per-appearance report. */
+export const unbackedClaimKey = (claim: UnbackedClaim): string =>
+  `unbackedClaim:${workKey(claim.ref)}`;
+export const unmarkedReservationKey = (reservation: UnmarkedReservation): string =>
+  `unmarkedReservation:${workKey(reservation.ref)}`;
+
 /**
- * The single derivation that returns the pool and the leftovers from ONE
- * open-issues read per target repo (issue 100): the neutral listing is
- * filtered by the pool's own rules and cross-referenced with the workspace's
- * reservations and the in-flight set. Reads only; never acts.
- *
- * - `reservations` are the work keys with a registry dir in this workspace.
- * - `inFlight` are the keys this process is launching right now — never
- *   reported, so the report is reliable.
+ * The single derivation that returns the pool and the reconciliation from ONE
+ * open-issues read per target repo (issue 100): the neutral listing is filtered
+ * by the pool's own rules and cross-referenced with the workspace's reservations
+ * and the in-flight set. Reads only; never acts.
  */
 export async function deriveTrackerState(
   port: TrackerPort,
   repos: string[],
   labels: Labels,
-  workerAccount: string,
   reservations: ReadonlySet<string> = new Set(),
   inFlight: ReadonlySet<string> = new Set(),
 ): Promise<TrackerState> {
@@ -103,7 +104,7 @@ export async function deriveTrackerState(
         // never registered it. A mark WITH a reservation is a normal reserved
         // work — the reserved derivation owns it.
         if (!reservations.has(key)) {
-          unbackedClaims.push({ ref: issue.ref, command: releaseCommand(issue, labels, workerAccount) });
+          unbackedClaims.push({ ref: issue.ref, command: releaseCommand(issue, labels) });
         }
         continue;
       }
@@ -160,29 +161,28 @@ function compareLeftoverRefs(a: { ref: IssueRef }, b: { ref: IssueRef }): number
   return a.ref.repo.localeCompare(b.ref.repo) || a.ref.number - b.ref.number;
 }
 
+const hasAnyLabel = (issue: OpenIssue, candidates: readonly string[]): boolean =>
+  candidates.some((label) => issue.labels.includes(label));
+
 /** The claim mark that makes a tracker entry a reservation: claim or block. */
 function hasClaimMark(issue: OpenIssue, labels: Labels): boolean {
-  return issue.labels.includes(labels.claimed) || issue.labels.includes(labels.blocked);
+  return hasAnyLabel(issue, [labels.claimed, labels.blocked]);
 }
 
 /** Any of the three factory labels — the pool label alone still marks a work. */
 function hasAnyFactoryLabel(issue: OpenIssue, labels: Labels): boolean {
-  return (
-    issue.labels.includes(labels.ready) ||
-    issue.labels.includes(labels.claimed) ||
-    issue.labels.includes(labels.blocked)
-  );
+  return hasAnyLabel(issue, [labels.ready, labels.claimed, labels.blocked]);
 }
 
 /** The copy-paste command that returns an unbacked claim to the pool: add the
  *  pool label when missing, drop the factory mark(s) present, release the
- *  worker assignee. */
-function releaseCommand(issue: OpenIssue, labels: Labels, workerAccount: string): string {
+ *  assignee(s) — an assigned work is never eligible. */
+function releaseCommand(issue: OpenIssue, labels: Labels): string {
   const parts = [`gh issue edit ${issue.ref.number}`, `--repo ${issue.ref.repo}`];
   if (!issue.labels.includes(labels.ready)) parts.push(`--add-label ${labels.ready}`);
   if (issue.labels.includes(labels.claimed)) parts.push(`--remove-label ${labels.claimed}`);
   if (issue.labels.includes(labels.blocked)) parts.push(`--remove-label ${labels.blocked}`);
-  if (issue.assignees.includes(workerAccount)) parts.push(`--remove-assignee ${workerAccount}`);
+  for (const assignee of issue.assignees) parts.push(`--remove-assignee ${assignee}`);
   return parts.join(" ");
 }
 

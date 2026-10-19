@@ -5,7 +5,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runForever, SweepEngine, workKey, type LoopDeps } from "../loop.js";
+import { runForever, SweepEngine, type LoopDeps } from "../loop.js";
+import { workKey } from "../state/derive.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";

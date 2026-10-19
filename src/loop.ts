@@ -11,7 +11,9 @@ import {
   workKey,
   renderUnbackedClaim,
   renderUnmarkedReservation,
-  type Leftovers,
+  unbackedClaimKey,
+  unmarkedReservationKey,
+  type Reconciliation,
   type PoolEntry,
   type RepairTrigger,
   type ReservedDerivation,
@@ -26,9 +28,6 @@ import { readRepairCycle, writeRepairCycle, EMPTY_REPAIR_CYCLE } from "./pool/re
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
-
-// Re-exported so the tests and the log keep one spelling of a work's key.
-export { workKey } from "./state/derive.js";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
@@ -72,8 +71,8 @@ export interface SweepResult {
   pool: PoolEntry[];
   /** The states derived for every reserved work this sweep (ticket 14). */
   reserved: ReservedDerivation[];
-  /** The tracker↔workspace leftovers reported this sweep (issue 100). */
-  leftovers: Leftovers;
+  /** The tracker↔workspace reconciliation reported this sweep (issue 100). */
+  reconciliation: Reconciliation;
   launched: SessionResult[];
   collected: CollectedWork[];
 }
@@ -199,9 +198,9 @@ export class SweepEngine {
   /** The previous observation only — process-local, never persisted. */
   private lastState: Map<string, OperationalClass> | null = null;
   /** The leftovers reported on the previous sweep — report once per appearance. */
-  private reportedLeftovers = new Set<string>();
-  /** The leftovers derived by the latest tick — what `runOnce` reports. */
-  lastLeftovers: Leftovers = { unbackedClaims: [], unmarkedReservations: [] };
+  private reportedReconciliation = new Set<string>();
+  /** The reconciliation derived by the latest tick — what `runOnce` reports. */
+  lastReconciliation: Reconciliation = { unbackedClaims: [], unmarkedReservations: [] };
   /** The class each action/event announced this interval (`null` = left); cleared after each observation. */
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
@@ -342,9 +341,9 @@ export class SweepEngine {
     parked.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || workKey(a.ref).localeCompare(workKey(b.ref)));
     this.parkedQueue = parked;
 
-    // The pool AND the leftovers from ONE open-issues read per repo (issue
-    // 100): the cached pool of the latest derivation (replenishment draws
-    // from it; a cache drained empty waits for the next tick) and the two
+    // The pool AND the reconciliation from ONE open-issues read per repo
+    // (issue 100): the cached pool of the latest derivation (replenishment
+    // draws from it; a cache drained empty waits for the next tick) and the
     // leftovers the reconciliation reports. No action: the report touches
     // nothing, and the sweep continues normally.
     const reservationKeys = new Set(reservedDirs.map((work) => workKey(work.ref)));
@@ -352,17 +351,16 @@ export class SweepEngine {
       tracker,
       config.repos,
       config.labels,
-      config.workerGhAccount,
       reservationKeys,
       inFlight,
     );
     this.lastPool = state.pool;
     this.cache = [...this.lastPool];
-    this.lastLeftovers = {
+    this.lastReconciliation = {
       unbackedClaims: state.unbackedClaims,
       unmarkedReservations: state.unmarkedReservations,
     };
-    this.observeLeftovers(this.lastLeftovers);
+    this.reportReconciliation(this.lastReconciliation);
     this.observeOperationalState(this.lastPool, derived, inFlight);
     return derived;
   }
@@ -372,19 +370,19 @@ export class SweepEngine {
    * next tick stays silent; one that disappears and reappears is reported
    * again. Pure logging — the report deletes, moves and archives nothing.
    */
-  private observeLeftovers(leftovers: Leftovers): void {
+  private reportReconciliation(reconciliation: Reconciliation): void {
     const current = new Set<string>();
-    for (const claim of leftovers.unbackedClaims) {
-      const key = `unbackedClaim ${workKey(claim.ref)}`;
+    for (const claim of reconciliation.unbackedClaims) {
+      const key = unbackedClaimKey(claim);
       current.add(key);
-      if (!this.reportedLeftovers.has(key)) this.log(renderUnbackedClaim(claim));
+      if (!this.reportedReconciliation.has(key)) this.log(renderUnbackedClaim(claim));
     }
-    for (const reservation of leftovers.unmarkedReservations) {
-      const key = `unmarkedReservation ${workKey(reservation.ref)}`;
+    for (const reservation of reconciliation.unmarkedReservations) {
+      const key = unmarkedReservationKey(reservation);
       current.add(key);
-      if (!this.reportedLeftovers.has(key)) this.log(renderUnmarkedReservation(reservation));
+      if (!this.reportedReconciliation.has(key)) this.log(renderUnmarkedReservation(reservation));
     }
-    this.reportedLeftovers = current;
+    this.reportedReconciliation = current;
   }
 
   /**
@@ -802,7 +800,7 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
   return {
     pool: engine.lastPool,
     reserved,
-    leftovers: engine.lastLeftovers,
+    reconciliation: engine.lastReconciliation,
     launched: engine.launched,
     collected: engine.collected,
   };

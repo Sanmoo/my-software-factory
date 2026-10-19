@@ -52,11 +52,17 @@ export async function readLaunchFacts(workDir: string): Promise<LaunchFacts> {
   // attempt died before writing — abrupt fall. The session dir and the
   // per-attempt logs are the evidence the runtime leaves at launch time.
   const logs = await attemptNumbers(workDir);
-  if (logs.length > 0 || existsSync(join(workDir, "sessao"))) {
+  if (hasAttemptEvidence(workDir, logs)) {
     return { attempt: logs.at(-1)! + 1, previousFall: true };
   }
 
   return { attempt: 1, previousFall: false };
+}
+
+/** The attempt evidence the runtime leaves at launch time: a per-attempt log
+ *  or the session dir. Its absence is the bare reservation. */
+function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
+  return logs.length > 0 || existsSync(join(workDir, "sessao"));
 }
 
 /** The attempt numbers present in the registry dir, ascending. */
@@ -209,25 +215,19 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const record = await readOutcomeRecord(dir);
     if (record) {
       lastOutcome.push({ key: relativeKey(works, dir), workDir: dir, record });
-    } else if (await hasAttemptFootprint(dir)) {
+    } else if (hasAttemptEvidence(dir, await attemptNumbers(dir))) {
       inFlight.push(relativeKey(works, dir));
     } else {
       reservedWithoutAttempt.push(relativeKey(works, dir));
     }
   }
-  inFlight.sort();
-  reservedWithoutAttempt.sort();
+  const byKey = (a: string, b: string): number => a.localeCompare(b);
+  inFlight.sort(byKey);
+  reservedWithoutAttempt.sort(byKey);
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
   return { inFlight, reservedWithoutAttempt, lastOutcome, archived };
-}
-
-/** The attempt evidence the runtime leaves at launch time: a per-attempt log
- *  or the session dir. Its absence is the bare reservation. */
-async function hasAttemptFootprint(workDir: string): Promise<boolean> {
-  if (existsSync(join(workDir, "sessao"))) return true;
-  return (await attemptNumbers(workDir)).length > 0;
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */

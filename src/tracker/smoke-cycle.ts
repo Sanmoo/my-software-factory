@@ -205,7 +205,7 @@ export async function runSmokeCycle(
   // derivation over the real adapter: the pool derivation of ticket 11 —
   // the work's own open PR (op9b, "Closes #N") keeps it out of the pool
   // (ticket 12: only sem-PR issues enter), and the blocked label would too
-  const { pool } = await deriveTrackerState(adapter, [repo], DEFAULT_LABELS, "bot-do-samuca");
+  const { pool } = await deriveTrackerState(adapter, [repo], DEFAULT_LABELS);
   if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
     throw new Error("derive: the PR-linked blocked claim must NOT be eligible");
   }

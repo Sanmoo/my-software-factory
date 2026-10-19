@@ -389,7 +389,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     assert.deepEqual(result, {
       pool: [],
       reserved: [],
-      leftovers: { unbackedClaims: [], unmarkedReservations: [] },
+      reconciliation: { unbackedClaims: [], unmarkedReservations: [] },
       launched: [],
       collected: [],
     });

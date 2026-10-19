@@ -19,7 +19,7 @@ const derivePool = async (
   port: FakeTrackerAdapter,
   repos: string[],
   labels = DEFAULT_LABELS,
-) => (await deriveTrackerState(port, repos, labels, "bot")).pool;
+) => (await deriveTrackerState(port, repos, labels)).pool;
 
 describe("derive — the pool of eligible works, stateless re-read", () => {
   let adapter: FakeTrackerAdapter;
@@ -177,7 +177,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     seedIssue(adapter, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.claimed] });
     await adapter.claim({ repo: REPO, number: 1 }, "bot", DEFAULT_LABELS.ready);
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot");
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(state.pool, []);
     assert.equal(state.unbackedClaims.length, 1);
@@ -192,10 +192,19 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     assert.match(line, /gh issue edit 1/);
   });
 
+  test("the release command drops every assignee, not only the worker's — an assigned work is never eligible", async () => {
+    seedIssue(adapter, { repo: REPO, number: 10, labels: [DEFAULT_LABELS.claimed] });
+    await adapter.claim({ repo: REPO, number: 10 }, "humano");
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
+
+    assert.match(state.unbackedClaims[0]!.command, /--remove-assignee humano/);
+  });
+
   test("the blocked label is a claim mark too — an unbacked block is reported like an unbacked claim", async () => {
     seedIssue(adapter, { repo: REPO, number: 2, labels: [DEFAULT_LABELS.blocked] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot");
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
 
     assert.equal(state.unbackedClaims.length, 1);
     assert.match(state.unbackedClaims[0]!.command, /--remove-label agent-blocked/);
@@ -204,7 +213,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("a claim with a reservation in this workspace is normal — never a leftover", async () => {
     seedIssue(adapter, { repo: REPO, number: 3, labels: [DEFAULT_LABELS.claimed] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(3));
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(3));
 
     assert.deepEqual(state.unbackedClaims, []);
     assert.deepEqual(state.unmarkedReservations, []);
@@ -213,7 +222,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("a work this process is launching right now is never reported", async () => {
     seedIssue(adapter, { repo: REPO, number: 4, labels: [DEFAULT_LABELS.claimed] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", new Set(), keys(4));
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, new Set(), keys(4));
 
     assert.deepEqual(state.unbackedClaims, []);
     assert.deepEqual(state.unmarkedReservations, []);
@@ -222,7 +231,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("an unmarked reservation is reported as a fact, without a command", async () => {
     seedIssue(adapter, { repo: REPO, number: 5, labels: ["outra-etiqueta"] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(5));
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(5));
 
     assert.equal(state.unmarkedReservations.length, 1);
     assert.equal(state.unmarkedReservations[0]?.ref.number, 5);
@@ -235,7 +244,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("a released reservation (pool label back) is normal — never reported", async () => {
     seedIssue(adapter, { repo: REPO, number: 6, labels: [DEFAULT_LABELS.ready] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(6));
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(6));
 
     assert.deepEqual(state.unmarkedReservations, []);
     assert.deepEqual(state.unbackedClaims, []);
@@ -245,7 +254,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("an unmarked reservation whose issue is closed is the done derivation's business, not a leftover", async () => {
     seedIssue(adapter, { repo: REPO, number: 7, state: "closed", stateReason: "completed" });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(7));
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(7));
 
     assert.deepEqual(state.unmarkedReservations, []);
   });
@@ -255,7 +264,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     seedIssue(adapter, { repo: REPO, number: 9, labels: [] });
 
     const before = adapter.readCost();
-    const state = await deriveTrackerState(adapter, [REPO, "Sanmoo/b"], DEFAULT_LABELS, "bot", keys(9));
+    const state = await deriveTrackerState(adapter, [REPO, "Sanmoo/b"], DEFAULT_LABELS, keys(9));
     const after = adapter.readCost();
 
     assert.equal(state.unbackedClaims.length, 1);
