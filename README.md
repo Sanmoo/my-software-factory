@@ -78,8 +78,8 @@ Runs the full cycle of one issue against the repo of the config example
 OFFLINE in `npm test`, over the in-memory REST sim; the full cycle alone is
 the real thing's empirical proof. Eligibility is proven via DIRECT reads
 right after seeding (listings converge late on GitHub; direct GETs are
-immediate) and the neutral `listOpenIssues()` read is re-checked once,
-non-blocking, after the cycle's last operation. Every
+immediate) and the open-issues listing is re-checked once, non-blocking,
+after the cycle's last operation. Every
 operation is executed, verified and **reverted** — comments deleted, labels
 and assignees removed, blockers unlinked, PR closed, branches deleted,
 issues closed. Without the bot token in the gh keyring

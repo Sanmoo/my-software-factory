@@ -285,25 +285,17 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   // ---- the 9 operations + rank ----
 
-  /** 1. The neutral read of the repo's open issues (issue 99): every open
-   *  issue with its labels, assignees and whether an OPEN PR links it, in one
-   *  issues listing + one open-PRs listing. Label semantics live in the
-   *  derivation; the adapter only resolves the linkage (the issue listing
-   *  cannot tell it).
+  /** 1. The neutral read of the repo's open issues (issue 99): one issues
+   *  listing + one open-PRs listing, never a per-issue read.
    *
-   * The listing is the PLAIN open-issues one, never label-filtered: GitHub's
-   * label-filtered listing is search-index-backed and lags minutes behind a
-   * freshly applied label, while the plain listing is immediately consistent
-   * (a just-labeled issue appears at once — ticket 16).
+   *  The listing is the PLAIN open-issues one, never label-filtered: GitHub's
+   *  label-filtered listing is search-index-backed and lags minutes behind a
+   *  fresh label, while the plain listing is immediately consistent (ticket 16).
    *
-   * Linkage is read from the OPEN PRs' bodies (Closes/Fixes/Resolves #N). The
-   * issue listing cannot tell it; one PR listing serves every issue. LIMITATION,
-   * accepted for budget: a human PR whose body carries no linkage keyword slips
-   * through — the honest alternative, a per-issue timeline cross-ref, costs one
-   * REST call per issue and was rejected (60/h shared budget). A slipped work is
-   * caught after its claim (the PR fact re-derives every tick), and only the
-   * first 100 open PRs are read (per_page=100, one call).
-   */
+   *  The issue listing cannot tell PR linkage, so OPEN PR bodies are read for
+   *  Closes/Fixes/Resolves #N. A human PR whose body carries no linkage keyword
+   *  slips through (caught after its claim, when the PR fact re-derives); a
+   *  per-issue timeline cross-ref was rejected for the 60/h budget. */
   async listOpenIssues(repo: string): Promise<OpenIssue[]> {
     const nodes = await this.api<RestListedIssue[]>(
       `repos/${repo}/issues?state=open&per_page=500`,

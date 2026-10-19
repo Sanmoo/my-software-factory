@@ -29,12 +29,11 @@ import { DEFAULT_LABELS } from "../config.js";
  *  Direct reads 2, claim 4+1 re-read, release 4+1, 2nd claim 2, blockClaim
  *  3+1, openPr 1, readPrFeedback 5 (timeline, pull, conversation, review
  *  submissions, inline comments), comment+readComments 2, derivation 2
- *  (open-issues listing + the open-PRs linkage listing — ticket 12: the seeded
- *  issue's OWN open PR (op9b, "Closes #N") links it, so the derivation
- *  excludes it from the pool in memory (issue 99: the neutral read flags
- *  hasOpenPr; no per-candidate readIssue), markDone+
- *  re-read 2, the late open-issues re-check 1 (its listing is EMPTY at that
- *  point — both seeded issues closed — so no linkage listing) = 31. */
+ *  (open-issues listing + the open-PRs linkage listing; the seeded issue's own
+ *  open PR (op9b, "Closes #N") flags hasOpenPr and the derivation excludes it
+ *  in memory, no per-candidate readIssue), markDone+re-read 2, the late
+ *  open-issues re-check 1 (its listing is EMPTY at that point — both seeded
+ *  issues closed — so no linkage listing) = 31. */
 export const CYCLE_ADAPTER_REST_CALLS = 31;
 
 /** op1's blocking proof: the direct reads right after seeding (immediate). */

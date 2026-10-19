@@ -43,36 +43,25 @@ export interface IssueSnapshot {
   createdAt: string;
 }
 
-/**
- * A neutral open issue (issue 99): the single whole-repo read the derivation
- * filters. No label semantics live here — the adapter resolves the open-PR
- * linkage and hands every open issue back; the derivation decides what is a
- * candidate. Labels and assignees travel so eligibility never needs a
- * per-candidate issue re-read; the blockers keep their own read.
- */
+/** One open issue, no label semantics: the derivation decides what is a
+ *  candidate, and `hasOpenPr` (resolved from the open-PRs listing) keeps
+ *  eligibility from re-reading the issue. */
 export interface OpenIssue {
   ref: IssueRef;
   title: string;
-  /** ISO 8601 creation date — age-based priority of the pool. */
+  /** ISO 8601 — age-based priority of the pool. */
   createdAt: string;
   labels: string[];
   assignees: string[];
-  /** Whether the issue is linked by an OPEN PR (Closes/Fixes/Resolves #N). */
+  /** Linked by an OPEN PR (Closes/Fixes/Resolves #N). */
   hasOpenPr: boolean;
 }
 
-/**
- * The read cost of the neutral open-issues read (issue 99), for the tracker
- * contract's budget pin: a whole-repo read is exactly one issues listing, at
- * most one open-PRs listing (the linkage), and never a per-issue snapshot.
- * The adapters' test harnesses count it from the calls they record.
- */
+/** The neutral read's cost, pinned by the tracker contract: one issues
+ *  listing, at most one open-PRs listing, no per-issue snapshot. */
 export interface ReadCost {
-  /** Whole-repo open-issues listings. */
   issueListings: number;
-  /** Whole-repo open-PRs listings (the linkage read). */
   pullListings: number;
-  /** Per-issue snapshot reads (`readIssue`) — a neutral read makes none. */
   issueReads: number;
 }
 
@@ -145,10 +134,8 @@ export class PartialWriteError extends Error {
  *   +. rank (honest null on GitHub)
  */
 export interface TrackerPort {
-  /** 1. The neutral read of a repo's open issues: ref, title, createdAt,
-   *  labels, assignees and whether an OPEN PR is linked. One issues listing
-   *  plus at most one open-PRs listing per repo; every label decision lives
-   *  in the derivation, never here. */
+  /** 1. Every open issue of a repo: ref, title, createdAt, labels, assignees
+   *  and whether an OPEN PR links it. Label decisions live in the derivation. */
   listOpenIssues(repo: string): Promise<OpenIssue[]>;
 
   /** 2. Snapshot of one issue. */
