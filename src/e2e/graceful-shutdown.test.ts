@@ -11,7 +11,7 @@ import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js"
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
-import { installGhShim, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
+import { installGhShim, isolatedHome, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
  * End-to-end of issue #90's shutdown contract: Ctrl-C stops new admissions and
@@ -253,9 +253,9 @@ describe("e2e: Ctrl-C shutdown — no new admissions, in-flight workers conclude
 
     const owner = spawn(process.execPath, [ownerScript, configPath, layout.root, launchedFile, holdFile, resultFile], {
       cwd: dir,
-      // The shim env isolates HOME as well: the owner's lock file stays in the
-      // suite's temp dir, like the contender's.
-      env: shim.env(),
+      // The owner builds the fake seams in-process and never calls `gh`; it
+      // only needs the suite-owned HOME so its lock file stays in the temp dir.
+      env: { ...process.env, HOME: isolatedHome(dir) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(owner);

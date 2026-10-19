@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isolatedHome, runCli as runCliProcess } from "./cli-harness.js";
 
 /**
- * Boot behavior of the cli (ticket 16): without the bot token in the gh
- * keyring, `msf run` fails at boot with a clear message. The account used
- * here has no token in any keyring, so the failure is local — no network,
- * no credential needed. The runs pass `--runtime fake` (the tests-only
- * flag, ticket 18) so the configured model is irrelevant to this boot check.
- * The live boot (token present, real derivation) is
- * proven in the credential-gated smoke (`npm run smoke:github`).
+ * Boot behavior of the cli (ticket 16): without the bot token for the account,
+ * `msf run` fails at boot with a clear message. The child gets an isolated
+ * HOME ({@link isolatedHome}), so the REAL `gh` finds no credential for the
+ * ghost account — the failure stays local, with no network and no credential
+ * needed, and the run's lock file (issue #90) never lands in the operator's
+ * state dir. The runs pass `--runtime fake` (the tests-only flag, ticket 18)
+ * so the configured model is irrelevant to this boot check. The live boot
+ * (token present, real derivation) is proven in the credential-gated smoke
+ * (`npm run smoke:github`).
  */
 
 describe("e2e: msf run boots through the keyring check", () => {
@@ -41,17 +44,16 @@ describe("e2e: msf run boots through the keyring check", () => {
     );
   }
 
-  function runCli(args: string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
-    const cli = new URL("../cli.js", import.meta.url).pathname;
-    const result = spawnSync(process.execPath, [cli, ...args], { cwd, encoding: "utf8" });
-    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  /** The built CLI in `cwd`, with the suite-owned HOME. */
+  function runCli(args: string[], cwd: string = dir): { status: number | null; stdout: string; stderr: string } {
+    return runCliProcess(cwd, args, { ...process.env, HOME: isolatedHome(dir) });
   }
 
   test("without the bot token in the keyring, the boot fails with a clear message", () => {
     const ghost = "msf-boot-test-ghost-account";
     writeMinimalConfig(ghost);
 
-    const result = runCli(["run", "--once", "--runtime", "fake"], dir);
+    const result = runCli(["run", "--once", "--runtime", "fake"]);
 
     assert.notEqual(result.status, 0);
     assert.match(
@@ -73,7 +75,7 @@ describe("e2e: msf run boots through the keyring check", () => {
       "utf8",
     );
 
-    const result = runCli(["run", "--once", "--runtime", "fake", "--config", other], dir);
+    const result = runCli(["run", "--once", "--runtime", "fake", "--config", other]);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr + result.stdout, new RegExp(`"${ghost}"`));
@@ -82,7 +84,7 @@ describe("e2e: msf run boots through the keyring check", () => {
   test("missing required config fails fast at boot, nonzero exit", () => {
     writeFileSync(join(dir, "msf.yaml"), "concurrency: 2\n", "utf8");
 
-    const result = runCli(["run", "--once"], dir);
+    const result = runCli(["run", "--once"]);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /worker-gh-account/);

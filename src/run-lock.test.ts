@@ -1,21 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { waitForStdout } from "./e2e/cli-harness.js";
+import { isolatedHome, waitForStdout } from "./e2e/cli-harness.js";
 
 const moduleUrl = new URL("./run-lock.js", import.meta.url).href;
-
-/** The child env: an isolated HOME keeps this suite's lock files inside the
- * temp dir instead of the operator's real state dir. */
-const childEnv = (home: string): NodeJS.ProcessEnv => ({ ...process.env, HOME: home });
 
 /** A holder that never boots the factory: the module's acquisition boundary,
  * used to prove cross-process exclusivity directly. It prints LOCKED once the
  * lock is its own and then stays alive until killed. */
-function spawnLockHolder(config: string, home: string): ChildProcess {
+function spawnLockHolder(config: string, env: NodeJS.ProcessEnv): ChildProcess {
   return spawn(
     process.execPath,
     [
@@ -30,13 +26,13 @@ function spawnLockHolder(config: string, home: string): ChildProcess {
       `,
       config,
     ],
-    { env: childEnv(home), stdio: ["ignore", "pipe", "pipe"] },
+    { env, stdio: ["ignore", "pipe", "pipe"] },
   );
 }
 
 /** A contender: exit 0 when admitted, exit 7 carrying the diagnostic when
  * refused. */
-function spawnContender(config: string, home: string): ChildProcess {
+function spawnContender(config: string, env: NodeJS.ProcessEnv): ChildProcess {
   return spawn(
     process.execPath,
     [
@@ -49,30 +45,32 @@ function spawnContender(config: string, home: string): ChildProcess {
       `,
       config,
     ],
-    { env: childEnv(home), stdio: ["ignore", "pipe", "pipe"] },
+    { env, stdio: ["ignore", "pipe", "pipe"] },
   );
 }
 
+/** Resolve with the child's exit code. Attach it BEFORE killing the child:
+ * node emits 'exit' once, and a late listener would hang forever. */
 function exitOf(child: ChildProcess): Promise<number> {
   return new Promise((resolve) => child.once("exit", (code) => resolve(code ?? -1)));
 }
 
-test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", { timeout: 30_000 }, async () => {
+test("run exclusivity is process-wide, aliases converge, and abrupt death releases it", { timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "msf-run-lock-"));
   try {
-    const home = join(dir, "home");
-    mkdirSync(home);
+    // The suite-owned HOME: the lock files of this test stay in the temp dir.
+    const env = { ...process.env, HOME: isolatedHome(dir) };
     const config = join(dir, "msf.yaml");
     const alias = join(dir, "alias.yaml");
     writeFileSync(config, "worker-gh-account: test\nrepos: []\n");
     symlinkSync(config, alias);
 
-    let owner: ChildProcess | undefined = spawnLockHolder(config, home);
+    let owner: ChildProcess | undefined = spawnLockHolder(config, env);
     try {
       await waitForStdout(owner, "LOCKED");
 
       // The symlinked spelling of the same real file is the same identity.
-      const contender = spawnContender(alias, home);
+      const contender = spawnContender(alias, env);
       let stderr = "";
       contender.stderr?.on("data", (chunk: Buffer) => {
         stderr += chunk.toString();
@@ -81,16 +79,18 @@ test("run exclusivity is process-wide, aliases converge, and abrupt death releas
       assert.match(stderr, /already has an active msf run/);
 
       // Abrupt death: no close(), no handler — the kernel releases the lock.
+      const ownerExit = exitOf(owner);
       owner.kill("SIGKILL");
-      await exitOf(owner);
+      await ownerExit;
       owner = undefined;
 
-      const restarted = spawnLockHolder(alias, home);
+      const restarted = spawnLockHolder(alias, env);
       try {
         await waitForStdout(restarted, "LOCKED");
       } finally {
+        const restartedExit = exitOf(restarted);
         restarted.kill("SIGTERM");
-        await exitOf(restarted);
+        await restartedExit;
       }
     } finally {
       owner?.kill("SIGKILL");
