@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RequiredCheckResult } from "../tracker/port.js";
+import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
 
 /**
  * The durable repair cycle of a work (issue 107): how many automatic repair
@@ -56,7 +56,7 @@ export async function writeRepairCycle(workDir: string, cycle: RepairCycle): Pro
 export function repairEvidenceSignature(input: {
   ref: { repo: string; number: number };
   headSha: string;
-  reasons: readonly ("conflicts" | "required-checks")[];
+  reasons: readonly RepairReason[];
   failingChecks: readonly RequiredCheckResult[];
 }): string {
   const checks = input.failingChecks

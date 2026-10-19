@@ -4,14 +4,14 @@
  * scripts outcomes without a container.
  */
 
-import type { IssueComment, IssueRef, RequiredCheckResult } from "../tracker/port.js";
+import type { IssueComment, IssueRef, RepairReason, RequiredCheckResult } from "../tracker/port.js";
 
 /**
  * The repair context of a reactivated session (issue 107): why the factory
  * intervened, the remote HEAD observed before intervening (the lease value)
  * and the evidence of the failing required checks. */
 export interface RepairMaterial {
-  reasons: ("conflicts" | "required-checks")[];
+  reasons: RepairReason[];
   /** The remote head observed before the intervention — pin the force-with-lease to it. */
   observedHeadSha: string;
   /** The PR's current base branch — the rebase target, never the repo default. */

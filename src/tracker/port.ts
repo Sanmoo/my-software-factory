@@ -124,6 +124,9 @@ export interface RequiredCheckResult {
   detailsUrl?: string;
 }
 
+/** Why a confirmed impediment reactivates the worker (issue 107). */
+export type RepairReason = "conflicts" | "required-checks";
+
 /**
  * The structured merge/CI facts of a work's open PR — the only facts the
  * repair derivation reads. `headSha` is the identity that makes a check
