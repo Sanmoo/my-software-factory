@@ -173,11 +173,17 @@ export interface LastOutcomeEntry {
 
 /**
  * The local registry as seen with the factory stopped (ticket 07 Q7): a work
- * dir without desfecho.json is in flight (orphan when the run is not up);
- * with it, the outcome of the last attempt; the archive holds the dones.
+ * dir with attempt evidence but no desfecho is in flight (orphan when the run
+ * is not up); a dir created before any attempt evidence is a reservation
+ * without a recorded attempt (the claim landed, the worker has not — common
+ * now that the reservation lands before the launch); with a desfecho, the
+ * outcome of the last attempt; the archive holds the dones.
  */
 export interface RegistryView {
+  /** Dirs with attempt evidence (a log or the session dir) and no outcome record. */
   inFlight: string[];
+  /** Dirs with no outcome record and no attempt evidence — the reservation alone. */
+  reservedWithoutAttempt: string[];
   lastOutcome: LastOutcomeEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
@@ -197,20 +203,31 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
       : workspace;
 
   const inFlight: string[] = [];
+  const reservedWithoutAttempt: string[] = [];
   const lastOutcome: LastOutcomeEntry[] = [];
   for (const dir of await workDirs(works)) {
     const record = await readOutcomeRecord(dir);
     if (record) {
       lastOutcome.push({ key: relativeKey(works, dir), workDir: dir, record });
-    } else {
+    } else if (await hasAttemptFootprint(dir)) {
       inFlight.push(relativeKey(works, dir));
+    } else {
+      reservedWithoutAttempt.push(relativeKey(works, dir));
     }
   }
   inFlight.sort();
+  reservedWithoutAttempt.sort();
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
-  return { inFlight, lastOutcome, archived };
+  return { inFlight, reservedWithoutAttempt, lastOutcome, archived };
+}
+
+/** The attempt evidence the runtime leaves at launch time: a per-attempt log
+ *  or the session dir. Its absence is the bare reservation. */
+async function hasAttemptFootprint(workDir: string): Promise<boolean> {
+  if (existsSync(join(workDir, "sessao"))) return true;
+  return (await attemptNumbers(workDir)).length > 0;
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */

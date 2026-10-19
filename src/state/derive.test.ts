@@ -5,9 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
-import { derivePool, deriveReserved } from "./derive.js";
+import {
+  deriveReserved,
+  deriveTrackerState,
+  renderUnbackedClaim,
+  renderUnmarkedReservation,
+} from "./derive.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
+
+/** The pool-only view over the single derivation, for the tests of the pool's rules. */
+const derivePool = async (
+  port: FakeTrackerAdapter,
+  repos: string[],
+  labels = DEFAULT_LABELS,
+) => (await deriveTrackerState(port, repos, labels, "bot")).pool;
 
 describe("derive — the pool of eligible works, stateless re-read", () => {
   let adapter: FakeTrackerAdapter;
@@ -148,6 +160,108 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
       "one neutral open-issues read per target repo",
     );
     assert.equal(after.issueReads - before.issueReads, 0, "eligibility never re-reads a candidate's issue");
+  });
+});
+
+describe("derive — the tracker↔workspace leftovers, from the same single read (issue 100)", () => {
+  let adapter: FakeTrackerAdapter;
+  const REPO = "Sanmoo/a";
+  const repos = [REPO];
+  const keys = (...numbers: number[]) => new Set(numbers.map((n) => `${REPO}#${n}`));
+
+  beforeEach(() => {
+    adapter = new FakeTrackerAdapter({ workerAccount: "bot" });
+  });
+
+  test("an open issue with the claim label and no reservation is an unbacked claim, with a copyable release command", async () => {
+    seedIssue(adapter, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.claimed] });
+    await adapter.claim({ repo: REPO, number: 1 }, "bot", DEFAULT_LABELS.ready);
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot");
+
+    assert.deepEqual(state.pool, []);
+    assert.equal(state.unbackedClaims.length, 1);
+    assert.equal(state.unbackedClaims[0]?.ref.number, 1);
+    assert.equal(
+      state.unbackedClaims[0]?.command,
+      `gh issue edit 1 --repo ${REPO} --add-label ${DEFAULT_LABELS.ready} --remove-label ${DEFAULT_LABELS.claimed} --remove-assignee bot`,
+    );
+    const line = renderUnbackedClaim(state.unbackedClaims[0]!);
+    assert.match(line, /unbacked claim: Sanmoo\/a#1/);
+    assert.match(line, /another factory or workspace may hold this claim/);
+    assert.match(line, /gh issue edit 1/);
+  });
+
+  test("the blocked label is a claim mark too — an unbacked block is reported like an unbacked claim", async () => {
+    seedIssue(adapter, { repo: REPO, number: 2, labels: [DEFAULT_LABELS.blocked] });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot");
+
+    assert.equal(state.unbackedClaims.length, 1);
+    assert.match(state.unbackedClaims[0]!.command, /--remove-label agent-blocked/);
+  });
+
+  test("a claim with a reservation in this workspace is normal — never a leftover", async () => {
+    seedIssue(adapter, { repo: REPO, number: 3, labels: [DEFAULT_LABELS.claimed] });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(3));
+
+    assert.deepEqual(state.unbackedClaims, []);
+    assert.deepEqual(state.unmarkedReservations, []);
+  });
+
+  test("a work this process is launching right now is never reported", async () => {
+    seedIssue(adapter, { repo: REPO, number: 4, labels: [DEFAULT_LABELS.claimed] });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", new Set(), keys(4));
+
+    assert.deepEqual(state.unbackedClaims, []);
+    assert.deepEqual(state.unmarkedReservations, []);
+  });
+
+  test("an unmarked reservation is reported as a fact, without a command", async () => {
+    seedIssue(adapter, { repo: REPO, number: 5, labels: ["outra-etiqueta"] });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(5));
+
+    assert.equal(state.unmarkedReservations.length, 1);
+    assert.equal(state.unmarkedReservations[0]?.ref.number, 5);
+    const line = renderUnmarkedReservation(state.unmarkedReservations[0]!);
+    assert.match(line, /unmarked reservation: Sanmoo\/a#5/);
+    assert.match(line, /no factory mark/);
+    assert.doesNotMatch(line, /gh issue edit/, "the human decision has no safe command");
+  });
+
+  test("a released reservation (pool label back) is normal — never reported", async () => {
+    seedIssue(adapter, { repo: REPO, number: 6, labels: [DEFAULT_LABELS.ready] });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(6));
+
+    assert.deepEqual(state.unmarkedReservations, []);
+    assert.deepEqual(state.unbackedClaims, []);
+    assert.deepEqual(state.pool.map((entry) => entry.ref.number), [6]);
+  });
+
+  test("an unmarked reservation whose issue is closed is the done derivation's business, not a leftover", async () => {
+    seedIssue(adapter, { repo: REPO, number: 7, state: "closed", stateReason: "completed" });
+
+    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, "bot", keys(7));
+
+    assert.deepEqual(state.unmarkedReservations, []);
+  });
+
+  test("the leftovers come from the same single read per repo — no extra listing, no per-issue reread", async () => {
+    seedIssue(adapter, { repo: REPO, number: 8, labels: [DEFAULT_LABELS.claimed] });
+    seedIssue(adapter, { repo: REPO, number: 9, labels: [] });
+
+    const before = adapter.readCost();
+    const state = await deriveTrackerState(adapter, [REPO, "Sanmoo/b"], DEFAULT_LABELS, "bot", keys(9));
+    const after = adapter.readCost();
+
+    assert.equal(state.unbackedClaims.length, 1);
+    assert.equal(state.unmarkedReservations.length, 1);
+    assert.equal(after.issueListings - before.issueListings, 2, "one open-issues read per target repo");
+    assert.equal(after.issueReads - before.issueReads, 0, "the leftovers never re-read a candidate's issue");
   });
 });
 

@@ -2,20 +2,38 @@ import type { Config } from "../config.js";
 import type { WorkspaceLayout } from "../layout.js";
 import { scanRegistry, type RegistryView } from "../pool/registry.js";
 import type { TrackerPort } from "../tracker/port.js";
-import { derivePool, type PoolEntry } from "./derive.js";
+import {
+  deriveTrackerState,
+  renderUnbackedClaim,
+  renderUnmarkedReservation,
+  type PoolEntry,
+  type UnbackedClaim,
+  type UnmarkedReservation,
+} from "./derive.js";
 
 /**
  * `msf status`: derivation on demand through the port (it works with the
  * factory stopped — the tracker is the truth) plus the local registry scan
- * (ticket 07 Q7): a work dir without desfecho.json is in flight (an orphan
- * when the run is not up), with it the outcome of the last attempt, and the
- * archive holds the dones. No IPC: the per-work artifacts are the interface.
+ * (ticket 07 Q7): a work dir with attempt evidence but no desfecho.json is in
+ * flight (an orphan when the run is not up); a dir with no attempt evidence is
+ * a bare reservation (the claim landed, the worker has not); with a desfecho,
+ * the outcome of the last attempt; the archive holds the dones. No IPC: the
+ * per-work artifacts are the interface.
+ *
+ * Issue 100: the SAME single derivation returns the pool and the two
+ * leftovers (unbacked claim, unmarked reservation) — one open-issues read per
+ * repo, from which the reconciliation against the workspace reservations and
+ * the registry view are rendered.
  */
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
   pool: PoolEntry[];
-  /** The local registry: in flight / last outcomes / archived dones. */
+  /** A tracker mark with no reservation in this workspace. */
+  unbackedClaims: UnbackedClaim[];
+  /** A reservation on disk whose work carries no factory mark. */
+  unmarkedReservations: UnmarkedReservation[];
+  /** The local registry: in flight / reserved-without-attempt / last outcomes / archived dones. */
   registry: RegistryView;
 }
 
@@ -24,9 +42,26 @@ export async function deriveStatus(
   config: Config,
   layout: WorkspaceLayout,
 ): Promise<StatusView> {
-  const pool = await derivePool(tracker, config.repos, config.labels);
   const registry = await scanRegistry(layout);
-  return { pool, registry };
+  // The reservations this workspace holds: every dir still under trabalhos/.
+  const reservations = new Set<string>([
+    ...registry.inFlight,
+    ...registry.reservedWithoutAttempt,
+    ...registry.lastOutcome.map((entry) => entry.key),
+  ]);
+  const state = await deriveTrackerState(
+    tracker,
+    config.repos,
+    config.labels,
+    config.workerGhAccount,
+    reservations,
+  );
+  return {
+    pool: state.pool,
+    unbackedClaims: state.unbackedClaims,
+    unmarkedReservations: state.unmarkedReservations,
+    registry,
+  };
 }
 
 /** The human view: one line per answer, in the order a human asks for them. */
@@ -41,9 +76,15 @@ export function renderStatus(view: StatusView): string {
   }
 
   lines.push(
+    view.registry.reservedWithoutAttempt.length === 0
+      ? "reserved without recorded attempt: none"
+      : `reserved without recorded attempt (the claim landed, no attempt on disk): ${view.registry.reservedWithoutAttempt.join(", ")}`,
+  );
+
+  lines.push(
     view.registry.inFlight.length === 0
       ? "in flight: none"
-      : `in flight (no outcome record — orphan when the run is not up): ${view.registry.inFlight.join(", ")}`,
+      : `in flight (attempt evidence on disk — orphan when the run is not up): ${view.registry.inFlight.join(", ")}`,
   );
 
   if (view.registry.lastOutcome.length === 0) {
@@ -61,6 +102,15 @@ export function renderStatus(view: StatusView): string {
       ? "archived (dones): none"
       : `archived (dones): ${view.registry.archived.join(", ")}`,
   );
+
+  if (view.unbackedClaims.length === 0 && view.unmarkedReservations.length === 0) {
+    lines.push("leftovers: none");
+  } else {
+    for (const claim of view.unbackedClaims) lines.push(renderUnbackedClaim(claim));
+    for (const reservation of view.unmarkedReservations) {
+      lines.push(renderUnmarkedReservation(reservation));
+    }
+  }
 
   return lines.join("\n");
 }

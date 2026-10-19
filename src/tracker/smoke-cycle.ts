@@ -1,6 +1,6 @@
 import { type ContractHarness } from "./contract.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
-import { derivePool } from "../state/derive.js";
+import { deriveTrackerState } from "../state/derive.js";
 import { DEFAULT_LABELS } from "../config.js";
 
 /**
@@ -205,11 +205,11 @@ export async function runSmokeCycle(
   // derivation over the real adapter: the pool derivation of ticket 11 —
   // the work's own open PR (op9b, "Closes #N") keeps it out of the pool
   // (ticket 12: only sem-PR issues enter), and the blocked label would too
-  const pool = await derivePool(adapter, [repo], DEFAULT_LABELS);
+  const { pool } = await deriveTrackerState(adapter, [repo], DEFAULT_LABELS, "bot-do-samuca");
   if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
     throw new Error("derive: the PR-linked blocked claim must NOT be eligible");
   }
-  console.log("extra EXECUTED+VERIFIED: derivePool over the real adapter → the PR-linked blocked claim kept out of the pool");
+  console.log("extra EXECUTED+VERIFIED: deriveTrackerState over the real adapter → the PR-linked blocked claim kept out of the pool");
 
   // 6. done
   await adapter.markDone(issue.ref);

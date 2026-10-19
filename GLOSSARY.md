@@ -8,6 +8,8 @@
 | Worker model | The configured AI model the worker uses to do its work. |
 | Pool | The set of work currently available for the factory to pick up. |<<<<<<< ours
 | Reservation | A claimed work whose session left an open PR; the claim is held while the human reviews. |
+| Unbacked claim | The tracker carries a factory claim mark (claim or block label) with no reservation in this workspace — another factory or workspace may be the one holding it. |
+| Unmarked reservation | A reservation dir whose work carries no factory mark at all — possibly lost work; the decision is human. |
 | Block | A work the factory stopped driving (2nd consecutive fall or PR closed without merge) until a human answers on the issue. |
 | Occurrence | A new act that needs human continuity (initial execution or feedback round leaving a PR open, a help request, a block) — never an ordinary sweep. |
 | Notification | A passive local desktop notice about a new occurrence: the work, a brief reason and the relevant GitHub address. |
