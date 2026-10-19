@@ -183,6 +183,11 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         [1, 2, 3],
         "all three launched",
       );
+      assert.deepEqual(
+        [...runtime.launched.map((r) => r.ref.number)].sort(),
+        [1, 2, 3],
+        "every claimed work launched",
+      );
 
       // Same cycle, no barrier: #2 already has its PR confirmed open and #3
       // is already claimed while worker 1 is still in flight.

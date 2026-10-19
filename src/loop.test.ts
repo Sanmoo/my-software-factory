@@ -110,8 +110,10 @@ describe("loop wiring — the git host feeds every launch", () => {
 
     const { launched } = await runOnce(deps);
 
-    const request = launched[0]?.request;
-    assert.ok(request);
+    // Two launches run concurrently: the ORDER they reach the runtime is not
+    // part of the contract, only which work each request carries.
+    const request = launched.find((result) => result.request.ref.number === 7)?.request;
+    assert.ok(request, "the launch of issue #7 is among the launched");
     assert.equal(request.material.issue.title, "issue #7");
     assert.equal(request.material.issue.body, "");
     assert.equal(request.material.diff, "diff --git a/x b/x\n+work");

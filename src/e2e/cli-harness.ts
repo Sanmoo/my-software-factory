@@ -15,6 +15,11 @@ function cliPath(): string {
  * test bug, not something to swallow. This keeps the CLI process tests free of
  * GitHub, credentials and the network (issue #90, Testing Decisions).
  *
+ * `env` also points the child's HOME inside the suite's temp dir: the run's
+ * per-user state (the run lock of issue #90 — never the real keyring, the shim
+ * answers that) then stays with the suite, so the tests neither depend on the
+ * operator's HOME being writable nor leave lock files behind in it.
+ *
  * Markers let a test observe and hold the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
  *     it (the run already holds the lock at that point).
@@ -26,13 +31,18 @@ function cliPath(): string {
 export interface GhShim {
   /** Directory holding the `gh` shim; prepend it to the child's PATH. */
   binDir: string;
-  /** The child environment: the shim on PATH plus any markers given. */
+  /** The isolated HOME of the child (inside the suite's temp dir). */
+  home: string;
+  /** The child environment: the shim on PATH, the isolated HOME and any
+   * markers given. */
   env(markers?: { ready?: string; hold?: string; fail?: boolean }): NodeJS.ProcessEnv;
 }
 
 export function installGhShim(baseDir: string): GhShim {
   const binDir = join(baseDir, "bin");
+  const home = join(baseDir, "home");
   mkdirSync(binDir, { recursive: true });
+  mkdirSync(home, { recursive: true });
   const shim = join(binDir, "gh");
   writeFileSync(
     shim,
@@ -64,9 +74,11 @@ export function installGhShim(baseDir: string): GhShim {
   chmodSync(shim, 0o755);
   return {
     binDir,
+    home,
     env(markers = {}) {
       return {
         ...process.env,
+        HOME: home,
         PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
         ...(markers.ready === undefined ? {} : { MSF_SHIM_READY: markers.ready }),
         ...(markers.hold === undefined ? {} : { MSF_SHIM_HOLD: markers.hold }),
@@ -76,12 +88,14 @@ export function installGhShim(baseDir: string): GhShim {
   };
 }
 
-/** Run the built CLI to completion in `cwd` (synchronous, bounded). */
+/** Run the built CLI to completion in `cwd` (synchronous, bounded). The
+ * bound is generous on purpose: a concurrent suite may delay a node start,
+ * and the calls under test answer in milliseconds. */
 export function runCli(
   cwd: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  timeoutMs = 20_000,
+  timeoutMs = 30_000,
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [cliPath(), ...args], {
     cwd,

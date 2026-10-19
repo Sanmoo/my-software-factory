@@ -20,6 +20,29 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
  * slow or hung owner never loses exclusivity. The kernel releases the lock
  * when the process dies — abrupt death included — so a new run needs no
  * manual cleanup.
+ *
+ * Why this mechanism: `flock` makes the kernel the arbiter and the releaser.
+ * The check-and-acquire is ONE syscall, so a simultaneous dispute can never
+ * admit two runs (a ``does the marker exist? then create it'' pair would not
+ * be atomic); no lock state lives on disk that could go stale or need a
+ * timeout; and the kernel drops the lock when the last descriptor of the
+ * process goes away, so nothing depends on a signal handler running first.
+ * The binding (`@deepseek-ai/node-addon-system`, pinned exact, prebuilt — no
+ * install-time compilation) is imported lazily by the package, so an
+ * unsupported platform or a missing binary rejects the ACQUISITION, not the
+ * module load: `msf status` keeps working and the run refuses to start.
+ *
+ * Fail closed: any failure to establish the exclusivity — the config cannot
+ * be resolved, the lock storage cannot be created, flock rejects for an
+ * unsupported platform or any errno other than the contention one — ends the
+ * run with a diagnostic. There is no unprotected fallback and no `--force`.
+ *
+ * Scope: local to the machine and to the OS user running it. The lock state
+ * lives in the user's state dir (see LOCK_DIR) rather than in a shared
+ * world-writable place, because two OS users are two operators: they carry
+ * separate `gh` keyrings and all the factory's operational state is per-user.
+ * Cross-machine coordination is out of scope: the guarantee is the `flock`
+ * semantics of the local filesystem.
  */
 export interface RunLock {
   /** Release the exclusivity. Normal completion and error paths must call it;
@@ -27,9 +50,12 @@ export interface RunLock {
   close(): Promise<void>;
 }
 
-/** Per-user state directory for the lock files. Stable across shell sessions
- * (unlike TMPDIR), so the identity of a run never depends on the environment
- * that happened to start it. */
+/** Per-user state directory for the lock files (mode 0700 — the identity of
+ * a run is the operator's business). Stable across shell sessions (unlike
+ * TMPDIR), so the identity of a run never depends on the environment that
+ * happened to start it. Not next to the config file: a deployment can keep
+ * `msf.yaml` in a read-only checkout, and the run must not need write access
+ * to the directory it reads from. */
 const LOCK_DIR = join(homedir(), ".local", "state", "msf", "locks");
 
 export async function acquireRunLock(configPath: string): Promise<RunLock> {
@@ -51,7 +77,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
 
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    await mkdir(LOCK_DIR, { recursive: true });
+    await mkdir(LOCK_DIR, { recursive: true, mode: 0o700 });
     handle = await open(lockPath, "a+");
   } catch (error) {
     throw new Error(

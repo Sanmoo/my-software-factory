@@ -98,7 +98,9 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
   }
 
   async function waitUntil(what: string, condition: () => Promise<boolean>): Promise<void> {
-    const deadline = Date.now() + 3_000;
+    // Generous on purpose: the same helper waits for in-process state and for
+    // a spawned CLI's boot line, and a loaded machine delays a node start.
+    const deadline = Date.now() + 10_000;
     while (!(await condition())) {
       if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`);
       await new Promise((r) => setTimeout(r, 1));
