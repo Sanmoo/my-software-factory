@@ -114,12 +114,7 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
     return {
       decision: "block",
       because: "fall-second",
-      comment: await blockedCommentBody({
-        attempt: facts.attempt,
-        record: facts.record,
-        ref: facts.ref,
-        workDir: facts.workDir,
-      }),
+      comment: await blockedCommentBody(facts),
     };
   }
   return { decision: "release", because: "fall-first" };
@@ -143,24 +138,15 @@ function isBlockedSelfReport(facts: OutcomeFacts): boolean {
   );
 }
 
-/** The input of a blocked comment: the fell attempt, the raw record on disk,
- *  the work and its absolute dir (probed, never shown). */
-export interface BlockedCommentInput {
-  /** The attempt that fell — the header names it, never a record's. */
-  attempt: number;
-  /** The raw record on disk: it may belong to an earlier attempt. */
-  record: OutcomeRecord | null;
-  /** The work, for the workspace-relative evidence paths. */
-  ref: IssueRef;
-  /** Absolute work dir on the host, probed for the evidence presence. */
-  workDir: string;
-}
+/** What a blocked comment needs from the ruler's facts — the attempt that
+ *  fell, its raw record (possibly another attempt's) and its evidence dir. */
+export type BlockedCommentInput = Pick<OutcomeFacts, "attempt" | "record" | "ref" | "workDir">;
 
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
  * before deciding to resume. The header names the fallen attempt; the outcome
  * is the current attempt's own record — a divergent record is named as such
- * instead of being presented as this fall's desfecho. The evidence of the
+ * instead of being presented as this fall's outcome. The evidence of the
  * attempt follows, independent of the record.
  */
 export async function blockedCommentBody(input: BlockedCommentInput): Promise<string> {
@@ -173,14 +159,13 @@ export async function blockedCommentBody(input: BlockedCommentInput): Promise<st
 
 /** The outcome of the named attempt: another attempt's record is absence here. */
 function describeOutcome({ attempt, record }: BlockedCommentInput): string {
+  const own = ownOutcomeRecord(record, attempt);
+  if (own !== null) return `the exact outcome record:\n\n${JSON.stringify(own, null, 2)}`;
   if (record === null) return "abrupt fall: no outcome record was written";
-  if (record.attempt !== attempt) {
-    return (
-      "abrupt fall: no outcome record was written " +
-      `(the record on disk belongs to attempt ${record.attempt})`
-    );
-  }
-  return `the exact outcome record:\n\n${JSON.stringify(record, null, 2)}`;
+  return (
+    "abrupt fall: no outcome record was written " +
+    `(the record on disk belongs to attempt ${record.attempt})`
+  );
 }
 
 /**

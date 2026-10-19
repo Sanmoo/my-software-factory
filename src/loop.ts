@@ -680,7 +680,7 @@ export class SweepEngine {
       await this.applyRelease(ref);
       resulting = "eligible";
     } else {
-      this.log(`collected ${key}: 2nd consecutive fall — blocked, the exact outcome goes to the issue`);
+      this.log(`collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome (or its absence) goes to the issue`);
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";
     }

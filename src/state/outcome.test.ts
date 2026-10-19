@@ -240,7 +240,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 });
 
-describe("issue 103 — the desfecho belongs to an attempt; the comment points at the evidence", () => {
+describe("issue 103 — the outcome record belongs to an attempt; the comment points at the evidence", () => {
   let dir: string;
   const ref = { repo: "Sanmoo/my-tasks", number: 91 };
   const relativeDir = "trabalhos/Sanmoo/my-tasks#91";
@@ -282,7 +282,7 @@ describe("issue 103 — the desfecho belongs to an attempt; the comment points a
       }),
     );
 
-    assert.ok(ruling.decision === "block");
+    assert.equal(ruling.decision, "block");
     assert.match(ruling.comment, /2 consecutive falls \(attempt 3\)/);
     assert.match(ruling.comment, /abrupt fall: no outcome record was written/);
     assert.match(ruling.comment, /the record on disk belongs to attempt 1/);
@@ -298,7 +298,7 @@ describe("issue 103 — the desfecho belongs to an attempt; the comment points a
 
     const ruling = await classifyOutcome(factsFor({ record, attempt: 2, consecutiveFall: true }));
 
-    assert.ok(ruling.decision === "block");
+    assert.equal(ruling.decision, "block");
     assert.match(ruling.comment, /2 consecutive falls \(attempt 2\) — the exact outcome record:/);
     assert.ok(ruling.comment.includes(JSON.stringify(record, null, 2)), "the record's JSON is preserved");
     assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/log-2\.jsonl — present/);
@@ -310,7 +310,7 @@ describe("issue 103 — the desfecho belongs to an attempt; the comment points a
       factsFor({ record: null, attempt: 3, consecutiveFall: true }),
     );
 
-    assert.ok(ruling.decision === "block");
+    assert.equal(ruling.decision, "block");
     for (const path of [
       `${relativeDir}/`,
       `${relativeDir}/log-3.jsonl`,
@@ -331,7 +331,7 @@ describe("issue 103 — the desfecho belongs to an attempt; the comment points a
       factsFor({ record: null, attempt: 3, consecutiveFall: true }),
     );
 
-    assert.ok(ruling.decision === "block");
+    assert.equal(ruling.decision, "block");
     assert.match(
       ruling.comment,
       /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-3\.log — could not be verified/,
