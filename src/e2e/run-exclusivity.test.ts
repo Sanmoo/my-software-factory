@@ -30,8 +30,8 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * the lock acquisition), never the lock module: the contract is observed at
  * the public boundary, not through the mechanism.
  *
- * The suite runs with the global `--test-timeout` (60 s, `npm test`): every
- * case is a set of real node processes, and under a loaded machine their
+ * The suite carries a 60 s timeout (matching `npm test`'s `--test-timeout`):
+ * every case is a set of real node processes, and under a loaded machine their
  * startup — not the behaviour under test — dominates.
  */
 

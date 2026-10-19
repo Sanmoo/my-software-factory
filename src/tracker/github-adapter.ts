@@ -156,7 +156,12 @@ export async function bakeCredentialHelper(
 /** The ambient token env vars that must never shadow the keyring (v1's
  * createGhCliBoundary pattern). One list: the boot check strips them from the
  * `gh` call, and the e2e harness adds gh's config-dir override on top. */
-export const AMBIENT_TOKEN_ENV_VARS = ["GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_TOKEN"] as const;
+export const AMBIENT_TOKEN_ENV_VARS = [
+  "GH_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+] as const;
 
 /**
  * Boot check (ticket 16): read the bot token from the gh keyring. Fails the

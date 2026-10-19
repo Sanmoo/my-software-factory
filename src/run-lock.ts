@@ -145,10 +145,8 @@ function lockFailure(canonicalConfig: string, via: "config-file" | "marker", err
   }
   const refusing = `configuration ${canonicalConfig} already has an active msf run`;
   const tail = "refusing to start a second one for the same configuration";
-  // The config file's flock can also be held by a process that is not a run.
-  return new Error(
-    via === "marker" ? `${refusing} — ${tail}` : `${refusing} (its file is flock'ed by another process) — ${tail}`,
-  );
+  if (via === "marker") return new Error(`${refusing} — ${tail}`);
+  return new Error(`${refusing} (its file is flock'ed by another process) — ${tail}`);
 }
 
 /** Close what was opened, ignoring a close that has nothing left to do. */

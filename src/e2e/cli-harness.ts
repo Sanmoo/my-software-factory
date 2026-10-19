@@ -18,9 +18,8 @@ function cliPath(): string {
  *
  * `env` is {@link isolatedEnv}: the child's HOME and XDG dirs point into the
  * suite, so the factory's per-user state (the run lock of issue #90) stays
- * with the suite, and the env-supplied credentials (`GH_CONFIG_DIR`,
- * `GH_TOKEN`, `GITHUB_TOKEN`) are cleared, so a child can never reach the
- * operator's store. That keeps the CLI process tests independent of the
+ * with the suite, and the ambient token vars plus `GH_CONFIG_DIR` are cleared,
+ * so a child can never reach the operator's credential store. That keeps the CLI process tests independent of the
  * operator's HOME being writable and free of GitHub, credentials and the
  * network (issue #90, Testing Decisions).
  *
