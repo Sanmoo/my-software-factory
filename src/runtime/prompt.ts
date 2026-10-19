@@ -165,12 +165,21 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
     (check) =>
       `  - \`${check.name}\` — ${check.conclusion ?? "unknown"}${check.detailsUrl ? ` (${check.detailsUrl})` : ""}`,
   );
+  const humanComments = (request.material.pr?.comments ?? []).filter(
+    (comment) => !comment.body.includes(AGENT_MARKER),
+  );
   return [
     `## The repair round — the factory reactivated this work`,
     ``,
     `The factory reacted to confirmed impediments on the CURRENT head of PR #${prNumber} (no human comment was needed):`,
     ...reasonLines,
     ...(checkLines.length > 0 ? [``, `Failing required checks:`, ...checkLines] : []),
+    ...(humanComments.length > 0
+      ? [
+          ``,
+          `Human review comments are also present: judge and answer each one under the feedback-round policy below, in this same round.`,
+        ]
+      : []),
     ``,
     `Do the work in this order:`,
     ``,

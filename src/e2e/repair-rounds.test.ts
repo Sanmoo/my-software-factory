@@ -391,6 +391,46 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     assert.match(comments.value.at(-1)!.body, /PR #\d+/, "the comment points at the PR");
   });
 
+  test("a partial correction advances the round but never renews the cap", async () => {
+    const config = makeConfig();
+    const { tracker, runtime, git, deps } = makeFactory(config);
+    const pr = await seedOpenPr(tracker, runtime, git, deps, 32);
+
+    const headWith = async (head: string, checks: RequiredCheckResult[]) => {
+      tracker.setPrRepairFacts({
+        repo: REPO,
+        prNumber: pr,
+        headSha: head,
+        mergeState: "mergeable",
+        requiredChecks: checks,
+      });
+      git.remoteHead = head;
+    };
+
+    await headWith("p1", [failing("a", "failure"), failing("b", "failure")]);
+    assert.equal((await runOnce(deps)).launched.length, 1, "round 1");
+
+    // One check fixed, the other still failing: new evidence, but no recovery.
+    await headWith("p2", [
+      { name: "a", status: "completed", conclusion: "success" },
+      failing("b", "failure"),
+    ]);
+    assert.equal((await runOnce(deps)).launched.length, 1, "a partial fix is new evidence → round 2");
+    assert.equal(
+      (await readRepairCycle(workDir(layout, REPO, 32))).usedRounds,
+      2,
+      "a partial fix never resets the cap",
+    );
+
+    // Full recovery is the only reset (besides a human unblock).
+    await headWith("p3", [
+      { name: "a", status: "completed", conclusion: "success" },
+      { name: "b", status: "completed", conclusion: "success" },
+    ]);
+    assert.equal((await runOnce(deps)).launched.length, 0);
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 32))).usedRounds, 0, "full recovery resets");
+  });
+
   test("the repair budget persists across sweeps and factory restarts (disk, not process memory)", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
@@ -434,14 +474,16 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     await runOnce(deps);
     assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).usedRounds, 1);
 
-    // Recovery: no conflicts and every required check approved.
+    // The new head is clean: an old head's failures never linger here, and the
+    // confirmed recovery (no conflicts, every required check approved) resets.
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
-      headSha: "head-i",
+      headSha: "head-i-fixed",
       mergeState: "mergeable",
       requiredChecks: [{ name: "build", status: "completed", conclusion: "success" }],
     });
+    git.remoteHead = "head-i-fixed";
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
