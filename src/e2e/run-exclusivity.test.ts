@@ -11,17 +11,21 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * End-to-end of issue #90 at the CLI boundary: `msf run` is exclusive per REAL
  * config path. Real, concurrent CLI subprocesses against a real temp
  * filesystem; the tracker boot read is served by a hermetic `gh` shim on PATH
- * (no keyring, no GitHub, no network). The protected identity is the
- * symlink-resolved path of the config file, never its content or the name on
- * the command line, and the guarantee covers the continuous run and `--once`
- * alike.
+ * (no keyring, no GitHub, no network) whose `env` also isolates the child's
+ * HOME. The protected identity is the symlink-resolved path of the config
+ * file, never its content or the name on the command line, and the guarantee
+ * covers the continuous run and `--once` alike.
  *
  * The owner is always a real `msf run` (held at the tracker boot check, past
  * the lock acquisition), never the lock module: the contract is observed at
  * the public boundary, not through the mechanism.
+ *
+ * The suite timeout is generous because every case is a set of real node
+ * processes: under a loaded machine (another suite compiling, other tests
+ * spawning) their startup — not the behaviour under test — dominates.
  */
 
-describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 30_000 }, () => {
+describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 60_000 }, () => {
   let dir: string;
   let shim: GhShim;
   let children: ChildProcess[];
@@ -252,8 +256,8 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
   test("a failure to establish the protection prevents the run, with a clear diagnostic and no workspace", () => {
     const workspace = join(dir, "ws-never");
     writeConfig("msf.yaml", workspace);
-    // The per-user lock storage cannot be created under a HOME that is not a
-    // directory: exclusivity cannot be established, so the run must refuse
+    // The per-user lock storage cannot be created under a HOME that is a
+    // regular file: exclusivity cannot be established, so the run must refuse
     // instead of running unprotected.
     const notADir = join(dir, "not-a-dir");
     writeFileSync(notADir, "", "utf8");
