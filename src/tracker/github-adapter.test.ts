@@ -270,6 +270,14 @@ describe("the 9 operations over gh", () => {
     assert.ok(!issue.known);
   });
 
+  test("2. readIssue: a malformed answer is a real failure, never a silent empty read", async () => {
+    const { adapter } = await makeAdapter(() => ({ stdout: "{ not json" }));
+    await assert.rejects(
+      adapter.readIssue({ repo: "Sanmoo/a", number: 1 }),
+      /invalid JSON/,
+    );
+  });
+
   test("3. readBlockers: blocked_by dependencies mapped with terminal state", async () => {
     const { adapter, calls } = await makeAdapter(() => ({
       stdout: JSON.stringify([
