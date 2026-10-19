@@ -64,6 +64,24 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
   test("an empty listing reads as no live worker — the shape of a stopped factory", () => {
     assert.deepEqual(parseWorkerContainers("\n", JSON.stringify([]), WORKS, NOW), []);
   });
+
+  test("an unreadable start time fails the probe instead of showing a fabricated 0s", () => {
+    const unreadable = [
+      { ...container("aaa111", "Sanmoo/my-tasks#4", "2026-02-01T11:58:30Z"), State: { Running: true } },
+    ];
+    assert.throws(
+      () => parseWorkerContainers("aaa111", JSON.stringify(unreadable), WORKS, NOW),
+      /no readable start time — liveness unknown/,
+      "a live worker whose age is unknowable is unknown liveness, not a worker that just started",
+    );
+  });
+
+  test("inspect output that is not JSON fails the probe — never an empty factory", () => {
+    assert.throws(
+      () => parseWorkerContainers("aaa111", "docker: something went wrong", WORKS, NOW),
+      /not JSON — liveness unknown/,
+    );
+  });
 });
 
 /**
