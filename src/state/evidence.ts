@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
-import { WORKSPACE_SUBPATHS } from "../layout.js";
+import { workDir, type WorkspaceLayout } from "../layout.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -11,8 +11,9 @@ import type { IssueRef } from "../tracker/port.js";
  * record's `paths` is never the source, because it may be empty, incomplete
  * or belong to another attempt.
  *
- * Every SHOWN path is workspace-relative: the host's absolute work dir is
- * probed but never leaves the process.
+ * Every SHOWN path is workspace-relative and names exactly the dir/file that
+ * was probed: both come from the same `workDir()` of the layout, so a comment
+ * can never point at a location whose presence was not consulted.
  */
 
 /** What a filesystem query says about one location — an unknown answer is never absence. */
@@ -31,26 +32,24 @@ export interface WorkEvidence {
   sandcastleLog: EvidenceLocation;
 }
 
-/**
- * Probe the three locations of one attempt. `dir` is the absolute work dir of
- * the same `ref` — probed, never shown; the shown paths come from `ref` alone.
- */
+/** Probe the three locations of one attempt of `ref` in the workspace. */
 export async function readWorkEvidence(
+  layout: WorkspaceLayout,
   ref: IssueRef,
   attempt: number,
-  dir: string,
 ): Promise<WorkEvidence> {
-  const workDir = `${WORKSPACE_SUBPATHS.works}/${ref.repo}#${ref.number}`;
+  const dir = workDir(layout, ref.repo, ref.number);
+  const shownDir = relative(layout.root, dir).split(sep).join("/");
   const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
     presenceOf(dir),
     presenceOf(join(dir, `log-${attempt}.jsonl`)),
     presenceOf(join(dir, "sessao", `sandcastle-${attempt}.log`)),
   ]);
   return {
-    workDir: { path: `${workDir}/`, presence: dirPresence },
-    eventLog: { path: `${workDir}/log-${attempt}.jsonl`, presence: logPresence },
+    workDir: { path: `${shownDir}/`, presence: dirPresence },
+    eventLog: { path: `${shownDir}/log-${attempt}.jsonl`, presence: logPresence },
     sandcastleLog: {
-      path: `${workDir}/sessao/sandcastle-${attempt}.log`,
+      path: `${shownDir}/sessao/sandcastle-${attempt}.log`,
       presence: sandcastlePresence,
     },
   };

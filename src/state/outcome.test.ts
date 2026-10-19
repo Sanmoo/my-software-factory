@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 
 import {
   readOutcomeRecord,
@@ -10,6 +12,14 @@ import {
   blockedCommentBody,
   DESFECHO_FILENAME,
 } from "./outcome.js";
+
+/** A layout nothing is probed against — for tests that assert no evidence. */
+const FAKE_WORKSPACE: WorkspaceLayout = {
+  root: "/nowhere",
+  repos: "/nowhere/repos",
+  works: "/nowhere/trabalhos",
+  archive: "/nowhere/archive",
+};
 
 /**
  * Factory building the structured facts the ruler reads: the outcome
@@ -25,20 +35,20 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
     attempt: 1,
     issueClosed: false,
     ref: { repo: "Sanmoo/a", number: 1 },
-    workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+    workspace: FAKE_WORKSPACE,
     ...overrides,
   };
 }
 
 describe("outcome — the factory's ruler reads only structured facts", () => {
-  let workDir: string;
+  let dir: string;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "msf-outcome-"));
+    dir = mkdtempSync(join(tmpdir(), "msf-outcome-"));
   });
 
   afterEach(() => {
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("the artifact contract is desfecho.json, in PT-BR on disk", () => {
@@ -47,7 +57,7 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
 
   test("an outcome record on disk parses into the structured schema", async () => {
     writeFileSync(
-      join(workDir, DESFECHO_FILENAME),
+      join(dir, DESFECHO_FILENAME),
       JSON.stringify({
         class: "pr-open",
         attempt: 1,
@@ -56,7 +66,7 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
       "utf8",
     );
 
-    const record = await readOutcomeRecord(workDir);
+    const record = await readOutcomeRecord(dir);
 
     assert.ok(record);
     assert.equal(record.class, "pr-open");
@@ -64,19 +74,19 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
   });
 
   test("the absence of the record is itself the class 'abrupt fall' (null, no error)", async () => {
-    const record = await readOutcomeRecord(workDir);
+    const record = await readOutcomeRecord(dir);
     assert.equal(record, null);
   });
 
   test("a record that breaks the schema is invalid — never interpreted as prose", async () => {
-    writeFileSync(join(workDir, DESFECHO_FILENAME), JSON.stringify({ class: "whatever" }), "utf8");
-    const record = await readOutcomeRecord(workDir);
+    writeFileSync(join(dir, DESFECHO_FILENAME), JSON.stringify({ class: "whatever" }), "utf8");
+    const record = await readOutcomeRecord(dir);
     assert.equal(record, null);
   });
 
   test("a corrupt record is treated as absent (abrupt fall), not a crash", async () => {
-    writeFileSync(join(workDir, DESFECHO_FILENAME), "{not json", "utf8");
-    const record = await readOutcomeRecord(workDir);
+    writeFileSync(join(dir, DESFECHO_FILENAME), "{not json", "utf8");
+    const record = await readOutcomeRecord(dir);
     assert.equal(record, null);
   });
 });
@@ -221,7 +231,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         attempt: 2,
         record,
         ref: { repo: "Sanmoo/a", number: 1 },
-        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+        workspace: FAKE_WORKSPACE,
       });
       assert.match(comment, /2 consecutive falls/i);
       assert.ok(comment.includes(JSON.stringify(record, null, 2)), "the exact desfecho JSON is embedded");
@@ -232,7 +242,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         attempt: 3,
         record: null,
         ref: { repo: "Sanmoo/a", number: 1 },
-        workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+        workspace: FAKE_WORKSPACE,
       });
       assert.match(comment, /attempt 3/);
       assert.match(comment, /no outcome record/i);
@@ -241,20 +251,29 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
 });
 
 describe("issue 103 — the outcome record belongs to an attempt; the comment points at the evidence", () => {
-  let dir: string;
+  let root: string;
+  let layout: WorkspaceLayout;
   const ref = { repo: "Sanmoo/my-tasks", number: 91 };
   const relativeDir = "trabalhos/Sanmoo/my-tasks#91";
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "msf-outcome-103-"));
+    root = mkdtempSync(join(tmpdir(), "msf-outcome-103-"));
+    layout = ensureWorkspace(join(root, "ws"));
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   });
 
+  /** The attempt's real dir in the workspace — the evidence lives there. */
+  function makeWorkDir(): string {
+    const dir = workDir(layout, ref.repo, ref.number);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   const factsFor = (overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) =>
-    facts({ ref, workDir: dir, ...overrides });
+    facts({ ref, workspace: layout, ...overrides });
 
   test("a record of another attempt is absent for this attempt: an old blocked-self-report without the current label is not record-only", async () => {
     const record = { class: "blocked-self-report" as const, attempt: 1 };
@@ -272,7 +291,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("the header names the fallen attempt and explains the divergent record; the old JSON is not embedded", async () => {
-    writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(makeWorkDir(), "log-3.jsonl"), "{}\n", "utf8");
 
     const ruling = await classifyOutcome(
       factsFor({
@@ -293,7 +312,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("a valid record of the current attempt keeps its treatment — JSON preserved, evidence appended", async () => {
-    writeFileSync(join(dir, "log-2.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(makeWorkDir(), "log-2.jsonl"), "{}\n", "utf8");
     const record = { class: "clean-without-pr" as const, attempt: 2, paths: {} };
 
     const ruling = await classifyOutcome(factsFor({ record, attempt: 2, consecutiveFall: true }));
@@ -306,6 +325,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("without paths the three locations still show, all relative to the named workspace", async () => {
+    makeWorkDir();
     const ruling = await classifyOutcome(
       factsFor({ record: null, attempt: 3, consecutiveFall: true }),
     );
@@ -320,12 +340,12 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     }
     assert.match(ruling.comment, /relative to the factory workspace on the host/);
     assert.match(ruling.comment, /workspace of msf\.yaml/);
-    assert.ok(!ruling.comment.includes(dir), "no absolute host path is shown");
+    assert.ok(!ruling.comment.includes(root), "no absolute host path is shown");
   });
 
   test("an unverifiable location stays in the comment — a query error is not absence", async () => {
     // A self-referential symlink: the query fails, the location is unknown.
-    symlinkSync("sessao", join(dir, "sessao"));
+    symlinkSync("sessao", join(makeWorkDir(), "sessao"));
 
     const ruling = await classifyOutcome(
       factsFor({ record: null, attempt: 3, consecutiveFall: true }),
@@ -356,6 +376,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
   });
 
   test("the old record stays on disk as history — preparing the comment never deletes or rewrites it", async () => {
+    const dir = makeWorkDir();
     const onDisk = { class: "blocked-self-report" as const, attempt: 1 };
     writeFileSync(join(dir, DESFECHO_FILENAME), JSON.stringify(onDisk), "utf8");
     writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");

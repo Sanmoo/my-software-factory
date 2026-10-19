@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { IssueRef } from "../tracker/port.js";
+import type { WorkspaceLayout } from "../layout.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**
@@ -68,7 +69,8 @@ export type OutcomeRuling =
   | { decision: "record-only"; because: "blocked-self-report" }
   /** Class 2: fall without PR, 1st consecutive — release (claimed→ready; the branch stays). */
   | { decision: "release"; because: "fall-first" }
-  /** Class 3/4: fall without PR, 2nd consecutive — blocked + comment carrying the exact outcome. */
+  /** Class 3/4: fall without PR, 2nd consecutive — blocked + comment carrying this
+   *  attempt's outcome (or its explicit absence) and the attempt's evidence. */
   | { decision: "block"; because: "fall-second"; comment: string };
 
 /** The structured facts the ruler reads — nothing else, zero prose (the two-rulers contract). */
@@ -88,8 +90,8 @@ export interface OutcomeFacts {
   issueClosed: boolean;
   /** The work the attempt belonged to — names the evidence dir of the blocked comment. */
   ref: IssueRef;
-  /** Absolute work dir on the host, probed read-only for the evidence presence. */
-  workDir: string;
+  /** The workspace whose trabalhos/ holds the attempt — the base of the evidence. */
+  workspace: WorkspaceLayout;
 }
 
 /**
@@ -139,8 +141,8 @@ function isBlockedSelfReport(facts: OutcomeFacts): boolean {
 }
 
 /** What a blocked comment needs from the ruler's facts — the attempt that
- *  fell, its raw record (possibly another attempt's) and its evidence dir. */
-export type BlockedCommentInput = Pick<OutcomeFacts, "attempt" | "record" | "ref" | "workDir">;
+ *  fell, its raw record (possibly another attempt's) and where its evidence lives. */
+export type BlockedCommentInput = Pick<OutcomeFacts, "attempt" | "record" | "ref" | "workspace">;
 
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
@@ -150,7 +152,7 @@ export type BlockedCommentInput = Pick<OutcomeFacts, "attempt" | "record" | "ref
  * attempt follows, independent of the record.
  */
 export async function blockedCommentBody(input: BlockedCommentInput): Promise<string> {
-  const evidence = await readWorkEvidence(input.ref, input.attempt, input.workDir);
+  const evidence = await readWorkEvidence(input.workspace, input.ref, input.attempt);
   return (
     `worker blocked after 2 consecutive falls (attempt ${input.attempt}) — ` +
     `${describeOutcome(input)}\n\n${renderWorkEvidence(evidence)}`
