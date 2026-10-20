@@ -3,8 +3,8 @@
 A worker container had no Docker: a round whose work needed it (issue 113's
 quality gateway runs the repo's real Docker test) self-reported blocked, and
 nothing in the container could tell "this repository needs Docker" from "this
-host has none". The factory's work now and then IS running containers, so the
-worker needs a daemon.
+host has none". Some of the work the factory takes on IS running containers, so the worker
+needs a daemon.
 
 We bind the host's daemon socket into every worker container and add the
 socket's own gid as a supplementary group (`--group-add`), with `DOCKER_HOST`

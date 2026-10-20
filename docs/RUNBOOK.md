@@ -92,8 +92,8 @@ Docker tests.
 - A **socket-based** daemon is required: the default `/var/run/docker.sock`, or
   the path `DOCKER_HOST=unix://…` names. Anything else is refused at launch
   with the reason.
-- The socket is root on this host. That is the accepted risk, like the operator
-  PAT riding inside the container.
+- Socket access is root on this host. That is the accepted risk, like the
+  operator PAT riding inside the container.
 - Containers a worker starts are the host's siblings: a bind path resolves on
   the HOST. The worktree and the workspace are mirrored at their host paths;
   container-only paths (`/msf-work`, the container's `/tmp`) are not — the
