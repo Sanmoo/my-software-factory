@@ -60,7 +60,6 @@ check results) — never LLM prose.
 ## Tests
 
 ```sh
-npm install
 npm run build:image   # once, with Docker installed and running
 npm run gateway
 ```

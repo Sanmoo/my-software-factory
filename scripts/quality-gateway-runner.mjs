@@ -9,9 +9,10 @@ import { resolve } from "node:path";
  * plan with the fixed ceiling; the test-only entry drives the same runner with
  * fixture checks and a short budget.
  *
- * Plain JavaScript because the first check deletes `dist/`, the compiled tree
- * this file cannot be part of. The operator contract (invocation, prerequisites,
- * ceiling, exit status) lives in README; the agent obligation in AGENTS.md.
+ * Plain JavaScript so it can run on a clean checkout before its own first
+ * stage compiles (and deletes) dist/. The operator contract (invocation,
+ * prerequisites, ceiling, exit status) lives in README; the agent obligation
+ * in AGENTS.md.
  */
 
 export const BUDGET_MS = 240_000;
@@ -61,7 +62,9 @@ export const OFFICIAL_PLAN = {
       command: "npm",
       args: ["run", "test:built", "--silent"],
       env: { MSF_REQUIRE_DOCKER: "1" },
-      requiresCompiledTests: true,
+      // A suite without the e2e files or the real Docker integration test is
+      // smaller than the required one: refuse it instead of passing quietly.
+      requiredTestFiles: ["state/liveness.test.js", "e2e/"],
     },
   ],
 };
@@ -71,6 +74,9 @@ const PREREQUISITE_FAILED = 2;
 const BUDGET_EXHAUSTED = 124;
 const CHECK_FAILED_WITHOUT_STATUS = 1;
 const CHECK_COULD_NOT_START = 127;
+
+/** The check currently running, so an interrupt can kill its whole group. */
+let runningChild = null;
 
 /** Kill the check's whole process group: a stalled node --test leaves test
  * subprocesses behind unless the group (spawned detached) dies with it. */
@@ -103,6 +109,7 @@ function spawnBounded(stage, cwd, remainingMs, { quiet }) {
       resolvePromise({ code: null, signal: null, error, timedOut: false, output: "" });
       return;
     }
+    runningChild = child;
     let output = "";
     if (quiet) {
       child.stdout?.on("data", (chunk) => (output += String(chunk)));
@@ -118,11 +125,22 @@ function spawnBounded(stage, cwd, remainingMs, { quiet }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (runningChild === child) runningChild = null;
       resolvePromise({ ...result, timedOut, output });
     };
     child.once("error", (error) => settle({ code: null, signal: null, error }));
     child.once("exit", (code, signal) => settle({ code, signal, error: null }));
   });
+}
+
+/** Terminate the running check (and its group) when the gateway is interrupted. */
+export function installSignalTermination() {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      if (runningChild !== null) killGroup(runningChild);
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  }
 }
 
 /** The compiled test files a run would execute, relative to `cwd`'s dist. */
@@ -190,15 +208,17 @@ export async function runGateway(plan, { cwd, budgetMs, label = "quality gateway
       report(`${position} check ${check} passed (${Date.now() - stageStarted}ms)`);
       continue;
     }
-    if (stage.requiresCompiledTests === true) {
-      const count = compiledTestFiles(cwd).length;
-      if (count === 0) {
-        reportError(
-          `check failed: ${check} ${position} — no compiled test files under dist/; refusing to validate an empty suite`,
-        );
+    if (stage.requiredTestFiles !== undefined) {
+      const files = compiledTestFiles(cwd);
+      const missing = stage.requiredTestFiles.filter(
+        (required) => !files.some((file) => file === required || file.startsWith(required)),
+      );
+      if (files.length === 0 || missing.length > 0) {
+        const gap = files.length === 0 ? "no test files under dist/" : `missing ${missing.join(", ")}`;
+        reportError(`check failed: ${check} ${position} — the compiled suite is incomplete (${gap}); refusing to validate a smaller suite`);
         return CHECK_FAILED_WITHOUT_STATUS;
       }
-      report(`${position} check ${check}: ${count} compiled test file(s)`);
+      report(`${position} check ${check}: ${files.length} compiled test file(s)`);
     }
     const result = await spawnBounded(stage, cwd, remaining(), { quiet: false });
     const took = Date.now() - stageStarted;
