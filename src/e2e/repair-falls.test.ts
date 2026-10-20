@@ -383,15 +383,16 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     await runOnce(deps); // resume: falls 1, round charged
     assert.equal((await readRepairCycle(workDir(layout, REPO, 105))).consecutiveFalls, 1);
 
-    // The PR recovers: no conflicts, every required check approved.
+    // The resumed round published its commit and the PR recovered on it: no
+    // conflicts, every required check approved.
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
-      headSha: "recovered",
+      headSha: "local105",
       mergeState: "mergeable",
       requiredChecks: [failing("build", "success")],
     });
-    git.remoteHead = "recovered";
+    git.remoteHead = "local105";
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
@@ -475,6 +476,151 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     for (let tick = 0; tick < 2; tick += 1) {
       assert.equal((await runOnce(deps)).launched.length, 0, "a self-reported block waits for the human");
     }
+  });
+
+  test("two falls block even when the tracker's current facts are not confirmed", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 110);
+    // Two falls already settled; the PR's facts are NOT confirmed (unknown
+    // mergeability): the open PR must not hide the fall.
+    const cycle: RepairCycle = {
+      usedRounds: 0,
+      lastEvidence: `${REPO}#110|${OBSERVED}|conflicts|`,
+      consecutiveFalls: 2,
+      attempt: {
+        evidence: `${REPO}#110|${OBSERVED}|conflicts|`,
+        attempt: 2,
+        observedHeadSha: OBSERVED,
+        remoteHeadSha: OBSERVED,
+        publication: "not-published",
+        localWork: { headSha: "local110", commits: 1, uncommitted: false, operationInProgress: null },
+      },
+    };
+    seedFallenLegacyRound(110, cycle, 2);
+    tracker.setPrRepairFacts({ repo: REPO, prNumber: pr, mergeState: "unknown", requiredChecks: [] });
+    git.remoteHead = OBSERVED;
+    git.localWork = {
+      headSha: "local110",
+      commits: 1,
+      uncommitted: false,
+      operationInProgress: null,
+    };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "an unconfirmed PR is not a reason to keep the work parked");
+    const issue = await tracker.readIssue({ repo: REPO, number: 110 });
+    assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the 2nd fall blocks anyway");
+    const comments = await tracker.readComments({ repo: REPO, number: 110 });
+    assert.ok(comments.known);
+    assert.match(comments.value.at(-1)!.body, /2 consecutive repair attempts ended without publishing/);
+  });
+
+  test("an unverified publication is never erased by facts that look like recovery", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 111);
+    // The attempt's publication is still unknown (the remote was unreadable on
+    // the last sweep); the tracker now looks clean.
+    writeFileSync(
+      join(workDir(layout, REPO, 111), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 1,
+        lastEvidence: `${REPO}#111|${OBSERVED}|conflicts|`,
+        consecutiveFalls: 0,
+        attempt: {
+          evidence: `${REPO}#111|${OBSERVED}|conflicts|`,
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: null,
+          publication: "pending",
+          localWork: { headSha: "local111", commits: 1, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "clean-looking",
+      mergeState: "mergeable",
+      requiredChecks: [failing("build", "success")],
+    });
+    git.remoteUnavailable = true;
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0);
+    assert.ok(
+      !sweep.reserved.some((decision) => decision.state === "repair-recovered"),
+      "recovery is not confirmed while the publication is unverified",
+    );
+    const cycle = await readRepairCycle(workDir(layout, REPO, 111));
+    assert.equal(cycle.usedRounds, 1, "the charge is not silently renewed");
+    assert.equal(cycle.attempt?.publication, "pending", "the attempt is not erased");
+  });
+
+  test("a remote that moved after the settlement is never overwritten by the resumption", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 112);
+    seedFallenLegacyRound(112);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.localWork = { headSha: "local112", commits: 2, uncommitted: false, operationInProgress: null };
+    git.remoteHead = "stranger999";
+
+    // The reconciliation settles the attempt as a concurrent change (the
+    // remote is not the observed head nor the produced commit)...
+    const first = await runOnce(deps);
+    assert.equal(first.launched.length, 0, "nothing is launched over a concurrent change");
+    // ...and the request for help follows from the same state.
+    const second = await runOnce(deps);
+    assert.equal(second.launched.length, 0);
+    const comments = await tracker.readComments({ repo: REPO, number: 112 });
+    assert.ok(comments.known);
+    assert.match(comments.value.at(-1)!.body, /a concurrent change/);
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 112))).attempt?.publication, "concurrent-change");
+  });
+
+  test("a push to the work branch between the fall and the resumption blocks instead of publishing", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 113);
+    // Already settled as NOT published (the remote was at the observed head).
+    writeFileSync(
+      join(workDir(layout, REPO, 113), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 0,
+        lastEvidence: `${REPO}#113|${OBSERVED}|conflicts|`,
+        consecutiveFalls: 1,
+        attempt: {
+          evidence: `${REPO}#113|${OBSERVED}|conflicts|`,
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: OBSERVED,
+          publication: "not-published",
+          localWork: { headSha: "local113", commits: 2, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    writeFileSync(join(workDir(layout, REPO, 113), "log-2.jsonl"), "{}\n", "utf8");
+    await conflictingOn(tracker, pr, OBSERVED);
+    // A collaborator pushed to the same branch AFTER the fall.
+    git.remoteHead = "collaborator777";
+    git.localWork = { headSha: "local113", commits: 2, uncommitted: false, operationInProgress: null };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "the local history is not published over the collaborator's push");
+    assert.ok(
+      logs.some((line) => line.includes("the remote moved to") && line.includes("nothing is published")),
+      "the guard names the concurrent change",
+    );
+    assert.ok(
+      runtime.launched.length === 1,
+      "only the first attempt ever ran — the resumption never started",
+    );
+
+    // The next sweep asks the human for a reconciliation.
+    const blocked = await runOnce(deps);
+    assert.equal(blocked.launched.length, 0);
+    const issue = await tracker.readIssue({ repo: REPO, number: 113 });
+    assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked));
   });
 
   test("the forward path is untouched: a published round from the start behaves as before", async () => {

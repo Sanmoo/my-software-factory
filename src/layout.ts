@@ -35,14 +35,19 @@ export function workDirOfKey(layout: WorkspaceLayout, key: string): string {
   return join(layout.works, key);
 }
 
-/** Guarantee the workspace and its derived subpaths exist (idempotent). */
-export function ensureWorkspace(root: string): WorkspaceLayout {
-  const layout: WorkspaceLayout = {
+/** The layout of a workspace root, without touching the disk. */
+export function workspaceLayout(root: string): WorkspaceLayout {
+  return {
     root,
     repos: join(root, WORKSPACE_SUBPATHS.repos),
     works: join(root, WORKSPACE_SUBPATHS.works),
     archive: join(root, WORKSPACE_SUBPATHS.archive),
   };
+}
+
+/** Guarantee the workspace and its derived subpaths exist (idempotent). */
+export function ensureWorkspace(root: string): WorkspaceLayout {
+  const layout = workspaceLayout(root);
   for (const path of [layout.root, layout.repos, layout.works, layout.archive]) {
     mkdirSync(path, { recursive: true });
   }

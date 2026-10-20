@@ -2,9 +2,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readdir, rename } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import { workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
+import { workspaceLayout, workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { readRepairCycle, type RepairCycle } from "./repair.js";
+import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -224,7 +225,7 @@ export interface LastOutcomeEntry {
  * on disk": an older attempt's record may sit there as history, and it never
  * becomes this attempt's outcome (issue 103's rule, now visible here too).
  */
-export interface AttemptWithoutOutcome {
+export interface AttemptWithoutOwnOutcome {
   key: string;
   /** The attempt that has no record of its own (the highest on disk). */
   attempt: number;
@@ -236,6 +237,8 @@ export interface AttemptWithoutOutcome {
 export interface RepairViewEntry {
   key: string;
   cycle: RepairCycle;
+  /** The attempt's evidence locations, probed read-only; null without an attempt. */
+  evidence: WorkEvidence | null;
 }
 
 /**
@@ -250,7 +253,7 @@ export interface RepairViewEntry {
 export interface RegistryView {
   /** Dirs whose current attempt has no outcome record of its own (a log or the
    *  session dir as evidence) — a fall, whatever an older record says. */
-  attemptsWithoutOutcome: AttemptWithoutOutcome[];
+  attemptsWithoutOwnOutcome: AttemptWithoutOwnOutcome[];
   /** Dirs with no outcome record and no attempt evidence — the reservation alone. */
   reservedWithoutAttempt: string[];
   lastOutcome: LastOutcomeEntry[];
@@ -265,15 +268,10 @@ export interface RegistryView {
  * workspace root; an absent workspace reads empty (status before any run).
  */
 export async function scanRegistry(workspace: WorkspaceLayout | string): Promise<RegistryView> {
-  const { works, archive } =
-    typeof workspace === "string"
-      ? {
-          works: join(workspace, WORKSPACE_SUBPATHS.works),
-          archive: join(workspace, WORKSPACE_SUBPATHS.archive),
-        }
-      : workspace;
+  const layout = typeof workspace === "string" ? workspaceLayout(workspace) : workspace;
+  const { works, archive } = layout;
 
-  const attemptsWithoutOutcome: AttemptWithoutOutcome[] = [];
+  const attemptsWithoutOwnOutcome: AttemptWithoutOwnOutcome[] = [];
   const reservedWithoutAttempt: string[] = [];
   const lastOutcome: LastOutcomeEntry[] = [];
   const repair: RepairViewEntry[] = [];
@@ -288,27 +286,30 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     if (record !== null) lastOutcome.push({ key, workDir: dir, record });
     if (record !== null) {
       if (record.attempt < lastAttempt) {
-        attemptsWithoutOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
+        attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
       }
     } else if (hasAttemptEvidence(dir, logs)) {
-      attemptsWithoutOutcome.push({ key, attempt: lastAttempt, recordedAttempt: null });
+      attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: null });
     } else {
       reservedWithoutAttempt.push(key);
     }
 
     const cycle = await readRepairCycle(dir);
     if (cycle.attempt !== null || cycle.usedRounds > 0 || cycle.consecutiveFalls > 0) {
-      repair.push({ key, cycle });
+      const attempt = cycle.attempt;
+      const evidence =
+        attempt === null ? null : await readWorkEvidence(layout, dir, attempt.attempt);
+      repair.push({ key, cycle, evidence });
     }
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
-  attemptsWithoutOutcome.sort((a, b) => byKey(a.key, b.key));
+  attemptsWithoutOwnOutcome.sort((a, b) => byKey(a.key, b.key));
   reservedWithoutAttempt.sort(byKey);
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
   repair.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
-  return { attemptsWithoutOutcome, reservedWithoutAttempt, lastOutcome, repair, archived };
+  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, archived };
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */

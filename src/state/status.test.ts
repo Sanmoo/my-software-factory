@@ -99,7 +99,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.registry.reservedWithoutAttempt, [`${REPO}#1`], "the bare reservation is not an orphan");
-    assert.deepEqual(view.registry.attemptsWithoutOutcome, [
+    assert.deepEqual(view.registry.attemptsWithoutOwnOutcome, [
       { key: `${REPO}#4`, attempt: 1, recordedAttempt: null },
     ]);
     assert.deepEqual(
@@ -286,8 +286,36 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /repair \(unpublished attempts, local work, pending reconciliation\): 1/);
     assert.match(
       text,
-      /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress\)/,
+      /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent\)/,
+      "the diagnosis names the attempt's own evidence paths, present or absent (story 32)",
     );
+    assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
+  });
+
+  test("the repair evidence reports an unverifiable location as such, never as absent", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(23, 1, 2);
+    // A file where the attempt's session dir should be: the probe cannot look
+    // inside it (ENOTDIR is absence; a permission error is "could not be verified").
+    writeFileSync(join(dir, "sessao"), "not a dir", "utf8");
+    await writeRepairCycle(dir, {
+      usedRounds: 1,
+      lastEvidence: `${REPO}#23|abc123|conflicts|`,
+      consecutiveFalls: 0,
+      attempt: {
+        evidence: `${REPO}#23|abc123|conflicts|`,
+        attempt: 2,
+        observedHeadSha: "abc123",
+        remoteHeadSha: null,
+        publication: "pending",
+        localWork: null,
+      },
+    });
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const text = renderStatus(view);
+    assert.match(text, /event log trabalhos\/Sanmoo\/my-tasks#23\/log-2\.jsonl present/);
+    assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
   });
 
   test("a legacy reparo.json is read as it stands: rounds counted, no attempt or fall invented", async () => {

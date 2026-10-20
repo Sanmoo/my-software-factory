@@ -1,5 +1,5 @@
 import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
-import { renderLocalWork } from "../pool/repair.js";
+import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
 
