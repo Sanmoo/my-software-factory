@@ -432,6 +432,26 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(!existsSync(request.workDir), "no footprint: no dir, no logs, no session");
   });
 
+  test("a socket that cannot be resolved is a factory failure before any footprint — never a work fall", async () => {
+    const failing = new SandcastleRuntime({
+      model: MODEL,
+      token: "t",
+      profileDir,
+      workspace: root,
+      dockerSocket: () => {
+        throw new Error("the Docker daemon socket /var/run/docker.sock is missing");
+      },
+      preflight: async () => {},
+      runSandcastle: async () => {
+        throw new Error("run must never be reached");
+      },
+      dockerProvider: () => dummySandbox(),
+    });
+
+    await assert.rejects(failing.launch(request), /socket \/var\/run\/docker\.sock is missing/);
+    assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
+  });
+
   test("the default preflight checks docker, the image, the token, the git credential helper and Docker inside the worker", async () => {
     const checks: string[][] = [];
     const recorded = defaultPreflight({

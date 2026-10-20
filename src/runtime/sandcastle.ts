@@ -249,6 +249,11 @@ export class SandcastleRuntime implements WorkerRuntime {
     // work falls — the factory fails fast with the reason (the v1's refusal).
     await this.preflight();
 
+    // The Docker socket the container inherits (ADR 0003), resolved with the
+    // preconditions: a socket that vanished between the two is the factory's
+    // failure to refuse out loud, never a work-level fall.
+    const dockerSocket = this.resolveDockerSocket();
+
     // The read-only profile snapshot: resolved once, mounted, copied by the
     // hook, and gone after the launch (never the operator's own profile).
     const snapshotDir = mkdtempSync(join(tmpdir(), "msf-perfil-"));
@@ -274,7 +279,7 @@ export class SandcastleRuntime implements WorkerRuntime {
 
       let outcome: SessionResult["outcome"];
       try {
-        await this.runSandcastle(this.runOptionsFor(request, snapshotDir, sessionsDir));
+        await this.runSandcastle(this.runOptionsFor(request, snapshotDir, sessionsDir, dockerSocket));
         outcome = await this.observedOutcome(request);
       } catch (error) {
         this.event(request, "session-failed", {
@@ -312,8 +317,12 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
-  private runOptionsFor(request: WorkRequest, snapshotDir: string, sessionsDir: string): RunOptions {
-    const dockerSocket = this.resolveDockerSocket();
+  private runOptionsFor(
+    request: WorkRequest,
+    snapshotDir: string,
+    sessionsDir: string,
+    dockerSocket: DockerSocket,
+  ): RunOptions {
     const agent = this.piProvider(this.model, {
       // No implicit capture: the sessions bind does the persistence, the
       // session file already lives on the host (the resume path of later
