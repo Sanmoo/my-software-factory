@@ -594,13 +594,15 @@ export class SweepEngine {
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const repairTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
-    // The lease value: the head observed before the intervention. A resumption
-    // keeps the head its fallen attempt was launched on — never a fresh read —
-    // so a collaborator's push to the branch after the fall is never
-    // overwritten by local history (issue 112, stories 10/17).
-    const pinnedHeadSha = resuming?.observedHeadSha ?? repairTrigger?.facts.headSha ?? null;
+    // The lease value: the head observed before the intervention — for a
+    // resumption, the head its fallen attempt was launched on (equal to the
+    // trigger's by construction: only the attempt whose evidence still matches
+    // the current head is resumed), never a fresh read. So a collaborator's
+    // push to the branch after the fall is never overwritten by local history
+    // (issue 112, stories 10/17).
+    const pinnedHeadSha = resuming?.observedHeadSha ?? repairTrigger?.facts.headSha;
     let baseBranch = prepared.baseBranch;
-    if (repairTrigger !== undefined && pinnedHeadSha !== null) {
+    if (repairTrigger !== undefined && pinnedHeadSha !== undefined) {
       baseBranch = repairTrigger.facts.baseBranch;
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
@@ -676,9 +678,11 @@ export class SweepEngine {
       git,
       ref,
       kind === "resume" ? launchable.issueReplies : undefined,
-      repairTrigger === undefined
-        ? undefined
-        : { trigger: repairTrigger, resuming, localWork, pinnedHeadSha },
+      // The lease exists exactly when a trigger does: the resumption's own head,
+      // else the head the trigger's facts were read on.
+      repairTrigger !== undefined && pinnedHeadSha !== undefined
+        ? { trigger: repairTrigger, resuming, localWork, pinnedHeadSha }
+        : undefined,
     );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
@@ -725,7 +729,6 @@ export class SweepEngine {
       // A work that never ran a repair round has nothing to reconcile — no git
       // inspection is paid for it on every sweep.
       if (!hasRepairCycle(stored)) continue;
-      if (stored.attempt === null && stored.lastEvidence === null) continue;
 
       // Git is read only when there is a verdict to reach: a legacy cycle with
       // no registry gap is not an attempt, and paying an inspection for it on
@@ -1114,7 +1117,7 @@ interface RepairLaunchContext {
   resuming: RepairAttempt | null;
   localWork: LocalWorkFacts | null;
   /** The remote head the intervention observed — the force-with-lease value. */
-  pinnedHeadSha: string | null;
+  pinnedHeadSha: string;
 }
 
 /**
@@ -1154,7 +1157,7 @@ async function launchMaterial(
   if (repair !== undefined) {
     material.repair = {
       reasons: repair.trigger.reasons,
-      observedHeadSha: repair.pinnedHeadSha ?? repair.trigger.facts.headSha,
+      observedHeadSha: repair.pinnedHeadSha,
       baseBranch: repair.trigger.facts.baseBranch,
       checks: repair.trigger.failingChecks,
       ...(repair.localWork === null ? {} : { localWork: repair.localWork }),

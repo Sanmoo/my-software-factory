@@ -17,6 +17,7 @@ import { readReconciliationFacts } from "../pool/registry.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
+  hasRepairCycle,
   isSettledPublication,
   readRepairCycle,
   repairEvidenceSignature,
@@ -435,7 +436,14 @@ async function deriveReservedWork(
 
     if (trigger !== null) {
       const signature = repairSignature(ref, trigger);
-      if (attempt?.publication === "not-published") {
+      // A resumption takes over the attempt whose evidence is still the one
+      // this head presents (issue 112): a fall on OLDER evidence is history,
+      // and the current head gets a round of its own, pinned to its own head.
+      if (
+        attempt !== null &&
+        attempt.publication === "not-published" &&
+        attempt.evidence === signature
+      ) {
         return {
           ref,
           state: "repair",
@@ -472,7 +480,7 @@ async function deriveReservedWork(
     // here would renew the budget and erase the attempt while the remote may
     // still carry the work (issue 112, story 21).
     const publicationUnverified = attempt !== null && !isSettledPublication(attempt.publication);
-    if (!publicationUnverified && repairFacts.known && cycle.usedRounds > 0 && repairRecovered(repairFacts.value)) {
+    if (!publicationUnverified && repairFacts.known && hasRepairCycle(cycle) && repairRecovered(repairFacts.value)) {
       return { ref, state: "repair-recovered", pr };
     }
 

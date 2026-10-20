@@ -17,6 +17,7 @@ import {
   AGENT_DIR_ENV,
   MISE_CONTAINER_DIR,
   NPM_CONTAINER_DIR,
+  SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
   WORKER_FLAG_ARGS,
   defaultPreflight,
@@ -888,7 +889,7 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
 
     assert.ok(captured?.signal, "the watchdog signal reaches the run");
     assert.ok(
-      (captured?.idleTimeoutSeconds ?? 0) >= SHORT_IDLE_SECONDS * 2,
+      (captured?.idleTimeoutSeconds ?? 0) >= SHORT_IDLE_SECONDS * SANDBOX_BACKSTOP_FACTOR,
       "Sandcastle's timer never preempts the verified-activity limit",
     );
   });

@@ -111,8 +111,10 @@ export function startActivityWatch(options: ActivityWatchOptions): ActivityWatch
   };
 
   // The baseline is the tree as it is when the session starts: the artifacts a
-  // previous attempt left are not this session's activity.
+  // previous attempt left are not this session's activity. A session that
+  // stopped before the baseline resolved arms nothing.
   void readActivityStamp(options).then((stamp) => {
+    if (stopped) return;
     lastStamp = stamp;
     timer = setTimeout(() => void tick(), options.pollMs);
   });
