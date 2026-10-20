@@ -714,6 +714,50 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal(cycle.attempt?.publication, "pending", "the attempt is not erased");
   });
 
+  test("a human answer never outranks an unverified publication", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 119);
+    // The work is blocked (a human decision is pending on the issue) and its
+    // last repair attempt's publication is still unknown: the remote cannot be
+    // read, so nobody can say whether the attempt already reached it.
+    writeFileSync(
+      join(workDir(layout, REPO, 119), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 1,
+        lastEvidence: `${REPO}#119|${OBSERVED}|conflicts|`,
+        consecutiveFalls: 0,
+        attempt: {
+          evidence: `${REPO}#119|${OBSERVED}|conflicts|`,
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: null,
+          publication: "pending",
+          localWork: { headSha: "local119", commits: 1, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    await conflictingOn(tracker, pr, OBSERVED);
+    await tracker.blockClaim({ repo: REPO, number: 119 }, DEFAULT_LABELS);
+    tracker.addComment({ repo: REPO, number: 119 }, "humano", "authorized — go ahead");
+    git.localWork = { headSha: "local119", commits: 1, uncommitted: false, operationInProgress: null };
+    git.remoteUnavailable = true;
+
+    const held = await runOnce(deps);
+    assert.equal(held.launched.length, 0, "no worker starts while publication is unverified");
+    const stillHeld = await readRepairCycle(workDir(layout, REPO, 119));
+    assert.equal(stillHeld.usedRounds, 1, "the human answer does not renew a budget nobody settled");
+    assert.equal(stillHeld.attempt?.publication, "pending", "the attempt is still there");
+
+    // The remote answers: the answer on the issue applies from then on.
+    git.remoteUnavailable = false;
+    git.remoteHead = OBSERVED;
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "settled, the human answer resumes the work");
+    const renewed = await readRepairCycle(workDir(layout, REPO, 119));
+    assert.equal(renewed.usedRounds, 0, "the human reset now applies");
+  });
+
   test("a remote that moved after the settlement is never overwritten by the resumption", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 112);

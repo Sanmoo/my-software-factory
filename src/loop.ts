@@ -594,16 +594,27 @@ export class SweepEngine {
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const repairTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
-    // The lease value: the head observed before the intervention — for a
-    // resumption, the head its fallen attempt was launched on (equal to the
-    // trigger's by construction: only the attempt whose evidence still matches
-    // the current head is resumed), never a fresh read. So a collaborator's
-    // push to the branch after the fall is never overwritten by local history
-    // (issue 112, stories 10/17).
-    const pinnedHeadSha = resuming?.observedHeadSha ?? repairTrigger?.facts.headSha;
+    // The launch context of a repair round (issue 112), computed once: the
+    // confirmed trigger, the unpublished attempt it takes over (when
+    // resuming), the local work read from real git and the lease value. The
+    // lease is the head observed before the intervention — for a resumption,
+    // the head its fallen attempt was launched on (equal to the trigger's by
+    // construction: only the attempt whose evidence still matches the current
+    // head is resumed), never a fresh read, so a collaborator's push to the
+    // branch after the fall is never overwritten by local history (stories
+    // 10/17).
+    const repair =
+      repairTrigger === undefined
+        ? undefined
+        : {
+            trigger: repairTrigger,
+            resuming,
+            localWork: await this.inspectLocalWork(ref),
+            pinnedHeadSha: resuming?.observedHeadSha ?? repairTrigger.facts.headSha,
+          } satisfies RepairLaunchContext;
     let baseBranch = prepared.baseBranch;
-    if (repairTrigger !== undefined && pinnedHeadSha !== undefined) {
-      baseBranch = repairTrigger.facts.baseBranch;
+    if (repair !== undefined) {
+      baseBranch = repair.trigger.facts.baseBranch;
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
         this.log(
@@ -612,10 +623,10 @@ export class SweepEngine {
         );
         return;
       }
-      if (observed.headSha !== pinnedHeadSha) {
+      if (observed.headSha !== repair.pinnedHeadSha) {
         this.log(
           `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
-            `observed ${pinnedHeadSha} — nothing is launched`,
+            `observed ${repair.pinnedHeadSha} — nothing is launched`,
         );
         if (resuming !== null) {
           // Somebody moved the branch after the fall: the local work must not
@@ -658,17 +669,18 @@ export class SweepEngine {
       // repair budget (issue 107 story 23); new commits never do.
       await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
-    // The local work the round takes over, read from real git: existing
-    // commits are reused, changes are inspected, an unfinished operation is
-    // continued — the resumption never restarts the work blind (issue 112).
-    const localWork = repairTrigger === undefined ? null : await this.inspectLocalWork(ref);
-    if (repairTrigger !== undefined) {
+    // The local work the round takes over was read with the context above:
+    // existing commits are reused, changes are inspected, an unfinished
+    // operation is continued — the resumption never restarts the work blind
+    // (issue 112).
+    const localWork = repair?.localWork ?? null;
+    if (repair !== undefined) {
       // The round is charged BEFORE the session (issue 107) and the attempt's
       // facts are recorded with it (issue 112): the observed head, the evidence
       // and the commit the branch already holds. A death mid-round refunds the
       // round — but only once publication is provably absent (the sweep's
       // reconciliation), never by presumption.
-      await this.recordRepairRound(dir, ref, repairTrigger, facts.attempt, localWork);
+      await this.recordRepairRound(dir, ref, repair.trigger, facts.attempt, localWork);
     }
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
@@ -678,11 +690,7 @@ export class SweepEngine {
       git,
       ref,
       kind === "resume" ? launchable.issueReplies : undefined,
-      // The lease exists exactly when a trigger does: the resumption's own head,
-      // else the head the trigger's facts were read on.
-      repairTrigger !== undefined && pinnedHeadSha !== undefined
-        ? { trigger: repairTrigger, resuming, localWork, pinnedHeadSha }
-        : undefined,
+      repair,
     );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
