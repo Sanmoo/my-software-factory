@@ -17,6 +17,7 @@ import { readReconciliationFacts } from "../pool/registry.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
+  isSettledPublication,
   readRepairCycle,
   repairEvidenceSignature,
   type RepairAttempt,
@@ -423,14 +424,17 @@ async function deriveReservedWork(
     if (attempt?.publication === "concurrent-change") {
       return repairFallBlocked(ref, pr, cycle, workspace, attempt, "concurrent-change");
     }
+    if (attempt?.publication === "pending") {
+      // Publication is uncertain: NO worker of any kind (repair, resumption or
+      // feedback round) and no budget return until the remote or the host
+      // answers — a later sweep repeats the query (the reconciliation owns the
+      // transition). Placed before the trigger so an unconfirmed PR fact cannot
+      // open a session while the attempt's publication is unknown.
+      return { ref, state: "idle" };
+    }
 
     if (trigger !== null) {
       const signature = repairSignature(ref, trigger);
-      if (attempt?.publication === "pending") {
-        // Publication is uncertain: no worker, no budget returned — a later
-        // sweep repeats the query (the reconciliation owns the transition).
-        return { ref, state: "idle" };
-      }
       if (attempt?.publication === "not-published") {
         return {
           ref,
@@ -467,8 +471,7 @@ async function deriveReservedWork(
     // A publication that is still unverified holds the ledger: resetting it
     // here would renew the budget and erase the attempt while the remote may
     // still carry the work (issue 112, story 21).
-    const publicationUnverified =
-      attempt !== null && (attempt.publication === "unknown" || attempt.publication === "pending");
+    const publicationUnverified = attempt !== null && !isSettledPublication(attempt.publication);
     if (!publicationUnverified && repairFacts.known && cycle.usedRounds > 0 && repairRecovered(repairFacts.value)) {
       return { ref, state: "repair-recovered", pr };
     }

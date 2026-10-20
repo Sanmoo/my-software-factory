@@ -336,7 +336,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const comments = await tracker.readComments({ repo: REPO, number: 103 });
     assert.ok(comments.known);
     const comment = comments.value.at(-1)!.body;
-    assert.match(comment, /the remote head moved to `stranger999`/, "the divergent head is named");
+    assert.match(comment, /the remote branch moved to `stranger999`/, "the divergent head is named");
     assert.match(comment, /a concurrent change/, "the cause is stated");
     assert.match(comment, /local work preserved: 2 commits on the branch/, "the work is preserved and named");
     assert.match(comment, /nothing was pushed, reset or discarded/);
@@ -476,6 +476,43 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     for (let tick = 0; tick < 2; tick += 1) {
       assert.equal((await runOnce(deps)).launched.length, 0, "a self-reported block waits for the human");
     }
+  });
+
+  test("a pending publication blocks a feedback round too, not only a repair round", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 115);
+    // The attempt's publication is unknown and the tracker's repair facts are
+    // unreadable; a human PR comment is waiting. No worker may start while the
+    // publication is uncertain (issue 112, story 21).
+    writeFileSync(
+      join(workDir(layout, REPO, 115), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 1,
+        lastEvidence: `${REPO}#115|${OBSERVED}|conflicts|`,
+        consecutiveFalls: 0,
+        attempt: {
+          evidence: `${REPO}#115|${OBSERVED}|conflicts|`,
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: null,
+          publication: "pending",
+          localWork: { headSha: "local115", commits: 1, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    tracker.setPrRepairFacts({ repo: REPO, prNumber: pr, mergeState: "unknown", requiredChecks: null });
+    tracker.addPrComment({ repo: REPO, prNumber: pr }, "humano", "please also check the docs");
+    git.remoteUnavailable = true;
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "no feedback round starts while publication is unverified");
+    assert.ok(
+      !sweep.reserved.some((decision) => decision.state === "feedback"),
+      "the derivation holds the work instead of handing it to a worker",
+    );
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 115))).usedRounds, 1, "the budget stays held");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 115))).attempt?.publication, "pending");
   });
 
   test("an unreadable local state is pending, never a concurrent change in disguise", async () => {

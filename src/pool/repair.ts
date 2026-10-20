@@ -289,22 +289,22 @@ export function reconcileRepairAttempt(input: {
       cycle: settleAttempt(input.cycle, attempt, "pending", localWork),
     };
   }
+  const remoteHeadSha = input.remote.headSha;
   if (localWork === null) {
     return {
       kind: "pending",
       reason: "the local work could not be read",
-      cycle: settleAttempt(input.cycle, attempt, "pending", localWork),
+      cycle: settleAttempt(input.cycle, attempt, "pending", null, remoteHeadSha),
     };
   }
 
-  const remoteHeadSha = input.remote.headSha;
   const produced = localWork.headSha;
   const settled = (
     publication: RepairPublication,
     cycle: RepairCycle,
   ): { cycle: RepairCycle; attempt: RepairAttempt } => {
-    const verdict: RepairAttempt = { ...attempt, publication, localWork, remoteHeadSha };
-    return { cycle: { ...cycle, attempt: verdict }, attempt: verdict };
+    const verdictCycle = settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
+    return { cycle: verdictCycle, attempt: verdictCycle.attempt! };
   };
 
   // The remote carries exactly the commit this attempt produced: published,
@@ -330,12 +330,20 @@ export function reconcileRepairAttempt(input: {
   return { kind: "concurrent-change", ...settled("concurrent-change", input.cycle) };
 }
 
-/** Persist one verdict on the attempt, keeping the round/fall ledgers as given. */
+/** Persist one verdict on the attempt, keeping the round/fall ledgers as given.
+ *  An unobserved remote head (a failed query) keeps the last known one. */
 function settleAttempt(
   cycle: RepairCycle,
   attempt: RepairAttempt,
   publication: RepairPublication,
   localWork: LocalWorkFacts | null,
+  remoteHeadSha: string | null = attempt.remoteHeadSha,
 ): RepairCycle {
-  return { ...cycle, attempt: { ...attempt, publication, localWork } };
+  return { ...cycle, attempt: { ...attempt, publication, localWork, remoteHeadSha } };
+}
+
+/** True when the cycle carries an attempt on disk — the status and the
+ *  reconciliation agree on what "this work ran a repair round" means. */
+export function hasRepairCycle(cycle: RepairCycle): boolean {
+  return cycle.attempt !== null || cycle.usedRounds > 0 || cycle.consecutiveFalls > 0;
 }

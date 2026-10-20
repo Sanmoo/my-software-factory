@@ -4,7 +4,7 @@ import { join, relative, sep } from "node:path";
 
 import { workspaceLayout, workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
-import { readRepairCycle, type RepairCycle } from "./repair.js";
+import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import type { IssueRef } from "../tracker/port.js";
 
@@ -295,7 +295,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     }
 
     const cycle = await readRepairCycle(dir);
-    if (cycle.attempt !== null || cycle.usedRounds > 0 || cycle.consecutiveFalls > 0) {
+    if (hasRepairCycle(cycle)) {
       const attempt = cycle.attempt;
       const evidence =
         attempt === null ? null : await readWorkEvidence(layout, dir, attempt.attempt);

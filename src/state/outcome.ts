@@ -205,13 +205,11 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
   const { attempt } = input;
   const evidence = await readWorkEvidence(input.workspace, input.workDir, attempt.attempt);
   const ending = describeRepairEnding(input.record, attempt.attempt);
-  const remoteShown =
-    attempt.remoteHeadSha === null ? "a commit" : `\`${shortSha(attempt.remoteHeadSha)}\``;
   const header =
     input.cause === "concurrent-change"
-      ? `automatic repair stopped: the remote head moved to ${remoteShown} ` +
-        `that the repair attempt did not produce (a concurrent change), so the factory will not ` +
-        `publish over it — PR #${input.prNumber}.`
+      ? `automatic repair stopped: the remote branch ${describeRemoteChange(attempt.remoteHeadSha)} ` +
+        `(a concurrent change the repair attempt did not produce), so the factory will not publish ` +
+        `over it — PR #${input.prNumber}.`
       : `automatic repair stopped after ${input.consecutiveFalls} consecutive repair attempts ended ` +
         `without publishing PR #${input.prNumber}: the impediment that reactivated the repair is still ` +
         `unresolved on the current HEAD.`;
@@ -228,6 +226,12 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
     ``,
     renderWorkEvidence(evidence),
   ].join("\n");
+}
+
+/** What happened to the remote branch, as the operator reads it. */
+function describeRemoteChange(remoteHeadSha: string | null): string {
+  if (remoteHeadSha === null) return "is gone from the remote";
+  return `moved to \`${shortSha(remoteHeadSha)}\``;
 }
 
 /**
