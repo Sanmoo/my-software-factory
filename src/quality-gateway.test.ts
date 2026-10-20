@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,16 +132,18 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
       'if [ "$1" = "run" ] && [ "$2" = "build" ]; then',
       '  if [ -e dist/stale.js ]; then echo "stale dist visible to compile" >&2; exit 9; fi',
       '  if [ "$FIXTURE_WRITE_TESTS" = "0" ]; then exit 0; fi',
-      "  mkdir -p dist || exit 8",
+      "  mkdir -p dist/state dist/e2e || exit 8",
       '  if [ "$FIXTURE_FAILING_TEST" = "1" ]; then',
       '    printf \'%s\\n\' \'const { test } = require("node:test"); test("fails", () => { throw new Error("fixture failure"); });\' > dist/sample.test.js',
       "  else",
       '    cp "$FIXTURE_TEST_SOURCE" dist/sample.test.js || exit 8',
       "  fi",
+      '  cp "$FIXTURE_TEST_SOURCE" dist/state/liveness.test.js || exit 8',
+      '  if [ "$FIXTURE_DROP_E2E" != "1" ]; then cp "$FIXTURE_TEST_SOURCE" dist/e2e/sample.test.js || exit 8; fi',
       "  exit 0",
       "fi",
       'if [ "$1" = "run" ] && [ "$2" = "test:built" ]; then',
-      "  exec node --test --test-timeout=60000 --test-force-exit dist/sample.test.js",
+      "  exec node --test --test-timeout=60000 --test-force-exit dist/sample.test.js dist/state/liveness.test.js dist/e2e/sample.test.js",
       "fi",
       'echo "unexpected npm $*" >&2',
       "exit 2",
@@ -178,6 +180,15 @@ async function gone(pid: number, timeoutMs = 2_000): Promise<boolean> {
   return false;
 }
 
+/** Wait for a fixture marker file (the check announces itself by writing it). */
+async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 describe("quality gateway — the command contract", () => {
   test("the official command prepares, cleans, compiles and runs the whole suite under 240s", () => {
     const { dir, dockerLog, env } = officialFixture();
@@ -189,7 +200,7 @@ describe("quality gateway — the command contract", () => {
     assert.ok(result.stdout.includes(`quality gateway: prerequisite "worker image ${WORKER_IMAGE}" ready`));
     assert.match(result.stdout, /quality gateway: \[1\/3\] check "clean" passed/);
     assert.match(result.stdout, /quality gateway: \[2\/3\] check "compile" passed/);
-    assert.match(result.stdout, /quality gateway: \[3\/3\] check "test": 1 compiled test file\(s\)/);
+    assert.match(result.stdout, /quality gateway: \[3\/3\] check "test": 3 compiled test file\(s\)/);
     assert.match(result.stdout, /quality gateway: \[3\/3\] check "test" .*passed/);
     assert.match(result.stdout, /quality gateway: passed in \d+ms of 240000ms/);
     assert.ok(!existsSync(join(dir, "dist", "stale.js")), "the clean stage removed the stale artifact");
@@ -240,7 +251,17 @@ describe("quality gateway — the command contract", () => {
     const result = runOfficial(dir, { ...env, FIXTURE_WRITE_TESTS: "0" });
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
-    assert.match(result.stderr, /check failed: "test" .*no compiled test files under dist/);
+    assert.match(result.stderr, /check failed: "test" .*compiled suite is incomplete \(no test files under dist\/\)/);
+    assert.doesNotMatch(result.stdout, /check "test" .*passed/);
+  });
+
+  test("a suite missing the e2e files is refused as smaller than the required one", () => {
+    const { dir, env } = officialFixture();
+
+    const result = runOfficial(dir, { ...env, FIXTURE_DROP_E2E: "1" });
+
+    assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+    assert.match(result.stderr, /check failed: "test" .*compiled suite is incomplete \(missing e2e\/\)/);
     assert.doesNotMatch(result.stdout, /check "test" .*passed/);
   });
 
@@ -328,6 +349,40 @@ describe("quality gateway — the command contract", () => {
     const childPid = Number(readFileSync(join(dir, "child.pid"), "utf8").trim());
     assert.ok(await gone(shPid), `the check process ${shPid} outlived the gateway`);
     assert.ok(await gone(childPid), `the check's descendant ${childPid} outlived the gateway`);
+  });
+
+  test("SIGINT terminates the running check and its descendants", async () => {
+    const dir = freshDir();
+    const plan: Plan = {
+      prerequisites: [],
+      stages: [
+        {
+          name: "stalled",
+          command: "/bin/sh",
+          args: ["-c", "sleep 300 & echo $! > child.pid; echo $$ > sh.pid; wait"],
+        },
+      ],
+    };
+    const planPath = join(dir, "fixture-plan.json");
+    writeFileSync(planPath, JSON.stringify(plan), "utf8");
+    const child = spawn(process.execPath, [FIXTURE_ENTRY], {
+      cwd: dir,
+      env: baseEnv({
+        MSF_GATEWAY_TEST_PLAN: planPath,
+        MSF_GATEWAY_TEST_BUDGET_MS: "20000",
+      }),
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const exited = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
+
+    await waitForFile(join(dir, "child.pid"));
+    child.kill("SIGINT");
+
+    assert.equal(await exited, 130, "an interrupted gateway reports SIGINT");
+    const shPid = Number(readFileSync(join(dir, "sh.pid"), "utf8").trim());
+    const childPid = Number(readFileSync(join(dir, "child.pid"), "utf8").trim());
+    assert.ok(await gone(shPid), `the check process ${shPid} outlived the interrupt`);
+    assert.ok(await gone(childPid), `the check's descendant ${childPid} outlived the interrupt`);
   });
 
   test("the real Docker check fails (never skips) when the gateway requires it", () => {

@@ -8,6 +8,7 @@ import { test, describe } from "node:test";
 import { readOutcomeRecord } from "../state/outcome.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { reviewReportPath } from "../runtime/prompt.js";
+import { WORKER_IMAGE } from "../worker-image.js";
 import type { WorkRequest } from "../runtime/port.js";
 
 /**
@@ -131,9 +132,9 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
       failIfMissingPrerequisite("docker is unavailable (docker info failed)");
     }
     try {
-      execFileSync("docker", ["image", "inspect", "msf-v2-worker:local"], { stdio: "ignore" });
+      execFileSync("docker", ["image", "inspect", WORKER_IMAGE], { stdio: "ignore" });
     } catch {
-      failIfMissingPrerequisite("worker image msf-v2-worker:local is missing — build it with `npm run build:image`");
+      failIfMissingPrerequisite(`worker image ${WORKER_IMAGE} is missing — build it with \`npm run build:image\``);
     }
 
     // The disposable repo and work dir stay on disk after the run: the

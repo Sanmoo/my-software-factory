@@ -91,7 +91,8 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
  * The quality gateway sets MSF_REQUIRE_DOCKER=1, turning that skip into a
  * failure: inside the measured gateway a missing daemon or image must never
  * look like a successful run of the required integration check. Module scope
- * on purpose: a suite-build throw is reported but does not fail the file.
+ * on purpose: this throw must fail the file; a throw raised while the suite is
+ * built is reported in TAP but still exits 0.
  */
 const dockerSkipReasonForFocusedRun = dockerSkipReasonUnlessRequired();
 

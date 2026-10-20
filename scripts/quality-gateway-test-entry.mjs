@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 
-import { runGateway } from "./quality-gateway-runner.mjs";
+import { installSignalTermination, runGateway } from "./quality-gateway-runner.mjs";
 
 /**
  * TEST-ONLY fixture entry (issue 113, Testing Decisions): the bounded
@@ -11,6 +11,8 @@ import { runGateway } from "./quality-gateway-runner.mjs";
  * be reconfigured this way; every line here is labelled as a fixture run.
  */
 const LABEL = "quality gateway fixture (test-only)";
+
+installSignalTermination();
 
 function refuse(line) {
   process.stderr.write(`${LABEL}: ${line}\n`);
