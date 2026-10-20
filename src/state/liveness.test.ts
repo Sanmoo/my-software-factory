@@ -88,8 +88,19 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
  * The real path, in the tracker-smoke pattern (issue 102): it runs inside
  * `npm test` where Docker and the worker image are there, and SKIPS WITH A
  * REASON where they are not — never a silent pass, never a false positive.
+ * The quality gateway sets MSF_REQUIRE_DOCKER=1, turning that skip into a
+ * failure: inside the measured gateway a missing daemon or image must never
+ * look like a successful run of the required integration check.
  */
 const dockerSkipReason: string | undefined = (() => {
+  const missing = missingDockerReason();
+  if (missing !== undefined && process.env.MSF_REQUIRE_DOCKER === "1") {
+    throw new Error(`the quality gateway requires the real Docker check, but ${missing}`);
+  }
+  return missing;
+})();
+
+function missingDockerReason(): string | undefined {
   try {
     execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], { stdio: "ignore" });
   } catch {
@@ -101,7 +112,7 @@ const dockerSkipReason: string | undefined = (() => {
     return `the worker image ${WORKER_IMAGE} is not built here (npm run build:image) — the real probe has nothing to list`;
   }
   return undefined;
-})();
+}
 
 describe("liveness — the real Docker shell", () => {
   test(

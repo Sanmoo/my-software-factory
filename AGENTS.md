@@ -20,6 +20,15 @@ Do not include review reports, attempt notes, or other temporary `revisao/` arti
 
 ## Conventions
 
+### Quality gateway
+
+Before declaring a Work ready, run `npm run gateway` and commit only while it
+passes. It is this repository's one canonical, budgeted deterministic gateway
+(README: prerequisites, scope, exit status); `npm test` alone is a focused run,
+not validation. Never remove, skip or optionalize a required check to fit the
+240-second ceiling — improve performance instead — and add any new deterministic
+check required for readiness to the gateway so it shares the same budget.
+
 ### Comments
 
 Comment only what is essential: the non-obvious *why* and the contracts a reader cannot infer from names and types.
