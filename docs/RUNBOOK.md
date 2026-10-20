@@ -85,21 +85,20 @@ declarations for mid-flight — that is the exception, not the design.
 
 ## Docker inside the worker (ADR 0003)
 
-Every worker container inherits the HOST's Docker daemon: the runtime binds the
-daemon socket and adds the socket's group, so `docker` works inside the worker —
-it builds the worker image (`npm run build:image`) and runs the repo's real
-Docker tests. The container starts no daemon of its own.
+A worker container inherits the HOST's Docker daemon, so `docker` works inside it
+— it builds the worker image (`npm run build:image`) and runs the repo's real
+Docker tests.
 
 - A **socket-based** daemon is required: the default `/var/run/docker.sock`, or
-  the path `DOCKER_HOST=unix://…` names. A tcp daemon, a missing socket and an
-  image without the docker client are all refused at launch, each with its own
-  message — never a worker that reports "no Docker here".
-- The preflight proves it on every launch: a throwaway worker-shaped container
-  asks the daemon for its version through the socket's group before any work
-  starts.
+  the path `DOCKER_HOST=unix://…` names. Anything else is refused at launch
+  with the reason.
+- The socket is root on this host. That is the accepted risk, like the operator
+  PAT riding inside the container.
 - Containers a worker starts are the host's siblings: a bind path resolves on
   the HOST. The worktree and the workspace are mirrored at their host paths;
-  container-only paths (`/msf-work`, the container's `/tmp`) are not.
+  container-only paths (`/msf-work`, the container's `/tmp`) are not — the
+  real-model proof (`npm run proof:real`) is therefore an operator-machine run,
+  never a worker one.
 
 ## (a) One-shot: claim + launch a real worker
 

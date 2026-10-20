@@ -22,6 +22,7 @@ import {
   defaultPreflight,
   dockerSocketFromHost,
   unixSocketPath,
+  workerShapedDockerRun,
 } from "./sandcastle.js";
 import type { WorkRequest } from "./port.js";
 
@@ -80,7 +81,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
       token: "gh-token-for-the-container",
       profileDir,
       workspace,
-      dockerSocket: () => SOCKET,
+      dockerSocket,
       blockedLabel: DEFAULT_LABELS.blocked,
       preflight: async () => {}, // the mechanics tests never touch docker
       runSandcastle: async (options) => {
@@ -336,7 +337,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       token: "t",
       profileDir,
       workspace: root,
-      dockerSocket: () => SOCKET,
+      dockerSocket,
       preflight: async () => {}, // offline: the contract tests never touch docker
       runSandcastle: async () => {
         if (fakes.die !== undefined) throw new Error(fakes.die);
@@ -363,7 +364,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       token: "t",
       profileDir,
       workspace: root,
-      dockerSocket: () => SOCKET,
+      dockerSocket,
       preflight: async () => {}, // offline: the contract tests never touch docker
       runSandcastle: async () => {
         seen = {
@@ -418,7 +419,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       token: "t",
       profileDir,
       workspace: root,
-      dockerSocket: () => SOCKET,
+      dockerSocket,
       preflight: async () => {
         throw new Error("docker unavailable");
       },
@@ -480,7 +481,6 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "--get",
         "credential.https://github.com.helper",
       ],
-      ["docker", "run", "--rm", "--network", "none", "--entrypoint", "docker", WORKER_IMAGE, "--version"],
       [
         "docker",
         "run",
@@ -488,11 +488,46 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "--network",
         "none",
         "--group-add",
-        String(SOCKET.gid),
+        "969",
         "-e",
-        `DOCKER_HOST=unix://${SOCKET.hostPath}`,
+        "DOCKER_HOST=unix:///var/run/docker.sock",
         "-v",
-        `${SOCKET.hostPath}:${SOCKET.hostPath}`,
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "--entrypoint",
+        "docker",
+        WORKER_IMAGE,
+        "--version",
+      ],
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--group-add",
+        "969",
+        "-e",
+        "DOCKER_HOST=unix:///var/run/docker.sock",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "--entrypoint",
+        "docker",
+        WORKER_IMAGE,
+        "buildx",
+        "version",
+      ],
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--group-add",
+        "969",
+        "-e",
+        "DOCKER_HOST=unix:///var/run/docker.sock",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
         "--entrypoint",
         "docker",
         WORKER_IMAGE,
@@ -534,12 +569,28 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       run: async (_command, args) => {
         // The git helper probe answers; the docker CLI probe does not.
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
-        if (args.includes("docker")) return { stdout: "", stderr: "" };
+        if (args.includes("--version")) throw new Error("exec: docker: not found");
         return { stdout: "ok", stderr: "" };
       },
     });
-    await assert.rejects(failing, /carries no docker CLI/);
+    await assert.rejects(failing, /carries no usable docker CLI/);
+    await assert.rejects(failing, /exec: docker: not found/, "the refusal carries what actually failed");
     await assert.rejects(failing, /npm run build:image/);
+  });
+
+  test("the default preflight refuses an image without the buildx builder — npm run build:image is the mandated operation", async () => {
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      dockerSocket: SOCKET,
+      run: async (_command, args) => {
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        if (args.includes("buildx")) throw new Error('docker: "buildx" is not a docker command');
+        return { stdout: "ok", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /has no buildx builder/);
+    await assert.rejects(failing, /is not a docker command/);
   });
 
   test("the default preflight refuses a socket the container user cannot reach — an actionable gid", async () => {
@@ -549,11 +600,12 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       run: async (_command, args) => {
         // Everything passes until the daemon probe INSIDE the container.
-        if (args[0] === "run" && args.includes("info")) throw new Error("permission denied");
-        return { stdout: args.includes("docker") ? "Docker version 26.1.5" : "!gh auth git-credential", stderr: "" };
+        if (args[0] === "run" && args.includes("info")) throw new Error("permission denied while trying to connect");
+        return { stdout: "ok", stderr: "" };
       },
     });
     await assert.rejects(failing, /cannot reach the Docker daemon through \/var\/run\/docker\.sock as gid 969/);
+    await assert.rejects(failing, /permission denied while trying to connect/);
   });
 });
 
@@ -571,6 +623,25 @@ describe("sandcastle runtime — the daemon socket the container inherits (ADR 0
   test("a daemon reached over tcp is refused, naming why a socket is required", () => {
     assert.throws(() => unixSocketPath("tcp://127.0.0.1:2375"), /not a unix socket/);
     assert.throws(() => unixSocketPath("ssh://host"), /unix:\/\/\/var\/run\/docker\.sock/);
+  });
+
+  test("the probe shape is the launch's trio, once: group, bind and DOCKER_HOST (the real test and the preflight share it)", () => {
+    assert.deepEqual(workerShapedDockerRun(SOCKET, WORKER_IMAGE, "docker", ["info"]), [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--group-add",
+      String(SOCKET.gid),
+      "-e",
+      `DOCKER_HOST=unix://${SOCKET.hostPath}`,
+      "-v",
+      `${SOCKET.hostPath}:${SOCKET.hostPath}`,
+      "--entrypoint",
+      "docker",
+      WORKER_IMAGE,
+      "info",
+    ]);
   });
 
   test("the socket's own gid is what the container user joins — never an assumed 999/0", () => {
@@ -639,20 +710,7 @@ describe("sandcastle runtime — the real Docker shell", () => {
       // the nested `docker run` is a worker launching a container of its own.
       const inside = execFileSync(
         "docker",
-        [
-          "run",
-          "--rm",
-          "--network",
-          "none",
-          "--group-add",
-          String(socket.gid),
-          "-e",
-          `DOCKER_HOST=unix://${socket.hostPath}`,
-          "-v",
-          `${socket.hostPath}:${socket.hostPath}`,
-          "--entrypoint",
-          "sh",
-          WORKER_IMAGE,
+        workerShapedDockerRun(socket, WORKER_IMAGE, "sh", [
           "-c",
           [
             "set -e",
@@ -664,7 +722,7 @@ describe("sandcastle runtime — the real Docker shell", () => {
             `docker run --rm --network none --entrypoint true ${WORKER_IMAGE}`,
             "echo DOCKER_INSIDE_OK",
           ].join(" && "),
-        ],
+        ]),
         { encoding: "utf8" },
       ).trim();
 

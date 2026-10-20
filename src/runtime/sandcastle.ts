@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -67,12 +67,10 @@ export const MISE_CONTAINER_DIR = "/home/agent/.local/share/mise";
 export const NPM_CONTAINER_DIR = `${AGENT_DIR}/npm`;
 
 /**
- * Docker inside the worker (ADR 0003, the unblock of issue 113): the worker
- * container inherits the host's daemon by binding its socket and joining the
- * socket's group — the worker builds the worker image and runs the repo's real
- * Docker tests instead of self-reporting blocked for a missing `docker`. The
- * container sees the socket where the host has it and DOCKER_HOST names that
- * path explicitly, so a non-default location needs no other change.
+ * Docker inside the worker (ADR 0003): the worker inherits the host's daemon
+ * by binding its socket and joining the socket's group, so it builds the
+ * worker image and runs the repo's real Docker tests. The container sees the
+ * socket where the host has it, and DOCKER_HOST names that same path.
  */
 export const DEFAULT_DOCKER_SOCKET_PATH = "/var/run/docker.sock";
 
@@ -88,19 +86,18 @@ export interface DockerSocket {
 export interface DockerSocketDeps {
   env?: NodeJS.ProcessEnv;
   /** Injectable stat for the tests; the default reads the real socket. */
-  stat?: (path: string) => { gid: number; isSocket(): boolean };
+  stat?: (path: string) => Pick<Stats, "gid" | "isSocket">;
 }
 
 /**
  * The socket the host's Docker answers on. Refuses instead of guessing: a
- * daemon reached over tcp has no socket to bind, and a missing socket would
- * land in the container as an empty mount — a worker with Docker-shaped tools
- * and no daemon is exactly the blocked round this exists to prevent.
+ * daemon reached over tcp has no socket to bind, and a missing socket lands in
+ * the container as an empty mount.
  */
 export function dockerSocketFromHost(deps: DockerSocketDeps = {}): DockerSocket {
   const hostPath = unixSocketPath((deps.env ?? process.env).DOCKER_HOST);
   const stat = deps.stat ?? ((path: string) => statSync(path));
-  let stats: { gid: number; isSocket(): boolean };
+  let stats: Pick<Stats, "gid" | "isSocket">;
   try {
     stats = stat(hostPath);
   } catch {
@@ -127,6 +124,36 @@ export function unixSocketPath(dockerHost: string | undefined): string {
     );
   }
   return host.slice(prefix.length);
+}
+
+/**
+ * The `docker run` flags that shape a probe like a worker container: the
+ * socket's group, the bind and DOCKER_HOST. They live HERE, once, because the
+ * launch's preconditions and the real Docker test both prove the capability —
+ * two hand-written copies would let the proof drift from the launch.
+ */
+export function workerShapedDockerRun(
+  socket: DockerSocket,
+  image: string,
+  entrypoint: string,
+  args: readonly string[],
+): string[] {
+  return [
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--group-add",
+    String(socket.gid),
+    "-e",
+    `DOCKER_HOST=unix://${socket.hostPath}`,
+    "-v",
+    `${socket.hostPath}:${socket.hostPath}`,
+    "--entrypoint",
+    entrypoint,
+    image,
+    ...args,
+  ];
 }
 
 /** The mise convergence hook's ceiling: a first install of many declared
@@ -310,11 +337,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /** The Docker socket bind (ADR 0003): the host's daemon socket, read-write
-   * (a socket is a channel, not a file tree), at the path the host has it —
-   * DOCKER_HOST in the container names the same path. */
-  private dockerSocketBind(socket: DockerSocket): { hostPath: string; sandboxPath: string; readonly: false } {
-    return { hostPath: socket.hostPath, sandboxPath: socket.hostPath, readonly: false };
-  }
+   * (a socket is a channel, not a file tree), at the path the host has it. */
 
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
   private runOptionsFor(
@@ -363,7 +386,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
           ...this.toolchainBinds(),
-          this.dockerSocketBind(dockerSocket),
+          { hostPath: dockerSocket.hostPath, sandboxPath: dockerSocket.hostPath, readonly: false },
         ],
       }),
       cwd: request.repoDir,
@@ -539,53 +562,38 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     // Docker INSIDE the worker (ADR 0003). A capability the image lacks or a
     // socket the container user cannot read lands in the round as a "no docker
     // here" blocked report — the agent has nothing to distinguish it from a
-    // host without Docker. Both are proven here, in a throwaway container
-    // shaped like a worker: the image's own user, the socket's group.
-    let version = "";
+    // host without Docker. Under test is the MANDATED operation, not just the
+    // binary: `npm run build:image` needs the CLI, the buildx builder and the
+    // daemon, so a throwaway container shaped like a worker proves all three.
+    const socket = deps.dockerSocket;
+    const probe = (entrypoint: string, args: string[]) =>
+      run("docker", workerShapedDockerRun(socket, deps.image, entrypoint, args));
+
     try {
-      ({ stdout: version } = await run("docker", [
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--entrypoint",
-        "docker",
-        deps.image,
-        "--version",
-      ]));
-    } catch {
-      version = "";
-    }
-    if (version.trim() === "") {
+      await probe("docker", ["--version"]);
+    } catch (error) {
       throw new Error(
-        `worker image ${deps.image} carries no docker CLI — a worker cannot run the Docker checks. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} carries no usable docker CLI (docker --version failed inside it: ${reasonOf(error)}). Rebuild it with: npm run build:image`,
       );
     }
-
-    const socket = deps.dockerSocket;
     try {
-      await run("docker", [
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--group-add",
-        String(socket.gid),
-        "-e",
-        `DOCKER_HOST=unix://${socket.hostPath}`,
-        "-v",
-        `${socket.hostPath}:${socket.hostPath}`,
-        "--entrypoint",
-        "docker",
-        deps.image,
-        "info",
-        "--format",
-        "{{.ServerVersion}}",
-      ]);
-    } catch {
+      await probe("docker", ["buildx", "version"]);
+    } catch (error) {
       throw new Error(
-        `worker image ${deps.image} cannot reach the Docker daemon through ${socket.hostPath} as gid ${socket.gid} — a worker would have no Docker. Check that this is the daemon's socket and that its group is readable by the container user (rebuild with: npm run build:image).`,
+        `worker image ${deps.image} has no buildx builder (docker buildx version failed inside it: ${reasonOf(error)}) — npm run build:image would fail in the round. Rebuild it with: npm run build:image`,
+      );
+    }
+    try {
+      await probe("docker", ["info", "--format", "{{.ServerVersion}}"]);
+    } catch (error) {
+      throw new Error(
+        `worker image ${deps.image} cannot reach the Docker daemon through ${socket.hostPath} as gid ${socket.gid} (docker info inside it failed: ${reasonOf(error)}) — a worker would have no Docker. Check that this is the daemon's socket and that its group is readable by the container user.`,
       );
     }
   };
+}
+
+/** An error's message, for a refusal that must carry what actually failed. */
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

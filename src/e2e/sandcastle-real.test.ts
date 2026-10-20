@@ -65,6 +65,12 @@ function dockerInfo(): string {
   return execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], { encoding: "utf8" }).trim();
 }
 
+/** Are we inside a container? Docker and Podman leave their marker: the proof's
+ *  temp root is then NOT the host's, and its nested worker cannot see it. */
+function insideContainer(): boolean {
+  return existsSync("/.dockerenv") || existsSync("/run/.containerenv");
+}
+
 /** The disposable local repo: a tiny node project with one proven pattern
  * (`sum`) the spec extends. No remote — pushes are impossible by construction. */
 function makeDisposableRepo(root: string): { repoDir: string; baseBranch: string; branch: string; roundStartSha: string } {
@@ -113,6 +119,11 @@ com a revisão de dois eixos e os relatórios gravados no work dir.`;
 describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { skip: ENABLED ? false : SKIP_REASON }, () => {
   test("a real container loads /implement, implements a local spec, commits locally and runs /code-review with two subagents", { timeout: 4 * 60 * 60 * 1000 }, async () => {
     if (MODEL === "") failIfMissingPrerequisite("MSF_REAL_PROOF_MODEL is unset — pass the model the worker session uses, e.g. MSF_REAL_PROOF_MODEL=provider/model-id");
+    if (insideContainer()) {
+      failIfMissingPrerequisite(
+        "the real proof runs on the operator's machine, not inside a worker container: its disposable repo and work dir live under the test's temp dir, which a worker does not share with the host, so the nested worker's binds would resolve on the host to empty directories (ADR 0003)",
+      );
+    }
     if (!existsSync(PROFILE_DIR)) failIfMissingPrerequisite(`the profile dir does not exist: ${PROFILE_DIR}`);
     try {
       dockerInfo();

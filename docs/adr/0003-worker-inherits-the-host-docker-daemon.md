@@ -33,9 +33,16 @@ Consequences, stated so nobody rediscovers them as bugs:
   inside the container (see RUNBOOK).
 - **No socket, no launch.** The preflight refuses before any artifact: a
   daemon reached over tcp (`DOCKER_HOST=tcp://…`) has no socket to bind, a
-  missing socket would land as an empty mount, and an image without the client
-  would hand the worker Docker-shaped tools that cannot reach anything. All
-  three are named at boot instead of becoming a blocked round.
+  missing socket would land as an empty mount, an image without the client or
+  without the buildx builder would hand the worker Docker-shaped tools that
+  cannot do the mandated `npm run build:image`, and a socket the container user
+  cannot read is the same hole. All of them are named at boot, with what
+  actually failed, instead of becoming a blocked round.
+- **The real-model proof (`npm run proof:real`) is an operator-machine run.**
+  Its disposable repo and work dir live under the test's own temp dir, which a
+  worker container does not share with the host: launched from inside a worker,
+  the nested worker's binds would resolve on the host to empty directories.
+  The proof refuses to start in a container and says so.
 - **The client need not match the server.** The CLI negotiates the API version,
   so Debian's client talks to whatever daemon the host runs; buildx is what
   `docker build` drives, which is the `npm run build:image` path.
