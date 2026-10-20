@@ -50,7 +50,7 @@ export interface PreparedWork {
 /** The git operations a session can leave unfinished in its worktree. */
 export type WorkOperation = "rebase" | "merge" | "cherry-pick";
 
-/** Every {@link WorkOperation}, for the readers that validate a persisted fact. */
+/** Every {@link WorkOperation}, so a persisted one can be validated on read. */
 export const WORK_OPERATIONS: readonly WorkOperation[] = ["rebase", "merge", "cherry-pick"];
 
 /**

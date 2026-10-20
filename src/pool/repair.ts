@@ -47,7 +47,7 @@ export type RepairPublication =
   | "not-published"
   | "concurrent-change";
 
-/** Every verdict, for the reader that validates a persisted record. */
+/** Every verdict, so a persisted one can be validated on read. */
 const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
   "unknown",
   "pending",

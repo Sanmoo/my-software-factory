@@ -16,7 +16,7 @@
 | Attempt | One try by a worker to carry out a work, counted per work. |
 | Outcome | The verdict of how an attempt ended. |
 | Running | A work whose attempt is being carried out by a live worker right now. |
-| Orphaned | A work whose attempt ended without a recorded outcome and with no worker running — an abrupt fall awaiting the factory's next reconciliation. |
+| Orphaned | A work whose current attempt ended without an outcome record of its own and with no worker running — an abrupt fall awaiting the factory's next reconciliation. An older attempt's record on disk is history, never this attempt's outcome. |
 | Archived work | A work that reached done, whose artifacts were moved to the archive. |
 | Block | A work the factory stopped driving (2nd consecutive worker fall, 2nd consecutive Repair fall, or PR closed without merge) until a human answers on the issue. |
 | Occurrence | A new act that needs human continuity (initial execution or feedback round leaving a PR open, a help request, a block) — never an ordinary sweep. |
@@ -24,7 +24,8 @@
 | Notice | The short form of Notification, used in code and docs. |
 | Review notice | A notification that a confirmed-open PR waits for the operator; it points at the PR. |
 | Repair | An automatic reactivation of a reserved work whose open PR has confirmed conflicts with its base or required checks concluded with failure/timeout; at most two rounds without recovery. |
-| Repair fall | A repair attempt that ended without publishing: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work — the open PR never hides the fall. |
-| Pending reconciliation | A repair attempt whose publication cannot be verified yet (the remote could not be read): no new worker and no budget returned until a later sweep gets an answer. |
-| Concurrent change | A remote head the repair attempt did not produce (a collaborator's push): the factory never publishes over it, preserves the local work and asks the human to reconcile both sides. |
+| Verified activity | What the agents themselves write under the dirs the session binds (the session transcripts, the work artifacts) — the only input of the idle limit, so a worker waiting on its reviewer subagents is not idle and an unconditional heartbeat is not work. |
+| Repair fall | A repair attempt that ended without publishing (abruptly or by a normal end) and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work — the open PR never hides the fall. |
+| Pending reconciliation | A repair attempt whose publication cannot be verified yet (the remote or the local work could not be read): no new worker and no budget returned until a later sweep gets an answer. |
+| Concurrent change | A remote head the repair attempt did not produce (a collaborator's push): the factory never publishes over it, preserves the local work, keeps the round charged and asks the human to reconcile both sides. |
 | Help notice | A notification that a work needs the operator on the issue (help request, block, rejection); it points at the issue. |

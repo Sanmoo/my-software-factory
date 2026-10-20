@@ -404,6 +404,88 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal(cycle.attempt, null);
   });
 
+  test("a fallen attempt never hijacks newer evidence: the new head gets its own round", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 117);
+    // Attempt 2 fell on the OLD head and its round was returned.
+    const cycle: RepairCycle = {
+      usedRounds: 0,
+      lastEvidence: signatureOf(117, OBSERVED),
+      consecutiveFalls: 1,
+      attempt: {
+        evidence: signatureOf(117, OBSERVED),
+        attempt: 2,
+        observedHeadSha: OBSERVED,
+        remoteHeadSha: OBSERVED,
+        publication: "not-published",
+        localWork: { headSha: "local117", commits: 1, uncommitted: false, operationInProgress: null },
+      },
+    };
+    seedFallenLegacyRound(117, cycle, 2);
+    // The PR recovered on a NEW head and conflicts again there: the evidence
+    // the old attempt addressed is gone, so there is nothing to resume.
+    const newHead = "bbbb2222cccc";
+    await conflictingOn(tracker, pr, newHead);
+    git.remoteHead = newHead;
+    git.localWork = { headSha: "local117", commits: 1, uncommitted: false, operationInProgress: null };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "the new evidence still gets its round");
+    const repair = sweep.launched[0]!.request.material.repair;
+    assert.ok(repair);
+    assert.equal(repair.resuming, undefined, "the old attempt is NOT resumed for evidence it never addressed");
+    assert.equal(repair.observedHeadSha, newHead, "the lease is pinned to the head the evidence was read on");
+    assert.equal(sweep.launched[0]!.request.attempt, 3, "a new attempt, numbered after the fallen one");
+
+    const issue = await tracker.readIssue({ repo: REPO, number: 117 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no false help request");
+    const after = await readRepairCycle(workDir(layout, REPO, 117));
+    assert.equal(after.usedRounds, 1, "the new round is charged once");
+    assert.equal(after.consecutiveFalls, 1, "and the earlier fall stays counted");
+  });
+
+  test("confirmed recovery clears the falls even when the fall's round was already refunded", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 118);
+    // The fall returned its round: nothing is charged, one fall stands, and the
+    // attempt record is settled on disk.
+    const cycle: RepairCycle = {
+      usedRounds: 0,
+      lastEvidence: signatureOf(118, OBSERVED),
+      consecutiveFalls: 1,
+      attempt: {
+        evidence: signatureOf(118, OBSERVED),
+        attempt: 2,
+        observedHeadSha: OBSERVED,
+        remoteHeadSha: OBSERVED,
+        publication: "not-published",
+        localWork: { headSha: "local118", commits: 1, uncommitted: false, operationInProgress: null },
+      },
+    };
+    seedFallenLegacyRound(118, cycle, 2);
+    // The work recovered by another path: the PR is clean on its head and
+    // every required check is approved — the confirmed recovery of story 25.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "recovered118",
+      mergeState: "mergeable",
+      requiredChecks: [failing("build", "success")],
+    });
+    git.remoteHead = "recovered118";
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "recovery launches nothing");
+    assert.ok(
+      sweep.reserved.some((decision) => decision.ref.number === 118 && decision.state === "repair-recovered"),
+      "a refunded cycle still resets on confirmed recovery",
+    );
+    const after = await readRepairCycle(workDir(layout, REPO, 118));
+    assert.equal(after.consecutiveFalls, 0, "the fall streak resets");
+    assert.equal(after.usedRounds, 0);
+    assert.equal(after.attempt, null, "the settled attempt leaves the ledger");
+  });
+
   test("a round that ends clean without publishing never renews the budget either", async () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr", "clean-without-pr"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 106);

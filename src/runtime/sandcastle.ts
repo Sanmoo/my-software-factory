@@ -10,7 +10,7 @@ import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
-import { startActivityWatch } from "./activity.js";
+import { startActivityWatch, type ActivityWatch } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
@@ -194,7 +194,7 @@ const DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
  * unreadable tree is still observed as "nothing changes" and times out — so it
  * is kept just far enough to never preempt the verified limit.
  */
-const SANDBOX_BACKSTOP_FACTOR = 2;
+export const SANDBOX_BACKSTOP_FACTOR = 2;
 
 /** The polling interval of the activity watch: often enough to notice work
  *  well inside a short limit, rarely enough not to walk the tree constantly. */
@@ -363,7 +363,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private activityWatch(
     request: WorkRequest,
     sessionsDir: string,
-  ): { signal: AbortSignal; stop: () => void } {
+  ): ActivityWatch & { signal: AbortSignal } {
     const idleMs = this.idleTimeoutSeconds * 1000;
     const controller = new AbortController();
     const watch = startActivityWatch({
@@ -387,7 +387,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         );
       },
     });
-    return { signal: controller.signal, stop: () => watch.stop() };
+    return { ...watch, signal: controller.signal };
   }
 
   /** The toolchain binds (ticket 18): workspace-derived host dirs, created
