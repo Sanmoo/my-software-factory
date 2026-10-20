@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
+import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import { localGitWork } from "../git/local.js";
 import { seedFixtureRemote, cleanupFixture } from "../git/local-fixtures.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -67,6 +67,10 @@ class FakeGitWork implements GitWork {
 
   async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
     return null;
+  }
+
+  async inspectLocalWork(_ref: IssueRef): Promise<LocalWorkFacts> {
+    return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };
   }
 }
 
@@ -467,7 +471,10 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     // no worker bind, so the work is Orphaned; without Docker liveness is
     // unknown and the registry-only line still names it, unclassified.
     if (result.stdout.includes("liveness unknown (docker not reachable)")) {
-      assert.match(result.stdout, /attempts without outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1/);
+      assert.match(
+        result.stdout,
+        /attempts without their own outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1 \(attempt 1 fell — no outcome record on disk\)/,
+      );
     } else {
       assert.match(result.stdout, /orphaned \([^\n]*\): 1\n\s+Sanmoo\/my-tasks#1/);
     }

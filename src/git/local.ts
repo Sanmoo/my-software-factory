@@ -1,10 +1,16 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { IssueRef } from "../tracker/port.js";
-import { repoCloneDir, workBranchName, type GitWork, type PreparedWork } from "./port.js";
+import {
+  repoCloneDir,
+  workBranchName,
+  type GitWork,
+  type LocalWorkFacts,
+  type PreparedWork,
+} from "./port.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -72,6 +78,15 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
         holding.push(path);
       } else if (line === "") path = null;
     }
+    return holding;
+  }
+
+  /** The worktree Sandcastle runs the worker in for `branch`: the managed
+   *  path it derives, else whichever worktree holds the branch. */
+  async function workerWorktreeOf(repoDir: string, branch: string): Promise<string | undefined> {
+    const managed = join(repoDir, ".sandcastle", "worktrees", branch.replaceAll("/", "-"));
+    if (existsSync(managed)) return managed;
+    const [holding] = await worktreesHolding(repoDir, branch);
     return holding;
   }
 
@@ -169,5 +184,56 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
       const line = out.trim();
       return line === "" ? null : (line.split(/\s+/)[0] ?? null);
     },
+
+    async inspectLocalWork(ref): Promise<LocalWorkFacts> {
+      const repoDir = repoCloneDir(options.reposDir, ref.repo);
+      const branch = workBranchName(ref.number);
+      if (!existsSync(join(repoDir, ".git")) || !(await localBranchExists(repoDir, branch))) {
+        // No clone or no branch yet: nothing of this attempt reached the disk.
+        return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };
+      }
+
+      const headSha = (await git(repoDir, ["rev-parse", `refs/heads/${branch}`])).trim();
+      const baseBranch = await detectDefaultBranch(repoDir);
+      // The branch's own commits against the base it was born from — never the
+      // base's later advances (three-dot semantics, as diffWork reads it).
+      const ahead = await git(repoDir, [
+        "rev-list",
+        "--count",
+        `refs/remotes/origin/${baseBranch}..refs/heads/${branch}`,
+      ]);
+
+      // The worker ran in Sandcastle's own worktree: that is where uncommitted
+      // changes and an interrupted operation live — the main clone never holds
+      // the branch checked out. Its path is derived first because an
+      // interrupted rebase detaches the worktree's HEAD, which makes the
+      // branch-based lookup miss it.
+      const worktreePath = await workerWorktreeOf(repoDir, branch);
+      if (worktreePath === undefined) {
+        return { headSha, commits: Number(ahead.trim()), uncommitted: false, operationInProgress: null };
+      }
+
+      const status = await git(worktreePath, ["status", "--porcelain"]);
+      const gitDir = (await git(worktreePath, ["rev-parse", "--git-dir"])).trim();
+      return {
+        headSha,
+        commits: Number(ahead.trim()),
+        uncommitted: status.trim() !== "",
+        // `git rev-parse --git-dir` answers absolute here; resolve keeps a
+        // relative answer relative to the worktree.
+        operationInProgress: operationInProgressOf(resolve(worktreePath, gitDir)),
+      };
+    },
   };
+}
+
+/** The operation markers git leaves inside the worktree's git dir, in the
+ *  order they win: an unfinished rebase is never mistaken for a clean tree. */
+function operationInProgressOf(gitDir: string): LocalWorkFacts["operationInProgress"] {
+  if (existsSync(join(gitDir, "rebase-merge")) || existsSync(join(gitDir, "rebase-apply"))) {
+    return "rebase";
+  }
+  if (existsSync(join(gitDir, "MERGE_HEAD"))) return "merge";
+  if (existsSync(join(gitDir, "CHERRY_PICK_HEAD"))) return "cherry-pick";
+  return null;
 }

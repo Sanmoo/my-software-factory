@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
+import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
@@ -53,6 +53,25 @@ class RepairGitWork implements GitWork {
 
   async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
     return this.remoteHead;
+  }
+
+  /**
+   * The branch on disk. Unset, it models the ordinary publish: whatever the
+   * remote holds now is the commit the attempt produced (the fake's stand-in
+   * for the worker's push — a test that leaves the remote where it was models
+   * a round that published nothing, and a test that sets this field models a
+   * divergent or unfinished local state).
+   */
+  localWork?: LocalWorkFacts;
+
+  async inspectLocalWork(_ref: IssueRef): Promise<LocalWorkFacts> {
+    if (this.localWork !== undefined) return this.localWork;
+    return {
+      headSha: this.remoteHead,
+      commits: this.remoteHead === null ? 0 : 1,
+      uncommitted: false,
+      operationInProgress: null,
+    };
   }
 }
 
@@ -108,7 +127,6 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   async function seedOpenPr(
     tracker: FakeTrackerAdapter,
     runtime: FakeWorkerRuntime,
-    git: RepairGitWork,
     deps: LoopDeps,
     number: number,
   ): Promise<number> {
@@ -123,7 +141,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("confirmed conflicts reactivate the worker with no human comment, same branch and same PR", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 1);
+    const pr = await seedOpenPr(tracker, runtime, deps, 1);
 
     // No human comment anywhere. The base advanced and now conflicts.
     tracker.setPrRepairFacts({
@@ -149,7 +167,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a required check that concluded failure or timeout reactivates the worker with its evidence", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 2);
+    const pr = await seedOpenPr(tracker, runtime, deps, 2);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -179,7 +197,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("conflicts and check failures are treated in ONE round, conflicts first", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 3);
+    const pr = await seedOpenPr(tracker, runtime, deps, 3);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -202,7 +220,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a human PR comment coexists with a trigger in ONE round addressing both", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 30);
+    const pr = await seedOpenPr(tracker, runtime, deps, 30);
     // A human review comment AND a confirmed conflict arrive before the tick.
     tracker.addPrComment({ repo: REPO, prNumber: pr }, "humano", "please also rename the helper");
     tracker.setPrRepairFacts({
@@ -227,7 +245,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("the repair rebases against the PR's CURRENT base, never the repository default", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 4);
+    const pr = await seedOpenPr(tracker, runtime, deps, 4);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -250,7 +268,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("optional, pending, cancelled, skipped, unknown and clean facts never trigger", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 5);
+    const pr = await seedOpenPr(tracker, runtime, deps, 5);
     git.remoteHead = "head-e";
 
     const noTrigger = async (label: string, facts: Parameters<FakeTrackerAdapter["setPrRepairFacts"]>[0]) => {
@@ -303,12 +321,12 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     });
   });
 
-  // ---- no loops: the same evidence is consumed, a stale head is not acted on ----
+  // ---- no loops: the fall ledger bounds the same evidence, a stale head is not acted on ----
 
-  test("re-finding the same failure without new evidence never opens another session", async () => {
+  test("the same failure with no publication retries once, then blocks: never an infinite round", async () => {
     const config = makeConfig();
-    const { tracker, runtime, git, deps } = makeFactory(config, ["pr-open", "pr-open", "pr-open"]);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 6);
+    const { tracker, runtime, git, deps } = makeFactory(config, ["pr-open", "pr-open", "pr-open", "pr-open"]);
+    const pr = await seedOpenPr(tracker, runtime, deps, 6);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -317,22 +335,41 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
       mergeState: "conflicting",
       requiredChecks: [],
     });
+    // The remote stays at the observed head: the round below publishes nothing.
     git.remoteHead = "head-f";
 
     const first = await runOnce(deps);
     assert.equal(first.launched.length, 1, "round 1");
 
-    // Several ticks with the same facts (the worker did not push a new head).
-    for (let tick = 0; tick < 3; tick += 1) {
-      const again = await runOnce(deps);
-      assert.equal(again.launched.length, 0, "the consumed evidence never rounds again");
+    // Issue 112: an attempt that fell before publishing returns its round and
+    // is taken over with the SAME evidence — the deadlock of issue 100.
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "the unpublished attempt is resumed with the same evidence");
+    const afterResume = await readRepairCycle(workDir(layout, REPO, 6));
+    assert.equal(afterResume.usedRounds, 1, "the fallen round returned, the resumed one is charged");
+    assert.equal(afterResume.consecutiveFalls, 1, "the fall is counted once");
+    assert.ok(resumed.launched[0]!.request.material.repair, "the round carries the repair context");
+
+    // The resumed round publishes nothing either: the second consecutive fall
+    // blocks the work instead of retrying forever.
+    const blocked = await runOnce(deps);
+    assert.equal(blocked.launched.length, 0, "the second fall never opens a third session");
+    const issue = await tracker.readIssue({ repo: REPO, number: 6 });
+    assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the 2nd fall blocks");
+    const comments = await tracker.readComments({ repo: REPO, number: 6 });
+    assert.ok(comments.known);
+    assert.match(comments.value.at(-1)!.body, /consecutive repair attempts ended without publishing/i);
+
+    // Sweeps after the block change nothing (the human answers on the issue).
+    for (let tick = 0; tick < 2; tick += 1) {
+      assert.equal((await runOnce(deps)).launched.length, 0, "a blocked work is not re-derived into a round");
     }
   });
 
   test("a repair round is skipped while the observed remote head no longer matches the facts", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 7);
+    const pr = await seedOpenPr(tracker, runtime, deps, 7);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -355,7 +392,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("two automatic rounds without recovery block the work and ask for help on the issue", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 8);
+    const pr = await seedOpenPr(tracker, runtime, deps, 8);
 
     const failOn = async (head: string) => {
       tracker.setPrRepairFacts({
@@ -394,7 +431,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a partial correction advances the round but never renews the cap", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 32);
+    const pr = await seedOpenPr(tracker, runtime, deps, 32);
 
     const headWith = async (head: string, checks: RequiredCheckResult[]) => {
       tracker.setPrRepairFacts({
@@ -434,7 +471,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("after a repair publishes, the factory waits for the new head's required checks", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 33);
+    const pr = await seedOpenPr(tracker, runtime, deps, 33);
 
     // Round 1: a confirmed conflict reactivates the worker.
     tracker.setPrRepairFacts({
@@ -478,7 +515,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("the repair budget persists across sweeps and factory restarts (disk, not process memory)", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 9);
+    const pr = await seedOpenPr(tracker, runtime, deps, 9);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -490,6 +527,11 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     git.remoteHead = "head-h";
     await runOnce(deps);
 
+    // The worker published: the remote (and the branch) now carry the produced
+    // commit the round pushed. The tracker's facts are still read on the head
+    // of the evidence, so the same signature comes back on the next sweep.
+    git.remoteHead = "head-h-published";
+
     // A fresh engine (a restart) reads the same budget from disk.
     const persisted = await readRepairCycle(workDir(layout, REPO, 9));
     assert.equal(persisted.usedRounds, 1);
@@ -498,6 +540,9 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     // The rebuilt engine still sees the consumed evidence: no duplicate round.
     const rebuilt = await runOnce({ ...deps });
     assert.equal(rebuilt.launched.length, 0);
+    const settled = await readRepairCycle(workDir(layout, REPO, 9));
+    assert.equal(settled.attempt?.publication, "published", "the round's publication is confirmed once");
+    assert.equal(settled.usedRounds, 1, "a published round is charged exactly once");
   });
 
   // ---- the two allowed resets ----
@@ -505,7 +550,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("confirmed recovery (no conflicts, all required checks approved) resets the budget", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 10);
+    const pr = await seedOpenPr(tracker, runtime, deps, 10);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -552,7 +597,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a human answer on the blocked issue resets the repair budget", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 11);
+    const pr = await seedOpenPr(tracker, runtime, deps, 11);
 
     const failOn = async (head: string) => {
       tracker.setPrRepairFacts({
@@ -585,7 +630,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("an existing Block prevails over conflicts and check failures", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 12);
+    const pr = await seedOpenPr(tracker, runtime, deps, 12);
 
     // The work is blocked by a human decision; the PR also has a conflict.
     tracker.setPrRepairFacts({
@@ -608,7 +653,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a PR closed without merge or already merged is never a repair candidate", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 13);
+    const pr = await seedOpenPr(tracker, runtime, deps, 13);
 
     tracker.setPrRepairFacts({
       repo: REPO,
@@ -632,7 +677,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
   test("a repair already in flight is never relaunched by a concurrent tick", async () => {
     const config = makeConfig(1);
     const { tracker, runtime, git, deps } = makeFactory(config);
-    const pr = await seedOpenPr(tracker, runtime, git, deps, 31);
+    const pr = await seedOpenPr(tracker, runtime, deps, 31);
 
     tracker.setPrRepairFacts({
       repo: REPO,

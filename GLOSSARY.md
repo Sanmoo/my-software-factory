@@ -24,4 +24,6 @@
 | Notice | The short form of Notification, used in code and docs. |
 | Review notice | A notification that a confirmed-open PR waits for the operator; it points at the PR. |
 | Repair | An automatic reactivation of a reserved work whose open PR has confirmed conflicts with its base or required checks concluded with failure/timeout; at most two rounds without recovery. |
+| Repair fall | A repair attempt that ended without publishing: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work — the open PR never hides the fall. |
+| Pending reconciliation | A repair attempt whose publication cannot be verified yet (the remote could not be read): no new worker and no budget returned until a later sweep gets an answer. |
 | Help notice | A notification that a work needs the operator on the issue (help request, block, rejection); it points at the issue. |

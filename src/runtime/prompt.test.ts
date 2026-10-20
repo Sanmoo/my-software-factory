@@ -492,4 +492,50 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /## The feedback-round policy/);
     assert.match(prompt, /please rename it/);
   });
+
+  test("a resumed round takes over the local work: inspect it, never reset it (issue 112)", () => {
+    const prompt = buildWorkerPrompt(
+      repairRequest({
+        material: {
+          issue: { title: "t", body: "b" },
+          diff: "",
+          pr: { number: 7, comments: [] },
+          repair: {
+            reasons: ["conflicts"],
+            observedHeadSha: "abc123",
+            baseBranch: "release/next",
+            checks: [],
+            resuming: 2,
+            localWork: {
+              headSha: "def456789012",
+              commits: 2,
+              uncommitted: true,
+              operationInProgress: "rebase",
+            },
+          },
+        },
+      }),
+      { blockedLabel: DEFAULT_LABELS.blocked },
+    );
+
+    assert.match(prompt, /## The repair round — the factory is RESUMING attempt 2/);
+    assert.match(prompt, /ended abruptly BEFORE publishing it/);
+    assert.match(prompt, /that round is not charged to the budget/);
+    assert.match(prompt, /2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress/);
+    assert.match(prompt, /existing commits are REUSED, never redone/);
+    assert.match(prompt, /uncommitted changes are READ and completed, never discarded/);
+    assert.match(prompt, /inspected and finished or aborted deliberately — never restarted blind/);
+    assert.match(prompt, /Never reset, checkout or recreate the branch/);
+    // The reviews must cover what is actually published; prior evidence is
+    // never presumed valid across a session (issue 112, stories 15-16).
+    assert.match(prompt, /reuse evidence from attempt 2 ONLY for content that is byte-identical/);
+    assert.match(prompt, /the two reviews must run again/);
+    assert.match(prompt, /--force-with-lease=agent-issue-42:abc123/, "the lease is still pinned");
+  });
+
+  test("a fresh repair round carries no resumption prose", () => {
+    const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.doesNotMatch(prompt, /RESUMING/);
+    assert.doesNotMatch(prompt, /reuse evidence from attempt/);
+  });
 });

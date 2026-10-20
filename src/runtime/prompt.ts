@@ -1,4 +1,5 @@
 import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
+import { renderLocalWork } from "../pool/repair.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
 
@@ -151,6 +152,9 @@ function implementationProcedure(request: WorkRequest): string {
  * resolved first by rebasing onto the PR's current base; the still-relevant
  * check failures are investigated after. The force-with-lease is pinned to
  * the head the factory observed — never plain --force, never a refreshed lease.
+ * Issue 112: a resumed round takes over the local work the fallen attempt left
+ * on the branch — it inspects it instead of redoing it, and its reviews cover
+ * the content actually published.
  */
 function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber: number): string[] {
   const reasonLines = [
@@ -168,12 +172,30 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
   const humanComments = (request.material.pr?.comments ?? []).filter(
     (comment) => !isAgentSpeech(comment.body),
   );
+  const localWork = repair.localWork;
+  const resuming = repair.resuming;
   return [
-    `## The repair round — the factory reactivated this work`,
+    resuming === undefined
+      ? `## The repair round — the factory reactivated this work`
+      : `## The repair round — the factory is RESUMING attempt ${resuming}`,
     ``,
     `The factory reacted to confirmed impediments on the CURRENT head of PR #${prNumber} (no human comment was needed):`,
     ...reasonLines,
     ...(checkLines.length > 0 ? [``, `Failing required checks:`, ...checkLines] : []),
+    ...(resuming === undefined
+      ? []
+      : [
+          ``,
+          `Attempt ${resuming} did the work below but ended abruptly BEFORE publishing it — the factory proved the remote ` +
+            `did not receive it, so that round is not charged to the budget. What it produced is still on your branch ` +
+            `(the same branch, the same PR):`,
+          `- ${renderLocalWork(localWork ?? null)}`,
+          `Inspect it before deciding how to continue (\`git status\`, \`git log --oneline origin/${repair.baseBranch}..HEAD\`, \`git diff\`):`,
+          `- existing commits are REUSED, never redone;`,
+          `- uncommitted changes are READ and completed, never discarded;`,
+          `- an operation left in progress (a rebase, a merge, a cherry-pick) is inspected and finished or aborted deliberately — never restarted blind.`,
+          `Never reset, checkout or recreate the branch to start over: the work on it is preserved on purpose.`,
+        ]),
     ...(humanComments.length > 0
       ? [
           ``,
@@ -188,6 +210,9 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
     `   Resolve the conflicts within the issue's specification. If a conflict requires a product or architecture decision the issue does not specify, do NOT invent behavior: self-report blocked (obligation 3) with the ambiguity and the concrete options.`,
     `2. **Investigate the failing checks** — their evidence is above. A timeout is a cause to diagnose (dependency, infrastructure, flakiness, credentials), NEVER a reason to re-run the same check. If the cause is external infrastructure, a service, credentials or a configuration outside your authorization, self-report blocked with the cause and the evidence (no secrets).`,
     `3. **Validate and review** — keep the full validation and the two independent reviews (step 5 of the implementation procedure above) after resolving the conflicts. Never weaken, skip or hide a required check or protection to reach approval.`,
+    resuming === undefined
+      ? `   The reviews must cover the content you are about to publish.`
+      : `   The reviews must cover the content you are about to publish: reuse evidence from attempt ${resuming} ONLY for content that is byte-identical (the same starting SHA); a commit, a rebase or a change since then makes that evidence stale and the two reviews must run again.`,
     `4. **Publish on the SAME branch and the SAME PR** with an explicit lease pinned to the head the factory observed:`,
     `   \`git push --force-with-lease=${request.branch}:${repair.observedHeadSha} origin ${request.branch}\``,
     `   Never use plain \`--force\`. If the lease is rejected, the remote changed concurrently: keep your local commits, do NOT retry with a refreshed lease and do NOT overwrite the other work — self-report blocked so a human reconciles both sides.`,

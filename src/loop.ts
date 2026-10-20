@@ -1,7 +1,7 @@
 import type { Config } from "./config.js";
 import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
-import type { GitWork } from "./git/port.js";
+import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import { helpNotice, reviewNotice, type Notifier, type WorkNotification } from "./notify/port.js";
 import { workDir, type WorkspaceLayout } from "./layout.js";
 import {
@@ -24,8 +24,29 @@ import {
   selfReportedBlocked,
   type OutcomeRuling,
 } from "./state/outcome.js";
-import { readLaunchFacts, scanReservedWorks, archiveDoneWork } from "./pool/registry.js";
-import { readRepairCycle, writeRepairCycle, EMPTY_REPAIR_CYCLE } from "./pool/repair.js";
+import {
+  readLaunchFacts,
+  scanReservedWorks,
+  archiveDoneWork,
+  readAttemptLedger,
+  type ReservedWorkEntry,
+} from "./pool/registry.js";
+import {
+  EMPTY_REPAIR_CYCLE,
+  MAX_REPAIR_FALLS,
+  MAX_REPAIR_ROUNDS,
+  isSettledPublication,
+  legacyRepairAttempt,
+  readRepairCycle,
+  reconcileRepairAttempt,
+  renderLocalWork,
+  shortSha,
+  writeRepairCycle,
+  type RemoteObservation,
+  type RepairAttempt,
+  type RepairCycle,
+  type RepairReconciliation,
+} from "./pool/repair.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -98,6 +119,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   repair: "reserved",
   "repair-recovered": "reserved",
   "repair-blocked": "reserved",
+  "repair-fall-blocked": "reserved",
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
 /** In-flight counts as reserved. Titles and order never enter — the schedule order stays untouched. */
@@ -177,6 +199,8 @@ interface Launchable {
   issueReplies?: IssueComment[];
   /** The confirmed impediments, only for a repair round. */
   repair?: RepairTrigger;
+  /** The unpublished attempt this repair takes over (issue 112), when resuming. */
+  resuming?: RepairAttempt | null;
 }
 
 /**
@@ -241,6 +265,12 @@ export class SweepEngine {
     const inFlight = new Set(this.slots.workKeys);
     const reservedDirs = await scanReservedWorks(workspace);
     const reservedWorks = reservedDirs.filter((work) => !inFlight.has(workKey(work.ref)));
+
+    // The repair reconciliation runs BEFORE the derivation (issue 112): a
+    // repair attempt that fell is settled against the remote first, so the
+    // derivation reads the verdict (resume, block, or uncertainty) instead of
+    // a charged round that never published.
+    await this.reconcileRepairAttempts(reservedDirs, inFlight);
 
     const derived = await deriveReserved(
       tracker,
@@ -318,7 +348,17 @@ export class SweepEngine {
             createdAt: decision.createdAt,
             pr: decision.pr,
             repair: decision.trigger,
+            resuming: decision.resuming,
           });
+          break;
+        }
+        case "repair-fall-blocked": {
+          this.log(
+            `derived ${workKey(decision.ref)}: repair attempt ${decision.attempt} fell without publishing — ` +
+              "blocked with the attempt's diagnosis on the issue (the open PR does not hide the fall)",
+          );
+          await this.applyBlockWithComment(decision.ref, decision.comment);
+          this.announce(decision.ref, "reserved");
           break;
         }
         case "repair-recovered": {
@@ -556,10 +596,17 @@ export class SweepEngine {
     let baseBranch = prepared.baseBranch;
     if (repairTrigger !== undefined) {
       baseBranch = repairTrigger.facts.baseBranch;
-      const observed = await git.observeRemoteHead(ref);
-      if (observed === null || observed !== repairTrigger.facts.headSha) {
+      const observed = await this.observeRemote(ref);
+      if (!observed.known) {
         this.log(
-          `repair round for ${key} skipped: the remote head ${observed ?? "(absent)"} no longer matches the ` +
+          `repair round for ${key} skipped: the remote head could not be read — ` +
+            "publication stays unverified and nothing is launched (the next sweep retries)",
+        );
+        return;
+      }
+      if (observed.headSha !== repairTrigger.facts.headSha) {
+        this.log(
+          `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
             `observed ${repairTrigger.facts.headSha} — the evidence is stale, nothing is launched`,
         );
         return;
@@ -597,10 +644,17 @@ export class SweepEngine {
       // repair budget (issue 107 story 23); new commits never do.
       await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
+    // The local work the round takes over, read from real git: existing
+    // commits are reused, changes are inspected, an unfinished operation is
+    // continued — the resumption never restarts the work blind (issue 112).
+    const localWork = repairTrigger === undefined ? null : await this.inspectLocalWork(ref);
     if (repairTrigger !== undefined) {
-      // The round is consumed BEFORE the session: a death mid-round must not
-      // renew the budget nor repeat the same evidence (issue 107).
-      await this.recordRepairRound(dir, ref, repairTrigger);
+      // The round is charged BEFORE the session (issue 107) and the attempt's
+      // facts are recorded with it (issue 112): the observed head, the evidence
+      // and the commit the branch already holds. A death mid-round refunds the
+      // round — but only once publication is provably absent (the sweep's
+      // reconciliation), never by presumption.
+      await this.recordRepairRound(dir, ref, repairTrigger, facts.attempt, localWork);
     }
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
@@ -610,7 +664,9 @@ export class SweepEngine {
       git,
       ref,
       kind === "resume" ? launchable.issueReplies : undefined,
-      repairTrigger,
+      repairTrigger === undefined
+        ? undefined
+        : { trigger: repairTrigger, resuming: launchable.resuming ?? null, localWork },
     );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
@@ -634,14 +690,142 @@ export class SweepEngine {
     await this.collect(launchable, result, facts.attempt, facts.previousFall);
   }
 
-  /** Consume one automatic repair round before its session: the budget and
-   *  the consumed evidence signature persist on disk, so a restart neither
-   *  renews the cap nor repeats the same round. */
-  private async recordRepairRound(dir: string, ref: IssueRef, trigger: RepairTrigger): Promise<void> {
+  /**
+   * The repair reconciliation of the tick (issue 112): every repair attempt
+   * that wrote its facts on disk and is not carried by a live worker is
+   * settled against the remote BEFORE the derivation reads the cycle. The
+   * settlement is idempotent — a settled attempt is never charged, refunded or
+   * counted again — and an unreadable remote leaves the attempt pending: no
+   * worker and no budget return until a later sweep gets an answer.
+   */
+  private async reconcileRepairAttempts(
+    works: readonly ReservedWorkEntry[],
+    inFlight: ReadonlySet<string>,
+  ): Promise<void> {
+    for (const work of works) {
+      const key = workKey(work.ref);
+      // A live worker owns its attempt: settling it mid-flight would read a
+      // half-written branch as a verdict.
+      if (inFlight.has(key)) continue;
+
+      const stored = await readRepairCycle(work.dir);
+      if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
+      // A work that never ran a repair round has nothing to reconcile — no git
+      // inspection is paid for it on every sweep.
+      if (stored.attempt === null && (stored.usedRounds === 0 || stored.lastEvidence === null)) continue;
+
+      const localWork = await this.inspectLocalWork(work.ref);
+      const cycle = stored.attempt === null ? await this.adoptLegacyCycle(work, stored, localWork) : stored;
+      if (cycle === null) continue;
+
+      const remote = await this.observeRemote(work.ref);
+      const decision = reconcileRepairAttempt({ cycle, remote, localWork });
+      if (decision.kind === "none") continue;
+      await writeRepairCycle(work.dir, decision.cycle);
+      this.logReconciliation(key, decision);
+    }
+  }
+
+  /** The cycle a legacy reparo.json implies (issue 112): the budget was charged
+   *  and the registry shows an attempt after the last recorded outcome — the
+   *  attempt whose observed head only the evidence signature names. */
+  private async adoptLegacyCycle(
+    work: ReservedWorkEntry,
+    cycle: RepairCycle,
+    localWork: LocalWorkFacts | null,
+  ): Promise<RepairCycle | null> {
+    const ledger = await readAttemptLedger(work.dir);
+    const attempt = legacyRepairAttempt({
+      cycle,
+      lastAttempt: ledger.lastAttempt,
+      recordedAttempt: ledger.recordedAttempt,
+      localWork,
+    });
+    return attempt === null ? null : { ...cycle, attempt };
+  }
+
+  /** The reconciliation verdict, said once in the operator's log. */
+  private logReconciliation(
+    key: string,
+    decision: Exclude<RepairReconciliation, { kind: "none" }>,
+  ): void {
+    const attempt = decision.cycle.attempt;
+    if (attempt === null) return;
+    switch (decision.kind) {
+      case "pending":
+        this.log(
+          `repair attempt ${attempt.attempt} of ${key}: reconciliation pending (${decision.reason}) — ` +
+            "no worker and no budget return while publication is uncertain",
+        );
+        return;
+      case "published":
+        this.log(
+          `repair attempt ${attempt.attempt} of ${key} confirmed published at ${shortSha(attempt.observedHeadSha)} → ` +
+            `${attempt.remoteHeadSha === null ? "the remote" : shortSha(attempt.remoteHeadSha)} — the round stays charged ` +
+            `(${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS})`,
+        );
+        return;
+      case "not-published":
+        this.log(
+          `repair attempt ${attempt.attempt} of ${key} ended without publishing — the round returns ` +
+            `(${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS}), ${decision.cycle.consecutiveFalls}/${MAX_REPAIR_FALLS} consecutive falls; ` +
+            `local work preserved: ${renderLocalWork(attempt.localWork)}`,
+        );
+        return;
+      case "concurrent-change":
+        this.log(
+          `repair attempt ${attempt.attempt} of ${key}: the remote moved to ` +
+            `${attempt.remoteHeadSha === null ? "a commit" : shortSha(attempt.remoteHeadSha)} — a concurrent change the attempt ` +
+            `did not produce; local work preserved (${renderLocalWork(attempt.localWork)}), a human is asked`,
+        );
+        return;
+    }
+  }
+
+  /** The local work of a work, or null when git cannot answer — never "nothing there". */
+  private async inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts | null> {
+    try {
+      return await this.deps.git.inspectLocalWork(ref);
+    } catch {
+      return null;
+    }
+  }
+
+  /** The remote head now, or the honest uncertainty (an unreadable remote is
+   *  not an empty branch). */
+  private async observeRemote(ref: IssueRef): Promise<RemoteObservation> {
+    try {
+      return { known: true, headSha: await this.deps.git.observeRemoteHead(ref) };
+    } catch {
+      return { known: false };
+    }
+  }
+
+  /** Charge one automatic repair round before its session: the budget, the
+   *  consumed evidence and the attempt's own facts persist on disk, so a
+   *  restart neither renews the cap nor repeats the same round, and a death is
+   *  attributable once the remote answers (issue 112). */
+  private async recordRepairRound(
+    dir: string,
+    ref: IssueRef,
+    trigger: RepairTrigger,
+    attempt: number,
+    localWork: LocalWorkFacts | null,
+  ): Promise<void> {
     const cycle = await readRepairCycle(dir);
+    const signature = repairSignature(ref, trigger);
     await writeRepairCycle(dir, {
       usedRounds: cycle.usedRounds + 1,
-      lastEvidence: repairSignature(ref, trigger),
+      lastEvidence: signature,
+      consecutiveFalls: cycle.consecutiveFalls,
+      attempt: {
+        evidence: signature,
+        attempt,
+        observedHeadSha: trigger.facts.headSha,
+        remoteHeadSha: null,
+        publication: "unknown",
+        localWork,
+      },
     });
   }
 
@@ -887,12 +1071,21 @@ export async function runForever(
  * PR's conversation on a feedback round, and the diff. Unknown reads degrade
  * to empty — the prompt still carries whatever is known, never a lie.
  */
+/** The repair context a session is launched with (issue 112): the confirmed
+ *  trigger, the unpublished attempt it takes over (when resuming) and the
+ *  local work read from the host. */
+interface RepairLaunchContext {
+  trigger: RepairTrigger;
+  resuming: RepairAttempt | null;
+  localWork: LocalWorkFacts | null;
+}
+
 async function launchMaterial(
   tracker: TrackerPort,
   git: GitWork,
   ref: IssueRef,
   issueReplies?: IssueComment[],
-  repair?: RepairTrigger,
+  repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {
   const issue = await tracker.readIssue(ref);
   const feedback = await tracker.readPrFeedback(ref);
@@ -916,10 +1109,12 @@ async function launchMaterial(
   if (issueReplies !== undefined) material.issueReplies = issueReplies;
   if (repair !== undefined) {
     material.repair = {
-      reasons: repair.reasons,
-      observedHeadSha: repair.facts.headSha,
-      baseBranch: repair.facts.baseBranch,
-      checks: repair.failingChecks,
+      reasons: repair.trigger.reasons,
+      observedHeadSha: repair.trigger.facts.headSha,
+      baseBranch: repair.trigger.facts.baseBranch,
+      checks: repair.trigger.failingChecks,
+      ...(repair.localWork === null ? {} : { localWork: repair.localWork }),
+      ...(repair.resuming === null ? {} : { resuming: repair.resuming.attempt }),
     };
   }
   return material;

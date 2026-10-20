@@ -8,6 +8,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
+import { writeRepairCycle } from "../pool/repair.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
@@ -98,8 +99,14 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.registry.reservedWithoutAttempt, [`${REPO}#1`], "the bare reservation is not an orphan");
-    assert.deepEqual(view.registry.attemptsWithoutOutcome, [`${REPO}#4`]);
-    assert.deepEqual(known(view).orphaned, [`${REPO}#4`], "no outcome and no live worker: orphaned");
+    assert.deepEqual(view.registry.attemptsWithoutOutcome, [
+      { key: `${REPO}#4`, attempt: 1, recordedAttempt: null },
+    ]);
+    assert.deepEqual(
+      known(view).orphaned,
+      [{ key: `${REPO}#4`, attempt: 1, recordedAttempt: null }],
+      "no outcome and no live worker: orphaned",
+    );
     assert.equal(view.registry.lastOutcome[0]?.key, `${REPO}#2`);
     assert.equal(view.registry.lastOutcome[0]?.record.class, "pr-open");
   });
@@ -178,7 +185,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /orphaned[^\n]*: liveness unknown \(docker not reachable\)/);
     assert.match(
       text,
-      /attempts without outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4/,
+      /attempts without their own outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4 \(attempt 1 fell — no outcome record on disk\)/,
       "the registry-only view is still complete — the works are named, just not classified",
     );
     assert.match(text, /pool \(eligible\): 1/);
@@ -213,10 +220,11 @@ describe("status — derivation on demand + local registry scan", () => {
         "msf status (derived on demand — the factory may be stopped)",
         "running (worker alive): 1",
         `  ${REPO}#4 (13m, attempt 1)`,
-        "orphaned (no outcome record, no worker alive): 1",
-        `  ${REPO}#5`,
+        "orphaned (attempt without its own outcome record, no worker alive): 1",
+        `  ${REPO}#5 (attempt 1 fell — no outcome record on disk)`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
+        "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
         "pool (eligible): 1",
@@ -226,6 +234,74 @@ describe("status — derivation on demand + local registry scan", () => {
         "reconciliation: none",
       ].join("\n"),
     );
+  });
+
+  test("a fallen attempt is named even when an older outcome record sits on disk (issue 112)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(20, 1, 2);
+    writeFileSync(
+      join(dir, DESFECHO_FILENAME),
+      JSON.stringify({ class: "pr-open", attempt: 1 }),
+      "utf8",
+    );
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    // The record is attempt 1's history: attempt 2 is the current, fallen one.
+    assert.deepEqual(known(view).orphaned, [
+      { key: `${REPO}#20`, attempt: 2, recordedAttempt: 1 },
+    ]);
+    assert.deepEqual(view.registry.lastOutcome.map((entry) => entry.record.attempt), [1]);
+    const text = renderStatus(view);
+    assert.match(text, /#20 \(attempt 2 fell — the record on disk is attempt 1's — history, not this attempt's\)/);
+    assert.match(text, /last outcome: 1[\s\S]*#20 = pr-open \(attempt 1\)/);
+    assert.doesNotMatch(text, /attempt 2 fell[^\n]*pr-open/, "history is never presented as the current result");
+  });
+
+  test("the repair section exposes the unpublished attempt, its local work and the pending reconciliation", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1, 2);
+    await writeRepairCycle(dir, {
+      usedRounds: 1,
+      lastEvidence: `${REPO}#21|abc123|conflicts|`,
+      consecutiveFalls: 1,
+      attempt: {
+        evidence: `${REPO}#21|abc123|conflicts|`,
+        attempt: 2,
+        observedHeadSha: "abc123",
+        remoteHeadSha: null,
+        publication: "pending",
+        localWork: {
+          headSha: "def456789012",
+          commits: 2,
+          uncommitted: true,
+          operationInProgress: "rebase",
+        },
+      },
+    });
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const text = renderStatus(view);
+
+    assert.match(text, /repair \(unpublished attempts, local work, pending reconciliation\): 1/);
+    assert.match(
+      text,
+      /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress\)/,
+    );
+  });
+
+  test("a legacy reparo.json is read as it stands: rounds counted, no attempt or fall invented", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(22, 1);
+    writeFileSync(
+      join(dir, "reparo.json"),
+      JSON.stringify({ usedRounds: 1, lastEvidence: `${REPO}#22|abc123|conflicts|` }),
+      "utf8",
+    );
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const text = renderStatus(view);
+    assert.match(text, /#22 \(rounds 1\/2; falls 0\/2\)/, "the legacy cycle is shown without invented facts");
   });
 
   test("the archived and the pool list one entry per line, capped at 10 with an omission marker", async () => {

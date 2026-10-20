@@ -116,7 +116,9 @@ describe("registry — the status view (worked on by msf status, factory stopped
     const view = await scanRegistry(layout);
 
     assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/a#3"]);
-    assert.deepEqual(view.attemptsWithoutOutcome, ["Sanmoo/d#4"]);
+    assert.deepEqual(view.attemptsWithoutOutcome, [
+      { key: "Sanmoo/d#4", attempt: 1, recordedAttempt: null },
+    ]);
     assert.equal(view.lastOutcome.length, 1);
     assert.equal(view.lastOutcome[0]?.key, "Sanmoo/b#7");
     assert.equal(view.lastOutcome[0]?.record.class, "pr-open");

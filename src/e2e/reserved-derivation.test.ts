@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { workBranchName, type GitWork, type PreparedWork } from "../git/port.js";
+import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DEFAULT_LABELS, type Config } from "../config.js";
@@ -56,6 +56,10 @@ class RecordingGitWork implements GitWork {
 
   async observeRemoteHead(_ref: IssueRef): Promise<string | null> {
     return null;
+  }
+
+  async inspectLocalWork(_ref: IssueRef): Promise<LocalWorkFacts> {
+    return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };
   }
 
   get prepareCount(): number {

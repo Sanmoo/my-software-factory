@@ -129,7 +129,10 @@ as you want; each round ends with the worker commenting what it addressed).
 You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
 round becomes a fall → release or blocked; a PR waiting for you stays
-parked; a merge you already did becomes done → archive).
+parked; a merge you already did becomes done → archive). A repair round that
+falls before publishing returns its round and is resumed automatically — same
+branch, same PR — while the remote is still where it was observed; two
+consecutive falls block the work and ask you on the issue.
 
 ## (c) Status — the trail, factory stopped
 
@@ -140,10 +143,12 @@ msf status --all  # every entry, no cap
 
 Derives on demand from the tracker, the workspace disk and a read-only Docker
 probe: live workers (**running**, with their age and attempt), works whose
-attempt died with no outcome record and no worker alive (**orphaned**), the
-reservations (with or without an attempt), last outcomes, the pool, archived
-dones — and the two reconciliation leftovers when tracker and workspace
-disagree:
+current attempt wrote no outcome record of its own and has no worker alive
+(**orphaned** — an older attempt's record on disk is history, never its
+result), the reservations (with or without an attempt), the **repair** cycles
+(rounds and falls used, whether the attempt published, the local work it
+preserved, a pending reconciliation), last outcomes, the pool, archived dones
+— and the two reconciliation leftovers when tracker and workspace disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns the
   issue to the pool; its report warns that another factory or workspace may be

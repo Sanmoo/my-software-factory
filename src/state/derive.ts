@@ -11,10 +11,17 @@ import type {
   TrackerPort,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
-import type { WorkspaceLayout } from "../layout.js";
-import { readOutcomeRecord, blockedCommentBody } from "./outcome.js";
+import { workDir as workDirOf, type WorkspaceLayout } from "../layout.js";
+import { readOutcomeRecord, blockedCommentBody, repairFallComment } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
-import { MAX_REPAIR_ROUNDS, readRepairCycle, repairEvidenceSignature } from "../pool/repair.js";
+import {
+  MAX_REPAIR_FALLS,
+  MAX_REPAIR_ROUNDS,
+  readRepairCycle,
+  repairEvidenceSignature,
+  type RepairAttempt,
+  type RepairCycle,
+} from "../pool/repair.js";
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
@@ -278,8 +285,18 @@ export type ReservedDerivation =
    * Confirmed impediments of the open PR (conflicts with the current base or
    * required checks concluded with failure/timeout) reactivate the worker in
    * ONE round (issue 107) — the repair budget permits it. Same branch, same PR.
+   * `resuming` is the unpublished attempt this round takes over (issue 112):
+   * its local commits, changes and interrupted operation are inspected
+   * before continuing — never redone from scratch.
    */
-  | { ref: IssueRef; state: "repair"; pr: PullRequest; createdAt: string; trigger: RepairTrigger }
+  | {
+      ref: IssueRef;
+      state: "repair";
+      pr: PullRequest;
+      createdAt: string;
+      trigger: RepairTrigger;
+      resuming: RepairAttempt | null;
+    }
   /** The PR is confirmed clean (no conflicts, every required check approved):
    *  the repair budget resets (issue 107 story 22). */
   | { ref: IssueRef; state: "repair-recovered"; pr: PullRequest }
@@ -292,6 +309,13 @@ export type ReservedDerivation =
       usedRounds: number;
       comment: string;
     }
+  /**
+   * Repair stopped without publishing (issue 112): two consecutive attempts
+   * fell before publishing, or the remote moved to a head the attempt did not
+   * produce. The block holds even with the PR open — the fall is never hidden
+   * by the PR's state.
+   */
+  | { ref: IssueRef; state: "repair-fall-blocked"; pr: PullRequest; comment: string; attempt: number }
   /** Human answer on the issue after the marker: the retomada continues from
    * the existing branch — the sweep swaps blocked→claimed before the launch.
    * Only replies after the last agent marker become worker context. */
@@ -385,8 +409,35 @@ async function deriveReservedWork(
     const repairFacts = await port.readPrRepairFacts(ref);
     const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
     const cycle = await readRepairCycle(work.dir);
+    const attempt = cycle.attempt;
     if (trigger !== null) {
       const signature = repairSignature(ref, trigger);
+      // The attempt's own state comes before the evidence consumption (issue
+      // 112): an attempt that fell without publishing must be taken over —
+      // with the same evidence — instead of being mistaken for a consumed
+      // round. Two consecutive falls and an unattributable remote change block
+      // the work even with the PR open.
+      if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
+        return repairFallBlocked(ref, pr, trigger, cycle, workspace, attempt, "consecutive-falls");
+      }
+      if (attempt?.publication === "pending") {
+        // Publication is uncertain: no worker, no budget returned — a later
+        // sweep repeats the query (the reconciliation owns the transition).
+        return { ref, state: "idle" };
+      }
+      if (attempt?.publication === "concurrent-change") {
+        return repairFallBlocked(ref, pr, trigger, cycle, workspace, attempt, "concurrent-change");
+      }
+      if (attempt?.publication === "not-published") {
+        return {
+          ref,
+          state: "repair",
+          pr,
+          createdAt: issue.value.createdAt,
+          trigger,
+          resuming: attempt,
+        };
+      }
       // Story 19: re-finding the same failure without new evidence is never a
       // new session; the exhausted cap still blocks.
       if (cycle.lastEvidence === signature) {
@@ -398,7 +449,14 @@ async function deriveReservedWork(
       if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
         return repairBlocked(ref, pr, trigger, cycle.usedRounds);
       }
-      return { ref, state: "repair", pr, createdAt: issue.value.createdAt, trigger };
+      return {
+        ref,
+        state: "repair",
+        pr,
+        createdAt: issue.value.createdAt,
+        trigger,
+        resuming: null,
+      };
     }
 
     // Confirmed recovery (story 22): no conflicts and every required check
@@ -525,13 +583,48 @@ function repairBlocked(
   trigger: RepairTrigger,
   usedRounds: number,
 ): ReservedDerivation {
-  const reasons = trigger.reasons
-    .map((reason) => (reason === "conflicts" ? "the conflict with the base" : "the failing required checks"))
-    .join(" and ");
   const comment =
     `automatic repair stopped after ${usedRounds} rounds without recovering PR #${pr.number}: ` +
-    `${reasons} persist on the current HEAD. A human decision, authorization or fix is needed.`;
+    `${repairReasonsPhrase(trigger)} persist on the current HEAD. A human decision, authorization or fix is needed.`;
   return { ref, state: "repair-blocked", pr, trigger, usedRounds, comment };
+}
+
+/** The persisting impediments, in the operator's words. */
+function repairReasonsPhrase(trigger: RepairTrigger): string {
+  return trigger.reasons
+    .map((reason) =>
+      reason === "conflicts" ? "the conflict with the base" : "the failing required checks",
+    )
+    .join(" and ");
+}
+
+/**
+ * The block of a Repair that stopped without publishing (issue 112): the
+ * attempt that fell, its abrupt end, the divergent record on disk and the
+ * evidence paths are named by the comment; the local work is never touched.
+ */
+async function repairFallBlocked(
+  ref: IssueRef,
+  pr: PullRequest,
+  trigger: RepairTrigger,
+  cycle: RepairCycle,
+  workspace: WorkspaceLayout,
+  attempt: RepairAttempt,
+  cause: "consecutive-falls" | "concurrent-change",
+): Promise<ReservedDerivation> {
+  const dir = workDirOf(workspace, ref.repo, ref.number);
+  const record = await readOutcomeRecord(dir);
+  const comment = await repairFallComment({
+    cause,
+    prNumber: pr.number,
+    persisting: repairReasonsPhrase(trigger),
+    consecutiveFalls: cycle.consecutiveFalls,
+    attempt,
+    record,
+    workDir: dir,
+    workspace,
+  });
+  return { ref, state: "repair-fall-blocked", pr, comment, attempt: attempt.attempt };
 }
 
 /** The rejection comment: points at the PR (ticket 04 Q5). */
