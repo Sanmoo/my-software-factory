@@ -60,33 +60,24 @@ check results) — never LLM prose.
 ## Tests
 
 ```sh
+npm install
+npm run build:image   # once, with Docker installed and running
 npm run gateway
 ```
 
-`npm run gateway` is the canonical quality gateway — the complete deterministic
-validation of this repository, under one 240-second wall-clock ceiling:
+`npm run gateway` is this repository's canonical, mandatory validation:
+compilation, the TypeScript checks it carries, the whole test suite and the
+real local Docker integration test, all under one 240-second wall-clock
+ceiling. Docker and the worker image are mandatory prerequisites — a missing
+one fails the run, it never becomes a skip. Provisioning and image builds
+happen before the measured run; LLM reviews, `npm run proof:real` and
+`npm run smoke:github` stay outside it.
 
-- it starts by deleting `dist/`, then compiles (tsc type-checks as it emits, so
-  no separate `typecheck` pass is repeated), then runs the whole
-  `dist/**/*.test.js` suite, including the real local Docker integration test;
-- Docker and the worker image are mandatory prerequisites checked before any
-  check runs: `npm run build:image` once after installing/starting Docker;
-  dependency installation and image builds are prepared before the measured
-  run and are outside the budget;
-- LLM reviews, `npm run proof:real` and `npm run smoke:github` depend on live
-  systems and stay outside this deterministic contract;
-- at the deadline the running check and its subprocesses are killed and the
-  interrupted check is named; exceeding the budget fails the gateway even if
-  the checks would pass;
-- exit status: `0` all checks passed within the ceiling, `2` a prerequisite
-  is missing, `124` the budget was exhausted, otherwise the failed check's
-  own status.
+Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted,
+otherwise the failing check's own status.
 
-Focused runs (`npm test`, a single test file) stay available during
-development, but only the gateway validates a Work as ready. A new
-deterministic check required for readiness joins the gateway and shares the
-same budget; an overrun is fixed with performance work, never by removing,
-skipping or optionalizing a required check.
+`npm test` remains a focused run during development and never substitutes for
+the gateway.
 
 Deterministic and hermetic: the tracker and the worker runtime are fakes; the
 workspace uses a real temp dir — the disk is never mocked, and the git host
