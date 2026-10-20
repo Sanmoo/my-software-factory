@@ -3,7 +3,7 @@ import { BUDGET_MS, OFFICIAL_PLAN, installSignalTermination, runGateway } from "
 
 /**
  * The canonical quality gateway (issue 113). This entry accepts no flag and no
- * environment override: the official plan and its 240-second ceiling are fixed
+ * environment override: the official plan and its fixed ceiling are defined
  * here. See README for the operator contract.
  */
 installSignalTermination();
