@@ -46,7 +46,7 @@ import {
   type RepairCycle,
   type RepairReconciliation,
 } from "./pool/repair.js";
-import { renderLocalWork, shortSha } from "./state/repair-view.js";
+import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -795,9 +795,9 @@ export class SweepEngine {
         return;
       case "concurrent-change":
         this.log(
-          `repair attempt ${attempt.attempt} of ${key}: the remote moved to ` +
-            `${attempt.remoteHeadSha === null ? "a commit" : shortSha(attempt.remoteHeadSha)} — a concurrent change the attempt ` +
-            `did not produce; local work preserved (${renderLocalWork(attempt.localWork)}), a human is asked`,
+          `repair attempt ${attempt.attempt} of ${key}: the remote branch ` +
+            `${describeRemoteChange(attempt.remoteHeadSha)} — a concurrent change the attempt did not produce; ` +
+            `local work preserved (${renderLocalWork(attempt.localWork)}), a human is asked`,
         );
         return;
     }
@@ -817,8 +817,8 @@ export class SweepEngine {
       attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
     });
     this.log(
-      `repair attempt ${attempt.attempt} of ${workKey(ref)}: the remote moved to ` +
-        `${remoteHeadSha === null ? "a commit" : shortSha(remoteHeadSha)} while the attempt's observed head was ` +
+      `repair attempt ${attempt.attempt} of ${workKey(ref)}: the remote branch ` +
+        `${describeRemoteChange(remoteHeadSha)} while the attempt's observed head was ` +
         `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
     );
   }

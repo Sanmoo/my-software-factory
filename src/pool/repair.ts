@@ -274,9 +274,7 @@ export function reconcileRepairAttempt(input: {
 }): RepairReconciliation {
   const attempt = input.cycle.attempt;
   if (attempt === null) return { kind: "none" };
-  if (attempt.publication !== "unknown" && attempt.publication !== "pending") {
-    return { kind: "none" };
-  }
+  if (isSettledPublication(attempt.publication)) return { kind: "none" };
 
   // The host's inspection is the only source: falling back to the facts
   // recorded at launch would read a pre-session branch as the attempt's result
