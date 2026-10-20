@@ -624,8 +624,6 @@ async function repairFallBlocked(
   const comment = await repairFallComment({
     cause,
     prNumber: pr.number,
-    persisting:
-      "the impediment that reactivated the repair is still unresolved (its current facts may not be confirmed)",
     consecutiveFalls: cycle.consecutiveFalls,
     attempt,
     record,

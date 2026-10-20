@@ -186,8 +186,6 @@ export interface RepairFallCommentInput {
   /** Two consecutive falls, or a concurrent change the attempt did not produce. */
   cause: "consecutive-falls" | "concurrent-change";
   prNumber: number;
-  /** The persisting impediment, in the operator's words (already phrased). */
-  persisting: string;
   consecutiveFalls: number;
   attempt: RepairAttempt;
   /** desfecho.json as read from disk — it may belong to an EARLIER attempt. */
@@ -215,7 +213,8 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
         `that the repair attempt did not produce (a concurrent change), so the factory will not ` +
         `publish over it — PR #${input.prNumber}.`
       : `automatic repair stopped after ${input.consecutiveFalls} consecutive repair attempts ended ` +
-        `without publishing PR #${input.prNumber}: ${input.persisting} persists on the current HEAD.`;
+        `without publishing PR #${input.prNumber}: the impediment that reactivated the repair is still ` +
+        `unresolved on the current HEAD.`;
   return [
     header,
     ``,

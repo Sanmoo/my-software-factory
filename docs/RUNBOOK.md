@@ -142,9 +142,8 @@ msf status --all  # every entry, no cap
 
 Derives on demand from the tracker, the workspace disk and a read-only Docker
 probe: live workers (**running**), the attempts that fell with no worker alive
-(**orphaned**), the reservations, the **repair** cycles (rounds, falls, the
-preserved local work and a pending reconciliation), last outcomes, the pool,
-archived dones — and the two reconciliation leftovers when tracker and
+(**orphaned**), the reservations, the **repair** cycles, last outcomes, the
+pool, archived dones — and the two reconciliation leftovers when tracker and
 workspace disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns the

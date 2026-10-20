@@ -478,6 +478,44 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     }
   });
 
+  test("an unreadable local state is pending, never a concurrent change in disguise", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 114);
+    // The attempt is in flight from an earlier sweep; the host cannot answer.
+    writeFileSync(
+      join(workDir(layout, REPO, 114), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 1,
+        lastEvidence: `${REPO}#114|${OBSERVED}|conflicts|`,
+        consecutiveFalls: 0,
+        attempt: {
+          evidence: `${REPO}#114|${OBSERVED}|conflicts|`,
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: null,
+          publication: "unknown",
+          localWork: { headSha: OBSERVED, commits: 0, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    await conflictingOn(tracker, pr, OBSERVED);
+    // The remote moved, but the branch cannot be read: the truth is "unknown",
+    // not "the attempt produced the new head" nor "a stranger did".
+    git.remoteHead = "moved-but-unreadable";
+    git.localWork = null;
+
+    for (let tick = 0; tick < 2; tick += 1) {
+      const sweep = await runOnce(deps);
+      assert.equal(sweep.launched.length, 0, "an unreadable local state launches nothing");
+      const cycle = await readRepairCycle(workDir(layout, REPO, 114));
+      assert.equal(cycle.attempt?.publication, "pending", "the uncertainty is exposed");
+      assert.equal(cycle.usedRounds, 1, "and the budget is not returned");
+      const issue = await tracker.readIssue({ repo: REPO, number: 114 });
+      assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no help is asked on a guess");
+    }
+  });
+
   test("two falls block even when the tracker's current facts are not confirmed", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 110);

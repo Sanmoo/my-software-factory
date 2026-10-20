@@ -47,6 +47,15 @@ export type RepairPublication =
   | "not-published"
   | "concurrent-change";
 
+/** Every verdict, for the reader that validates a persisted record. */
+const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
+  "unknown",
+  "pending",
+  "published",
+  "not-published",
+  "concurrent-change",
+];
+
 /** The attempt a repair round put on disk, enough to attribute its publication
  *  later — after a death that wrote no outcome record. */
 export interface RepairAttempt {
@@ -56,9 +65,8 @@ export interface RepairAttempt {
   attempt: number;
   /** The remote head observed before the intervention — the lease value. */
   observedHeadSha: string;
-  /** The remote head the reconciliation saw when it settled the attempt. */
+  /** The head the remote held when the attempt was settled. */
   remoteHeadSha: string | null;
-  /** What reconciliation concluded about publishing this attempt. */
   publication: RepairPublication;
   /** The work branch as the host last saw it; null when it could not be read. */
   localWork: LocalWorkFacts | null;
@@ -134,7 +142,7 @@ function readAttempt(value: unknown): RepairAttempt | null {
 }
 
 function isPublication(value: string): value is RepairPublication {
-  return ["unknown", "pending", "published", "not-published", "concurrent-change"].includes(value);
+  return REPAIR_PUBLICATIONS.includes(value as RepairPublication);
 }
 
 /** True when the attempt's publication is a terminal verdict — a settlement
@@ -223,7 +231,6 @@ export function legacyRepairAttempt(input: {
   cycle: RepairCycle;
   lastAttempt: number;
   recordedAttempt: number | null;
-  localWork: LocalWorkFacts | null;
 }): RepairAttempt | null {
   const { cycle } = input;
   if (cycle.attempt !== null) return null;
@@ -237,7 +244,7 @@ export function legacyRepairAttempt(input: {
     observedHeadSha: headSha,
     remoteHeadSha: null,
     publication: "unknown",
-    localWork: input.localWork,
+    localWork: null,
   };
 }
 
@@ -271,7 +278,10 @@ export function reconcileRepairAttempt(input: {
     return { kind: "none" };
   }
 
-  const localWork = input.localWork ?? attempt.localWork;
+  // The host's inspection is the only source: falling back to the facts
+  // recorded at launch would read a pre-session branch as the attempt's result
+  // and turn an unreadable host into a concurrent-change verdict.
+  const localWork = input.localWork;
   if (!input.remote.known) {
     return {
       kind: "pending",
