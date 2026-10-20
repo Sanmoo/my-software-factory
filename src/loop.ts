@@ -757,7 +757,6 @@ export class SweepEngine {
       cycle,
       lastAttempt: ledger.lastAttempt,
       recordedAttempt: ledger.recordedAttempt,
-      localWork: null,
     });
     if (candidate === null) return null;
     const localWork = await this.inspectLocalWork(work.ref);
@@ -1105,12 +1104,6 @@ export async function runForever(
   log("factory ended cleanly (human act)");
 }
 
-/**
- * Gather the launch material of a work from the port + git host (ticket 17):
- * the issue (title/body), human issue replies on a blocked retomada, the open
- * PR's conversation on a feedback round, and the diff. Unknown reads degrade
- * to empty — the prompt still carries whatever is known, never a lie.
- */
 /** The repair context a session is launched with (issue 112): the confirmed
  *  trigger, the unpublished attempt it takes over (when resuming) and the
  *  local work read from the host. */
@@ -1122,6 +1115,13 @@ interface RepairLaunchContext {
   pinnedHeadSha: string | null;
 }
 
+/**
+ * Gather the launch material of a work from the port + git host (ticket 17):
+ * the issue (title/body), human issue replies on a blocked retomada, the open
+ * PR's conversation on a feedback round, the repair context above, and the
+ * diff. Unknown reads degrade to empty — the prompt still carries whatever is
+ * known, never a lie.
+ */
 async function launchMaterial(
   tracker: TrackerPort,
   git: GitWork,

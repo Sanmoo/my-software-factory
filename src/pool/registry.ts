@@ -283,8 +283,8 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // The record never stops being history: a work whose record and whose
     // orphaned attempt coexist shows BOTH (issue 112) — the record is not
     // presented as the current attempt's result.
-    if (record !== null) lastOutcome.push({ key, workDir: dir, record });
     if (record !== null) {
+      lastOutcome.push({ key, workDir: dir, record });
       if (record.attempt < lastAttempt) {
         attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
       }

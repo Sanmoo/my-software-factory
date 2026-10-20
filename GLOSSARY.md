@@ -18,7 +18,7 @@
 | Running | A work whose attempt is being carried out by a live worker right now. |
 | Orphaned | A work whose attempt ended without a recorded outcome and with no worker running — an abrupt fall awaiting the factory's next reconciliation. |
 | Archived work | A work that reached done, whose artifacts were moved to the archive. |
-| Block | A work the factory stopped driving (2nd consecutive fall or PR closed without merge) until a human answers on the issue. |
+| Block | A work the factory stopped driving (2nd consecutive worker fall, 2nd consecutive Repair fall, or PR closed without merge) until a human answers on the issue. |
 | Occurrence | A new act that needs human continuity (initial execution or feedback round leaving a PR open, a help request, a block) — never an ordinary sweep. |
 | Notification | A passive local desktop notice about a new occurrence: the work, a brief reason and the relevant GitHub address. |
 | Notice | The short form of Notification, used in code and docs. |
@@ -26,4 +26,5 @@
 | Repair | An automatic reactivation of a reserved work whose open PR has confirmed conflicts with its base or required checks concluded with failure/timeout; at most two rounds without recovery. |
 | Repair fall | A repair attempt that ended without publishing: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work — the open PR never hides the fall. |
 | Pending reconciliation | A repair attempt whose publication cannot be verified yet (the remote could not be read): no new worker and no budget returned until a later sweep gets an answer. |
+| Concurrent change | A remote head the repair attempt did not produce (a collaborator's push): the factory never publishes over it, preserves the local work and asks the human to reconcile both sides. |
 | Help notice | A notification that a work needs the operator on the issue (help request, block, rejection); it points at the issue. |

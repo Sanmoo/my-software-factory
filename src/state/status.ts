@@ -1,6 +1,11 @@
 import type { Config } from "../config.js";
 import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
-import { readLastAttempt, scanRegistry, type RegistryView } from "../pool/registry.js";
+import {
+  readLastAttempt,
+  scanRegistry,
+  type AttemptWithoutOwnOutcome,
+  type RegistryView,
+} from "../pool/registry.js";
 import type { TrackerPort } from "../tracker/port.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import {
@@ -35,14 +40,10 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
-/** A fallen attempt as the status names it (issue 112): the attempt with no
- *  record of its own, and the attempt the record on disk belongs to (history —
- *  never this attempt's result). */
-export interface OrphanedAttempt {
-  key: string;
-  attempt: number;
-  recordedAttempt: number | null;
-}
+/** A fallen attempt as the status names it (issue 112): the registry's own
+ *  fact, under the status vocabulary — the attempt with no record of its own,
+ *  and the attempt the record on disk belongs to (history, never its result). */
+export type OrphanedAttempt = AttemptWithoutOwnOutcome;
 
 /** What the probe could say: the two states, or that it could not tell. */
 export type Liveness =
@@ -120,13 +121,7 @@ async function classifyLiveness(
   return {
     state: "known",
     running,
-    orphaned: registry.attemptsWithoutOwnOutcome
-      .filter((entry) => !carried.has(entry.key))
-      .map((entry) => ({
-        key: entry.key,
-        attempt: entry.attempt,
-        recordedAttempt: entry.recordedAttempt,
-      })),
+    orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key)),
   };
 }
 
