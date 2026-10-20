@@ -4,6 +4,7 @@ import { test, describe } from "node:test";
 import {
   bakeCredentialHelper,
   createGitHubAdapter,
+  defaultCommandRunner,
   MissingCredentialError,
   GitHubTrackerAdapter,
   readGhToken,
@@ -647,6 +648,21 @@ describe("9c. credential bake: a reused clone with accumulated helpers ends with
       exec("git", ["config", "--local", "credential.helper", ""], { cwd: dir }),
       (error: unknown) => (error as { code?: number }).code === 5,
     );
+  });
+
+  test("a child that exits before the body lands is its exit code, never an unhandled EPIPE", async () => {
+    // `git config --unset-all` answering exit 5 can close the pipe under the
+    // write. The verdict of the call is the code; a stray EPIPE must not take
+    // the process (and the test file running it) down.
+    await assert.rejects(
+      defaultCommandRunner("sh", ["-c", "exit 5"], { env: {}, input: "x".repeat(512 * 1024) }),
+      (error: unknown) => (error as { exitCode?: number | null }).exitCode === 5,
+    );
+    const ok = await defaultCommandRunner("sh", ["-c", "cat >/dev/null; echo done"], {
+      env: {},
+      input: "body",
+    });
+    assert.equal(ok.stdout.trim(), "done", "a child that DOES read the body still receives it");
   });
 
   test("a clone with TWO-plus credential.helper values ends with exactly one (the intended)", async () => {

@@ -116,6 +116,11 @@ export const defaultCommandRunner: CommandRunner = (file, args, options) =>
         reject(new CommandError(file, args, code, stderr));
       }
     });
+    // A child that exits before the body lands (a fast `git config --unset-all`
+    // that answers exit 5) closes the pipe under the write: an unhandled EPIPE
+    // here would crash the whole runner. The exit code is the verdict of the
+    // call, never the fate of this write.
+    child.stdin.on("error", () => {});
     child.stdin.end(options.input ?? "");
   });
 
