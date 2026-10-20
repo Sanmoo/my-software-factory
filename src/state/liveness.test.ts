@@ -92,13 +92,18 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
  * failure: inside the measured gateway a missing daemon or image must never
  * look like a successful run of the required integration check.
  */
-const dockerSkipReason: string | undefined = (() => {
+/** The skip reason a focused run may carry; under the gateway's requirement
+ * the same missing prerequisite throws instead of skipping. Module scope on
+ * purpose: a suite-build throw would be reported but not fail the file. */
+const dockerSkipReason = dockerSkipReasonUnlessRequired();
+
+function dockerSkipReasonUnlessRequired(): string | undefined {
   const missing = missingDockerReason();
   if (missing !== undefined && process.env.MSF_REQUIRE_DOCKER === "1") {
     throw new Error(`the quality gateway requires the real Docker check, but ${missing}`);
   }
   return missing;
-})();
+}
 
 function missingDockerReason(): string | undefined {
   try {
