@@ -13,6 +13,13 @@ export function shortSha(sha: string): string {
   return sha.slice(0, 12);
 }
 
+/** What happened to the remote branch, in one phrase: a moved head, or a
+ *  branch that is gone (a deleted branch is not "a commit"). */
+export function describeRemoteChange(remoteHeadSha: string | null): string {
+  if (remoteHeadSha === null) return "is gone from the remote";
+  return `moved to \`${shortSha(remoteHeadSha)}\``;
+}
+
 /**
  * The local work of an attempt in one phrase, for the block comment and the
  * status: what exists on disk and would be lost by a blind restart.
@@ -41,7 +48,7 @@ export function describePublication(publication: RepairPublication): string {
     case "not-published":
       return "not published (the remote is still at the observed head)";
     case "concurrent-change":
-      return "the remote moved to a head this attempt did not produce (concurrent change)";
+      return "a concurrent change the attempt did not produce";
     case "pending":
       return "publication not verified yet (reconciliation pending)";
     case "unknown":

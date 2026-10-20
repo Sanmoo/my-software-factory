@@ -493,6 +493,13 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
+    // An unsettled repair attempt holds the claim even when the PR cannot be
+    // read: releasing it would hand the work back to the pool while its
+    // publication is still unknown (issue 112).
+    const cycle = await readRepairCycle(work.dir);
+    if (cycle.attempt !== null && !isSettledPublication(cycle.attempt.publication)) {
+      return { ref, state: "idle" };
+    }
     return deriveUnreconciledFall(ref, work.dir, workspace, inFlight);
   }
   return { ref, state: "idle" };

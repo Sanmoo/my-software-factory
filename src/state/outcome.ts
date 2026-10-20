@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
 import type { RepairAttempt } from "../pool/repair.js";
-import { describePublication, renderLocalWork, shortSha } from "./repair-view.js";
+import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**
@@ -226,12 +226,6 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
     ``,
     renderWorkEvidence(evidence),
   ].join("\n");
-}
-
-/** What happened to the remote branch, as the operator reads it. */
-function describeRemoteChange(remoteHeadSha: string | null): string {
-  if (remoteHeadSha === null) return "is gone from the remote";
-  return `moved to \`${shortSha(remoteHeadSha)}\``;
 }
 
 /**

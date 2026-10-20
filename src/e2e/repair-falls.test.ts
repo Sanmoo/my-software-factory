@@ -683,7 +683,12 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 0, "the local history is not published over the collaborator's push");
     assert.ok(
-      logs.some((line) => line.includes("the remote moved to") && line.includes("nothing is published")),
+      logs.some(
+        (line) =>
+          line.includes("repair attempt 2 of") &&
+          line.includes("the remote branch moved to") &&
+          line.includes("nothing is published"),
+      ),
       "the guard names the concurrent change",
     );
     assert.ok(
