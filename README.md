@@ -7,6 +7,8 @@ dedicated bot account. The human is the gate — the factory never merges.
 ## Requirements
 
 - Node 22+
+- Docker whose daemon answers on a unix socket: the workers are containers and
+  each one inherits that daemon (ADR 0003)
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml

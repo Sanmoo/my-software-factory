@@ -6,7 +6,8 @@ headless in a container, profile snapshot), the real git host. This is the
 exact script of the live proof: a real issue → worker → PR opened by the
 configured account → human feedback → merge. In v0.1 that account is the
 operator's: GitHub hides `bot-do-samuca`, and the accepted risk is the
-operator PAT inside the unrestricted container. Factory speech is the
+operator PAT inside the unrestricted container — as is the host's Docker
+socket riding inside it (ADR 0003). Factory speech is the
 `<!-- msf:agent -->` marker, not a different login.
 
 ## Before the first run (once)
@@ -81,6 +82,24 @@ snapshot's global config and the repo's `mise.toml`, when the repo declares
 one. The session NEVER hunts a declared tool: it is there or the launch
 fails fast. The worker still may run `mise install` for tools a work adds
 declarations for mid-flight — that is the exception, not the design.
+
+## Docker inside the worker (ADR 0003)
+
+Every worker container inherits the HOST's Docker daemon: the runtime binds the
+daemon socket and adds the socket's group, so `docker` works inside the worker —
+it builds the worker image (`npm run build:image`) and runs the repo's real
+Docker tests. The container starts no daemon of its own.
+
+- A **socket-based** daemon is required: the default `/var/run/docker.sock`, or
+  the path `DOCKER_HOST=unix://…` names. A tcp daemon, a missing socket and an
+  image without the docker client are all refused at launch, each with its own
+  message — never a worker that reports "no Docker here".
+- The preflight proves it on every launch: a throwaway worker-shaped container
+  asks the daemon for its version through the socket's group before any work
+  starts.
+- Containers a worker starts are the host's siblings: a bind path resolves on
+  the HOST. The worktree and the workspace are mirrored at their host paths;
+  container-only paths (`/msf-work`, the container's `/tmp`) are not.
 
 ## (a) One-shot: claim + launch a real worker
 

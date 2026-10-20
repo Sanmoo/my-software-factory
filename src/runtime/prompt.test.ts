@@ -55,6 +55,15 @@ describe("worker prompt — the material the session starts from", () => {
     assert.match(prompt, /Add a `greet` endpoint to the API\./);
   });
 
+  test("tells the worker Docker is available inside the container — and that its binds resolve on the host (ADR 0003)", () => {
+    // The blocked round this exists for: an agent that needs Docker reported
+    // "there is no Docker here" because nothing said there was.
+    const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /Docker works inside this container/);
+    assert.match(prompt, /npm run build:image/);
+    assert.match(prompt, /host's siblings/);
+  });
+
   test("a blocked-resume prompt includes human issue replies and reconciles them with the issue body", () => {
     const request = baseRequest({
       material: {

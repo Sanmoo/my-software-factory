@@ -17,9 +17,17 @@ ARG PI_VERSION=1.3.0
 # steady start downloads nothing (fd-find is Debian's package name and installs
 # `fdfind`; Pi probes for `fd`). jq is another probe. curl is only needed here,
 # for the GitHub CLI key, and is purged after.
+#
+# The docker CLI is the CLIENT only: the runtime binds the host's daemon socket
+# into the worker container (ADR 0003), so a worker builds the worker image and
+# runs the repo's real Docker tests instead of self-reporting blocked for a
+# missing Docker. buildx is what `docker build` drives on a modern daemon (the
+# legacy builder is gone); the client negotiates the API with the host's server,
+# so its Debian version need not match the host's. No daemon package here: the
+# worker must never start a second Docker of its own.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      git ca-certificates curl gnupg python3 ripgrep fd-find jq \
+      git ca-certificates curl gnupg python3 ripgrep fd-find jq docker-cli docker-buildx \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && mkdir -p -m 755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \

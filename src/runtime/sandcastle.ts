@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -66,6 +66,69 @@ export const TOOLCHAIN_SUBPATHS = {
 export const MISE_CONTAINER_DIR = "/home/agent/.local/share/mise";
 export const NPM_CONTAINER_DIR = `${AGENT_DIR}/npm`;
 
+/**
+ * Docker inside the worker (ADR 0003, the unblock of issue 113): the worker
+ * container inherits the host's daemon by binding its socket and joining the
+ * socket's group — the worker builds the worker image and runs the repo's real
+ * Docker tests instead of self-reporting blocked for a missing `docker`. The
+ * container sees the socket where the host has it and DOCKER_HOST names that
+ * path explicitly, so a non-default location needs no other change.
+ */
+export const DEFAULT_DOCKER_SOCKET_PATH = "/var/run/docker.sock";
+
+/** The daemon socket a worker container inherits, with the group it needs. */
+export interface DockerSocket {
+  /** The daemon socket on the host — the same path inside the container. */
+  hostPath: string;
+  /** The socket's gid: the supplementary group the container user joins to
+   *  read a root-owned 0660 socket (Docker-outside-of-Docker). */
+  gid: number;
+}
+
+export interface DockerSocketDeps {
+  env?: NodeJS.ProcessEnv;
+  /** Injectable stat for the tests; the default reads the real socket. */
+  stat?: (path: string) => { gid: number; isSocket(): boolean };
+}
+
+/**
+ * The socket the host's Docker answers on. Refuses instead of guessing: a
+ * daemon reached over tcp has no socket to bind, and a missing socket would
+ * land in the container as an empty mount — a worker with Docker-shaped tools
+ * and no daemon is exactly the blocked round this exists to prevent.
+ */
+export function dockerSocketFromHost(deps: DockerSocketDeps = {}): DockerSocket {
+  const hostPath = unixSocketPath((deps.env ?? process.env).DOCKER_HOST);
+  const stat = deps.stat ?? ((path: string) => statSync(path));
+  let stats: { gid: number; isSocket(): boolean };
+  try {
+    stats = stat(hostPath);
+  } catch {
+    throw new Error(
+      `the Docker daemon socket ${hostPath} is missing — the worker inherits Docker through it. Start Docker (or point DOCKER_HOST at the socket your daemon uses) and run again.`,
+    );
+  }
+  if (!stats.isSocket()) {
+    throw new Error(
+      `the Docker daemon path ${hostPath} is not a unix socket — the worker inherits Docker by binding it. Point DOCKER_HOST at the daemon's socket.`,
+    );
+  }
+  return { hostPath, gid: stats.gid };
+}
+
+/** The unix socket path DOCKER_HOST names, or the default when unset. */
+export function unixSocketPath(dockerHost: string | undefined): string {
+  const host = dockerHost?.trim() ?? "";
+  if (host === "") return DEFAULT_DOCKER_SOCKET_PATH;
+  const prefix = host.startsWith("unix://") ? "unix://" : host.startsWith("unix:") ? "unix:" : null;
+  if (prefix === null) {
+    throw new Error(
+      `DOCKER_HOST=${host} is not a unix socket — the worker inherits Docker through a bind-mounted socket, so the factory needs a socket-based daemon (unset DOCKER_HOST, or set it to unix://${DEFAULT_DOCKER_SOCKET_PATH}).`,
+    );
+  }
+  return host.slice(prefix.length);
+}
+
 /** The mise convergence hook's ceiling: a first install of many declared
  *  tools (java, elixir, python…) is slow — the launch waits so the session
  *  NEVER meets a missing declared tool; every later launch is a no-op hit
@@ -116,6 +179,9 @@ export interface SandcastleRuntimeOptions {
    * layer): <workspace>/toolchains/... created idempotently at launch and
    * bound read-write so installed toolchains survive the container. */
   workspace: string;
+  /** The Docker daemon socket the container inherits (ADR 0003). Resolved at
+   * launch; defaults to dockerSocketFromHost(). */
+  dockerSocket?: () => DockerSocket;
   /** The blocked label the worker self-reports; defaults to the config default. */
   blockedLabel?: string;
   /** Full agent runs per launch; defaults to 1 (one session, one full run). */
@@ -139,6 +205,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly token: string;
   private readonly image: string;
   private readonly workspace: string;
+  private readonly resolveDockerSocket: () => DockerSocket;
   private readonly profileDir: string;
   private readonly allowedRoots: readonly string[];
   private readonly skipDanglingProfileLinks: boolean;
@@ -156,6 +223,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.token = options.token;
     this.image = options.image ?? WORKER_IMAGE;
     this.workspace = options.workspace;
+    this.resolveDockerSocket = options.dockerSocket ?? (() => dockerSocketFromHost());
     this.profileDir = options.profileDir ?? DEFAULT_PROFILE_DIR;
     this.allowedRoots = options.allowedRoots ?? [];
     this.skipDanglingProfileLinks = options.skipDanglingProfileLinks ?? false;
@@ -165,7 +233,14 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.idleTimeoutSeconds = options.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
     this.runSandcastle = options.runSandcastle ?? (async (runOptions) => sandcastleRun(runOptions));
     this.dockerProvider = options.dockerProvider ?? ((dockerOptions) => docker(dockerOptions));
-    this.preflight = options.preflight ?? (async () => defaultPreflight({ token: this.token, image: this.image })());
+    this.preflight =
+      options.preflight ??
+      (async () =>
+        defaultPreflight({
+          token: this.token,
+          image: this.image,
+          dockerSocket: this.resolveDockerSocket(),
+        })());
     this.piProvider = options.piProvider ?? ((model, piOptions) => pi(model, piOptions));
   }
 
@@ -229,8 +304,16 @@ export class SandcastleRuntime implements WorkerRuntime {
     ];
   }
 
+  /** The Docker socket bind (ADR 0003): the host's daemon socket, read-write
+   * (a socket is a channel, not a file tree), at the path the host has it —
+   * DOCKER_HOST in the container names the same path. */
+  private dockerSocketBind(socket: DockerSocket): { hostPath: string; sandboxPath: string; readonly: false } {
+    return { hostPath: socket.hostPath, sandboxPath: socket.hostPath, readonly: false };
+  }
+
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
   private runOptionsFor(request: WorkRequest, snapshotDir: string, sessionsDir: string): RunOptions {
+    const dockerSocket = this.resolveDockerSocket();
     const agent = this.piProvider(this.model, {
       // No implicit capture: the sessions bind does the persistence, the
       // session file already lives on the host (the resume path of later
@@ -259,13 +342,19 @@ export class SandcastleRuntime implements WorkerRuntime {
       agent: agentWithFlags,
       sandbox: this.dockerProvider({
         imageName: this.image,
-        env: { GH_TOKEN: this.token },
+        // GH_TOKEN authenticates gh; DOCKER_HOST names the socket the worker
+        // inherits, so the CLI inside reaches the host daemon (ADR 0003).
+        env: { GH_TOKEN: this.token, DOCKER_HOST: `unix://${dockerSocket.hostPath}` },
+        // The socket's own group, as a supplementary gid: the container user
+        // is the host user, not root, and the socket is root-owned 0660.
+        groups: [dockerSocket.gid],
         // No `network` — Docker's default bridge, open egress.
         mounts: [
           { hostPath: snapshotDir, sandboxPath: PROFILE_MOUNT, readonly: true },
           { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
           ...this.toolchainBinds(),
+          this.dockerSocketBind(dockerSocket),
         ],
       }),
       cwd: request.repoDir,
@@ -372,15 +461,19 @@ export async function workerToken(account: string): Promise<string> {
 export interface PreflightDeps {
   token: string;
   image: string;
+  /** The daemon socket the worker container inherits (ADR 0003). */
+  dockerSocket: DockerSocket;
   /** The command runner (docker); injectable for tests. */
   run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 }
 
 /**
  * The launch preconditions (the v1's refusal pattern): Docker is alive, the
- * worker image exists, the token is present, and the image carries the git
- * credential helper the worker's push needs. A failure is a factory-level
- * failure, not a work outcome — the launch throws before any artifact.
+ * worker image exists, the token is present, the image carries the git
+ * credential helper the worker's push needs, the image carries the docker CLI
+ * and the socket bind really reaches the daemon (ADR 0003). A failure is a
+ * factory-level failure, not a work outcome — the launch throws before any
+ * artifact.
  */
 export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
   return async () => {
@@ -431,6 +524,58 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     if (helper.trim() === "") {
       throw new Error(
         `worker image ${deps.image} has no git credential helper for github.com — the worker cannot push. Rebuild it with: npm run build:image`,
+      );
+    }
+
+    // Docker INSIDE the worker (ADR 0003). A capability the image lacks or a
+    // socket the container user cannot read lands in the round as a "no docker
+    // here" blocked report — the agent has nothing to distinguish it from a
+    // host without Docker. Both are proven here, in a throwaway container
+    // shaped like a worker: the image's own user, the socket's group.
+    let version = "";
+    try {
+      ({ stdout: version } = await run("docker", [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "docker",
+        deps.image,
+        "--version",
+      ]));
+    } catch {
+      version = "";
+    }
+    if (version.trim() === "") {
+      throw new Error(
+        `worker image ${deps.image} carries no docker CLI — a worker cannot run the Docker checks. Rebuild it with: npm run build:image`,
+      );
+    }
+
+    const socket = deps.dockerSocket;
+    try {
+      await run("docker", [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--group-add",
+        String(socket.gid),
+        "-e",
+        `DOCKER_HOST=unix://${socket.hostPath}`,
+        "-v",
+        `${socket.hostPath}:${socket.hostPath}`,
+        "--entrypoint",
+        "docker",
+        deps.image,
+        "info",
+        "--format",
+        "{{.ServerVersion}}",
+      ]);
+    } catch {
+      throw new Error(
+        `worker image ${deps.image} cannot reach the Docker daemon through ${socket.hostPath} as gid ${socket.gid} — a worker would have no Docker. Check that this is the daemon's socket and that its group is readable by the container user (rebuild with: npm run build:image).`,
       );
     }
   };
