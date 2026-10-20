@@ -37,7 +37,12 @@ if (planPath === undefined || budget === undefined) {
       refuse(`cannot read the fixture plan at ${planPath}: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
-    if (plan !== undefined) {
+    if (plan === undefined) {
+      // The parse failure above already reported and set the exit code.
+    } else if (plan === null || typeof plan !== "object" || !Array.isArray(plan.stages)) {
+      refuse(`the fixture plan at ${planPath} must be an object with a stages array`);
+      process.exitCode = 1;
+    } else {
       process.exitCode = await runGateway(plan, { cwd: process.cwd(), budgetMs, label: LABEL });
     }
   }

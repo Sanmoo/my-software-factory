@@ -9,6 +9,7 @@ dedicated bot account. The human is the gate — the factory never merges.
 - Node 22+
 - Docker whose daemon answers on a unix socket: the workers are containers and
   each one inherits that daemon (ADR 0003)
+- Docker, for the real local integration test (see Tests)
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml
@@ -65,12 +66,12 @@ npm run gateway
 ```
 
 `npm run gateway` is this repository's canonical, mandatory validation:
-compilation, the TypeScript checks it carries, the whole test suite and the
-real local Docker integration test, all under one 240-second wall-clock
-ceiling. Docker and the worker image are mandatory prerequisites — a missing
-one fails the run, it never becomes a skip. Provisioning and image builds
-happen before the measured run; LLM reviews, `npm run proof:real` and
-`npm run smoke:github` stay outside it. At the deadline the running check and
+compilation (tsc's whole-project typecheck — the emitting build fails on type
+errors), the whole test suite and the real local Docker integration test, all
+under one 240-second wall-clock ceiling. Docker and the worker image are
+mandatory prerequisites — a missing one fails the run, it never becomes a
+skip. Provisioning and image builds happen before the measured run; LLM
+reviews, `npm run proof:real` and `npm run smoke:github` stay outside it. At the deadline the running check and
 its subprocesses are killed and the interrupted check is named.
 
 Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted;

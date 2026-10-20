@@ -100,6 +100,12 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
   const dockerLog = join(dir, "docker.log");
   const testSource = join(dir, "sample.test.source.js");
   mkdirSync(binDir, { recursive: true });
+  // The gateway compares compiled tests with their sources: the fixture keeps
+  // one source per compiled test so "a smaller suite" is observable.
+  for (const source of ["unit.test.ts", "state/liveness.test.ts", "e2e/sample.test.ts"]) {
+    mkdirSync(join(dir, "src", join(source, "..")), { recursive: true });
+    writeFileSync(join(dir, "src", source), "// fixture test source\n", "utf8");
+  }
   writeFileSync(
     testSource,
     [
@@ -133,7 +139,9 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
       '  if [ -e dist/stale.js ]; then echo "stale dist visible to compile" >&2; exit 9; fi',
       '  if [ "$FIXTURE_WRITE_TESTS" = "0" ]; then exit 0; fi',
       "  mkdir -p dist/state dist/e2e || exit 8",
-      '  if [ "$FIXTURE_FAILING_TEST" = "1" ]; then',
+      '  if [ "$FIXTURE_DROP_UNIT" = "1" ]; then',
+      "    :",
+      '  elif [ "$FIXTURE_FAILING_TEST" = "1" ]; then',
       '    printf \'%s\\n\' \'const { test } = require("node:test"); test("fails", () => { throw new Error("fixture failure"); });\' > dist/sample.test.js',
       "  else",
       '    cp "$FIXTURE_TEST_SOURCE" dist/sample.test.js || exit 8',
@@ -252,6 +260,16 @@ describe("quality gateway — the command contract", () => {
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /check failed: "test" .*compiled suite is incomplete \(no test files under dist\/\)/);
+    assert.doesNotMatch(result.stdout, /check "test" .*passed/);
+  });
+
+  test("a suite missing one compiled test file is refused as smaller than its sources", () => {
+    const { dir, env } = officialFixture();
+
+    const result = runOfficial(dir, { ...env, FIXTURE_DROP_UNIT: "1" });
+
+    assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+    assert.match(result.stderr, /check failed: "test" .*compiled suite is incomplete \(2 of 3 source test files compiled\)/);
     assert.doesNotMatch(result.stdout, /check "test" .*passed/);
   });
 

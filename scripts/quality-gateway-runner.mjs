@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+
+import { WORKER_IMAGE } from "./worker-image.mjs";
 
 /**
  * The quality gateway runner (issue 113): composition of the required checks,
@@ -16,19 +18,6 @@ import { resolve } from "node:path";
  */
 
 export const BUDGET_MS = 240_000;
-
-/** The worker image tag lives in package.json; the gateway requires it. */
-function workerImageTag() {
-  try {
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    if (typeof pkg.workerImage !== "string") throw new Error("`workerImage` is missing or not a string");
-    return pkg.workerImage;
-  } catch (error) {
-    throw new Error(`cannot read the worker image from package.json: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-const WORKER_IMAGE = workerImageTag();
 
 const PREREQUISITES = [
   {
@@ -129,7 +118,7 @@ function spawnBounded(stage, cwd, remainingMs, { quiet }) {
       resolvePromise({ ...result, timedOut, output });
     };
     child.once("error", (error) => settle({ code: null, signal: null, error }));
-    child.once("exit", (code, signal) => settle({ code, signal, error: null }));
+    child.once("close", (code, signal) => settle({ code, signal, error: null }));
   });
 }
 
@@ -148,6 +137,17 @@ function compiledTestFiles(cwd) {
   try {
     return readdirSync(resolve(cwd, "dist"), { recursive: true }).filter((entry) =>
       String(entry).endsWith(".test.js"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** The test sources the compile stage is expected to turn into those files. */
+function sourceTestFiles(cwd) {
+  try {
+    return readdirSync(resolve(cwd, "src"), { recursive: true }).filter((entry) =>
+      String(entry).endsWith(".test.ts"),
     );
   } catch {
     return [];
@@ -210,11 +210,15 @@ export async function runGateway(plan, { cwd, budgetMs, label = "quality gateway
     }
     if (stage.requiredTestFiles !== undefined) {
       const files = compiledTestFiles(cwd);
+      const sources = sourceTestFiles(cwd);
       const missing = stage.requiredTestFiles.filter(
         (required) => !files.some((file) => file === required || file.startsWith(required)),
       );
-      if (files.length === 0 || missing.length > 0) {
-        const gap = files.length === 0 ? "no test files under dist/" : `missing ${missing.join(", ")}`;
+      if (files.length === 0 || missing.length > 0 || files.length < sources.length) {
+        let gap;
+        if (files.length === 0) gap = "no test files under dist/";
+        else if (missing.length > 0) gap = `missing ${missing.join(", ")}`;
+        else gap = `${files.length} of ${sources.length} source test files compiled`;
         reportError(`check failed: ${check} ${position} — the compiled suite is incomplete (${gap}); refusing to validate a smaller suite`);
         return CHECK_FAILED_WITHOUT_STATUS;
       }
