@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { LocalWorkFacts } from "../git/port.js";
+import { WORK_OPERATIONS, type LocalWorkFacts, type WorkOperation } from "../git/port.js";
 import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
 
 /**
@@ -28,7 +28,8 @@ export const REPAIR_FILENAME = "reparo.json";
 /** The joint cap: conflicts and CI failures share the same two rounds. */
 export const MAX_REPAIR_ROUNDS = 2;
 
-/** How many consecutive repair attempts may end without publishing. */
+/** Separate from the round budget on purpose: returning an undelivered round
+ *  must never authorize an unbounded number of retries. */
 export const MAX_REPAIR_FALLS = 2;
 
 /**
@@ -46,7 +47,8 @@ export type RepairPublication =
   | "not-published"
   | "concurrent-change";
 
-/** The durable record of the attempt a repair round put on disk. */
+/** The attempt a repair round put on disk, enough to attribute its publication
+ *  later — after a death that wrote no outcome record. */
 export interface RepairAttempt {
   /** The evidence signature this attempt addresses — the round's ticket. */
   evidence: string;
@@ -131,7 +133,7 @@ function readAttempt(value: unknown): RepairAttempt | null {
   };
 }
 
-export function isPublication(value: string): value is RepairPublication {
+function isPublication(value: string): value is RepairPublication {
   return ["unknown", "pending", "published", "not-published", "concurrent-change"].includes(value);
 }
 
@@ -145,7 +147,8 @@ export function isSettledPublication(publication: RepairPublication): boolean {
   );
 }
 
-/** The local-work facts as persisted; a partial record degrades to null. */
+/** A record written by another version may carry fewer facts: an unreadable
+ *  local state is null (unverified), never an invented clean branch. */
 function readLocalWork(value: unknown): LocalWorkFacts | null {
   if (value === null || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -155,9 +158,7 @@ function readLocalWork(value: unknown): LocalWorkFacts | null {
   const operation = record["operationInProgress"];
   if (headSha !== null && typeof headSha !== "string") return null;
   if (typeof commits !== "number" || typeof uncommitted !== "boolean") return null;
-  if (operation !== null && !["rebase", "merge", "cherry-pick"].includes(String(operation))) {
-    return null;
-  }
+  if (operation !== null && !WORK_OPERATIONS.includes(operation as WorkOperation)) return null;
   return {
     headSha,
     commits: Math.max(0, Math.floor(commits)),
@@ -327,44 +328,4 @@ function settleAttempt(
   localWork: LocalWorkFacts | null,
 ): RepairCycle {
   return { ...cycle, attempt: { ...attempt, publication, localWork } };
-}
-/** A branch tip the human reads at a glance: the first 12 characters. */
-export function shortSha(sha: string): string {
-  return sha.slice(0, 12);
-}
-
-/**
- * The local work of an attempt in one phrase, for the block comment and the
- * status: what exists on disk and would be lost by a blind restart.
- */
-export function renderLocalWork(facts: LocalWorkFacts | null): string {
-  if (facts === null) return "the local work could not be read";
-  const parts: string[] = [];
-  if (facts.headSha === null) {
-    parts.push("no work branch on disk");
-  } else {
-    parts.push(
-      facts.commits === 1 ? "1 commit on the branch" : `${facts.commits} commits on the branch`,
-    );
-    parts.push(`HEAD ${shortSha(facts.headSha)}`);
-  }
-  if (facts.uncommitted) parts.push("uncommitted changes");
-  if (facts.operationInProgress !== null) parts.push(`a ${facts.operationInProgress} in progress`);
-  return parts.join(", ");
-}
-
-/** The publication verdict in the operator's vocabulary — one phrase, no jargon. */
-export function describePublication(publication: RepairPublication): string {
-  switch (publication) {
-    case "published":
-      return "published (the remote carries the commit the attempt produced)";
-    case "not-published":
-      return "not published (the remote is still at the observed head)";
-    case "concurrent-change":
-      return "the remote moved to a head this attempt did not produce (concurrent change)";
-    case "pending":
-      return "publication not verified yet (reconciliation pending)";
-    case "unknown":
-      return "publication not verified yet";
-  }
 }

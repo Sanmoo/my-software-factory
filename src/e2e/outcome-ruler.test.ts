@@ -394,7 +394,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     const facts = await readLaunchFacts(workDir(layout, REPO, 1));
     assert.deepEqual(facts, { attempt: 2, previousFall: true });
     const view = await scanRegistry(layout);
-    assert.deepEqual(view.attemptsWithoutOutcome, []);
+    assert.deepEqual(view.attemptsWithoutOwnOutcome, []);
     assert.equal(view.lastOutcome.length, 1);
     assert.equal(view.lastOutcome[0]!.key, `${REPO}#1`);
     assert.equal(view.lastOutcome[0]!.record.class, "clean-without-pr");

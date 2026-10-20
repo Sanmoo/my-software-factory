@@ -76,7 +76,7 @@ export async function deriveStatus(
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
   const reservations = new Set<string>([
-    ...registry.attemptsWithoutOutcome.map((entry) => entry.key),
+    ...registry.attemptsWithoutOwnOutcome.map((entry) => entry.key),
     ...registry.reservedWithoutAttempt,
     ...registry.lastOutcome.map((entry) => entry.key),
   ]);
@@ -120,7 +120,7 @@ async function classifyLiveness(
   return {
     state: "known",
     running,
-    orphaned: registry.attemptsWithoutOutcome
+    orphaned: registry.attemptsWithoutOwnOutcome
       .filter((entry) => !carried.has(entry.key))
       .map((entry) => ({
         key: entry.key,

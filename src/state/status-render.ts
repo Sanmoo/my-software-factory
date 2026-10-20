@@ -3,13 +3,10 @@ import {
   renderUnmarkedReservation,
   workKey,
 } from "./derive.js";
-import {
-  MAX_REPAIR_FALLS,
-  MAX_REPAIR_ROUNDS,
-  describePublication,
-  renderLocalWork,
-} from "../pool/repair.js";
+import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
+import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";
+import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 
 /**
@@ -52,11 +49,11 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   // Liveness unknown: the registry can still name the works whose outcome was
   // never recorded — it just cannot say which of them a worker still carries.
-  if (liveness.state === "unknown" && view.registry.attemptsWithoutOutcome.length > 0) {
+  if (liveness.state === "unknown" && view.registry.attemptsWithoutOwnOutcome.length > 0) {
     lines.push(
       ...section(
         "attempts without their own outcome (Running or Orphaned — only Docker can tell)",
-        view.registry.attemptsWithoutOutcome.map((entry) =>
+        view.registry.attemptsWithoutOwnOutcome.map((entry) =>
           renderFallen(entry.key, entry.attempt, entry.recordedAttempt),
         ),
         cap,
@@ -129,9 +126,13 @@ function renderFallen(key: string, attempt: number, recordedAttempt: number | nu
   return `${key} (attempt ${attempt} fell — ${history})`;
 }
 
-/** One repair cycle: the two ledgers, the attempt's publication and its local work. */
+/**
+ * One repair cycle: the two ledgers, the attempt's publication, the local work
+ * it preserved and the evidence the operator opens by hand (issue 112, story
+ * 32 — paths always shown, workspace-relative, whatever their presence).
+ */
 function renderRepair(entry: RepairViewEntry): string {
-  const { cycle } = entry;
+  const { cycle, evidence } = entry;
   const parts = [
     `rounds ${cycle.usedRounds}/${MAX_REPAIR_ROUNDS}`,
     `falls ${cycle.consecutiveFalls}/${MAX_REPAIR_FALLS}`,
@@ -140,7 +141,17 @@ function renderRepair(entry: RepairViewEntry): string {
     parts.push(`attempt ${cycle.attempt.attempt}: ${describePublication(cycle.attempt.publication)}`);
     parts.push(`local work: ${renderLocalWork(cycle.attempt.localWork)}`);
   }
+  if (evidence !== null) parts.push(`evidence: ${renderEvidence(evidence)}`);
   return `${entry.key} (${parts.join("; ")})`;
+}
+
+/** The three evidence locations in one clause: path, then what the probe said. */
+function renderEvidence(evidence: WorkEvidence): string {
+  return [
+    `reservation ${evidence.workDir.path} ${evidence.workDir.presence}`,
+    `event log ${evidence.eventLog.path} ${evidence.eventLog.presence}`,
+    `sandcastle log ${evidence.sandcastleLog.path} ${evidence.sandcastleLog.presence}`,
+  ].join(", ");
 }
 
 /**

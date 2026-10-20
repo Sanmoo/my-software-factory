@@ -10,6 +10,7 @@ import {
   type GitWork,
   type LocalWorkFacts,
   type PreparedWork,
+  type WorkOperation,
 } from "./port.js";
 
 const execFile = promisify(execFileCallback);
@@ -229,7 +230,7 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
 
 /** The operation markers git leaves inside the worktree's git dir, in the
  *  order they win: an unfinished rebase is never mistaken for a clean tree. */
-function operationInProgressOf(gitDir: string): LocalWorkFacts["operationInProgress"] {
+function operationInProgressOf(gitDir: string): WorkOperation | null {
   if (existsSync(join(gitDir, "rebase-merge")) || existsSync(join(gitDir, "rebase-apply"))) {
     return "rebase";
   }

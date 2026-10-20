@@ -39,14 +39,13 @@ import {
   legacyRepairAttempt,
   readRepairCycle,
   reconcileRepairAttempt,
-  renderLocalWork,
-  shortSha,
   writeRepairCycle,
   type RemoteObservation,
   type RepairAttempt,
   type RepairCycle,
   type RepairReconciliation,
 } from "./pool/repair.js";
+import { renderLocalWork, shortSha } from "./state/repair-view.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -593,8 +592,14 @@ export class SweepEngine {
     // — and is pinned to the head the facts were read on. If the remote moved
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const repairTrigger = launchable.repair;
+    const resuming = launchable.resuming ?? null;
+    // The lease value: the head observed before the intervention. A resumption
+    // keeps the head its fallen attempt was launched on — never a fresh read —
+    // so a collaborator's push to the branch after the fall is never
+    // overwritten by local history (issue 112, stories 10/17).
+    const pinnedHeadSha = resuming?.observedHeadSha ?? repairTrigger?.facts.headSha ?? null;
     let baseBranch = prepared.baseBranch;
-    if (repairTrigger !== undefined) {
+    if (repairTrigger !== undefined && pinnedHeadSha !== null) {
       baseBranch = repairTrigger.facts.baseBranch;
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
@@ -604,11 +609,17 @@ export class SweepEngine {
         );
         return;
       }
-      if (observed.headSha !== repairTrigger.facts.headSha) {
+      if (observed.headSha !== pinnedHeadSha) {
         this.log(
           `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
-            `observed ${repairTrigger.facts.headSha} — the evidence is stale, nothing is launched`,
+            `observed ${pinnedHeadSha} — nothing is launched`,
         );
+        if (resuming !== null) {
+          // Somebody moved the branch after the fall: the local work must not
+          // be published over it. The attempt is settled as a concurrent
+          // change, and the next derivation asks the human for a reconciliation.
+          await this.markConcurrentChange(ref, resuming, observed.headSha);
+        }
         return;
       }
     }
@@ -666,7 +677,7 @@ export class SweepEngine {
       kind === "resume" ? launchable.issueReplies : undefined,
       repairTrigger === undefined
         ? undefined
-        : { trigger: repairTrigger, resuming: launchable.resuming ?? null, localWork },
+        : { trigger: repairTrigger, resuming, localWork, pinnedHeadSha },
     );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
@@ -714,9 +725,20 @@ export class SweepEngine {
       // inspection is paid for it on every sweep.
       if (stored.attempt === null && (stored.usedRounds === 0 || stored.lastEvidence === null)) continue;
 
-      const localWork = await this.inspectLocalWork(work.ref);
-      const cycle = stored.attempt === null ? await this.adoptLegacyCycle(work, stored, localWork) : stored;
-      if (cycle === null) continue;
+      // Git is read only when there is a verdict to reach: a legacy cycle with
+      // no registry gap is not an attempt, and paying an inspection for it on
+      // every sweep would be waste, not diligence.
+      let cycle: RepairCycle;
+      let localWork: LocalWorkFacts | null;
+      if (stored.attempt !== null) {
+        cycle = stored;
+        localWork = await this.inspectLocalWork(work.ref);
+      } else {
+        const adopted = await this.adoptLegacyCycle(work, stored);
+        if (adopted === null) continue;
+        cycle = adopted;
+        localWork = adopted.attempt?.localWork ?? null;
+      }
 
       const remote = await this.observeRemote(work.ref);
       const decision = reconcileRepairAttempt({ cycle, remote, localWork });
@@ -729,19 +751,17 @@ export class SweepEngine {
   /** The cycle a legacy reparo.json implies (issue 112): the budget was charged
    *  and the registry shows an attempt after the last recorded outcome — the
    *  attempt whose observed head only the evidence signature names. */
-  private async adoptLegacyCycle(
-    work: ReservedWorkEntry,
-    cycle: RepairCycle,
-    localWork: LocalWorkFacts | null,
-  ): Promise<RepairCycle | null> {
+  private async adoptLegacyCycle(work: ReservedWorkEntry, cycle: RepairCycle): Promise<RepairCycle | null> {
     const ledger = await readAttemptLedger(work.dir);
-    const attempt = legacyRepairAttempt({
+    const candidate = legacyRepairAttempt({
       cycle,
       lastAttempt: ledger.lastAttempt,
       recordedAttempt: ledger.recordedAttempt,
-      localWork,
+      localWork: null,
     });
-    return attempt === null ? null : { ...cycle, attempt };
+    if (candidate === null) return null;
+    const localWork = await this.inspectLocalWork(work.ref);
+    return { ...cycle, attempt: { ...candidate, localWork } };
   }
 
   /** The reconciliation verdict, said once in the operator's log. */
@@ -780,6 +800,26 @@ export class SweepEngine {
         );
         return;
     }
+  }
+
+  /** Record that the remote moved to a head the attempt did not produce: the
+   *  derivation then blocks the work with the help request (issue 112). */
+  private async markConcurrentChange(
+    ref: IssueRef,
+    attempt: RepairAttempt,
+    remoteHeadSha: string | null,
+  ): Promise<void> {
+    const dir = workDir(this.deps.workspace, ref.repo, ref.number);
+    const cycle = await readRepairCycle(dir);
+    await writeRepairCycle(dir, {
+      ...cycle,
+      attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
+    });
+    this.log(
+      `repair attempt ${attempt.attempt} of ${workKey(ref)}: the remote moved to ` +
+        `${remoteHeadSha === null ? "a commit" : shortSha(remoteHeadSha)} while the attempt's observed head was ` +
+        `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
+    );
   }
 
   /** The local work of a work, or null when git cannot answer — never "nothing there". */
@@ -1078,6 +1118,8 @@ interface RepairLaunchContext {
   trigger: RepairTrigger;
   resuming: RepairAttempt | null;
   localWork: LocalWorkFacts | null;
+  /** The remote head the intervention observed — the force-with-lease value. */
+  pinnedHeadSha: string | null;
 }
 
 async function launchMaterial(
@@ -1110,7 +1152,7 @@ async function launchMaterial(
   if (repair !== undefined) {
     material.repair = {
       reasons: repair.trigger.reasons,
-      observedHeadSha: repair.trigger.facts.headSha,
+      observedHeadSha: repair.pinnedHeadSha ?? repair.trigger.facts.headSha,
       baseBranch: repair.trigger.facts.baseBranch,
       checks: repair.trigger.failingChecks,
       ...(repair.localWork === null ? {} : { localWork: repair.localWork }),

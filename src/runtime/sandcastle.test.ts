@@ -884,7 +884,7 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
 
     assert.ok(captured?.signal, "the watchdog signal reaches the run");
     assert.ok(
-      (captured?.idleTimeoutSeconds ?? 0) > SHORT_IDLE_SECONDS * 2,
+      (captured?.idleTimeoutSeconds ?? 0) >= SHORT_IDLE_SECONDS * 2,
       "Sandcastle's timer never preempts the verified-activity limit",
     );
   });

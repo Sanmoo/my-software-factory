@@ -410,23 +410,26 @@ async function deriveReservedWork(
     const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
     const cycle = await readRepairCycle(work.dir);
     const attempt = cycle.attempt;
+
+    // The attempt's own state comes before the trigger and the evidence
+    // consumption (issue 112): two consecutive falls and an unattributable
+    // remote change block the work EVEN with the PR open and even when the
+    // tracker's current facts are not confirmed — the open PR never hides a
+    // fall. An attempt that fell without publishing is taken over instead of
+    // being mistaken for a consumed round.
+    if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
+      return repairFallBlocked(ref, pr, cycle, workspace, attempt, "consecutive-falls");
+    }
+    if (attempt?.publication === "concurrent-change") {
+      return repairFallBlocked(ref, pr, cycle, workspace, attempt, "concurrent-change");
+    }
+
     if (trigger !== null) {
       const signature = repairSignature(ref, trigger);
-      // The attempt's own state comes before the evidence consumption (issue
-      // 112): an attempt that fell without publishing must be taken over —
-      // with the same evidence — instead of being mistaken for a consumed
-      // round. Two consecutive falls and an unattributable remote change block
-      // the work even with the PR open.
-      if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
-        return repairFallBlocked(ref, pr, trigger, cycle, workspace, attempt, "consecutive-falls");
-      }
       if (attempt?.publication === "pending") {
         // Publication is uncertain: no worker, no budget returned — a later
         // sweep repeats the query (the reconciliation owns the transition).
         return { ref, state: "idle" };
-      }
-      if (attempt?.publication === "concurrent-change") {
-        return repairFallBlocked(ref, pr, trigger, cycle, workspace, attempt, "concurrent-change");
       }
       if (attempt?.publication === "not-published") {
         return {
@@ -461,7 +464,12 @@ async function deriveReservedWork(
 
     // Confirmed recovery (story 22): no conflicts and every required check
     // approved — the only thing besides a human unblock that resets the cap.
-    if (repairFacts.known && cycle.usedRounds > 0 && repairRecovered(repairFacts.value)) {
+    // A publication that is still unverified holds the ledger: resetting it
+    // here would renew the budget and erase the attempt while the remote may
+    // still carry the work (issue 112, story 21).
+    const publicationUnverified =
+      attempt !== null && (attempt.publication === "unknown" || attempt.publication === "pending");
+    if (!publicationUnverified && repairFacts.known && cycle.usedRounds > 0 && repairRecovered(repairFacts.value)) {
       return { ref, state: "repair-recovered", pr };
     }
 
@@ -606,7 +614,6 @@ function repairReasonsPhrase(trigger: RepairTrigger): string {
 async function repairFallBlocked(
   ref: IssueRef,
   pr: PullRequest,
-  trigger: RepairTrigger,
   cycle: RepairCycle,
   workspace: WorkspaceLayout,
   attempt: RepairAttempt,
@@ -617,7 +624,8 @@ async function repairFallBlocked(
   const comment = await repairFallComment({
     cause,
     prNumber: pr.number,
-    persisting: repairReasonsPhrase(trigger),
+    persisting:
+      "the impediment that reactivated the repair is still unresolved (its current facts may not be confirmed)",
     consecutiveFalls: cycle.consecutiveFalls,
     attempt,
     record,

@@ -2,12 +2,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
-import {
-  describePublication,
-  renderLocalWork,
-  shortSha,
-  type RepairAttempt,
-} from "../pool/repair.js";
+import type { RepairAttempt } from "../pool/repair.js";
+import { describePublication, renderLocalWork, shortSha } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**

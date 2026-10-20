@@ -47,6 +47,12 @@ export interface PreparedWork {
   branchOnOrigin: boolean;
 }
 
+/** The git operations a session can leave unfinished in its worktree. */
+export type WorkOperation = "rebase" | "merge" | "cherry-pick";
+
+/** Every {@link WorkOperation}, for the readers that validate a persisted fact. */
+export const WORK_OPERATIONS: readonly WorkOperation[] = ["rebase", "merge", "cherry-pick"];
+
 /**
  * What the work branch holds on disk right now (issue 112): the commits a
  * resumed round must reuse instead of redoing, the changes it must inspect
@@ -62,7 +68,7 @@ export interface LocalWorkFacts {
   /** The worktree holds tracked changes that were never committed. */
   uncommitted: boolean;
   /** An operation the worktree left unfinished — inspected, never restarted blind. */
-  operationInProgress: "rebase" | "merge" | "cherry-pick" | null;
+  operationInProgress: WorkOperation | null;
 }
 
 export interface GitWork {
