@@ -11,14 +11,14 @@ import type {
   TrackerPort,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
-import { workDir as workDirOf, type WorkspaceLayout } from "../layout.js";
+import { type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, blockedCommentBody, repairFallComment } from "./outcome.js";
 import { readReconciliationFacts } from "../pool/registry.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
   hasRepairCycle,
-  isSettledPublication,
+  hasUnsettledPublication,
   readRepairCycle,
   repairEvidenceSignature,
   type RepairAttempt,
@@ -386,6 +386,15 @@ async function deriveReservedWork(
     const comments = await port.readComments(ref);
     const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
     if (issueReplies.length > 0) {
+      // A pending publication outranks the human answer (issue 112, story 21):
+      // the remote may already carry this attempt's commit, so starting a
+      // worker would duplicate it — and the resume renews a budget the
+      // reconciliation has not settled yet. The answer applies as soon as the
+      // next sweep gets its verdict; until then the hold is what status shows.
+      const cycle = await readRepairCycle(work.dir);
+      if (cycle.attempt !== null && hasUnsettledPublication(cycle.attempt)) {
+        return { ref, state: "idle" };
+      }
       const feedback = await port.readPrFeedback(ref);
       const pr = feedback.known ? feedback.value.pr : null;
       return { ref, state: "resumable", pr, createdAt: issue.value.createdAt, issueReplies };
@@ -420,12 +429,12 @@ async function deriveReservedWork(
     // fall. An attempt that fell without publishing is taken over instead of
     // being mistaken for a consumed round.
     if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
-      return repairFallBlocked(ref, pr, cycle, workspace, attempt, "consecutive-falls");
+      return repairFallBlocked(ref, pr, cycle, work.dir, workspace, attempt, "consecutive-falls");
     }
     if (attempt?.publication === "concurrent-change") {
-      return repairFallBlocked(ref, pr, cycle, workspace, attempt, "concurrent-change");
+      return repairFallBlocked(ref, pr, cycle, work.dir, workspace, attempt, "concurrent-change");
     }
-    if (attempt !== null && !isSettledPublication(attempt.publication)) {
+    if (attempt !== null && hasUnsettledPublication(attempt)) {
       // Publication is unverified: NO worker of any kind (repair, resumption
       // or feedback round) and no budget return until the remote or the host
       // answers — a later sweep repeats the query (the reconciliation owns the
@@ -476,11 +485,10 @@ async function deriveReservedWork(
 
     // Confirmed recovery (story 22): no conflicts and every required check
     // approved — the only thing besides a human unblock that resets the cap.
-    // A publication that is still unverified holds the ledger: resetting it
-    // here would renew the budget and erase the attempt while the remote may
-    // still carry the work (issue 112, story 21).
-    const publicationUnverified = attempt !== null && !isSettledPublication(attempt.publication);
-    if (!publicationUnverified && repairFacts.known && hasRepairCycle(cycle) && repairRecovered(repairFacts.value)) {
+    // The gate is "this work has a repair cycle", not "a round is charged":
+    // after a fall the charged round was returned, and the fall ledger it left
+    // behind is exactly what recovery must clear (issue 112, story 25).
+    if (repairFacts.known && hasRepairCycle(cycle) && repairRecovered(repairFacts.value)) {
       return { ref, state: "repair-recovered", pr };
     }
 
@@ -505,7 +513,7 @@ async function deriveReservedWork(
     // read: releasing it would hand the work back to the pool while its
     // publication is still unknown (issue 112).
     const cycle = await readRepairCycle(work.dir);
-    if (cycle.attempt !== null && !isSettledPublication(cycle.attempt.publication)) {
+    if (cycle.attempt !== null && hasUnsettledPublication(cycle.attempt)) {
       return { ref, state: "idle" };
     }
     return deriveUnreconciledFall(ref, work.dir, workspace, inFlight);
@@ -633,11 +641,11 @@ async function repairFallBlocked(
   ref: IssueRef,
   pr: PullRequest,
   cycle: RepairCycle,
+  dir: string,
   workspace: WorkspaceLayout,
   attempt: RepairAttempt,
   cause: "consecutive-falls" | "concurrent-change",
 ): Promise<ReservedDerivation> {
-  const dir = workDirOf(workspace, ref.repo, ref.number);
   const record = await readOutcomeRecord(dir);
   const comment = await repairFallComment({
     cause,

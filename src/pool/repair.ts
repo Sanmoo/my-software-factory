@@ -155,6 +155,12 @@ export function isSettledPublication(publication: RepairPublication): boolean {
   );
 }
 
+/** True while the attempt's publication is unknown or pending: no worker of
+ *  any kind may start and no budget may return until a sweep settles it. */
+export function hasUnsettledPublication(attempt: RepairAttempt): boolean {
+  return !isSettledPublication(attempt.publication);
+}
+
 /** A record written by another version may carry fewer facts: an unreadable
  *  local state is null (unverified), never an invented clean branch. */
 function readLocalWork(value: unknown): LocalWorkFacts | null {
@@ -279,20 +285,20 @@ export function reconcileRepairAttempt(input: {
   // The host's inspection is the only source: falling back to the facts
   // recorded at launch would read a pre-session branch as the attempt's result
   // and turn an unreadable host into a concurrent-change verdict.
-  const localWork = input.localWork;
   if (!input.remote.known) {
     return {
       kind: "pending",
       reason: "the remote head could not be read",
-      cycle: settleAttempt(input.cycle, attempt, "pending", localWork),
+      cycle: settleAttempt(input.cycle, attempt, "pending", input.localWork).cycle,
     };
   }
   const remoteHeadSha = input.remote.headSha;
+  const localWork = input.localWork;
   if (localWork === null) {
     return {
       kind: "pending",
       reason: "the local work could not be read",
-      cycle: settleAttempt(input.cycle, attempt, "pending", null, remoteHeadSha),
+      cycle: settleAttempt(input.cycle, attempt, "pending", null, remoteHeadSha).cycle,
     };
   }
 
@@ -300,10 +306,8 @@ export function reconcileRepairAttempt(input: {
   const settled = (
     publication: RepairPublication,
     cycle: RepairCycle,
-  ): { cycle: RepairCycle; attempt: RepairAttempt } => {
-    const verdictCycle = settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
-    return { cycle: verdictCycle, attempt: verdictCycle.attempt! };
-  };
+  ): { cycle: RepairCycle; attempt: RepairAttempt } =>
+    settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
 
   // The remote carries exactly the commit this attempt produced: published,
   // and attributable — a different head proves nothing about this attempt.
@@ -336,8 +340,9 @@ function settleAttempt(
   publication: RepairPublication,
   localWork: LocalWorkFacts | null,
   remoteHeadSha: string | null = attempt.remoteHeadSha,
-): RepairCycle {
-  return { ...cycle, attempt: { ...attempt, publication, localWork, remoteHeadSha } };
+): { cycle: RepairCycle; attempt: RepairAttempt } {
+  const settled: RepairAttempt = { ...attempt, publication, localWork, remoteHeadSha };
+  return { cycle: { ...cycle, attempt: settled }, attempt: settled };
 }
 
 /** True when the cycle carries an attempt on disk — the status and the
