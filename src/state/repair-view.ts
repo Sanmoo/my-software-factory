@@ -16,7 +16,7 @@ export function shortSha(sha: string): string {
 /** What happened to the remote branch, in one phrase: a moved head, or a
  *  branch that is gone (a deleted branch is not "a commit"). */
 export function describeRemoteChange(remoteHeadSha: string | null): string {
-  if (remoteHeadSha === null) return "is gone from the remote";
+  if (remoteHeadSha === null) return "no longer exists";
   return `moved to \`${shortSha(remoteHeadSha)}\``;
 }
 
@@ -46,7 +46,9 @@ export function describePublication(publication: RepairPublication): string {
     case "published":
       return "published (the remote carries the commit the attempt produced)";
     case "not-published":
-      return "not published (the remote is still at the observed head)";
+      // True for the unchanged head AND for a branch that is gone: the remote
+      // never received this attempt's commit.
+      return "not published (the remote does not carry the attempt's commit)";
     case "concurrent-change":
       return "a concurrent change the attempt did not produce";
     case "pending":

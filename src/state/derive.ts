@@ -424,12 +424,12 @@ async function deriveReservedWork(
     if (attempt?.publication === "concurrent-change") {
       return repairFallBlocked(ref, pr, cycle, workspace, attempt, "concurrent-change");
     }
-    if (attempt?.publication === "pending") {
-      // Publication is uncertain: NO worker of any kind (repair, resumption or
-      // feedback round) and no budget return until the remote or the host
+    if (attempt !== null && !isSettledPublication(attempt.publication)) {
+      // Publication is unverified: NO worker of any kind (repair, resumption
+      // or feedback round) and no budget return until the remote or the host
       // answers — a later sweep repeats the query (the reconciliation owns the
-      // transition). Placed before the trigger so an unconfirmed PR fact cannot
-      // open a session while the attempt's publication is unknown.
+      // transition). Placed before the trigger so an unconfirmed PR fact
+      // cannot open a session while the attempt's publication is unknown.
       return { ref, state: "idle" };
     }
 

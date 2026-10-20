@@ -232,7 +232,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       /attempt 3 fell abruptly: no outcome record of its own was written \(the record on disk belongs to attempt 1\)/,
       "the fallen attempt and the divergent record are named",
     );
-    assert.match(comment, /not published \(the remote is still at the observed head\)/);
+    assert.match(comment, /not published \(the remote does not carry the attempt's commit\)/);
     assert.match(comment, /local work preserved: 2 commits on the branch/, "the preserved work is named");
     assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#100\/log-3\.jsonl — present/, "the evidence paths are named");
     assert.doesNotMatch(comment, /\/(home|tmp|root)\//, "no absolute path leaves the factory");
@@ -651,6 +651,28 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.ok(comments.known);
     assert.match(comments.value.at(-1)!.body, /a concurrent change/);
     assert.equal((await readRepairCycle(workDir(layout, REPO, 112))).attempt?.publication, "concurrent-change");
+  });
+
+  test("a deleted remote branch is named as gone, never as a head the attempt did not produce", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 116);
+    seedFallenLegacyRound(116);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.localWork = { headSha: "local116", commits: 1, uncommitted: false, operationInProgress: null };
+    // The branch was deleted on the remote after the fall: absence, not a
+    // concurrent head to compare against.
+    git.remoteHead = null;
+
+    const first = await runOnce(deps);
+    assert.equal(first.launched.length, 0);
+    // The reconciliation reads absence as "nothing published"; the launch guard
+    // then refuses to recreate the branch the lease was pinned to.
+    const blocked = await runOnce(deps);
+    assert.equal(blocked.launched.length, 0);
+    const comments = await tracker.readComments({ repo: REPO, number: 116 });
+    assert.ok(comments.known);
+    assert.match(comments.value.at(-1)!.body, /the remote branch no longer exists/);
+    assert.doesNotMatch(comments.value.at(-1)!.body, /moved to/);
   });
 
   test("a push to the work branch between the fall and the resumption blocks instead of publishing", async () => {
