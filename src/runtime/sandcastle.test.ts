@@ -783,6 +783,10 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
       token: "t",
       profileDir,
       workspace: root,
+      // The daemon socket the launch binds (ADR 0003) — pinned like every
+      // other runtime test here: the idle-limit mechanics never read the
+      // machine's real socket.
+      dockerSocket,
       preflight: async () => {}, // offline: the tests never touch docker
       idleTimeoutSeconds: SHORT_IDLE_SECONDS,
       activityPollMs: 25,
