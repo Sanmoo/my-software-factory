@@ -10,6 +10,7 @@ import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
+import { startActivityWatch } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
@@ -185,6 +186,21 @@ export const WORKER_FLAG_ARGS: readonly string[] = [
 const PROFILE_SETUP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
 
+/**
+ * The sandbox's own clock is a LAST RESORT behind the activity watchdog (issue
+ * 112): the agent can be silent on stdout for a long time while its reviewer
+ * subagents work, so the effective idle limit is the one measured on verifiable
+ * activity. Sandcastle's timer only guards the case where the watchdog itself
+ * cannot see the filesystem — never the ordinary wait on a live subagent.
+ */
+const SANDBOX_BACKSTOP_FACTOR = 6;
+
+/** The polling interval of the activity watch: often enough to notice work
+ *  well inside a short limit, rarely enough not to walk the tree constantly. */
+function defaultActivityPollMs(idleMs: number): number {
+  return Math.max(100, Math.min(Math.floor(idleMs / 4), 30_000));
+}
+
 export interface SandcastleRuntimeOptions {
   /** Pi model for the headless session: "provider/model-id". */
   model: string;
@@ -213,8 +229,12 @@ export interface SandcastleRuntimeOptions {
   blockedLabel?: string;
   /** Full agent runs per launch; defaults to 1 (one session, one full run). */
   maxIterations?: number;
-  /** Sandcastle's idle timeout in seconds (the only time budget of a worker). */
+  /** Sandcastle's idle timeout in seconds — the SANDBOX backstop; the effective
+   *  idle limit is measured on verifiable agent activity (issue 112). */
   idleTimeoutSeconds?: number;
+  /** How often the activity watch reads the watched tree; derived from the idle
+   *  limit when unset (tests shorten it). */
+  activityPollMs?: number;
 
   // ---- process-boundary seams (tests inject; production leaves unset) ----
   /** The Pi agent factory itself. */
@@ -240,6 +260,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly blockedLabel: string;
   private readonly maxIterations: number;
   private readonly idleTimeoutSeconds: number;
+  private readonly activityPollMs: number;
   private readonly runSandcastle: (options: RunOptions) => Promise<RunResult>;
   private readonly dockerProvider: (options: DockerOptions) => SandboxProvider;
   private readonly preflight: () => Promise<void>;
@@ -258,6 +279,8 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.blockedLabel = options.blockedLabel ?? DEFAULT_LABELS.blocked;
     this.maxIterations = options.maxIterations ?? 1;
     this.idleTimeoutSeconds = options.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
+    this.activityPollMs =
+      options.activityPollMs ?? defaultActivityPollMs(this.idleTimeoutSeconds * 1000);
     this.runSandcastle = options.runSandcastle ?? (async (runOptions) => sandcastleRun(runOptions));
     this.dockerProvider = options.dockerProvider ?? ((dockerOptions) => docker(dockerOptions));
     this.preflight =
@@ -304,21 +327,66 @@ export class SandcastleRuntime implements WorkerRuntime {
         ...(warnings.length > 0 ? { profileWarnings: warnings } : {}),
       });
 
+      // The verified-activity idle limit (issue 112): the watchdog aborts the
+      // run once nothing verifiable happened for the configured idle time.
+      const watch = this.activityWatch(request, sessionsDir);
       let outcome: SessionResult["outcome"];
       try {
-        await this.runSandcastle(this.runOptionsFor(request, snapshotDir, sessionsDir, dockerSocket));
+        await this.runSandcastle(
+          this.runOptionsFor(request, snapshotDir, sessionsDir, dockerSocket, watch.signal),
+        );
         outcome = await this.observedOutcome(request);
       } catch (error) {
         this.event(request, "session-failed", {
           reason: error instanceof Error ? error.message : String(error),
         });
         outcome = "abrupt-death";
+      } finally {
+        // The watch dies with the session: a resolved or failed run is not an idle.
+        watch.stop();
       }
       this.event(request, "session-end", { outcome });
       return { request, outcome };
     } finally {
       rmSync(snapshotDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * The verified-activity idle limit (issue 112): a watchdog over the files the
+   * agents write, aborting the run once nothing verifiable happened for the
+   * configured idle time. Reviewer subagent transcripts count (they are real
+   * work); the factory's own logs do not (they only echo stdout). The returned
+   * signal carries the abort into Sandcastle, which kills the agent subprocess.
+   */
+  private activityWatch(
+    request: WorkRequest,
+    sessionsDir: string,
+  ): { signal: AbortSignal; stop: () => void } {
+    const idleMs = this.idleTimeoutSeconds * 1000;
+    const controller = new AbortController();
+    const watch = startActivityWatch({
+      dirs: [sessionsDir, request.workDir],
+      exclude: [
+        join(request.workDir, `log-${request.attempt}.jsonl`),
+        join(sessionsDir, `sandcastle-${request.attempt}.log`),
+      ],
+      idleMs,
+      pollMs: this.activityPollMs,
+      onIdle: (measured) => {
+        this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+          event: "activity-idle",
+          attempt: request.attempt,
+          idleMs: Math.round(measured),
+        });
+        controller.abort(
+          new Error(
+            `no verifiable activity for ${formatIdle(measured)} — the session was ended by the idle limit`,
+          ),
+        );
+      },
+    });
+    return { signal: controller.signal, stop: () => watch.stop() };
   }
 
   /** The toolchain binds (ticket 18): workspace-derived host dirs, created
@@ -345,6 +413,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     snapshotDir: string,
     sessionsDir: string,
     dockerSocket: DockerSocket,
+    signal: AbortSignal,
   ): RunOptions {
     const agent = this.piProvider(this.model, {
       // No implicit capture: the sessions bind does the persistence, the
@@ -396,7 +465,8 @@ export class SandcastleRuntime implements WorkerRuntime {
       prompt: buildWorkerPrompt(request, { blockedLabel: this.blockedLabel }),
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,
-      idleTimeoutSeconds: this.idleTimeoutSeconds,
+      idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
+      signal,
       name: `work-${request.ref.number}-attempt-${request.attempt}`,
       hooks: {
         sandbox: {
@@ -596,4 +666,9 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
 /** An error's message, for a refusal that must carry what actually failed. */
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The idle span in the operator's units: 300 ms is not "0 seconds". */
+function formatIdle(idleMs: number): string {
+  return idleMs < 1000 ? `${Math.round(idleMs)} ms` : `${(idleMs / 1000).toFixed(1)} s`;
 }

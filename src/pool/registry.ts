@@ -4,6 +4,7 @@ import { join, relative, sep } from "node:path";
 
 import { workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { readRepairCycle, type RepairCycle } from "./repair.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -101,6 +102,22 @@ export async function readReconciliationFacts(workDir: string): Promise<Reconcil
   const lastRecordedFall = record?.class === "clean-without-pr";
   const consecutiveFall = abruptCount >= 2 || (abruptCount === 1 && lastRecordedFall);
   return { lastAttempt, consecutiveFall };
+}
+
+/**
+ * The attempt ledger of one work (issue 112): the highest attempt the registry
+ * numbers, and the attempt the outcome record on disk belongs to (null when no
+ * record exists). The gap between the two is an attempt that wrote no record
+ * of its own — the fall a repair reconciliation must settle.
+ */
+export interface AttemptLedger {
+  lastAttempt: number;
+  recordedAttempt: number | null;
+}
+
+export async function readAttemptLedger(dir: string): Promise<AttemptLedger> {
+  const { logs, record } = await attemptsAndRecord(dir);
+  return { lastAttempt: lastAttemptOf(logs, record), recordedAttempt: record?.attempt ?? null };
 }
 
 /**
@@ -202,6 +219,26 @@ export interface LastOutcomeEntry {
 }
 
 /**
+ * A work whose CURRENT attempt carries no outcome record of its own — the fall
+ * awaiting reconciliation (issue 112). It is not the same thing as "no record
+ * on disk": an older attempt's record may sit there as history, and it never
+ * becomes this attempt's outcome (issue 103's rule, now visible here too).
+ */
+export interface AttemptWithoutOutcome {
+  key: string;
+  /** The attempt that has no record of its own (the highest on disk). */
+  attempt: number;
+  /** The attempt the record on disk belongs to; null when there is no record. */
+  recordedAttempt: number | null;
+}
+
+/** The repair cycle of a work as `msf status` reads it (issue 112). */
+export interface RepairViewEntry {
+  key: string;
+  cycle: RepairCycle;
+}
+
+/**
  * The local registry as seen with the factory stopped (ticket 07 Q7): a dir
  * with attempt evidence but no desfecho is an attempt whose outcome was never
  * recorded — Running while a live worker carries it, Orphaned otherwise (only
@@ -211,11 +248,14 @@ export interface LastOutcomeEntry {
  * the outcome of the last attempt; the archive holds the dones.
  */
 export interface RegistryView {
-  /** Dirs with attempt evidence (a log or the session dir) and no outcome record. */
-  attemptsWithoutOutcome: string[];
+  /** Dirs whose current attempt has no outcome record of its own (a log or the
+   *  session dir as evidence) — a fall, whatever an older record says. */
+  attemptsWithoutOutcome: AttemptWithoutOutcome[];
   /** Dirs with no outcome record and no attempt evidence — the reservation alone. */
   reservedWithoutAttempt: string[];
   lastOutcome: LastOutcomeEntry[];
+  /** The repair cycle of every work that ran or is running an automatic round. */
+  repair: RepairViewEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
 }
@@ -233,26 +273,42 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         }
       : workspace;
 
-  const attemptsWithoutOutcome: string[] = [];
+  const attemptsWithoutOutcome: AttemptWithoutOutcome[] = [];
   const reservedWithoutAttempt: string[] = [];
   const lastOutcome: LastOutcomeEntry[] = [];
+  const repair: RepairViewEntry[] = [];
   for (const dir of await workDirs(works)) {
+    const key = relativeKey(works, dir);
     const record = await readOutcomeRecord(dir);
-    if (record) {
-      lastOutcome.push({ key: relativeKey(works, dir), workDir: dir, record });
-    } else if (hasAttemptEvidence(dir, await attemptNumbers(dir))) {
-      attemptsWithoutOutcome.push(relativeKey(works, dir));
+    const logs = await attemptNumbers(dir);
+    const lastAttempt = lastAttemptOf(logs, record);
+    // The record never stops being history: a work whose record and whose
+    // orphaned attempt coexist shows BOTH (issue 112) — the record is not
+    // presented as the current attempt's result.
+    if (record !== null) lastOutcome.push({ key, workDir: dir, record });
+    if (record !== null) {
+      if (record.attempt < lastAttempt) {
+        attemptsWithoutOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
+      }
+    } else if (hasAttemptEvidence(dir, logs)) {
+      attemptsWithoutOutcome.push({ key, attempt: lastAttempt, recordedAttempt: null });
     } else {
-      reservedWithoutAttempt.push(relativeKey(works, dir));
+      reservedWithoutAttempt.push(key);
+    }
+
+    const cycle = await readRepairCycle(dir);
+    if (cycle.attempt !== null || cycle.usedRounds > 0 || cycle.consecutiveFalls > 0) {
+      repair.push({ key, cycle });
     }
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
-  attemptsWithoutOutcome.sort(byKey);
+  attemptsWithoutOutcome.sort((a, b) => byKey(a.key, b.key));
   reservedWithoutAttempt.sort(byKey);
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
+  repair.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
-  return { attemptsWithoutOutcome, reservedWithoutAttempt, lastOutcome, archived };
+  return { attemptsWithoutOutcome, reservedWithoutAttempt, lastOutcome, repair, archived };
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */

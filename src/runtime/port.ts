@@ -5,11 +5,15 @@
  */
 
 import type { IssueComment, IssueRef, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import type { LocalWorkFacts } from "../git/port.js";
 
 /**
  * The repair context of a reactivated session (issue 107): why the factory
  * intervened, the remote HEAD observed before intervening (the lease value)
- * and the evidence of the failing required checks. */
+ * and the evidence of the failing required checks. Issue 112 adds what the
+ * host found on disk: the local work the round takes over instead of redoing,
+ * and the number of the unpublished attempt it resumes (absent on a new round).
+ */
 export interface RepairMaterial {
   reasons: RepairReason[];
   /** The remote head observed before the intervention — pin the force-with-lease to it. */
@@ -18,6 +22,11 @@ export interface RepairMaterial {
   baseBranch: string;
   /** The required checks that failed or timed out (evidence to investigate). */
   checks: RequiredCheckResult[];
+  /** The work branch as the host found it — commits, uncommitted changes, an
+   *  interrupted operation. Absent only when git could not read it. */
+  localWork?: LocalWorkFacts;
+  /** The attempt this session resumes (issue 112); absent on a fresh round. */
+  resuming?: number;
 }
 
 /**

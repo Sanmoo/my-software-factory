@@ -3,7 +3,14 @@ import {
   renderUnmarkedReservation,
   workKey,
 } from "./derive.js";
-import type { RunningWorker, StatusView } from "./status.js";
+import {
+  MAX_REPAIR_FALLS,
+  MAX_REPAIR_ROUNDS,
+  describePublication,
+  renderLocalWork,
+} from "../pool/repair.js";
+import type { RepairViewEntry } from "../pool/registry.js";
+import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -37,8 +44,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(
     ...section(
-      "orphaned (no outcome record, no worker alive)",
-      liveness.state === "known" ? liveness.orphaned : null,
+      "orphaned (attempt without its own outcome record, no worker alive)",
+      liveness.state === "known" ? liveness.orphaned.map(renderOrphaned) : null,
       cap,
     ),
   );
@@ -48,8 +55,10 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   if (liveness.state === "unknown" && view.registry.attemptsWithoutOutcome.length > 0) {
     lines.push(
       ...section(
-        "attempts without outcome (Running or Orphaned — only Docker can tell)",
-        view.registry.attemptsWithoutOutcome,
+        "attempts without their own outcome (Running or Orphaned — only Docker can tell)",
+        view.registry.attemptsWithoutOutcome.map((entry) =>
+          renderFallen(entry.key, entry.attempt, entry.recordedAttempt),
+        ),
         cap,
       ),
     );
@@ -59,6 +68,14 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ...section(
       "reserved without attempt (the claim landed, no attempt evidence on disk)",
       view.registry.reservedWithoutAttempt,
+      cap,
+    ),
+  );
+
+  lines.push(
+    ...section(
+      "repair (unpublished attempts, local work, pending reconciliation)",
+      view.registry.repair.map(renderRepair),
       cap,
     ),
   );
@@ -95,6 +112,35 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 function renderRunning(worker: RunningWorker): string {
   const attempt = worker.attempt === null ? "" : `, attempt ${worker.attempt}`;
   return `${worker.key} (${formatAge(worker.ageMs)}${attempt})`;
+}
+
+/** One fallen attempt: the attempt itself, and the record that is NOT its own. */
+function renderOrphaned(orphan: OrphanedAttempt): string {
+  return renderFallen(orphan.key, orphan.attempt, orphan.recordedAttempt);
+}
+
+/** The fallen attempt (issue 112): the current one named, the historical record
+ *  disowned — a human must not read attempt 1's outcome as attempt 2's result. */
+function renderFallen(key: string, attempt: number, recordedAttempt: number | null): string {
+  const history =
+    recordedAttempt === null
+      ? "no outcome record on disk"
+      : `the record on disk is attempt ${recordedAttempt}'s — history, not this attempt's`;
+  return `${key} (attempt ${attempt} fell — ${history})`;
+}
+
+/** One repair cycle: the two ledgers, the attempt's publication and its local work. */
+function renderRepair(entry: RepairViewEntry): string {
+  const { cycle } = entry;
+  const parts = [
+    `rounds ${cycle.usedRounds}/${MAX_REPAIR_ROUNDS}`,
+    `falls ${cycle.consecutiveFalls}/${MAX_REPAIR_FALLS}`,
+  ];
+  if (cycle.attempt !== null) {
+    parts.push(`attempt ${cycle.attempt.attempt}: ${describePublication(cycle.attempt.publication)}`);
+    parts.push(`local work: ${renderLocalWork(cycle.attempt.localWork)}`);
+  }
+  return `${entry.key} (${parts.join("; ")})`;
 }
 
 /**

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -749,3 +749,143 @@ function dummySandbox(): SandboxProvider {
     env: {},
   } as unknown as SandboxProvider;
 }
+
+describe("sandcastle runtime — the idle limit measured on verifiable activity (issue 112)", () => {
+  let root: string;
+  let profileDir: string;
+  let request: WorkRequest;
+
+  /** A short REAL limit: the suite never waits the production ten minutes. */
+  const SHORT_IDLE_SECONDS = 0.3;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "msf-sandcastle-idle-"));
+    profileDir = join(root, "perfil");
+    mkdirSync(profileDir, { recursive: true });
+    request = {
+      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
+      branch: "agent-issue-42",
+      repoDir: join(root, "repos", "Sanmoo#my-tasks"),
+      baseBranch: "main",
+      attempt: 1,
+      material: { issue: { title: "t", body: "b" }, diff: "" },
+    };
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function runtimeWith(runSandcastle: (options: RunOptions) => Promise<RunResult>): SandcastleRuntime {
+    return new SandcastleRuntime({
+      model: MODEL,
+      token: "t",
+      profileDir,
+      workspace: root,
+      preflight: async () => {}, // offline: the tests never touch docker
+      idleTimeoutSeconds: SHORT_IDLE_SECONDS,
+      activityPollMs: 25,
+      runSandcastle,
+      dockerProvider: () => dummySandbox(),
+    });
+  }
+
+  /** Hold the run open until the runtime aborts it (or a generous safety net). */
+  function untilAborted(options: RunOptions, safetyMs: number): Promise<RunResult> {
+    return new Promise((resolve, reject) => {
+      const signal = options.signal;
+      assert.ok(signal, "the runtime hands the watchdog's signal to Sandcastle");
+      const done = setTimeout(() => resolve(emptyResult(request.branch)), safetyMs);
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(done);
+          reject(signal.reason);
+        },
+        { once: true },
+      );
+    });
+  }
+
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  test("reviewer subagent transcripts keep the worker alive past the idle limit", async () => {
+    // The worker is silent on stdout while two reviewers work: what changes is
+    // the session dir — exactly what the watchdog measures.
+    const result = await runtimeWith(async () => {
+      const reviewerDir = join(request.workDir, "sessao", "sessao-principal", "run-das-revisoes");
+      mkdirSync(reviewerDir, { recursive: true });
+      for (let tick = 0; tick < 6; tick += 1) {
+        writeFileSync(join(reviewerDir, "transcript.jsonl"), `${tick}\n`, "utf8");
+        await sleep(60);
+      }
+      writeFileSync(
+        join(request.workDir, DESFECHO_FILENAME),
+        JSON.stringify({ class: "pr-open", attempt: 1 }),
+        "utf8",
+      );
+      return emptyResult(request.branch);
+    }).launch(request);
+
+    assert.equal(result.outcome, "pr-open", "the session survived far past the short idle limit");
+    const lines = readLines(join(request.workDir, "log-1.jsonl"));
+    assert.ok(!lines.some((line) => line.includes("activity-idle")), "verifiable work is never an idle");
+  });
+
+  test("no verifiable activity still ends the session at the idle limit", async () => {
+    const startedAt = Date.now();
+    const result = await runtimeWith((options) => untilAborted(options, 5_000)).launch(request);
+    const elapsed = Date.now() - startedAt;
+
+    assert.equal(result.outcome, "abrupt-death");
+    assert.ok(elapsed < 2_000, `the wait ended at the short limit, not by the safety net (${elapsed}ms)`);
+    const lines = readLines(join(request.workDir, "log-1.jsonl"));
+    assert.ok(lines.some((line) => line.includes("activity-idle")), "the idle is diagnosed in the attempt's log");
+    assert.ok(
+      lines.some((line) => line.includes("no verifiable activity")),
+      "the reason names the activity, not only the sandbox clock",
+    );
+  });
+
+  test("an unconditional heartbeat is not proof of work: the factory's own logs never keep a dead session alive", async () => {
+    const startedAt = Date.now();
+    const result = await runtimeWith(async (options) => {
+      const run = untilAborted(options, 5_000);
+      // Handled while the heartbeat loop below runs: the rejection is the
+      // assertion's subject, not a stray unhandled one.
+      run.catch(() => {});
+      // The two logs the factory itself writes from the agent's stdout: a
+      // session that only "reports" liveness must still time out.
+      const sandcastleLog = join(request.workDir, "sessao", "sandcastle-1.log");
+      for (let tick = 0; tick < 40; tick += 1) {
+        appendFileSync(join(request.workDir, "log-1.jsonl"), "{}\n", "utf8");
+        appendFileSync(sandcastleLog, "still here\n", "utf8");
+        await sleep(25);
+      }
+      return run;
+    }).launch(request);
+    const elapsed = Date.now() - startedAt;
+
+    assert.equal(result.outcome, "abrupt-death");
+    assert.ok(elapsed < 2_000, "the heartbeat did not extend the limit");
+    assert.ok(
+      readLines(join(request.workDir, "log-1.jsonl")).some((line) => line.includes("activity-idle")),
+      "the idle limit remained effective",
+    );
+  });
+
+  test("the sandbox's own clock is only a backstop behind the verified-activity limit", async () => {
+    let captured: RunOptions | undefined;
+    await runtimeWith(async (options) => {
+      captured = options;
+      return emptyResult(request.branch);
+    }).launch(request);
+
+    assert.ok(captured?.signal, "the watchdog signal reaches the run");
+    assert.ok(
+      (captured?.idleTimeoutSeconds ?? 0) > SHORT_IDLE_SECONDS * 2,
+      "Sandcastle's timer never preempts the verified-activity limit",
+    );
+  });
+});

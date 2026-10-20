@@ -392,3 +392,90 @@ describe("git host — cleanup only on done", () => {
     assert.ok(branches.stdout.includes("agent-issue-8"), "in-flight work keeps its branch");
   });
 });
+
+describe("git host — the local work a resumption must preserve (issue 112)", () => {
+  let root: string;
+  let reposDir: string;
+  let remote: FixtureRemote;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), "msf-git-local-"));
+    reposDir = join(root, "repos");
+    mkdirSync(reposDir, { recursive: true });
+    remote = await seedFixtureRemote(root, "Sanmoo/my-tasks", { defaultBranch: "main" });
+  });
+
+  afterEach(() => {
+    cleanupFixture(root);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function gitWork(): GitWork {
+    return localGitWork({ reposDir, remoteUrl: (repo) => remote.barePath(repo) });
+  }
+
+  /** The worktree Sandcastle runs the worker in, with git identity to commit. */
+  async function sandcastleWorktree(number: number): Promise<string> {
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    const worktreeDir = join(cloneDir, ".sandcastle", "worktrees", workBranchName(number));
+    await execFile("git", ["worktree", "add", "-q", worktreeDir, workBranchName(number)], { cwd: cloneDir });
+    await execFile("git", ["config", "user.email", "worker@example.com"], { cwd: worktreeDir });
+    await execFile("git", ["config", "user.name", "worker"], { cwd: worktreeDir });
+    return worktreeDir;
+  }
+
+  test("a branch with no commits reports an empty local state — nothing invented", async () => {
+    const git = gitWork();
+    await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+
+    assert.deepEqual(await git.inspectLocalWork({ repo: "Sanmoo/my-tasks", number: 7 }), {
+      headSha: (await execFile("git", ["rev-parse", "agent-issue-7"], {
+        cwd: repoCloneDir(reposDir, "Sanmoo/my-tasks"),
+      })).stdout.trim(),
+      commits: 0,
+      uncommitted: false,
+      operationInProgress: null,
+    });
+  });
+
+  test("a repo never cloned reports an empty local state, never an error", async () => {
+    const git = gitWork();
+    assert.deepEqual(await git.inspectLocalWork({ repo: "Sanmoo/my-tasks", number: 7 }), {
+      headSha: null,
+      commits: 0,
+      uncommitted: false,
+      operationInProgress: null,
+    });
+  });
+
+  test("commits, uncommitted changes and an interrupted rebase are all read from the worktree", async () => {
+    const git = gitWork();
+    await git.prepareWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    const worktreeDir = await sandcastleWorktree(7);
+
+    // The fallen attempt's own commits — the work a resumption must reuse.
+    await commitFileIn(worktreeDir, "file.txt", "the work, part 1\n", "work part 1");
+    await commitFileIn(worktreeDir, "extra.txt", "the work, part 2\n", "work part 2");
+
+    // A change the session never committed.
+    writeFileSync(join(worktreeDir, "unfinished.txt"), "half done\n", "utf8");
+
+    // The base moved with a conflict; the rebase stops and stays in progress.
+    await remote.commitFile("main", "file.txt", "the base moved\n", "advance base");
+    await execFile("git", ["fetch", "-q", "origin"], { cwd: worktreeDir });
+    await assert.rejects(execFile("git", ["rebase", "origin/main"], { cwd: worktreeDir }));
+
+    const facts = await git.inspectLocalWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
+    const tip = await execFile("git", ["rev-parse", "refs/heads/agent-issue-7"], { cwd: cloneDir });
+    assert.equal(facts.headSha, tip.stdout.trim(), "the branch tip is the attempt's produced commit");
+    assert.equal(facts.commits, 2, "the branch's own commits are counted against the base");
+    assert.equal(facts.uncommitted, true, "the conflicted and untracked files are uncommitted work");
+    assert.equal(facts.operationInProgress, "rebase", "an interrupted rebase is never mistaken for a clean tree");
+
+    // Inspection alone changes nothing: the rebase is still there to be finished.
+    assert.ok(existsSync(join(worktreeDir, ".git")) || (await execFile("git", ["status", "--porcelain"], { cwd: worktreeDir })).stdout !== "");
+    const again = await git.inspectLocalWork({ repo: "Sanmoo/my-tasks", number: 7 });
+    assert.deepEqual(again, facts, "reading the local state is idempotent");
+  });
+});

@@ -35,10 +35,19 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
+/** A fallen attempt as the status names it (issue 112): the attempt with no
+ *  record of its own, and the attempt the record on disk belongs to (history —
+ *  never this attempt's result). */
+export interface OrphanedAttempt {
+  key: string;
+  attempt: number;
+  recordedAttempt: number | null;
+}
+
 /** What the probe could say: the two states, or that it could not tell. */
 export type Liveness =
   | { state: "unknown" }
-  | { state: "known"; running: RunningWorker[]; orphaned: string[] };
+  | { state: "known"; running: RunningWorker[]; orphaned: OrphanedAttempt[] };
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
@@ -67,7 +76,7 @@ export async function deriveStatus(
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
   const reservations = new Set<string>([
-    ...registry.attemptsWithoutOutcome,
+    ...registry.attemptsWithoutOutcome.map((entry) => entry.key),
     ...registry.reservedWithoutAttempt,
     ...registry.lastOutcome.map((entry) => entry.key),
   ]);
@@ -111,7 +120,13 @@ async function classifyLiveness(
   return {
     state: "known",
     running,
-    orphaned: registry.attemptsWithoutOutcome.filter((key) => !carried.has(key)),
+    orphaned: registry.attemptsWithoutOutcome
+      .filter((entry) => !carried.has(entry.key))
+      .map((entry) => ({
+        key: entry.key,
+        attempt: entry.attempt,
+        recordedAttempt: entry.recordedAttempt,
+      })),
   };
 }
 

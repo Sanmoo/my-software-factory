@@ -47,6 +47,24 @@ export interface PreparedWork {
   branchOnOrigin: boolean;
 }
 
+/**
+ * What the work branch holds on disk right now (issue 112): the commits a
+ * resumed round must reuse instead of redoing, the changes it must inspect
+ * instead of discarding, and the operation it must finish or abort instead of
+ * blindly restarting. Read host-side, from the real repository — never from
+ * the worker's prose.
+ */
+export interface LocalWorkFacts {
+  /** Tip of the work branch, or null when the branch is not on disk. */
+  headSha: string | null;
+  /** Commits the work branch carries beyond origin/<base> (0 when the branch is absent). */
+  commits: number;
+  /** The worktree holds tracked changes that were never committed. */
+  uncommitted: boolean;
+  /** An operation the worktree left unfinished — inspected, never restarted blind. */
+  operationInProgress: "rebase" | "merge" | "cherry-pick" | null;
+}
+
 export interface GitWork {
   /**
    * Prepare a launch: clone once (first work of the repo), fetch delta
@@ -76,4 +94,12 @@ export interface GitWork {
    * the branch has no changes yet; a later base advance never leaks in.
    */
   diffWork(ref: IssueRef): Promise<string>;
+
+  /**
+   * The fact sheet of the work branch as it exists on disk (issue 112): its
+   * tip, how many commits it carries beyond the base, whether the worktree is
+   * dirty and whether an operation was left in progress. Throws when git
+   * cannot answer — an unverifiable local state is never "nothing there".
+   */
+  inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts>;
 }

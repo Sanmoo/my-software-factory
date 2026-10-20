@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
+import {
+  describePublication,
+  renderLocalWork,
+  shortSha,
+  type RepairAttempt,
+} from "../pool/repair.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**
@@ -174,6 +180,75 @@ function describeOutcome({ attempt, record }: BlockedCommentInput): string {
   if (record === null) return "abrupt fall: no outcome record was written";
   return (
     "abrupt fall: no outcome record was written " +
+    `(the record on disk belongs to attempt ${record.attempt})`
+  );
+}
+
+/** What the repair-fall comment needs: the fallen attempt and the reason the
+ *  factory stopped, never the worker's prose. */
+export interface RepairFallCommentInput {
+  /** Two consecutive falls, or a concurrent change the attempt did not produce. */
+  cause: "consecutive-falls" | "concurrent-change";
+  prNumber: number;
+  /** The persisting impediment, in the operator's words (already phrased). */
+  persisting: string;
+  consecutiveFalls: number;
+  attempt: RepairAttempt;
+  /** desfecho.json as read from disk — it may belong to an EARLIER attempt. */
+  record: OutcomeRecord | null;
+  workDir: string;
+  workspace: WorkspaceLayout;
+}
+
+/**
+ * The block comment of a Repair that stopped without publishing (issue 112).
+ * It names the attempt that actually fell, the abrupt end and the divergent
+ * record on disk — never presenting an older attempt's outcome as this one's —
+ * plus the publication verdict, the preserved local work and the attempt's own
+ * evidence paths (#103's contract, reused verbatim).
+ */
+export async function repairFallComment(input: RepairFallCommentInput): Promise<string> {
+  const { attempt } = input;
+  const evidence = await readWorkEvidence(input.workspace, input.workDir, attempt.attempt);
+  const ending = describeRepairEnding(input.record, attempt.attempt);
+  const remoteShown =
+    attempt.remoteHeadSha === null ? "a commit" : `\`${shortSha(attempt.remoteHeadSha)}\``;
+  const header =
+    input.cause === "concurrent-change"
+      ? `automatic repair stopped: the remote head moved to ${remoteShown} ` +
+        `that the repair attempt did not produce (a concurrent change), so the factory will not ` +
+        `publish over it — PR #${input.prNumber}.`
+      : `automatic repair stopped after ${input.consecutiveFalls} consecutive repair attempts ended ` +
+        `without publishing PR #${input.prNumber}: ${input.persisting} persists on the current HEAD.`;
+  return [
+    header,
+    ``,
+    `attempt ${attempt.attempt} ${ending}.`,
+    `publication: ${describePublication(attempt.publication)}; ` +
+      `local work preserved: ${renderLocalWork(attempt.localWork)}.`,
+    ``,
+    input.cause === "concurrent-change"
+      ? "The branch, the PR and the local work stay for a human to reconcile: nothing was pushed, reset or discarded. A human decision is needed."
+      : "The branch and the PR stay; a human decision, authorization or fix is needed before another attempt.",
+    ``,
+    renderWorkEvidence(evidence),
+  ].join("\n");
+}
+
+/**
+ * How the attempt ended without publishing, from the record facts alone: a
+ * normal end (its own record exists) or an abrupt fall — whose own record is
+ * absent, with an older attempt's record named as history, never as this
+ * attempt's outcome (issue 103's rule, reused here).
+ */
+function describeRepairEnding(record: OutcomeRecord | null, attempt: number): string {
+  const own = ownOutcomeRecord(record, attempt);
+  if (own !== null) {
+    return `ended normally (its outcome record says "${own.class}") but nothing reached the remote`;
+  }
+  if (record === null) return "fell abruptly: no outcome record was written";
+  return (
+    "fell abruptly: no outcome record of its own was written " +
     `(the record on disk belongs to attempt ${record.attempt})`
   );
 }
