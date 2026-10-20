@@ -1,6 +1,7 @@
 {
   "name": "my-software-factory",
   "version": "2.0.0-alpha.1",
+  "workerImage": "msf-v2-worker:local",
   "description": "msf-v2: the minimal software factory — one headless orchestrator that drains a pool of works into PRs",
   "type": "module",
   "private": true,
@@ -12,10 +13,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:image": "docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) -t msf-v2-worker:local docker",
+    "build:image": "docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) -t $(node -p \"require('./package.json').workerImage\") docker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gateway": "node scripts/quality-gateway.mjs",
-    "test": "npm run build && node --test --test-timeout=60000 --test-force-exit \"dist/**/*.test.js\"",
+    "test": "npm run build && npm run test:built",
+    "test:built": "node --test --test-timeout=60000 --test-force-exit \"dist/**/*.test.js\"",
     "proof:real": "export MSF_REAL_PROOF=1 && npm run build && node --test --test-timeout=14400000 dist/e2e/sandcastle-real.test.js",
     "smoke:github": "npm run build && node dist/tracker/github-smoke.js"
   },

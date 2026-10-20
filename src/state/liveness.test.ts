@@ -90,12 +90,10 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
  * REASON where they are not — never a silent pass, never a false positive.
  * The quality gateway sets MSF_REQUIRE_DOCKER=1, turning that skip into a
  * failure: inside the measured gateway a missing daemon or image must never
- * look like a successful run of the required integration check.
+ * look like a successful run of the required integration check. Module scope
+ * on purpose: a suite-build throw is reported but does not fail the file.
  */
-/** The skip reason a focused run may carry; under the gateway's requirement
- * the same missing prerequisite throws instead of skipping. Module scope on
- * purpose: a suite-build throw would be reported but not fail the file. */
-const dockerSkipReason = dockerSkipReasonUnlessRequired();
+const dockerSkipReasonForFocusedRun = dockerSkipReasonUnlessRequired();
 
 function dockerSkipReasonUnlessRequired(): string | undefined {
   const missing = missingDockerReason();
@@ -122,7 +120,7 @@ function missingDockerReason(): string | undefined {
 describe("liveness — the real Docker shell", () => {
   test(
     "a real worker-image container carrying a work dir is read back as that work",
-    { skip: dockerSkipReason, timeout: 60_000 },
+    { skip: dockerSkipReasonForFocusedRun, timeout: 60_000 },
     async () => {
       const worksRoot = mkdtempSync(join(tmpdir(), "msf-liveness-"));
       const workDir = join(worksRoot, "Sanmoo", "my-tasks#7");
