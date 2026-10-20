@@ -157,7 +157,7 @@ export function isSettledPublication(publication: RepairPublication): boolean {
 
 /** True while the attempt's publication is unknown or pending: no worker of
  *  any kind may start and no budget may return until a sweep settles it. */
-export function hasUnsettledPublication(attempt: RepairAttempt): boolean {
+export function hasPendingReconciliation(attempt: RepairAttempt): boolean {
   return !isSettledPublication(attempt.publication);
 }
 

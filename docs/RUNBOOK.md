@@ -129,9 +129,8 @@ as you want; each round ends with the worker commenting what it addressed).
 You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
 round becomes a fall → release or blocked; a PR waiting for you stays
-parked; a merge you already did becomes done → archive). A repair fall is
-resumed automatically on the same branch and PR, and two consecutive falls ask
-you on the issue (see GLOSSARY.md).
+parked; a merge you already did becomes done → archive). A repair fall resumes
+on the same branch and PR (see GLOSSARY.md).
 
 ## (c) Status — the trail, factory stopped
 
