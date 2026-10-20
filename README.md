@@ -71,10 +71,12 @@ real local Docker integration test, all under one 240-second wall-clock
 ceiling. Docker and the worker image are mandatory prerequisites — a missing
 one fails the run, it never becomes a skip. Provisioning and image builds
 happen before the measured run; LLM reviews, `npm run proof:real` and
-`npm run smoke:github` stay outside it.
+`npm run smoke:github` stay outside it. At the deadline the running check and
+its subprocesses are killed and the interrupted check is named.
 
-Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted,
-otherwise the failing check's own status.
+Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted;
+otherwise the failing check's status (`1` when it reported none, `127` when it
+could not start).
 
 `npm test` remains a focused run during development and never substitutes for
 the gateway.

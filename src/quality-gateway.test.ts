@@ -8,25 +8,23 @@ import { test, describe } from "node:test";
 import { WORKER_IMAGE } from "./worker-image.js";
 
 /**
- * The quality gateway's command contract (issue 113). Every test spawns the
- * REAL command (`scripts/quality-gateway.mjs`) with an isolated working
- * directory and controlled environment. The official composition is exercised
- * end to end over a fixture project whose `npm`/`docker` are executable shims;
- * deadline behaviour uses the narrowly scoped test arrangement (a fixture plan
- * and short budget through MSF_GATEWAY_TEST_*), never the official plan with a
- * shortened ceiling — the production invocation has no such flag.
+ * The quality gateway's command contract (issue 113). Every test spawns a real
+ * command in an isolated working directory with a controlled environment. The
+ * official composition is exercised end to end through the canonical entry
+ * over a fixture project whose `npm`/`docker` are executable shims; deadline
+ * behaviour uses the test-only fixture entry (fixture checks, short budget).
+ * The canonical command itself reads no override, which one test proves.
  */
 
 const GATEWAY = new URL("../scripts/quality-gateway.mjs", import.meta.url).pathname;
+const FIXTURE_ENTRY = new URL("../scripts/quality-gateway-test-entry.mjs", import.meta.url).pathname;
+const FIXTURE_LABEL = "quality gateway fixture (test-only)";
 
 interface CommandStage {
   name: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  action?: "remove-dist";
-  requiresCompiledTests?: boolean;
-  hint?: string;
 }
 
 interface Plan {
@@ -58,23 +56,29 @@ function baseEnv(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-/** Spawn the real gateway command in `dir`. A plan/budget selects the test
- * arrangement; without both, the command runs its official composition. */
-function runGateway(dir: string, extraEnv: NodeJS.ProcessEnv = {}, plan?: Plan, budgetMs?: number): CommandResult {
-  const arrangement: NodeJS.ProcessEnv = {};
-  if (plan !== undefined) {
-    const planPath = join(dir, "fixture-plan.json");
-    writeFileSync(planPath, JSON.stringify(plan), "utf8");
-    arrangement["MSF_GATEWAY_TEST_PLAN"] = planPath;
-  }
-  if (budgetMs !== undefined) arrangement["MSF_GATEWAY_TEST_BUDGET_MS"] = String(budgetMs);
-  const result = spawnSync(process.execPath, [GATEWAY], {
+function spawnCommand(entry: string, dir: string, env: NodeJS.ProcessEnv): CommandResult {
+  const result = spawnSync(process.execPath, [entry], {
     cwd: dir,
     encoding: "utf8",
     timeout: 30_000,
-    env: baseEnv({ ...arrangement, ...extraEnv }),
+    env: baseEnv(env),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+/** The canonical command: official plan, fixed ceiling, no override. */
+function runOfficial(dir: string, extraEnv: NodeJS.ProcessEnv = {}): CommandResult {
+  return spawnCommand(GATEWAY, dir, extraEnv);
+}
+
+/** The test-only fixture entry: bounded checks under a short deadline. */
+function runFixturePlan(dir: string, plan: Plan, budgetMs: number): CommandResult {
+  const planPath = join(dir, "fixture-plan.json");
+  writeFileSync(planPath, JSON.stringify(plan), "utf8");
+  return spawnCommand(FIXTURE_ENTRY, dir, {
+    MSF_GATEWAY_TEST_PLAN: planPath,
+    MSF_GATEWAY_TEST_BUDGET_MS: String(budgetMs),
+  });
 }
 
 function nodeStage(name: string, source: string): CommandStage {
@@ -89,7 +93,7 @@ function writeShim(binDir: string, name: string, body: string): void {
 
 /** A minimal project the OFFICIAL gateway can run: `docker` passes the
  * preflight (recording its calls), `npm run build` proves dist is clean and
- * compiles one fixture test, and `node --test` really executes it. */
+ * compiles one fixture test, and the built test command really executes it. */
 function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.ProcessEnv } {
   const dir = freshDir();
   const binDir = join(dir, "bin");
@@ -136,6 +140,9 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
       "  fi",
       "  exit 0",
       "fi",
+      'if [ "$1" = "run" ] && [ "$2" = "test:built" ]; then',
+      "  exec node --test --test-timeout=60000 --test-force-exit dist/sample.test.js",
+      "fi",
       'echo "unexpected npm $*" >&2',
       "exit 2",
       "",
@@ -175,27 +182,49 @@ describe("quality gateway — the command contract", () => {
   test("the official command prepares, cleans, compiles and runs the whole suite under 240s", () => {
     const { dir, dockerLog, env } = officialFixture();
 
-    const result = runGateway(dir, env);
+    const result = runOfficial(dir, env);
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.match(result.stdout, /prerequisite "docker daemon" ready/);
-    assert.match(result.stdout, new RegExp(`prerequisite "worker image ${WORKER_IMAGE}" ready`));
-    assert.match(result.stdout, /\[1\/3\] check "clean" passed/);
-    assert.match(result.stdout, /\[2\/3\] check "compile" passed/);
-    assert.match(result.stdout, /\[3\/3\] check "test": 1 compiled test file\(s\)/);
-    assert.match(result.stdout, /\[3\/3\] check "test" .*passed/);
-    assert.match(result.stdout, /quality gateway passed in \d+ms of 240000ms/);
+    assert.match(result.stdout, /quality gateway: prerequisite "docker daemon" ready/);
+    assert.ok(result.stdout.includes(`quality gateway: prerequisite "worker image ${WORKER_IMAGE}" ready`));
+    assert.match(result.stdout, /quality gateway: \[1\/3\] check "clean" passed/);
+    assert.match(result.stdout, /quality gateway: \[2\/3\] check "compile" passed/);
+    assert.match(result.stdout, /quality gateway: \[3\/3\] check "test": 1 compiled test file\(s\)/);
+    assert.match(result.stdout, /quality gateway: \[3\/3\] check "test" .*passed/);
+    assert.match(result.stdout, /quality gateway: passed in \d+ms of 240000ms/);
     assert.ok(!existsSync(join(dir, "dist", "stale.js")), "the clean stage removed the stale artifact");
     assert.ok(existsSync(join(dir, "dist", "sample.test.js")), "the freshly compiled suite executed");
     const calls = readFileSync(dockerLog, "utf8");
     assert.match(calls, /docker info --format \{\{\.ServerVersion\}\}/);
-    assert.match(calls, new RegExp(`docker image inspect ${WORKER_IMAGE}`));
+    assert.ok(calls.includes(`docker image inspect ${WORKER_IMAGE}`));
+  });
+
+  test("the canonical command ignores the fixture arrangement variables", () => {
+    const { dir, env } = officialFixture();
+    const trivialPlan = join(dir, "trivial-plan.json");
+    writeFileSync(
+      trivialPlan,
+      JSON.stringify({ prerequisites: [], stages: [{ name: "trivial", command: process.execPath, args: ["-e", "0"] }] }),
+      "utf8",
+    );
+
+    const result = runOfficial(dir, {
+      ...env,
+      MSF_GATEWAY_TEST_PLAN: trivialPlan,
+      MSF_GATEWAY_TEST_BUDGET_MS: "999999999",
+    });
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /prerequisite "docker daemon" ready/);
+    assert.match(result.stdout, /\[2\/3\] check "compile" passed/);
+    assert.match(result.stdout, /quality gateway: passed in \d+ms of 240000ms/);
+    assert.doesNotMatch(result.stdout, /trivial/);
   });
 
   test("a missing Docker prerequisite fails before any check runs", () => {
     const { dir, env } = officialFixture();
 
-    const result = runGateway(dir, { ...env, FIXTURE_DOCKER_FAIL: "1" });
+    const result = runOfficial(dir, { ...env, FIXTURE_DOCKER_FAIL: "1" });
 
     assert.equal(result.status, 2, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /prerequisite failed: docker daemon \(exit 1\)/);
@@ -208,7 +237,7 @@ describe("quality gateway — the command contract", () => {
   test("an empty compiled suite is refused instead of passing with zero tests", () => {
     const { dir, env } = officialFixture();
 
-    const result = runGateway(dir, { ...env, FIXTURE_WRITE_TESTS: "0" });
+    const result = runOfficial(dir, { ...env, FIXTURE_WRITE_TESTS: "0" });
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /check failed: "test" .*no compiled test files under dist/);
@@ -218,7 +247,7 @@ describe("quality gateway — the command contract", () => {
   test("a failing compiled suite fails the gateway and names the test stage", () => {
     const { dir, env } = officialFixture();
 
-    const result = runGateway(dir, { ...env, FIXTURE_FAILING_TEST: "1" });
+    const result = runOfficial(dir, { ...env, FIXTURE_FAILING_TEST: "1" });
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /check failed: "test" .*\(exit 1;/);
@@ -238,12 +267,12 @@ describe("quality gateway — the command contract", () => {
       ],
     };
 
-    const result = runGateway(dir, {}, plan, 20_000);
+    const result = runFixturePlan(dir, plan, 20_000);
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.match(result.stdout, /\[1\/2\] check "write-marker" passed/);
-    assert.match(result.stdout, /\[2\/2\] check "read-marker" passed/);
-    assert.match(result.stdout, /quality gateway passed in \d+ms of 20000ms/);
+    assert.ok(result.stdout.includes(`${FIXTURE_LABEL}: [1/2] check "write-marker" passed`));
+    assert.ok(result.stdout.includes(`${FIXTURE_LABEL}: [2/2] check "read-marker" passed`));
+    assert.match(result.stdout, /passed in \d+ms of 20000ms/);
   });
 
   test("a failing check fails the gateway, names it, and stops the later checks", () => {
@@ -256,7 +285,7 @@ describe("quality gateway — the command contract", () => {
       ],
     };
 
-    const result = runGateway(dir, {}, plan, 20_000);
+    const result = runFixturePlan(dir, plan, 20_000);
 
     assert.equal(result.status, 3, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /check failed: "broken" .*exit 3/);
@@ -270,10 +299,10 @@ describe("quality gateway — the command contract", () => {
       stages: [nodeStage("first", "setTimeout(() => {}, 900)"), nodeStage("second", "setTimeout(() => {}, 900)")],
     };
 
-    const result = runGateway(dir, {}, plan, 1_500);
+    const result = runFixturePlan(dir, plan, 1_500);
 
     assert.equal(result.status, 124, `stderr: ${result.stderr}`);
-    assert.match(result.stdout, /check "first" .*passed/);
+    assert.match(result.stdout, /\[1\/2\] check "first" .*passed/);
     assert.match(result.stderr, /BUDGET EXHAUSTED[^\n]*interrupted check "second"/);
     assert.match(result.stderr, /ceiling 1500ms/);
   });
@@ -291,7 +320,7 @@ describe("quality gateway — the command contract", () => {
       ],
     };
 
-    const result = runGateway(dir, {}, plan, 1_000);
+    const result = runFixturePlan(dir, plan, 1_000);
 
     assert.equal(result.status, 124, `stderr: ${result.stderr}`);
     assert.match(result.stderr, /interrupted check "stalled"/);
