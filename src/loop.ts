@@ -35,6 +35,7 @@ import {
   EMPTY_REPAIR_CYCLE,
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
+  hasRepairCycle,
   isSettledPublication,
   legacyRepairAttempt,
   readRepairCycle,
@@ -723,7 +724,8 @@ export class SweepEngine {
       if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
       // A work that never ran a repair round has nothing to reconcile — no git
       // inspection is paid for it on every sweep.
-      if (stored.attempt === null && (stored.usedRounds === 0 || stored.lastEvidence === null)) continue;
+      if (!hasRepairCycle(stored)) continue;
+      if (stored.attempt === null && stored.lastEvidence === null) continue;
 
       // Git is read only when there is a verdict to reach: a legacy cycle with
       // no registry gap is not an attempt, and paying an inspection for it on
