@@ -440,7 +440,7 @@ async function deriveReservedWork(
       // feedback round) and no budget return until the remote or the host
       // answers — a later sweep repeats the query (the reconciliation owns the
       // transition). Placed before the trigger so an unconfirmed PR fact
-      // cannot open a session while the attempt's publication is unknown.
+      // cannot open a session while the reconciliation is pending.
       return { ref, state: "idle" };
     }
 

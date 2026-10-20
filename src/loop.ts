@@ -594,31 +594,38 @@ export class SweepEngine {
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const repairTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
-    // The lease value of a repair round (issue 112): the head observed before
-    // the intervention — for a resumption, the head its fallen attempt was
-    // launched on (equal to the trigger's by construction: only the attempt
-    // whose evidence still matches the current head is resumed), never a fresh
-    // read, so a collaborator's push to the branch after the fall is never
-    // overwritten by local history (stories 10/17).
-    const pinnedHeadSha =
+    // The launch context of a repair round (issue 112), created once here and
+    // filled with the local work below: the confirmed trigger, the unpublished
+    // attempt it takes over (when resuming) and the lease value — the head
+    // observed before the intervention (for a resumption, the head its fallen
+    // attempt was launched on: equal to the trigger's by construction, since
+    // only the attempt whose evidence still matches the current head is
+    // resumed), never a fresh read, so a collaborator's push to the branch
+    // after the fall is never overwritten by local history (stories 10/17).
+    const repair: RepairLaunchContext | undefined =
       repairTrigger === undefined
-        ? null
-        : (resuming?.observedHeadSha ?? repairTrigger.facts.headSha);
+        ? undefined
+        : {
+            trigger: repairTrigger,
+            resuming,
+            localWork: null,
+            pinnedHeadSha: resuming?.observedHeadSha ?? repairTrigger.facts.headSha,
+          };
     let baseBranch = prepared.baseBranch;
-    if (repairTrigger !== undefined && pinnedHeadSha !== null) {
-      baseBranch = repairTrigger.facts.baseBranch;
+    if (repair !== undefined) {
+      baseBranch = repair.trigger.facts.baseBranch;
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
         this.log(
           `repair round for ${key} skipped: the remote head could not be read — ` +
-            "publication stays unverified and nothing is launched (the next sweep retries)",
+            "its reconciliation stays pending and nothing is launched (the next sweep retries)",
         );
         return;
       }
-      if (observed.headSha !== pinnedHeadSha) {
+      if (observed.headSha !== repair.pinnedHeadSha) {
         this.log(
           `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
-            `observed ${pinnedHeadSha} — nothing is launched`,
+            `observed ${repair.pinnedHeadSha} — nothing is launched`,
         );
         if (resuming !== null) {
           // Somebody moved the branch after the fall: the local work must not
@@ -665,12 +672,8 @@ export class SweepEngine {
     // round is really going out: existing commits are reused, changes are
     // inspected, an unfinished operation is continued — the resumption never
     // restarts the work blind (issue 112).
-    const localWork = repairTrigger === undefined ? null : await this.inspectLocalWork(ref);
-    const repair: RepairLaunchContext | undefined =
-      repairTrigger !== undefined && pinnedHeadSha !== null
-        ? { trigger: repairTrigger, resuming, localWork, pinnedHeadSha }
-        : undefined;
     if (repair !== undefined) {
+      repair.localWork = await this.inspectLocalWork(ref);
       // The round is charged BEFORE the session (issue 107) and the attempt's
       // facts are recorded with it (issue 112): the observed head, the evidence
       // and the commit the branch already holds. A death mid-round refunds the
