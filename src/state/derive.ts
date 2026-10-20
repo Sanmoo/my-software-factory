@@ -18,7 +18,7 @@ import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
   hasRepairCycle,
-  hasUnsettledPublication,
+  hasPendingReconciliation,
   readRepairCycle,
   repairEvidenceSignature,
   type RepairAttempt,
@@ -386,13 +386,14 @@ async function deriveReservedWork(
     const comments = await port.readComments(ref);
     const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
     if (issueReplies.length > 0) {
-      // A pending publication outranks the human answer (issue 112, story 21):
-      // the remote may already carry this attempt's commit, so starting a
+      // A pending reconciliation outranks the human answer (issue 112, story
+      // 21): the remote may already carry this attempt's commit, so starting a
       // worker would duplicate it — and the resume renews a budget the
-      // reconciliation has not settled yet. The answer applies as soon as the
-      // next sweep gets its verdict; until then the hold is what status shows.
+      // reconciliation has not settled yet. The answer survives and applies as
+      // soon as the next sweep gets its verdict; until then this hold is what
+      // status shows.
       const cycle = await readRepairCycle(work.dir);
-      if (cycle.attempt !== null && hasUnsettledPublication(cycle.attempt)) {
+      if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
         return { ref, state: "idle" };
       }
       const feedback = await port.readPrFeedback(ref);
@@ -434,9 +435,9 @@ async function deriveReservedWork(
     if (attempt?.publication === "concurrent-change") {
       return repairFallBlocked(ref, pr, cycle, work.dir, workspace, attempt, "concurrent-change");
     }
-    if (attempt !== null && hasUnsettledPublication(attempt)) {
-      // Publication is unverified: NO worker of any kind (repair, resumption
-      // or feedback round) and no budget return until the remote or the host
+    if (attempt !== null && hasPendingReconciliation(attempt)) {
+      // Pending reconciliation: NO worker of any kind (repair, resumption or
+      // feedback round) and no budget return until the remote or the host
       // answers — a later sweep repeats the query (the reconciliation owns the
       // transition). Placed before the trigger so an unconfirmed PR fact
       // cannot open a session while the attempt's publication is unknown.
@@ -509,11 +510,11 @@ async function deriveReservedWork(
   // waiting for the human — or a released work, whose state is the pool's
   // business, not this one's.
   if (issue.value.labels.includes(labels.claimed)) {
-    // An unsettled repair attempt holds the claim even when the PR cannot be
+    // A pending reconciliation holds the claim even when the PR cannot be
     // read: releasing it would hand the work back to the pool while its
     // publication is still unknown (issue 112).
     const cycle = await readRepairCycle(work.dir);
-    if (cycle.attempt !== null && hasUnsettledPublication(cycle.attempt)) {
+    if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
       return { ref, state: "idle" };
     }
     return deriveUnreconciledFall(ref, work.dir, workspace, inFlight);
