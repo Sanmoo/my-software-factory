@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isolatedEnv, runCli } from "./cli-harness.js";
@@ -91,5 +91,14 @@ describe("e2e: msf run boots through the keyring check", () => {
     const cli = new URL("../cli.js", import.meta.url).pathname;
     const head = execFileSync("head", ["-1", cli], { encoding: "utf8" });
     assert.match(head, /^#!.*node/);
+  });
+
+  test("the built cli is executable — the bin symlink runs the file itself", () => {
+    // `npm link`/`npm i -g` symlink the bin straight to dist/cli.js, so the
+    // shebang only works if the file keeps the exec bit: a compile into a
+    // fresh dist (the gateway deletes it) emits 644, and the global `msf` then
+    // dies with EACCES.
+    const cli = new URL("../cli.js", import.meta.url).pathname;
+    assert.doesNotThrow(() => accessSync(cli, constants.X_OK));
   });
 });
