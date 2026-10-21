@@ -172,10 +172,11 @@ container and a **duplicate workers** line — the decision is yours.
 ## (d) Local desktop notifications (issue 93)
 
 `msf run` (continuous and `--once`) shows a Linux desktop notice when a new
-occurrence needs you: an open PR to review, a help request, or a block. One
-notice per occurrence — never a reminder — and `msf status` never notifies.
-Each notice names `<repo>#<n>`, the reason, and the PR (review) or issue
-(help) address.
+occurrence needs you: an open PR to review, a help request or a block, an
+intervention on a work (duplicate workers, a silent survivor), or the factory's
+own Docker warning, which names no work. One notice per occurrence — never a
+reminder — and `msf status` never notifies. A work notice names `<repo>#<n>`,
+the reason and the PR (review) or issue (help, intervention) address.
 
 On by default; disable with `notifications: false` in `msf.yaml`. Needs a
 Linux desktop session with a notification daemon, and the factory running
@@ -183,9 +184,10 @@ inside it. If delivery is unavailable the sweep warns in the terminal and
 carries on: outcome, state and exit code unchanged.
 
 Smoke: a review notice after the initial PR and after a PR comment, a help
-notice for a help request or a block, silence after a restart — and every
-notice carrying the work and its address, with no window opened and no focus
-taken.
+notice for a help request or a block, an intervention notice for a duplicated
+or silent worker, the factory's Docker warning after the configured threshold,
+silence after a restart — and every work notice carrying the work and its
+address, with no window opened and no focus taken.
 
 ## What the human does in the proof
 

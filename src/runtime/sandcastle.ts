@@ -10,7 +10,12 @@ import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
-import { DEFAULT_IDLE_LIMIT_MS, startActivityWatch, type ActivityWatch } from "./activity.js";
+import {
+  DEFAULT_IDLE_LIMIT_MS,
+  startActivityWatch,
+  workActivityDirs,
+  type ActivityWatch,
+} from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import { eventLogName, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
@@ -331,7 +336,7 @@ export class SandcastleRuntime implements WorkerRuntime {
 
       // The verified-activity idle limit (issue 112): the watchdog aborts the
       // run once nothing verifiable happened for the configured idle time.
-      const watch = this.activityWatch(request, sessionsDir);
+      const watch = await this.activityWatch(request, sessionsDir);
       let outcome: SessionResult["outcome"];
       try {
         await this.runSandcastle(
@@ -361,18 +366,14 @@ export class SandcastleRuntime implements WorkerRuntime {
    * work); the factory's own logs do not (they only echo stdout). The returned
    * signal carries the abort into Sandcastle, which kills the agent subprocess.
    */
-  private activityWatch(
+  private async activityWatch(
     request: WorkRequest,
     sessionsDir: string,
-  ): ActivityWatch & { signal: AbortSignal } {
+  ): Promise<ActivityWatch & { signal: AbortSignal }> {
     const idleMs = this.idleTimeoutSeconds * 1000;
     const controller = new AbortController();
     const watch = startActivityWatch({
-      dirs: [sessionsDir, request.workDir],
-      exclude: [
-        join(request.workDir, eventLogName(request.attempt)),
-        join(sessionsDir, sandcastleLogName(request.attempt)),
-      ],
+      ...(await workActivityDirs(request.workDir, sessionsDir)),
       idleMs,
       pollMs: this.activityPollMs,
       onIdle: (measured) => {

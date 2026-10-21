@@ -1,23 +1,28 @@
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { readActivityStamp, type ActivityDirs } from "../runtime/activity.js";
-import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "../runtime/attempt-logs.js";
-import type { LiveWorker } from "../state/liveness.js";
+import { readActivityStamp, workActivityDirs } from "../runtime/activity.js";
+import {
+  occupiedSlots,
+  type DuplicateWorkers,
+  type LiveWorker,
+} from "../state/liveness.js";
 
 /**
- * The survivor ledger of the operational cycle (issue 118): the workers a
- * reliable liveness probe shows but THIS process did not launch — the workers
- * that outlived a factory death. Recognition is observation only: nothing is
- * relaunched, attached to, killed or given a new attempt while a survivor
- * lives. The ledger is process-local on purpose; a restart re-reads the same
- * facts from Docker, and a work whose exit is confirmed is reconciled from
- * disk + tracker by the ordinary ruler.
+ * The survivor ledger and policy of the operational cycle (issue 118): the
+ * workers a reliable liveness probe shows but THIS process did not launch —
+ * the workers that outlived a factory death. Recognition is observation only:
+ * nothing is relaunched, attached to, killed or given a new attempt while a
+ * survivor lives. The ledger is process-local on purpose; a restart re-reads
+ * the same facts from Docker, and a work whose exit is confirmed is reconciled
+ * from disk + tracker by the ordinary ruler.
  *
- * The verifiable-activity observation is the one the runtime already uses
- * (runtime/activity.ts): what the agents write counts, the factory's own logs
- * never do. For a survivor the limit only WARNS — the factory ends nothing it
- * did not launch.
+ * The decisions the cycle asks for live HERE, pure: which silence is owed a
+ * warning, how many slots a live workforce exceeds, which duplicates are new.
+ * The loop only logs and delivers what they return.
+ *
+ * The activity observation is the runtime's own (runtime/activity.ts): what
+ * the agents write counts, the factory's derived logs never do. For a survivor
+ * the limit only WARNS — the factory ends nothing it did not launch.
  */
 
 /** One surviving worker as the cycle tracks it. */
@@ -43,39 +48,14 @@ export function survivorWorkKeys(
     .sort((a, b) => a.localeCompare(b));
 }
 
-/**
- * The dirs whose files prove a surviving worker is working: its session dir
- * and the work dir, minus the factory's own derived logs (the attempt's event
- * log and Sandcastle's stdout log) — those only echo the agent and would turn
- * any line the factory writes into false proof of life.
- */
-async function survivorActivityDirs(dir: string): Promise<ActivityDirs> {
-  const sessions = join(dir, "sessao");
-  const [workNames, sessionNames] = await Promise.all([namesOf(dir), namesOf(sessions)]);
-  const exclude = [
-    ...workNames.filter((name) => EVENT_LOG_PATTERN.test(name)).map((name) => join(dir, name)),
-    ...sessionNames
-      .filter((name) => SANDCASTLE_LOG_PATTERN.test(name))
-      .map((name) => join(sessions, name)),
-  ];
-  return { dirs: [sessions, dir], exclude };
-}
-
-/** The entries of a dir; one that cannot be read proves no activity. */
-async function namesOf(dir: string): Promise<string[]> {
-  try {
-    return await readdir(dir);
-  } catch {
-    return [];
-  }
-}
-
 /** One observation of a survivor's verifiable activity. */
 export async function observeSurvivorActivity(
   record: SurvivorRecord,
   now: number,
 ): Promise<SurvivorRecord> {
-  const stamp = await readActivityStamp(await survivorActivityDirs(record.dir));
+  const stamp = await readActivityStamp(
+    await workActivityDirs(record.dir, join(record.dir, "sessao")),
+  );
   // The first observation is the baseline: the artifacts a previous attempt
   // left are not this worker's activity.
   if (record.activityStamp === null) {
@@ -83,4 +63,35 @@ export async function observeSurvivorActivity(
   }
   if (stamp === record.activityStamp) return record;
   return { ...record, activityStamp: stamp, lastActivityAt: now };
+}
+
+/** The silence a survivor is owed a warning for — null while it is still
+ *  working, or once the warning of this life was already raised. */
+export function idleWarningDue(
+  record: SurvivorRecord,
+  now: number,
+  idleLimitMs: number,
+): number | null {
+  if (record.idleWarned) return null;
+  const idleMs = now - record.lastActivityAt;
+  return idleMs >= idleLimitMs ? idleMs : null;
+}
+
+/** How many slots the live workforce exceeds the configured concurrency by
+ *  (0 = within the limit): distinct containers, a local launch Docker already
+ *  shows counted once. */
+export function capacityExcess(
+  workers: readonly LiveWorker[],
+  localWorkKeys: ReadonlySet<string>,
+  concurrency: number,
+): number {
+  return Math.max(0, occupiedSlots(workers, localWorkKeys) - concurrency);
+}
+
+/** The duplicates not announced yet — every appearance is said once. */
+export function newDuplicates(
+  announced: ReadonlySet<string>,
+  duplicates: readonly DuplicateWorkers[],
+): DuplicateWorkers[] {
+  return duplicates.filter((duplicate) => !announced.has(duplicate.key));
 }

@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { isAbsolute, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
+import { WORKSPACE_SUBPATHS } from "../layout.js";
 import { parseWorkKey } from "../pool/registry.js";
 
 const execFile = promisify(execFileCallback);
@@ -245,33 +246,29 @@ type WorkCorrelation =
   | { kind: "foreign" }
   | { kind: "inconclusive" };
 
-/** A work dir as any factory lays it on disk: <somewhere>/trabalhos/<repo>#<n>. */
-const WORK_UNDER_TRABALHOS = /(?:^|\/)trabalhos\/(.+#\d+)(?:\/sessao)?$/;
+/** A work dir as any factory lays it on disk: <workspace>/trabalhos/<repo>#<n>. */
+const WORK_UNDER_A_WORKS_DIR = new RegExp(
+  `(?:^|/)${WORKSPACE_SUBPATHS.works}/(.+#\\d+)(?:/sessao)?$`,
+);
 
 function correlateWork(mounts: Array<{ Source?: string }>, worksRoot: string): WorkCorrelation {
-  let undecidable = false;
   let foreign = false;
   for (const mount of mounts) {
     const source = mount.Source;
     if (source === undefined) continue;
     const path = relative(worksRoot, source);
-    // Under THIS works root: the dir must name a work. (".." is absolute-path safe.)
+    // Under THIS works root: the dir must name a work, or the identity is
+    // undecidable — which is decisive and never "not ours". (".." is
+    // absolute-path safe.)
     if (path !== "" && !path.startsWith("..") && !isAbsolute(path)) {
       // The sessions bind points at <work dir>/sessao — the work is its parent.
       const name = path.split(sep).join("/").replace(/\/sessao$/, "");
-      if (parseWorkKey(name) !== null) return { kind: "ours", key: name };
-      undecidable = true;
-      continue;
+      return parseWorkKey(name) === null
+        ? { kind: "inconclusive" }
+        : { kind: "ours", key: name };
     }
     // Outside it: another workspace's worker, or a stranger's mount.
-    if (WORK_UNDER_TRABALHOS.test(mountPath(source))) foreign = true;
+    if (WORK_UNDER_A_WORKS_DIR.test(source.split(sep).join("/"))) foreign = true;
   }
-  if (undecidable) return { kind: "inconclusive" };
-  if (foreign) return { kind: "foreign" };
-  return { kind: "inconclusive" };
-}
-
-/** A mount source as a posix path, whatever the host separator. */
-function mountPath(source: string): string {
-  return source.split(sep).join("/");
+  return foreign ? { kind: "foreign" } : { kind: "inconclusive" };
 }
