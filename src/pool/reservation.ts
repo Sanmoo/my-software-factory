@@ -1,24 +1,19 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import { WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import {
   isRepositoryIdentity,
   isTicketIdentity,
+  workIdentity,
   workIdentityKey,
   type RepositoryIdentity,
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import {
-  anchorOfKey,
-  anchorOfWork,
-  keyOfAnchor,
-  readableKeyOf,
-  workOfAnchor,
-  workKeyOf,
-} from "./work-key.js";
+import { readPersistedRecord, type PersistedFacts } from "./persisted.js";
+import { anchorOfKey, anchorOfWork, keyOfAnchor, readableKeyOf, workOfAnchor, workKeyOf } from "./work-key.js";
 
 /**
  * The reservation record (issue 125): the Work's own facts, persisted inside
@@ -27,10 +22,9 @@ import {
  * presentation data. A restart reads the Work from here instead of
  * reconstructing it from whatever configuration happens to be current.
  *
- * Disk names stay PT-BR with the rest of the registry. The dir key itself is
- * the identity anchor (pool/work-key.ts); this record adds the facts a key
- * cannot carry (the Jira key/URL as it read when reserved) and the ones a
- * future tracker may present differently.
+ * The dir key itself is the identity anchor (pool/work-key.ts); this record
+ * adds the facts a key cannot carry (the Jira key/URL as it read when
+ * reserved) and the ones a future tracker may present differently.
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
@@ -58,10 +52,7 @@ export interface ReservationRecord {
  * GitHub dir (no record yet, readable and usable where it is); `unreadable` is
  * a record that cannot be trusted and must never be silently replaced.
  */
-export type ReservationFacts =
-  | { state: "persisted"; record: ReservationRecord }
-  | { state: "absent" }
-  | { state: "unreadable"; reason: string };
+export type ReservationFacts = PersistedFacts<ReservationRecord>;
 
 /** One reserved Work as the registry reads it after a restart. */
 export interface ReservationEntry {
@@ -88,10 +79,6 @@ export function reservationRecordOf(
   return { version: 1, ticket: work.ticket, destination: work.destination, presentation, reservedAt };
 }
 
-export function workOfReservation(record: ReservationRecord): WorkIdentity {
-  return { ticket: record.ticket, destination: record.destination };
-}
-
 /**
  * Persist the reservation of a Work. Idempotent: an existing record of the
  * SAME Work is kept untouched (its first reservedAt is history), a record of a
@@ -107,14 +94,14 @@ export async function reserveWork(
   }
 
   const works = typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
-  const work = workOfReservation(record);
+  const work = workIdentity(record.ticket, record.destination);
   const key = workKeyOf(work);
   const dir = join(works, key);
   mkdirSync(dir, { recursive: true });
 
   const existing = await readReservation(dir);
   if (existing.state === "persisted") {
-    const existingWork = workOfReservation(existing.record);
+    const existingWork = workIdentity(existing.record.ticket, existing.record.destination);
     if (keyOfAnchor(anchorOfWork(existingWork)) !== keyOfAnchor(anchorOfWork(work))) {
       throw new ReservationError(
         `reservation ${dir} already holds a different Work (${workIdentityKey(existingWork)})`,
@@ -131,22 +118,8 @@ export async function reserveWork(
 }
 
 /** The persisted facts of a work dir; `absent` when the dir predates the record. */
-export async function readReservation(dir: string): Promise<ReservationFacts> {
-  let raw: string;
-  try {
-    raw = await readFile(join(dir, RESERVATION_FILENAME), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
-    return { state: "unreadable", reason: `cannot read ${RESERVATION_FILENAME}: ${describe(error)}` };
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isReservationRecord(parsed)) return { state: "unreadable", reason: `${RESERVATION_FILENAME} is not a reservation record` };
-    return { state: "persisted", record: parsed };
-  } catch (error) {
-    return { state: "unreadable", reason: `${RESERVATION_FILENAME} is not valid JSON: ${describe(error)}` };
-  }
+export function readReservation(dir: string): Promise<ReservationFacts> {
+  return readPersistedRecord(dir, RESERVATION_FILENAME, "a reservation record", isReservationRecord);
 }
 
 /**
@@ -168,7 +141,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
     const reservation = await readReservation(dir);
 
     if (reservation.state === "persisted") {
-      const persistedWork = workOfReservation(reservation.record);
+      const persistedWork = workIdentity(reservation.record.ticket, reservation.record.destination);
       if (keyOfAnchor(anchorOfWork(persistedWork)) === keyOfAnchor(anchor)) {
         entries.push({ key, dir, work: persistedWork, reservation });
       } else {
@@ -232,8 +205,4 @@ function isReservationRecord(value: unknown): value is ReservationRecord {
     (facts["title"] === undefined || typeof facts["title"] === "string") &&
     (facts["url"] === undefined || typeof facts["url"] === "string")
   );
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -90,7 +90,7 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { operationalLog } from "./log.js";
+import { describeError, operationalLog } from "./log.js";
 import { formatDuration } from "./format.js";
 import { mkdirSync } from "node:fs";
 
@@ -315,6 +315,8 @@ type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover";
 interface Launchable {
   ref: IssueRef;
   kind: LaunchKind;
+  /** The ticket's title when the pool supplied it — presentation of the reservation. */
+  title?: string;
   /** ISO 8601 — age-based priority inside each group; null for a recovery,
    *  which waits for nothing human and is launched before the parked rounds. */
   createdAt: string | null;
@@ -934,7 +936,7 @@ export class SweepEngine {
       const entry = this.cache.shift();
       if (entry === undefined) return undefined;
       if (this.carriedKeys.has(workKey(entry.ref))) continue;
-      return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
+      return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null, title: entry.title };
     }
   }
 
@@ -1026,10 +1028,13 @@ export class SweepEngine {
       // with no footprint. Its own facts (source + destination + presentation)
       // land on disk with it (issue 125), so a restart reads the Work from the
       // registry instead of reconstructing it from the current configuration.
-      mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
       const work = workOfIssueRef(ref);
       const url = ticketUrl(work.ticket);
-      await reserveWork(workspace, reservationRecordOf(work, url === undefined ? {} : { url }));
+      const presentation = {
+        ...(launchable.title === undefined ? {} : { title: launchable.title }),
+        ...(url === undefined ? {} : { url }),
+      };
+      await reserveWork(workspace, reservationRecordOf(work, presentation));
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);

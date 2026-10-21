@@ -45,11 +45,14 @@ export function branchOfWork(work: WorkIdentity): string {
     }
     return workBranchName(ticket.number);
   }
-  return `agent-${ticket.provider}.${encodeRef(ticket.site)}.${encodeRef(ticket.stableId)}`;
+  return (
+    `agent-${ticket.provider}.` +
+    `${encodeBranchComponent(ticket.site)}.${encodeBranchComponent(ticket.stableId)}`
+  );
 }
 
 /** base64url: [A-Za-z0-9_-], no dot, no separator a sanitizer could collapse. */
-function encodeRef(value: string): string {
+function encodeBranchComponent(value: string): string {
   if (value === "") throw new Error("a branch component cannot be empty");
   return Buffer.from(value, "utf8").toString("base64url");
 }
