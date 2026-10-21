@@ -6,17 +6,12 @@ import type { RecoveryBudget } from "../config.js";
 import type { OutcomeClass } from "../state/outcome.js";
 
 /**
- * The interruption-recovery budget of a work (issue 123): an attempt that ended
- * with NO outcome record was interrupted by infrastructure — a SIGKILLed
- * worker, a dead factory process, a dead container, a hard stop — and that is
- * not a failure of the attempt. The interruption is absorbed here, by a finite
- * allowance counted per work and scoped to the attempt, never by the attempt
- * number and never by the 1st/2nd-fall ruler.
- *
- * The count is an artifact of the work (trabalhos/<repo>#<n>/recuperacao.json),
- * so it survives the factory's death: a restart continues the same count
- * instead of renewing the allowance. Exhausting it pauses the work and asks the
- * operator for help — it never restarts forever.
+ * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
+ * an attempt that ended with no outcome record is interrupted, not failed, so
+ * the factory absorbs it with a finite allowance scoped to the attempt instead
+ * of consuming it. The ledger is an artifact of the work
+ * (trabalhos/<repo>#<n>/recuperacao.json), so a restart continues the count
+ * instead of renewing it; exhausting it pauses the work and asks for help.
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
@@ -155,7 +150,7 @@ export async function peekRecovery(
   attempt: number,
 ): Promise<RecoveryDecision> {
   const ledger = await readRecoveryLedger(workDir);
-  return recoveryDecision(budgetForAttempt(ledger, attempt), budget);
+  return recoveryDecision(ledgerForAttempt(ledger, attempt), budget);
 }
 
 /**
@@ -170,16 +165,10 @@ export async function consumeRecovery(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
-  const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
+  const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
   const decision = recoveryDecision(ledger, budget);
   const at = now().toISOString();
-  if (decision.decision === "pause-help") {
-    await writeLedger(workDir, {
-      ...ledger,
-      lastStop: { kind: "interruption", attempt, at },
-    });
-    return decision;
-  }
+  if (decision.decision === "pause-help") return decision;
 
   const event: RecoveryEvent = {
     index: ledger.consumed,
@@ -205,7 +194,7 @@ export async function recordInterruptionStop(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
+  const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
   await writeLedger(workDir, {
     ...ledger,
     lastStop: { kind: "interruption", attempt, at: now().toISOString() },
@@ -224,7 +213,7 @@ export async function recordFailure(
   now: () => Date = () => new Date(),
 ): Promise<void> {
   const ledger = await readRecoveryLedger(workDir);
-  const current = budgetForAttempt(ledger, attempt);
+  const current = ledgerForAttempt(ledger, attempt);
   await writeLedger(workDir, {
     ...current,
     lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
@@ -232,9 +221,9 @@ export async function recordFailure(
   });
 }
 
-/** The same ledger for a different attempt: the allowance is per attempt, the
- *  events stay as the work's history. */
-function budgetForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
+/** The ledger scoped to an attempt: its allowance is per attempt, its events
+ *  stay as the work's history. */
+function ledgerForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
   if (ledger.attempt === attempt) return ledger;
   return { ...ledger, attempt, consumed: 0 };
 }

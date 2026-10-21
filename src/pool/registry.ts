@@ -16,8 +16,8 @@ import type { IssueRef } from "../tracker/port.js";
  * desfecho.json (written by the runtime when it can; its absence is an
  * INTERRUPTION of the attempt — issue 123), log-<n>.jsonl (the attempt's event
  * log), sessao/ (the session dir) and recuperacao.json (the recovery budget) —
- * and the reconciliation of a restart is
- * nothing but reading them back here (ticket 05 Q3). Names on disk stay PT-BR.
+ * and the reconciliation of a restart is nothing but reading them back here
+ * (ticket 05 Q3). Names on disk stay PT-BR.
  */
 
 /** The facts a launch derives from the registry before a worker is born. */
