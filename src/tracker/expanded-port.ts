@@ -13,6 +13,7 @@ import type {
   TicketSource,
   WorkIdentity,
 } from "./identity.js";
+import { pullRequestIdentity } from "./identity.js";
 
 /**
  * The expanded tracker contracts (issue 124): ticket facts/mutations and
@@ -105,4 +106,15 @@ export interface PullRequestTracker {
   openPullRequest(input: OpenPullRequestInput): Promise<PullRequestRecord>;
   reopenPullRequest(target: WorkPullRequest): Promise<WriteOutcome>;
   pushWorkBranch(input: PushWorkBranchInput): Promise<WriteOutcome>;
+}
+
+/** The expanded record over the old PR shape; one identity, built in one place. */
+export function withPullRequestIdentity(pull: PullRequest, repository: RepositoryIdentity): PullRequestRecord {
+  return { ...pull, identity: pullRequestIdentity(repository, pull.number) };
+}
+
+/** The old shape, without the explicit PR identity the expanded contract adds. */
+export function legacyPullRequest(record: PullRequestRecord): PullRequest {
+  const { identity: _identity, ...pull } = record;
+  return pull;
 }

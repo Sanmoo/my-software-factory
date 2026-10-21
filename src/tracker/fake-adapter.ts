@@ -32,12 +32,13 @@ import type {
   TicketTracker,
   WorkPullRequest,
 } from "./expanded-port.js";
+import { withPullRequestIdentity } from "./expanded-port.js";
 import {
-  GITHUB_SITE,
-  githubRepository,
   githubTicket,
+  isGitHubSource,
   issueRefOf,
-  pullRequestIdentity,
+  issueRefOfTicket,
+  type RepositoryIdentity,
   type TicketIdentity,
 } from "./identity.js";
 
@@ -97,6 +98,8 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
 
   /** Every pushBranch performed, in order — for assertions. */
   readonly pushedBranches: PushBranchInput[] = [];
+  /** PRs opened for a non-GitHub ticket: no GitHub issue exists to link them to. */
+  private readonly standalonePullRequests = new Map<string, PullRequestRecord>();
   /** The reservation sequence: every claim's "<repo>#<n>", in order. */
   readonly claimedOrder: string[] = [];
   /** Read cost of the neutral read; the fake resolves linkage structurally,
@@ -447,7 +450,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
   // ---- expanded ticket/PR contracts (issue 124) ----
 
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
-    if (selection.source.provider !== "github" || selection.source.site !== GITHUB_SITE) {
+    if (!isGitHubSource(selection.source)) {
       throw new Error(
         `the fake GitHub adapter cannot list ${selection.source.provider} tickets from ${selection.source.site}`,
       );
@@ -522,71 +525,103 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
   }
 
   async readPullRequestFeedback(target: WorkPullRequest): Promise<Known<ExpandedPrFeedback>> {
-    const ref =
-      target.pullRequest === null
-        ? target.work.ticket.provider === "github"
-          ? issueRefOf(target.work.ticket)
-          : null
-        : this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
-    if (ref === null) return notKnown;
-    const feedback = await this.readPrFeedback(ref);
-    if (!feedback.known) return notKnown;
-    if (feedback.value.pr === null) {
-      return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
+    if (target.pullRequest !== null) {
+      const detached = this.standalonePullRequests.get(
+        this.pullRequestKey(target.pullRequest.repository.repo, target.pullRequest.number),
+      );
+      if (detached !== undefined) return known({ pr: { ...detached }, comments: [], reviews: [] });
+      const ref = this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
+      if (ref === null) return notKnown;
+      return this.expandedFeedback(ref, target.work.destination);
     }
-    return known({
-      pr: this.withPullRequestIdentity(feedback.value.pr, target.work.destination.repo),
-      comments: feedback.value.comments,
-      reviews: feedback.value.reviews,
-    });
+    const ref = issueRefOfTicket(target.work.ticket);
+    if (ref === null) return notKnown;
+    return this.expandedFeedback(ref, target.work.destination);
   }
 
   async readPullRequestRepairFacts(target: WorkPullRequest): Promise<Known<PrRepairFacts>> {
-    const ref =
-      target.pullRequest === null
-        ? target.work.ticket.provider === "github"
-          ? issueRefOf(target.work.ticket)
-          : null
-        : this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
-    if (ref === null) return notKnown;
-    return this.readPrRepairFacts(ref);
+    if (target.pullRequest !== null) {
+      const detached = this.standalonePullRequests.get(
+        this.pullRequestKey(target.pullRequest.repository.repo, target.pullRequest.number),
+      );
+      if (detached !== undefined) return known(defaultRepairFacts(detached.number, detached.baseBranch));
+      const ref = this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
+      if (ref === null) return notKnown;
+      return this.readPrRepairFacts(ref);
+    }
+    const ref = issueRefOfTicket(target.work.ticket);
+    return ref === null ? notKnown : this.readPrRepairFacts(ref);
   }
 
   async openPullRequest(input: OpenPullRequestInput): Promise<PullRequestRecord> {
-    const ref = issueRefOf(input.work.ticket);
-    const pull = await this.openPr({
-      repo: input.work.destination.repo,
-      issueNumber: ref.number,
-      headBranch: input.headBranch,
-      baseBranch: input.baseBranch,
-      title: input.title,
-    });
-    return this.withPullRequestIdentity(pull, input.work.destination.repo);
+    const ref = issueRefOfTicket(input.work.ticket);
+    if (ref !== null) {
+      const pull = await this.openPr({
+        repo: input.work.destination.repo,
+        issueNumber: ref.number,
+        headBranch: input.headBranch,
+        baseBranch: input.baseBranch,
+        title: input.title,
+      });
+      return withPullRequestIdentity(pull, input.work.destination);
+    }
+    const number = this.nextPrNumber++;
+    const record = withPullRequestIdentity(
+      {
+        number,
+        state: "open",
+        merged: false,
+        headBranch: input.headBranch,
+        baseBranch: input.baseBranch,
+        author: this.options.workerAccount,
+      },
+      input.work.destination,
+    );
+    this.standalonePullRequests.set(this.pullRequestKey(input.work.destination.repo, number), record);
+    return { ...record };
   }
 
   reopenPullRequest(target: WorkPullRequest): Promise<WriteOutcome> {
     if (target.pullRequest !== null) {
+      const key = this.pullRequestKey(target.pullRequest.repository.repo, target.pullRequest.number);
+      const detached = this.standalonePullRequests.get(key);
+      if (detached !== undefined) {
+        detached.state = "open";
+        return Promise.resolve({ performed: [`pull ${target.pullRequest.repository.repo}#${detached.number} reopened`] });
+      }
       const ref = this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
-      if (ref === null) return Promise.resolve({ performed: [] });
-      return this.reopenPr(ref);
+      return ref === null ? Promise.resolve({ performed: [] }) : this.reopenPr(ref);
     }
-    if (target.work.ticket.provider !== "github") return Promise.resolve({ performed: [] });
-    return this.reopenPr(issueRefOf(target.work.ticket));
+    const ref = issueRefOfTicket(target.work.ticket);
+    return ref === null ? Promise.resolve({ performed: [] }) : this.reopenPr(ref);
   }
 
   pushWorkBranch(input: PushWorkBranchInput): Promise<WriteOutcome> {
     return this.pushBranch({ repo: input.destination.repo, branch: input.branch });
   }
 
-  private issueRefOfPr(repo: string, prNumber: number): IssueRef | null {
-    return this.findPrByNumber(repo, prNumber)?.issueRef ?? null;
+  private async expandedFeedback(
+    ref: IssueRef,
+    destination: RepositoryIdentity,
+  ): Promise<Known<ExpandedPrFeedback>> {
+    const feedback = await this.readPrFeedback(ref);
+    if (!feedback.known) return notKnown;
+    if (feedback.value.pr === null) {
+      return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
+    }
+    return known({
+      pr: withPullRequestIdentity(feedback.value.pr, destination),
+      comments: feedback.value.comments,
+      reviews: feedback.value.reviews,
+    });
   }
 
-  private withPullRequestIdentity(pull: PullRequest, repo: string): PullRequestRecord {
-    return {
-      ...pull,
-      identity: pullRequestIdentity(githubRepository(repo), pull.number),
-    };
+  private pullRequestKey(repo: string, number: number): string {
+    return `${repo}#${number}`;
+  }
+
+  private issueRefOfPr(repo: string, prNumber: number): IssueRef | null {
+    return this.findPrByNumber(repo, prNumber)?.issueRef ?? null;
   }
 
   // ---- internals ----
