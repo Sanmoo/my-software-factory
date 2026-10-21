@@ -333,7 +333,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     outcome?: OutcomeRecord["class"];
     /** The attempt the written record declares; defaults to the launched one. */
     recordAttempt?: number;
-    /** A raw record body written verbatim — a legacy/invalid shape the session left. */
+    /** A record body written verbatim — a shape the reader rejects (legacy/malformed). */
     rawRecord?: string;
     die?: string;
   }): SandcastleRuntime {
@@ -428,7 +428,11 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(rejected, "the attempt's log says the record was rejected");
     assert.equal(rejected["attempt"], 2, "the log line belongs to the session that ended");
     assert.equal(rejected["recordedAttempt"], 1, "the log names the attempt the record belongs to");
-    assert.match(String(rejected["reason"]), /attempt 1.*attempt 2/, "the reason is the mismatch, not a guess");
+    assert.equal(
+      typeof rejected["reason"],
+      "string",
+      "the reason is carried for the operator, not left to the mismatch to imply",
+    );
     assert.ok(
       readLines(join(request.workDir, "log-2.jsonl")).at(-1)?.includes("abrupt-death"),
       "session-end records the observed outcome — the absence",
