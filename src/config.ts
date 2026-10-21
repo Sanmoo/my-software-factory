@@ -225,7 +225,8 @@ function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean
 
 function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
   const value = doc["recovery"];
-  if (value === undefined) return { ...DEFAULT_RECOVERY_BUDGET };
+  if (value === undefined)
+    return { maxRecoveries: DEFAULT_RECOVERY_BUDGET.maxRecoveries, waitsMs: [...DEFAULT_RECOVERY_BUDGET.waitsMs] };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(`config field "recovery" must be a mapping when given`);
   }

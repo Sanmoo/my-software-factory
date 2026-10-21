@@ -172,14 +172,14 @@ describe("registry — the status view (worked on by msf status, factory stopped
     assert.deepEqual(view.archived, []);
   });
 
-  test("a corrupt record does not lie about status: it is an abrupt fall (last outcome shows it absent... reserved without attempt)", async () => {
+  test("a corrupt record does not lie about status: it reads as absent — no outcome of its own, the dir stays a bare reservation", async () => {
     const corrupt = join(layout.works, "Sanmoo/c#9");
     mkdirSync(corrupt, { recursive: true });
     writeFileSync(join(corrupt, DESFECHO_FILENAME), "{not json", "utf8");
 
     const view = await scanRegistry(layout);
-    // The invalid record is treated as absent — the abrupt fall class — and
-    // with no attempt evidence the dir is a bare reservation, never a fake outcome.
+    // The invalid record is treated as absent and, with no attempt evidence,
+    // the dir is a bare reservation — never a fake outcome.
     assert.deepEqual(view.reservedWithoutAttempt, ["Sanmoo/c#9"]);
     assert.deepEqual(view.attemptsWithoutOwnOutcome, []);
     assert.deepEqual(view.lastOutcome, []);
