@@ -11,6 +11,9 @@ import { join } from "node:path";
  *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
  */
 
+/** The work's session subdir, on disk as decided: <work dir>/sessao. */
+export const SESSIONS_SUBDIR = "sessao";
+
 /** The PT-BR subpath names as decided on disk. */
 export const WORKSPACE_SUBPATHS = {
   repos: "repos",

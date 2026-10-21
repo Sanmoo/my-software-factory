@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { SESSIONS_SUBDIR } from "../layout.js";
 import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "./attempt-logs.js";
 
 /**
@@ -42,7 +43,8 @@ export interface ActivityDirs {
  * log, which only echo the agent and would turn any factory line into proof of
  * work. Shared by the runtime's own watchdog and the survivor watch.
  */
-export async function workActivityDirs(workDir: string, sessionsDir: string): Promise<ActivityDirs> {
+export async function workActivityDirs(workDir: string): Promise<ActivityDirs> {
+  const sessionsDir = join(workDir, SESSIONS_SUBDIR);
   const [workNames, sessionNames] = await Promise.all([namesOf(workDir), namesOf(sessionsDir)]);
   return {
     dirs: [sessionsDir, workDir],

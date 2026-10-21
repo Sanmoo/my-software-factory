@@ -1,11 +1,5 @@
-import { join } from "node:path";
-
 import { readActivityStamp, workActivityDirs } from "../runtime/activity.js";
-import {
-  occupiedSlots,
-  type DuplicateWorkers,
-  type LiveWorker,
-} from "../state/liveness.js";
+import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
 
 /**
  * The survivor ledger and policy of the operational cycle (issue 118): the
@@ -53,9 +47,7 @@ export async function observeSurvivorActivity(
   record: SurvivorRecord,
   now: number,
 ): Promise<SurvivorRecord> {
-  const stamp = await readActivityStamp(
-    await workActivityDirs(record.dir, join(record.dir, "sessao")),
-  );
+  const stamp = await readActivityStamp(await workActivityDirs(record.dir));
   // The first observation is the baseline: the artifacts a previous attempt
   // left are not this worker's activity.
   if (record.activityStamp === null) {
@@ -77,21 +69,33 @@ export function idleWarningDue(
   return idleMs >= idleLimitMs ? idleMs : null;
 }
 
-/** How many slots the live workforce exceeds the configured concurrency by
- *  (0 = within the limit): distinct containers, a local launch Docker already
- *  shows counted once. */
-export function capacityExcess(
-  workers: readonly LiveWorker[],
-  localWorkKeys: ReadonlySet<string>,
-  concurrency: number,
-): number {
-  return Math.max(0, occupiedSlots(workers, localWorkKeys) - concurrency);
+/** A liveness-unavailable episode: when the continuous silence began and
+ *  whether its one warning was already raised. */
+export interface UnavailableEpisode {
+  unknownSince: number;
+  warned: boolean;
 }
 
-/** The duplicates not announced yet — every appearance is said once. */
-export function newDuplicates(
+/** The silence the operator is owed a warning for: the measured unavailability
+ *  once the threshold is reached, and only once per episode. */
+export function unavailableWarningDue(
+  episode: UnavailableEpisode,
+  now: number,
+  warnMs: number,
+): number | null {
+  if (episode.warned) return null;
+  const unavailableForMs = now - episode.unknownSince;
+  return unavailableForMs >= warnMs ? unavailableForMs : null;
+}
+
+/** The duplicates not announced yet — every appearance is said once — and the
+ *  ledger for the next observation. */
+export function freshDuplicates(
   announced: ReadonlySet<string>,
   duplicates: readonly DuplicateWorkers[],
-): DuplicateWorkers[] {
-  return duplicates.filter((duplicate) => !announced.has(duplicate.key));
+): { fresh: DuplicateWorkers[]; next: ReadonlySet<string> } {
+  return {
+    fresh: duplicates.filter((duplicate) => !announced.has(duplicate.key)),
+    next: new Set(duplicates.map((duplicate) => duplicate.key)),
+  };
 }

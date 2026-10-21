@@ -64,19 +64,20 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import {
-  capacityExcess,
+  freshDuplicates,
   idleWarningDue,
-  newDuplicates,
   observeSurvivorActivity,
   survivorWorkKeys,
+  unavailableWarningDue,
   type SurvivorRecord,
+  type UnavailableEpisode,
 } from "./pool/survivors.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
+  capacityExcess,
   duplicateWorkers,
   occupiedSlots,
   probeLiveness,
-  workersByWork,
   type LivenessObservation,
   type LivenessProbe,
 } from "./state/liveness.js";
@@ -262,6 +263,9 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
   return a.createdAt.localeCompare(b.createdAt) || workKey(a.ref).localeCompare(workKey(b.ref));
 }
 
+/** The no-worker view of {@link SweepEngine.carriedKeys} (liveness unknown). */
+const EMPTY_KEYS: ReadonlySet<string> = new Set();
+
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
@@ -351,9 +355,6 @@ export class SweepEngine {
   /** The latest probe answer — read before every decision that could replace
    *  a worker; `unknown` suspends launches instead of guessing. */
   private liveness: LivenessObservation = { state: "known", workers: [] };
-  /** The works a live container carries, from the same answer — the launch and
-   *  capacity decisions never ask Docker a second question of their own. */
-  private carriedKeys = new Set<string>();
   /** The workers a reliable probe showed and this process did not launch. */
   private readonly survivors = new Map<string, SurvivorRecord>();
   /** The recoveries the ended survivors' reconciliation asks for, flushed by
@@ -361,9 +362,9 @@ export class SweepEngine {
   private survivorRecoveries: Launchable[] = [];
   /** The current Docker-unavailability episode: when it began and whether its
    *  one warning was already raised. */
-  private livenessEpisode: { unknownSince: number; warned: boolean } | null = null;
+  private livenessEpisode: UnavailableEpisode | null = null;
   /** The works whose duplicate containers were already reported. */
-  private announcedDuplicates = new Set<string>();
+  private announcedDuplicates: ReadonlySet<string> = new Set();
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -650,6 +651,13 @@ export class SweepEngine {
     this.announced.clear();
   }
 
+  /** The works a live container carries, read from the latest answer: the
+   *  launch and capacity decisions never ask Docker a second question. */
+  private get carriedKeys(): ReadonlySet<string> {
+    if (this.liveness.state !== "known") return EMPTY_KEYS;
+    return new Set(this.liveness.workers.map((worker) => worker.key));
+  }
+
   /** Record the class an action/event lands a work in (`null` = it leaves). */
   private announce(ref: IssueRef, resulting: OperationalClass | null): void {
     this.announced.set(workKey(ref), resulting);
@@ -668,10 +676,6 @@ export class SweepEngine {
       this.deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     );
     this.liveness = observation;
-    this.carriedKeys =
-      observation.state === "known"
-        ? new Set(observation.workers.map((worker) => worker.key))
-        : new Set();
     if (observation.state === "unknown") this.enterUnavailableEpisode(observation.reason);
     else this.closeUnavailableEpisode();
   }
@@ -692,9 +696,12 @@ export class SweepEngine {
       );
     }
     const episode = this.livenessEpisode;
-    if (episode.warned) return;
-    const unavailableForMs = now - episode.unknownSince;
-    if (unavailableForMs < this.deps.config.liveness.unavailableWarnMs) return;
+    const unavailableForMs = unavailableWarningDue(
+      episode,
+      now,
+      this.deps.config.liveness.unavailableWarnMs,
+    );
+    if (unavailableForMs === null) return;
     episode.warned = true;
     this.log(
       `WARNING: Docker has not answered for ${formatDuration(unavailableForMs)} — the factory keeps launching nothing ` +
@@ -790,10 +797,12 @@ export class SweepEngine {
    */
   private async announceDuplicates(): Promise<void> {
     if (this.liveness.state !== "known") return;
-    const duplicates = duplicateWorkers(this.liveness.workers);
-    const announced = newDuplicates(this.announcedDuplicates, duplicates);
-    this.announcedDuplicates = new Set(duplicates.map((duplicate) => duplicate.key));
-    for (const duplicate of announced) {
+    const { fresh, next } = freshDuplicates(
+      this.announcedDuplicates,
+      duplicateWorkers(this.liveness.workers),
+    );
+    this.announcedDuplicates = next;
+    for (const duplicate of fresh) {
       this.log(
         `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
           "no new launch for it, no owner chosen and nothing ended; a human decision is needed",

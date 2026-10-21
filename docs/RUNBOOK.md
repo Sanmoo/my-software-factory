@@ -39,8 +39,6 @@ profile-allowed-roots:
   - ~/meus-dotfiles         # every root a profile link really points into
   - ~/.agents
 # profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
-# liveness:
-#   unavailable-warn-ms: 60000        # one notice after this long without Docker
 EOF
 ```
 
