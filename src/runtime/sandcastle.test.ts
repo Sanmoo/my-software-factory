@@ -331,6 +331,10 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
 
   function runtimeThat(fakes: {
     outcome?: OutcomeRecord["class"];
+    /** The attempt the written record declares; defaults to the launched one. */
+    recordAttempt?: number;
+    /** A raw record body written verbatim — a legacy/invalid shape the session left. */
+    rawRecord?: string;
     die?: string;
   }): SandcastleRuntime {
     return new SandcastleRuntime({
@@ -342,10 +346,12 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       preflight: async () => {}, // offline: the contract tests never touch docker
       runSandcastle: async () => {
         if (fakes.die !== undefined) throw new Error(fakes.die);
-        if (fakes.outcome !== undefined) {
+        if (fakes.rawRecord !== undefined) {
+          writeFileSync(join(request.workDir, DESFECHO_FILENAME), fakes.rawRecord, "utf8");
+        } else if (fakes.outcome !== undefined) {
           const record: OutcomeRecord = {
             class: fakes.outcome,
-            attempt: request.attempt,
+            attempt: fakes.recordAttempt ?? request.attempt,
             ...(fakes.outcome === "pr-open"
               ? { pr: { repo: request.ref.repo, number: 9, branch: request.branch } }
               : {}),
@@ -407,8 +413,51 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.equal(await readOutcomeRecord(request.workDir), null);
   });
 
+  test("a record left by another attempt is never this attempt's outcome: attempt 2 reads the attempt-1 record as an abrupt death (issue 143)", async () => {
+    const result = await runtimeThat({ outcome: "pr-open", recordAttempt: 1 }).launch({
+      ...request,
+      attempt: 2,
+    });
+
+    assert.equal(result.outcome, "abrupt-death", "the older attempt's verdict is history, not this session's result");
+    const record = await readOutcomeRecord(request.workDir);
+    assert.equal(record?.attempt, 1, "the record on disk stays untouched — it is the history of attempt 1");
+    const rejected = readLines(join(request.workDir, "log-2.jsonl"))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((line) => line["event"] === "outcome-record-rejected");
+    assert.ok(rejected, "the attempt's log says the record was rejected");
+    assert.equal(rejected["attempt"], 2, "the log line belongs to the session that ended");
+    assert.equal(rejected["recordedAttempt"], 1, "the log names the attempt the record belongs to");
+    assert.match(String(rejected["reason"]), /attempt 1.*attempt 2/, "the reason is the mismatch, not a guess");
+    assert.ok(
+      readLines(join(request.workDir, "log-2.jsonl")).at(-1)?.includes("abrupt-death"),
+      "session-end records the observed outcome — the absence",
+    );
+  });
+
+  test("the attempt's own record still ends the session with the class it declares", async () => {
+    const result = await runtimeThat({ outcome: "pr-open", recordAttempt: 2 }).launch({
+      ...request,
+      attempt: 2,
+    });
+
+    assert.equal(result.outcome, "pr-open");
+    assert.ok(
+      !readLines(join(request.workDir, "log-2.jsonl")).some((line) => line.includes("outcome-record-rejected")),
+      "an own record is never rejected",
+    );
+  });
+
+  test("a legacy record without an attempt field is not accepted as this attempt's outcome (issue 143)", async () => {
+    const result = await runtimeThat({
+      rawRecord: JSON.stringify({ class: "pr-open" }),
+    }).launch(request);
+
+    assert.equal(result.outcome, "abrupt-death", "a record that names no attempt is no attempt's outcome");
+  });
+
   test("attempt numbering comes from the WorkRequest — attempt 2 writes log-2.jsonl", async () => {
-    await runtimeThat({ outcome: "clean-without-pr" }).launch({ ...request, attempt: 2 });
+    await runtimeThat({ outcome: "clean-without-pr", recordAttempt: 2 }).launch({ ...request, attempt: 2 });
 
     assert.ok(readLines(join(request.workDir, "log-2.jsonl"))[0]?.includes("session-start"));
     assert.ok(existsSync(join(request.workDir, "sessao")));

@@ -136,9 +136,17 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
  * The record OF THIS ATTEMPT: a record left by another attempt is absent for
  * the current attempt's classification and diagnosis (issue 103) — the old
  * file survives on disk as history and serves numbering/reconciliation, but
- * it never decides this attempt's transition.
+ * it never decides this attempt's transition. A record without an `attempt`
+ * (legacy) never parses, so it is absence too (issue 143).
+ *
+ * The ONE place the criterion "is this record this attempt's?" lives: the
+ * collection path (runtime), the ruler and the status all call it, so they
+ * cannot diverge (issue 143).
  */
-function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
+export function ownOutcomeRecord(
+  record: OutcomeRecord | null,
+  attempt: number,
+): OutcomeRecord | null {
   return record !== null && record.attempt === attempt ? record : null;
 }
 

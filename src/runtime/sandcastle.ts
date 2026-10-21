@@ -8,7 +8,11 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
-import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import {
+  ownOutcomeRecord,
+  readOutcomeRecord,
+  type OutcomeRecord,
+} from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import {
@@ -48,7 +52,9 @@ const execFile = promisify(execFileCallback);
  * and log-<n>.jsonl at launch time — BEFORE any outcome, so an abrupt death
  * leaves the footprint the registry reads — and desfecho.json whenever the
  * session manages (the worker writes it through the /msf-work mount; its
- * absence is the class "abrupt-death" and nothing writes it for it).
+ * absence is the class "abrupt-death" and nothing writes it for it). Only the
+ * record OF THIS ATTEMPT is read as the session's outcome: an earlier
+ * attempt's record on disk is history and is logged as rejected (issue 143).
  */
 
 /** Inside the container: the agent dir is the writable COPY of the snapshot. */
@@ -337,7 +343,7 @@ export class SandcastleRuntime implements WorkerRuntime {
 
       // The verified-activity idle limit (issue 112): the watchdog aborts the
       // run once nothing verifiable happened for the configured idle time.
-      const watch = await this.activityWatch(request, sessionsDir);
+      const watch = await this.activityWatch(request);
       let outcome: SessionResult["outcome"];
       try {
         await this.runSandcastle(
@@ -367,10 +373,7 @@ export class SandcastleRuntime implements WorkerRuntime {
    * work); the factory's own logs do not (they only echo stdout). The returned
    * signal carries the abort into Sandcastle, which kills the agent subprocess.
    */
-  private async activityWatch(
-    request: WorkRequest,
-    sessionsDir: string,
-  ): Promise<ActivityWatch & { signal: AbortSignal }> {
+  private async activityWatch(request: WorkRequest): Promise<ActivityWatch & { signal: AbortSignal }> {
     const idleMs = this.idleTimeoutSeconds * 1000;
     const controller = new AbortController();
     const watch = startActivityWatch({
@@ -510,10 +513,25 @@ export class SandcastleRuntime implements WorkerRuntime {
     };
   }
 
-  /** The outcome the runtime observed: the record's class, or the absence. */
+  /**
+   * The outcome the runtime observed: the class of THIS attempt's record, or
+   * the absence (issue 143). A record left by another attempt is absence here
+   * — never that attempt's verdict read as this session's result — and the
+   * attempt's log names the mismatch so the diagnosis needs no guessing.
+   */
   private async observedOutcome(request: WorkRequest): Promise<SessionResult["outcome"]> {
     const record: OutcomeRecord | null = await readOutcomeRecord(request.workDir);
-    return record?.class ?? "abrupt-death";
+    const own = ownOutcomeRecord(record, request.attempt);
+    if (own !== null) return own.class;
+    if (record !== null) {
+      this.event(request, "outcome-record-rejected", {
+        recordedAttempt: record.attempt,
+        reason:
+          `the outcome record on disk belongs to attempt ${record.attempt}, not to attempt ` +
+          `${request.attempt} — the session wrote no record of its own`,
+      });
+    }
+    return "abrupt-death";
   }
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
