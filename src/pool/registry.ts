@@ -3,7 +3,7 @@ import { readdir, rename } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import { workspaceLayout, workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
-import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { readOutcomeRecord, recordedFailure, type OutcomeRecord } from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
@@ -45,9 +45,9 @@ export async function readLaunchFacts(
   if (!existsSync(workDir)) return { attempt: continueAttempt ?? 1, previousFall: false };
 
   const { logs, record } = await attemptsAndRecord(workDir);
-  // The last RECORDED attempt is the only fall fact: an interrupt attempt
+  // The last RECORDED attempt is the only fall fact: an interrupted attempt
   // writes nothing, so it neither resets nor feeds the consecutive count.
-  const previousFall = record?.class === "clean-without-pr";
+  const previousFall = recordedFailure(record);
 
   if (continueAttempt !== undefined) {
     // A recovery continues the interrupted attempt: the SAME number in the

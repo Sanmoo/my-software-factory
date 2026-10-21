@@ -52,14 +52,6 @@ export interface OutcomeRecord {
   paths?: Record<string, string>;
 }
 
-/**
- * The umbrella classification of a collection, no matter how the record got
- * there: `no-outcome` is written by no one — it names the FACT of an absent
- * record (a SIGKILLed worker, a dead factory process, a dead container, a
- * hard stop) without turning it into a failure of the attempt (issue 123).
- */
-export type ObservedClass = OutcomeClass | "no-outcome";
-
 /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
   /** The terminal state reached while the claim was held (the human's merge
@@ -150,6 +142,29 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
  */
 export function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
   return record !== null && record.attempt === attempt ? record : null;
+}
+
+/**
+ * The written failure the ruler counts for CONSECUTIVENESS at launch: a clean
+ * end without a PR. A `pr-open` record is a success and resets the count; a
+ * self-report is the worker's own stop, not a failure (issue 123).
+ */
+export function recordedFailure(record: OutcomeRecord | null): boolean {
+  return record?.class === "clean-without-pr";
+}
+
+/**
+ * The record that ends an attempt as a failure/abandon for the ruler: its own
+ * record, unless it is the blocked self-report the `record-only` ruling
+ * handles. One rule, shared by collection and by the derivation that settles
+ * an unreconciled failure (issue 123).
+ */
+export function recordSettlesFailure(
+  record: OutcomeRecord | null,
+  attempt: number,
+): OutcomeRecord | null {
+  const own = ownOutcomeRecord(record, attempt);
+  return own !== null && own.class !== "blocked-self-report" ? own : null;
 }
 
 /** The ACTUAL blocked self-report of one attempt — a record left by another

@@ -54,12 +54,10 @@ export interface RecoveryLedger {
   lastStop: RecoveryStop | null;
 }
 
-export const EMPTY_RECOVERY_LEDGER: RecoveryLedger = {
-  attempt: 1,
-  consumed: 0,
-  events: [],
-  lastStop: null,
-};
+/** The honest initial state: no recovery was ever consumed. */
+export function emptyLedger(): RecoveryLedger {
+  return { attempt: 1, consumed: 0, events: [], lastStop: null };
+}
 
 export type RecoveryDecision =
   | { decision: "recover"; index: number; waitMs: number; consumed: number }
@@ -76,17 +74,17 @@ export async function readRecoveryLedger(workDir: string): Promise<RecoveryLedge
   try {
     raw = await readFile(join(workDir, RECOVERY_FILENAME), "utf8");
   } catch {
-    return { ...EMPTY_RECOVERY_LEDGER, events: [] };
+    return emptyLedger();
   }
   try {
     return parseLedger(JSON.parse(raw));
   } catch {
-    return { ...EMPTY_RECOVERY_LEDGER, events: [] };
+    return emptyLedger();
   }
 }
 
 function parseLedger(value: unknown): RecoveryLedger {
-  if (value === null || typeof value !== "object") return { ...EMPTY_RECOVERY_LEDGER, events: [] };
+  if (value === null || typeof value !== "object") return emptyLedger();
   const record = value as Record<string, unknown>;
   return {
     attempt: positiveInteger(record["attempt"]) ?? 1,
