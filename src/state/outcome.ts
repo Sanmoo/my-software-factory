@@ -110,15 +110,13 @@ export interface OutcomeFacts {
  *      2nd consecutive → blocked + comment.
  *
  * The record is consulted only when it belongs to the collected attempt (issue
- * 103): a crash never inherits the previous attempt's verdict — its own
- * absence is an interruption, not a failure.
+ * 103): a crash never inherits the previous attempt's verdict.
  */
 export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
 
-  // No outcome record of this attempt: an interruption, never a failure.
   if (ownOutcomeRecord(facts.record, facts.attempt) === null) {
     return { decision: "interrupt", because: "no-outcome" };
   }
@@ -214,7 +212,7 @@ function describeOutcome({ attempt, record }: AttemptCommentInput): string {
 /** What the pause of an exhausted recovery budget needs: the interrupted
  *  attempt, the configured allowance and the attempt's evidence. */
 export interface InterruptionPausedInput extends AttemptCommentInput {
-  policy: RecoveryBudget;
+  budget: RecoveryBudget;
 }
 
 /**
@@ -226,7 +224,7 @@ export interface InterruptionPausedInput extends AttemptCommentInput {
 export async function interruptionPausedCommentBody(input: InterruptionPausedInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   const header =
-    `attempt ${input.attempt} was interrupted and ${exhaustedReason(input.policy)} — ` +
+    `attempt ${input.attempt} was interrupted and ${exhaustedReason(input.budget)} — ` +
     "no attempt was consumed.";
   return [header, describeOutcome(input), "", renderWorkEvidence(evidence)].join("\n\n");
 }
@@ -300,9 +298,8 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
 
 /**
  * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt. Absence is the FACT "no-outcome" — an interruption of
- * the attempt, never a failure of it (issue 123) — and the recovery budget,
- * never the fall ruler, answers it.
+ * invalid or corrupt. Absence is the FACT "no-outcome" (issue 123): the
+ * recovery budget, never the fall ruler, answers it.
  */
 export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {
   let raw: string;

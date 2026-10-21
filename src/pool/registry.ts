@@ -14,9 +14,9 @@ import type { IssueRef } from "../tracker/port.js";
  * Slots are only in memory (pool/slots.ts); everything else about a work is
  * an artifact in real disk under <workspace>/trabalhos/<repo>#<n>/ —
  * desfecho.json (written by the runtime when it can; its absence is an
- * INTERRUPTION of the attempt, not a failure — issue 123), log-<n>.jsonl (the
- * attempt's event log), sessao/ (the session dir) and recuperacao.json (the
- * interruption-recovery budget) — and the reconciliation of a restart is
+ * INTERRUPTION of the attempt — issue 123), log-<n>.jsonl (the attempt's event
+ * log), sessao/ (the session dir) and recuperacao.json (the recovery budget) —
+ * and the reconciliation of a restart is
  * nothing but reading them back here (ticket 05 Q3). Names on disk stay PT-BR.
  */
 

@@ -318,7 +318,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
 
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_BUDGET,
+      budget: DEFAULT_RECOVERY_BUDGET,
       record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
       workDir: dir,
       workspace: layout,
@@ -351,7 +351,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     const dir = makeWorkDir();
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_BUDGET,
+      budget: DEFAULT_RECOVERY_BUDGET,
       record: null,
       workDir: dir,
       workspace: layout,
@@ -375,7 +375,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
 
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_BUDGET,
+      budget: DEFAULT_RECOVERY_BUDGET,
       record: null,
       workDir: workDir(layout, ref.repo, ref.number),
       workspace: layout,
