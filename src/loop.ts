@@ -1023,14 +1023,10 @@ export class SweepEngine {
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      // The reservation comes first (issue 98): if the tracker write fails, the
-      // next sweep re-claims and reuses this directory instead of leaving a mark
-      // with no footprint. Its own facts (source + destination + presentation)
-      // land on disk with it (issue 125), so a restart reads the Work from the
-      // registry instead of reconstructing it from the current configuration.
-      // The dir is the safety footprint of issue 98; the record is the Work's
-      // facts. A record that is unknown or cannot be written is reported and
-      // never blocks the claim: the dir key still anchors the Work.
+      // The dir is the safety footprint of issue 98 and lands before the claim;
+      // the record is the Work's own facts (issue 125). An unknown or
+      // unwritable record is reported and never blocks the claim — nor is it
+      // overwritten.
       const work = workOfIssueRef(ref);
       mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
       const url = ticketUrl(work.ticket);

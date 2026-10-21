@@ -67,9 +67,14 @@ export function githubRepository(repo: string): RepositoryIdentity {
 }
 
 export function githubTicket(repo: string, number: number): GitHubTicketIdentity {
+  return githubTicketAt(GITHUB_SITE, repo, number);
+}
+
+/** A GitHub ticket on any site; github.com is the default via {@link githubTicket}. */
+export function githubTicketAt(site: string, repo: string, number: number): GitHubTicketIdentity {
   return {
     provider: "github",
-    site: GITHUB_SITE,
+    site,
     repo,
     number,
     stableId: String(number),
@@ -112,7 +117,6 @@ export function repositoryIdentityKey(repository: RepositoryIdentity): string {
 export function workIdentity(ticket: TicketIdentity, destination: RepositoryIdentity): WorkIdentity {
   return { ticket, destination };
 }
-
 
 export function workIdentityKey(work: WorkIdentity): string {
   return `${ticketIdentityKey(work.ticket)}/${repositoryIdentityKey(work.destination)}`;

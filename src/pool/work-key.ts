@@ -2,6 +2,7 @@ import {
   GITHUB_SITE,
   githubRepository,
   githubTicket,
+  githubTicketAt,
   jiraTicket,
   type RepositoryIdentity,
   type TicketProvider,
@@ -83,15 +84,7 @@ export function workOfAnchor(anchor: WorkAnchor, readableKey: string): WorkIdent
   const destination: RepositoryIdentity = githubRepository(anchor.repo);
   if (anchor.provider === "github") {
     const number = anchor.number ?? Number(anchor.stableId);
-    return {
-      ticket:
-        anchor.site === GITHUB_SITE
-          ? githubTicket(anchor.repo, number)
-          : // A non-github.com GitHub site keeps its own identity; the legacy
-            // helper would fold it into github.com.
-            { provider: "github", site: anchor.site, repo: anchor.repo, number, stableId: String(number), key: `#${number}` },
-      destination,
-    };
+    return { ticket: githubTicketAt(anchor.site, anchor.repo, number), destination };
   }
   return { ticket: jiraTicket({ site: anchor.site, stableId: anchor.stableId, key: readableKey }), destination };
 }
