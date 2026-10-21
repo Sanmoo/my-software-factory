@@ -53,7 +53,8 @@ export async function readLaunchFacts(
     // A recovery continues the interrupted attempt: the SAME number in the
     // artifact, the branch preserved. A record of an earlier attempt is
     // history and never makes this attempt's continuation a fall.
-    return { attempt: continueAttempt, previousFall: previousFall && (record?.attempt ?? 0) < continueAttempt };
+    const recordPrecedes = (record?.attempt ?? 0) < continueAttempt;
+    return { attempt: continueAttempt, previousFall: previousFall && recordPrecedes };
   }
 
   if (record) {

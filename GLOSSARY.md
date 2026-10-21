@@ -1,6 +1,3 @@
-**Factory**:
-The service that turns eligible work into reviewed changes for the operator.
-
 **Work**:
 A piece of requested change the operator wants completed.
 
@@ -48,7 +45,7 @@ An attempt that ended without an outcome record: a SIGKILLed worker, a dead fact
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
 
 **Recovery budget**:
-The finite, per-work and persisted allowance of recoveries for one attempt, with a configurable backoff. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
+The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.

@@ -326,8 +326,8 @@ describe("status — derivation on demand + local registry scan", () => {
     // #30: interrupted twice — two recoveries consumed, the attempt kept.
     const interrupted = seedAttempt(30, 2);
     const now = () => new Date("2026-01-01T00:00:00Z");
-    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, "worker-interrupted", now);
-    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, "worker-interrupted", now);
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, now);
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, now);
     // #31: a written failure — the attempt was consumed.
     const failed = seedAttempt(31, 1);
     await recordFailure(failed, 1, "clean-without-pr", now);

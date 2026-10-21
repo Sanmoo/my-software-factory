@@ -22,15 +22,10 @@ import type { OutcomeClass } from "../state/outcome.js";
 /** Disk name stays PT-BR with the rest of the registry. */
 export const RECOVERY_FILENAME = "recuperacao.json";
 
-/** Why the budget is spent: the attempt ended without an outcome record. */
-export const INTERRUPTION_REASON = "worker-interrupted";
-
 /** One consumed recovery: which attempt it continued, its wait and when. */
 export interface RecoveryEvent {
   /** 0-based index; the wait schedule is indexed by it. */
   index: number;
-  /** Why the attempt was interrupted — the single cause: no outcome record. */
-  reason: typeof INTERRUPTION_REASON;
   /** The backoff this recovery is granted; the loop waits it before the relaunch. */
   waitMs: number;
   /** The attempt the recovery continues — the same number, never a new one. */
@@ -114,7 +109,6 @@ function isEvent(value: unknown): value is RecoveryEvent {
   const event = value as Record<string, unknown>;
   return (
     nonNegativeInteger(event["index"]) !== null &&
-    typeof event["reason"] === "string" &&
     typeof event["waitMs"] === "number" &&
     positiveInteger(event["attempt"]) !== null &&
     typeof event["at"] === "string"
@@ -175,7 +169,6 @@ export async function consumeRecovery(
   workDir: string,
   policy: RecoveryPolicy,
   attempt: number,
-  reason: typeof INTERRUPTION_REASON,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
   const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
@@ -191,7 +184,6 @@ export async function consumeRecovery(
 
   const event: RecoveryEvent = {
     index: ledger.consumed,
-    reason,
     waitMs: decision.waitMs,
     attempt,
     at,

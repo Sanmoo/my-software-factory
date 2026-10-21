@@ -50,12 +50,7 @@ import {
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
-import {
-  consumeRecovery,
-  recordFailure,
-  INTERRUPTION_REASON,
-  type RecoveryDecision,
-} from "./pool/recovery.js";
+import { consumeRecovery, recordFailure, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -379,13 +374,6 @@ export class SweepEngine {
           // exhausted budget pauses it and asks the operator for help.
           if (decision.recovery.decision === "pause-help") {
             const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-            // Persist the exhausted stop for `msf status` (the peek consumed
-            // nothing; granting is impossible at this count).
-            await consumeRecovery(dir, config.recovery, decision.attempt, INTERRUPTION_REASON);
-            this.log(
-              `derived ${workKey(decision.ref)}: attempt ${decision.attempt} was interrupted and ` +
-                `${decision.recovery.reason} — blocked, asking the operator for help (no attempt was consumed)`,
-            );
             await this.pauseInterrupted(decision.ref, dir, decision.attempt, decision.recovery);
           } else {
             this.log(
@@ -792,7 +780,7 @@ export class SweepEngine {
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     if (kind === "recover") {
-      const decision = await consumeRecovery(dir, config.recovery, facts.attempt, INTERRUPTION_REASON);
+      const decision = await consumeRecovery(dir, config.recovery, facts.attempt);
       if (decision.decision === "pause-help") {
         this.log(`recovery of ${key} paused: ${decision.reason} — the work is blocked and asks for help`);
         await this.pauseInterrupted(ref, dir, facts.attempt, decision);
@@ -837,6 +825,9 @@ export class SweepEngine {
     decision: Extract<RecoveryDecision, { decision: "pause-help" }>,
   ): Promise<void> {
     const { workspace, config } = this.deps;
+    // Persist the exhausted stop for `msf status`: the peek consumed nothing,
+    // and granting is impossible at this count, so this only records it.
+    await consumeRecovery(dir, config.recovery, attempt);
     const comment = await interruptionPausedCommentBody({
       attempt,
       policy: config.recovery,
