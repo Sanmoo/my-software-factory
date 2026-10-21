@@ -22,7 +22,7 @@ import {
   readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
-  ownOutcomeRecord,
+  recordSettlesFailure,
   interruptionPausedCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
@@ -165,6 +165,15 @@ function changedWorkKeys(
   return changed;
 }
 
+/** A recovery (no human age) goes first; the rest by creation age, then key. */
+function byParkedPriority(a: Launchable, b: Launchable): number {
+  if (a.createdAt === null || b.createdAt === null) {
+    if (a.createdAt === b.createdAt) return workKey(a.ref).localeCompare(workKey(b.ref));
+    return a.createdAt === null ? -1 : 1;
+  }
+  return a.createdAt.localeCompare(b.createdAt) || workKey(a.ref).localeCompare(workKey(b.ref));
+}
+
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
@@ -206,8 +215,9 @@ type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover";
 interface Launchable {
   ref: IssueRef;
   kind: LaunchKind;
-  /** ISO 8601 — age-based priority inside each group. */
-  createdAt: string;
+  /** ISO 8601 — age-based priority inside each group; null for a recovery,
+   *  which waits for nothing human and is launched before the parked rounds. */
+  createdAt: string | null;
   /** The work's linked PR when the derivation saw one (the retomada reopens a closed one). */
   pr: PullRequest | null;
   /** Human issue replies after the last agent marker, only for a retomada. */
@@ -376,7 +386,7 @@ export class SweepEngine {
               kind: "recover",
               // A recovery waits for nothing human: it sorts before the parked
               // feedback rounds, which carry their own creation time.
-              createdAt: "",
+              createdAt: null,
               pr: null,
               attempt: decision.attempt,
             });
@@ -435,7 +445,7 @@ export class SweepEngine {
           break; // idle / unknown: nothing to decide
       }
     }
-    parked.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || workKey(a.ref).localeCompare(workKey(b.ref)));
+    parked.sort(byParkedPriority);
     this.parkedQueue = parked;
 
     // The pool AND the reconciliation from ONE open-issues read per repo
@@ -1067,7 +1077,7 @@ export class SweepEngine {
         next = {
           ref,
           kind: "recover",
-          createdAt: "",
+          createdAt: null,
           pr,
           attempt,
         };
@@ -1123,7 +1133,7 @@ export class SweepEngine {
    * attempt was consumed. An absent/other-attempt record is no failure here.
    */
   private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
-    const own = ownOutcomeRecord(record, attempt);
+    const own = recordSettlesFailure(record, attempt);
     if (own !== null) await recordFailure(dir, attempt, own.class);
   }
 

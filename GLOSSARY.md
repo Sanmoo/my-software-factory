@@ -1,5 +1,3 @@
-The factory turns eligible requested changes into reviewed changes for the operator. This vocabulary distinguishes factory activity from the issue tracker's own lifecycle.
-
 ## Language
 
 **Factory**:
@@ -52,7 +50,7 @@ An attempt that ended without an outcome record: a SIGKILLed worker, a dead fact
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
 
 **Recovery budget**:
-The finite, per-work and persisted allowance of recoveries for one attempt, with a configured backoff (see `msf.yaml`). Exhausting it pauses the work and asks for help; it is separate from the attempt count.
+The finite, per-work and persisted allowance of recoveries for one attempt (see `msf.yaml` for the default and the backoff). Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.

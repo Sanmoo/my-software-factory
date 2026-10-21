@@ -16,7 +16,8 @@ import {
   readOutcomeRecord,
   blockedCommentBody,
   repairFallComment,
-  ownOutcomeRecord,
+  recordSettlesFailure,
+  selfReportedBlocked,
   type OutcomeRecord,
 } from "./outcome.js";
 import { readAttemptLedger } from "../pool/registry.js";
@@ -572,14 +573,13 @@ async function deriveUnreconciledAttempt(
   }
 
   const record = await readOutcomeRecord(dir);
-  const own = ownOutcomeRecord(record, ledger.lastAttempt);
-  if (own !== null && own.class === "blocked-self-report") {
+  if (selfReportedBlocked(record, ledger.lastAttempt)) {
     // The worker reported blocked but the label never landed (an interrupted
     // claim swap): nothing to recover and nothing to rule — the human sees
     // the outcome in `msf status`.
     return { ref, state: "idle" };
   }
-  if (own !== null) {
+  if (recordSettlesFailure(record, ledger.lastAttempt) !== null) {
     return deriveUnreconciledFailure(ref, dir, workspace, ledger.lastAttempt, record);
   }
 
