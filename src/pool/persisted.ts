@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { describeError } from "../log.js";
+
 /**
  * Reading a persisted JSON record of a work dir. `absent` is the honest empty
  * state (a dir older than the record); `unreadable` is an unknown that is never
@@ -20,15 +22,12 @@ export interface PersistedFile<T> {
   isRecord: (value: unknown) => value is T;
 }
 
-export async function readPersistedRecord<T>(dir: string, file: PersistedFile<T>): Promise<PersistedFacts<T>> {
-  return readPersistedRecordSync(dir, file);
-}
-
 /**
- * The same read, synchronously: the launch path must not yield the event loop
- * between its dir reservation and the claim (issue 98's order).
+ * Read one record synchronously: the launch path must not yield the event
+ * loop between its dir reservation and the claim (issue 98's order), and the
+ * files are tiny.
  */
-export function readPersistedRecordSync<T>(dir: string, file: PersistedFile<T>): PersistedFacts<T> {
+export function readPersistedRecord<T>(dir: string, file: PersistedFile<T>): PersistedFacts<T> {
   let raw: string;
   try {
     raw = readFileSync(join(dir, file.filename), "utf8");
@@ -51,11 +50,7 @@ export function readPersistedRecordSync<T>(dir: string, file: PersistedFile<T>):
  * death mid-write leaves the previous record intact instead of a truncated
  * one — the difference between "older facts" and "unreadable".
  */
-export async function writePersistedRecord(dir: string, filename: string, record: unknown): Promise<void> {
-  writePersistedRecordSync(dir, filename, record);
-}
-
-export function writePersistedRecordSync(dir: string, filename: string, record: unknown): void {
+export function writePersistedRecord(dir: string, filename: string, record: unknown): void {
   mkdirSync(dir, { recursive: true });
   const temp = join(dir, `.${filename}.${process.pid}.${writeCounter++}.tmp`);
   writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
@@ -63,7 +58,3 @@ export function writePersistedRecordSync(dir: string, filename: string, record: 
 }
 
 let writeCounter = 0;
-
-export function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

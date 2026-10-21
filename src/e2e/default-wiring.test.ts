@@ -127,7 +127,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
 
     // The launch persists the Work's own facts and the PR association on the
     // same real path (issue 125): a restart reads them instead of the config.
-    const reservation = await readReservation(work);
+    const reservation = readReservation(work);
     assert.equal(reservation.state, "persisted");
     if (reservation.state === "persisted") {
       assert.equal(reservation.record.ticket.provider, "github");
@@ -135,7 +135,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
       assert.equal(reservation.record.destination.repo, REPO);
       assert.equal(reservation.record.presentation.title, "Add a greeting");
     }
-    const associations = await readPrAssociations(work);
+    const associations = readPrAssociations(work);
     assert.equal(associations.state, "persisted");
     assert.equal(associations.state === "persisted" ? activePullRequest(associations.record)?.number : null, 1);
 
@@ -162,7 +162,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.equal(result.launched.length, 1, "the unknown record does not block the work");
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed]);
     assert.equal(readFileSync(join(work, "reserva.json"), "utf8"), "{ truncated", "the evidence stays for a human");
-    const reservation = await readReservation(work);
+    const reservation = readReservation(work);
     assert.equal(reservation.state, "unreadable");
   });
 

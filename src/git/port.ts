@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { IssueRef } from "../tracker/port.js";
-import { requireSupportedGitHubSite, type WorkIdentity } from "../tracker/identity.js";
+import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
 /**
  * The git host side of the factory (ticket 10 / 15 decisions): one clone per
@@ -30,17 +30,16 @@ export function workBranchName(number: number): string {
 /**
  * The work branch of an explicit Work identity (issue 125).
  *
- * A GitHub ticket keeps the legacy `agent-issue-<n>` — the remote branches of
- * existing works stay theirs. Any other source derives the name from provider +
- * site + stable ticket id, base64url-encoded: injective (the readable Jira key
- * never enters, and a mutable key cannot rename a branch) and safe as a git
- * ref. Two sites, or two providers, aimed at the same repository can never
- * share a branch, so no slug or sanitization merges their rounds.
+ * A GitHub ticket on github.com keeps the legacy `agent-issue-<n>` — the remote
+ * branches of existing works stay theirs. Any other source derives the name
+ * from provider + site + stable ticket id, base64url-encoded: injective (the
+ * readable Jira key never enters, and a mutable key cannot rename a branch) and
+ * safe as a git ref. Two sites, or two providers, aimed at the same repository
+ * can never share a branch, so no slug or sanitization merges their rounds.
  */
 export function branchOfWork(work: WorkIdentity): string {
   const { ticket } = work;
-  if (ticket.provider === "github") {
-    requireSupportedGitHubSite(ticket.site);
+  if (ticket.provider === "github" && ticket.site === GITHUB_SITE) {
     return workBranchName(ticket.number);
   }
   return (

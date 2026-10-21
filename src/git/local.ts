@@ -93,6 +93,11 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
     return holding;
   }
 
+  /** The clone and the branch the explicit Work addresses. */
+  function targetOf(work: WorkIdentity): { repoDir: string; branch: string } {
+    return { repoDir: repoCloneDir(options.reposDir, work.destination.repo), branch: branchOfWork(work) };
+  }
+
   /** The default branch, revealed by the clone itself — never an API call. */
   async function detectDefaultBranch(repoDir: string): Promise<string> {
     try {
@@ -108,7 +113,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
   }
 
   async function prepareWorkFor(work: WorkIdentity): Promise<PreparedWork> {
-    const repoDir = repoCloneDir(options.reposDir, work.destination.repo);
+    const { repoDir } = targetOf(work);
 
     // One clone per target repo: created on the first work, never re-cloned.
     if (existsSync(join(repoDir, ".git"))) {
@@ -120,7 +125,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
     // The default branch, revealed by the clone itself — no API call.
     const baseBranch = await detectDefaultBranch(repoDir);
 
-    const branch = branchOfWork(work);
+    const { branch } = targetOf(work);
     let branchCreated = false;
     if (!(await localBranchExists(repoDir, branch))) {
       // Born from the default; relaunches reuse it untouched.
@@ -137,12 +142,10 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
   }
 
   async function cleanupDoneWorkFor(work: WorkIdentity): Promise<void> {
-    const repoDir = repoCloneDir(options.reposDir, work.destination.repo);
+    const { repoDir, branch } = targetOf(work);
 
     // No clone ever created: there is nothing to clean.
     if (!existsSync(join(repoDir, ".git"))) return;
-
-    const branch = branchOfWork(work);
 
     // Remote branch — the human's merge may have auto-deleted it already.
     const remoteHeads = await git(repoDir, ["ls-remote", "origin", `refs/heads/${branch}`]);
@@ -169,8 +172,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
   }
 
   async function diffWorkFor(work: WorkIdentity): Promise<string> {
-    const repoDir = repoCloneDir(options.reposDir, work.destination.repo);
-    const branch = branchOfWork(work);
+    const { repoDir, branch } = targetOf(work);
     const baseBranch = await detectDefaultBranch(repoDir);
     // Three-dot: from the merge-base — only the work's own changes, never
     // the base's later advances.
@@ -178,9 +180,8 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
   }
 
   async function observeRemoteHeadFor(work: WorkIdentity): Promise<string | null> {
-    const repoDir = repoCloneDir(options.reposDir, work.destination.repo);
+    const { repoDir, branch } = targetOf(work);
     if (!existsSync(join(repoDir, ".git"))) return null;
-    const branch = branchOfWork(work);
     // Asked of the remote, never of a stale remote-tracking ref (issue 96).
     const out = await git(repoDir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
     const line = out.trim();
@@ -188,8 +189,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
   }
 
   async function inspectLocalWorkFor(work: WorkIdentity): Promise<LocalWorkFacts> {
-    const repoDir = repoCloneDir(options.reposDir, work.destination.repo);
-    const branch = branchOfWork(work);
+    const { repoDir, branch } = targetOf(work);
     if (!existsSync(join(repoDir, ".git")) || !(await localBranchExists(repoDir, branch))) {
       // No clone or no branch yet: nothing of this attempt reached the disk.
       return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };

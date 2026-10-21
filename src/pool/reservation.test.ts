@@ -49,12 +49,12 @@ describe("reservation record — the Work's persisted source and destination", (
       "2026-01-01T00:00:00.000Z",
     );
 
-    const written = await reserveWork(layout, record);
+    const written = reserveWork(layout, record);
     assert.ok(existsSync(join(written.dir, RESERVATION_FILENAME)));
 
     // A fresh read after a restart: identity, site, stable id, destination and
     // presentation all come from disk, never from any current configuration.
-    const read = await readReservation(written.dir);
+    const read = readReservation(written.dir);
     assert.equal(read.state, "persisted");
     if (read.state !== "persisted") return;
     assert.deepEqual(read.record.ticket, work.ticket);
@@ -71,14 +71,14 @@ describe("reservation record — the Work's persisted source and destination", (
 
   test("re-reserving the same Work keeps the original record — an earlier execution is never overwritten", async () => {
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
-    const first = await reserveWork(layout, reservationRecordOf(work, { title: "first" }, "2026-01-01T00:00:00.000Z"));
+    const first = reserveWork(layout, reservationRecordOf(work, { title: "first" }, "2026-01-01T00:00:00.000Z"));
     assert.equal(first.created, true);
 
-    const second = await reserveWork(layout, reservationRecordOf(work, { title: "second" }, "2026-02-02T00:00:00.000Z"));
+    const second = reserveWork(layout, reservationRecordOf(work, { title: "second" }, "2026-02-02T00:00:00.000Z"));
     assert.equal(second.created, false);
     assert.equal(second.dir, first.dir);
 
-    const read = await readReservation(first.dir);
+    const read = readReservation(first.dir);
     assert.equal(read.state, "persisted");
     if (read.state !== "persisted") return;
     assert.equal(read.record.reservedAt, "2026-01-01T00:00:00.000Z");
@@ -87,7 +87,7 @@ describe("reservation record — the Work's persisted source and destination", (
 
   test("a record that names another Work never takes over an occupied reservation dir", async () => {
     const original = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
-    const dir = (await reserveWork(layout, reservationRecordOf(original))).dir;
+    const dir = (reserveWork(layout, reservationRecordOf(original))).dir;
 
     // A foreign record inside this dir (a hand edit, a bug, a future key
     // scheme): the reservation must stay the dir key's Work and the conflict
@@ -107,7 +107,7 @@ describe("reservation record — the Work's persisted source and destination", (
 
     // Re-reserving reports the unknown and leaves the file untouched: the
     // Work can still be launched, a human decides about the record.
-    const retry = await reserveWork(layout, reservationRecordOf(original));
+    const retry = reserveWork(layout, reservationRecordOf(original));
     assert.equal(retry.created, false);
     assert.equal(retry.reservation.state, "unreadable");
     assert.equal(
@@ -121,8 +121,8 @@ describe("reservation record — the Work's persisted source and destination", (
     const before = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
     const renamed = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-9", repo: "Sanmoo/my-tasks" });
 
-    const first = await reserveWork(layout, reservationRecordOf(before, { title: "first" }));
-    const second = await reserveWork(layout, reservationRecordOf(renamed, { title: "renamed" }));
+    const first = reserveWork(layout, reservationRecordOf(before, { title: "first" }));
+    const second = reserveWork(layout, reservationRecordOf(renamed, { title: "renamed" }));
 
     assert.equal(second.dir, first.dir, "the readable key is presentation, never identity");
     assert.equal(second.created, false);
@@ -131,10 +131,10 @@ describe("reservation record — the Work's persisted source and destination", (
 
   test("an unreadable record is surfaced, never overwritten: the reservation stays visible", async () => {
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
-    const dir = (await reserveWork(layout, reservationRecordOf(work))).dir;
+    const dir = (reserveWork(layout, reservationRecordOf(work))).dir;
     writeFileSync(join(dir, RESERVATION_FILENAME), "{ not json", "utf8");
 
-    const read = await readReservation(dir);
+    const read = readReservation(dir);
     assert.equal(read.state, "unreadable");
     const entries = await scanReservations(layout);
     assert.equal(entries.length, 1, "an unreadable record does not hide the reservation");
@@ -143,7 +143,7 @@ describe("reservation record — the Work's persisted source and destination", (
     assert.equal(entries[0]!.work, null);
 
     // The Work is not blocked by its corrupt record, and the evidence stays.
-    const retry = await reserveWork(layout, reservationRecordOf(work));
+    const retry = reserveWork(layout, reservationRecordOf(work));
     assert.equal(retry.created, false);
     assert.equal(retry.reservation.state, "unreadable");
     assert.equal(readFileSync(join(dir, RESERVATION_FILENAME), "utf8"), "{ not json");
@@ -168,13 +168,13 @@ describe("reservation record — the Work's persisted source and destination", (
     });
 
     // Its first new launch can persist the facts; the dir does not move.
-    const written = await reserveWork(
+    const written = reserveWork(
       layout,
       reservationRecordOf(entry.work, { url: "https://github.com/Sanmoo/my-tasks/issues/7" }),
     );
     assert.equal(written.dir, legacyDir);
     assert.equal(written.created, true);
-    assert.equal((await readReservation(legacyDir)).state, "persisted");
+    assert.equal((readReservation(legacyDir)).state, "persisted");
   });
 
   test("a configuration change routing the same ticket to another repo reserves a SEPARATE Work", async () => {
@@ -182,8 +182,8 @@ describe("reservation record — the Work's persisted source and destination", (
     const before = jiraWork({ ...ticket, repo: "Sanmoo/my-tasks" });
     const after = jiraWork({ ...ticket, repo: "Sanmoo/other-tasks" });
 
-    const first = await reserveWork(layout, reservationRecordOf(before, { title: "before" }));
-    const second = await reserveWork(layout, reservationRecordOf(after, { title: "after" }));
+    const first = reserveWork(layout, reservationRecordOf(before, { title: "before" }));
+    const second = reserveWork(layout, reservationRecordOf(after, { title: "after" }));
 
     assert.notEqual(first.dir, second.dir, "destination is part of the Work identity");
     const entries = await scanReservations(layout);
@@ -194,7 +194,7 @@ describe("reservation record — the Work's persisted source and destination", (
     assert.ok(old.work !== null);
     assert.equal(old.work.destination.repo, "Sanmoo/my-tasks");
     assert.equal(old.reservation.state, "persisted");
-    const oldRecord = await readReservation(first.dir);
+    const oldRecord = readReservation(first.dir);
     assert.equal(oldRecord.state === "persisted" ? oldRecord.record.presentation.title : null, "before");
   });
 });

@@ -68,7 +68,7 @@ export function activePullRequest(record: PrAssociationsRecord): PullRequestIden
   return null;
 }
 
-export function readPrAssociations(dir: string): Promise<PrAssociationsFacts> {
+export function readPrAssociations(dir: string): PrAssociationsFacts {
   return readPersistedRecord(dir, PR_ASSOCIATION_FILE);
 }
 
@@ -78,7 +78,7 @@ export function readPrAssociations(dir: string): Promise<PrAssociationsFacts> {
  * previous one stays as history. An unreadable file or a file of another Work
  * is refused: history is never overwritten.
  */
-export async function recordPrAssociation(
+export function recordPrAssociation(
   dir: string,
   input: {
     work: WorkIdentity;
@@ -87,7 +87,7 @@ export async function recordPrAssociation(
     attempt: number;
     openedAt?: string;
   },
-): Promise<PrAssociationsRecord> {
+): PrAssociationsRecord {
   const { work, pullRequest, attempt } = input;
   if (!Number.isInteger(attempt) || attempt < 1) {
     throw new PrAssociationError(`invalid attempt ${attempt}: an association belongs to a numbered attempt`);
@@ -102,7 +102,7 @@ export async function recordPrAssociation(
     );
   }
 
-  const facts = await readPrAssociations(dir);
+  const facts = readPrAssociations(dir);
   if (facts.state === "unreadable") {
     throw new PrAssociationError(`PR associations of ${dir} are unreadable (${facts.reason}); refusing to overwrite them`);
   }
@@ -137,7 +137,7 @@ export async function recordPrAssociation(
       },
     ],
   };
-  await writePersistedRecord(dir, PR_ASSOCIATIONS_FILENAME, record);
+  writePersistedRecord(dir, PR_ASSOCIATIONS_FILENAME, record);
   return record;
 }
 
