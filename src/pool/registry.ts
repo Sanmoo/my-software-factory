@@ -19,7 +19,9 @@ import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
+import { issueRefOfTicket } from "../tracker/identity.js";
 import type { IssueRef } from "../tracker/port.js";
+import { scanReservations } from "./reservation.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -162,24 +164,25 @@ export function parseWorkKey(name: string): { repo: string; number: number } | n
 }
 
 /**
- * The works the factory ever launched and still owns on disk: every
- * trabalhos/<repo>#<n> dir (recursively — the repo's slash nests the dir).
- * This is the derivation's source of "who is reserved": the tracker tells
- * the state, the registry tells WHO (ticket 14 — nothing but disk survives
- * a restart, and a released work keeps its dir until done).
+ * The works the factory ever launched and still owns on disk. This is the
+ * derivation's source of "who is reserved": the tracker tells the state, the
+ * registry tells WHO (ticket 14 — nothing but disk survives a restart, and a
+ * released work keeps its dir until done).
+ *
+ * TRANSITIONAL bridge (issue 125): it is the {@link scanReservations} read,
+ * filtered to the Works an `IssueRef` can express — a GitHub ticket. A
+ * reservation of another provider stays visible to the expanded registry and
+ * is simply outside this legacy consumer until it migrates; nothing is
+ * relocated and no evidence is lost.
  */
 export async function scanReservedWorks(
   workspace: WorkspaceLayout | string,
 ): Promise<ReservedWorkEntry[]> {
-  const works =
-    typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
-
   const entries: ReservedWorkEntry[] = [];
-  for (const dir of await workDirs(works)) {
-    const relativePath = relative(works, dir).split(sep).join("/");
-    const parsed = parseWorkKey(relativePath);
-    if (parsed === null) continue;
-    entries.push({ ref: { repo: parsed.repo, number: parsed.number }, dir });
+  for (const entry of await scanReservations(workspace)) {
+    const ref = issueRefOfTicket(entry.work.ticket);
+    if (ref === null) continue;
+    entries.push({ ref, dir: entry.dir });
   }
   return entries.sort((a, b) => a.ref.repo.localeCompare(b.ref.repo) || a.ref.number - b.ref.number);
 }

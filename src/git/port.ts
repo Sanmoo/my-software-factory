@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { IssueRef } from "../tracker/port.js";
+import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
 /**
  * The git host side of the factory (ticket 10 / 15 decisions): one clone per
@@ -24,6 +25,43 @@ import type { IssueRef } from "../tracker/port.js";
 
 export function workBranchName(number: number): string {
   return `agent-issue-${number}`;
+}
+
+/**
+ * The work branch of an explicit Work identity (issue 125).
+ *
+ * A GitHub ticket keeps the legacy `agent-issue-<n>` — the remote branches of
+ * existing works stay theirs. Any other source derives the name from provider +
+ * site + stable ticket id, base64url-encoded: injective (the readable Jira key
+ * never enters, and a mutable key cannot rename a branch) and safe as a git
+ * ref. Two sites, or two providers, aimed at the same repository can never
+ * share a branch, so no slug or sanitization merges their rounds.
+ */
+export function branchOfWork(work: WorkIdentity): string {
+  const { ticket } = work;
+  if (ticket.provider === "github") {
+    if (ticket.site !== GITHUB_SITE) {
+      throw new Error(`GitHub site ${ticket.site} has no branch convention: only ${GITHUB_SITE} is supported`);
+    }
+    return workBranchName(ticket.number);
+  }
+  return `agent-${ticket.provider}.${encodeRef(ticket.site)}.${encodeRef(ticket.stableId)}`;
+}
+
+/** base64url: [A-Za-z0-9_-], no dot, no separator a sanitizer could collapse. */
+function encodeRef(value: string): string {
+  if (value === "") throw new Error("a branch component cannot be empty");
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+/**
+ * The worktree Sandcastle manages for a branch inside the shared clone. The
+ * path is a pure function of the branch, so two Works of one repository never
+ * land on the same worktree (git itself also refuses a branch checked out
+ * twice).
+ */
+export function workerWorktreePath(repoDir: string, branch: string): string {
+  return join(repoDir, ".sandcastle", "worktrees", branch.replaceAll("/", "-"));
 }
 
 /** Directory of the single clone of a target repo: <reposDir>/<owner>#<name>. */
@@ -108,4 +146,18 @@ export interface GitWork {
    * cannot answer — an unverifiable local state is never "nothing there".
    */
   inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts>;
+}
+
+/**
+ * The same git host side addressed by the explicit Work identity (issue 125):
+ * the legacy `GitWork` methods above are the transitional bridge over these,
+ * kept for the consumers not migrated yet. The slice does not migrate the
+ * orchestration or runtime.
+ */
+export interface ExpandedGitWork extends GitWork {
+  prepareWorkFor(work: WorkIdentity): Promise<PreparedWork>;
+  cleanupDoneWorkFor(work: WorkIdentity): Promise<void>;
+  observeRemoteHeadFor(work: WorkIdentity): Promise<string | null>;
+  diffWorkFor(work: WorkIdentity): Promise<string>;
+  inspectLocalWorkFor(work: WorkIdentity): Promise<LocalWorkFacts>;
 }
