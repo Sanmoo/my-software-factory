@@ -56,7 +56,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       ...section(
         "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell)",
         view.registry.attemptsWithoutOwnOutcome.map((entry) =>
-          renderFallen(entry.key, entry.attempt, entry.recordedAttempt),
+          renderInterrupted(entry.key, entry.attempt, entry.recordedAttempt),
         ),
         cap,
       ),
@@ -123,13 +123,13 @@ function renderRunning(worker: RunningWorker): string {
 
 /** One interrupted attempt: the attempt itself, and the record that is NOT its own. */
 function renderOrphaned(orphan: OrphanedAttempt): string {
-  return renderFallen(orphan.key, orphan.attempt, orphan.recordedAttempt);
+  return renderInterrupted(orphan.key, orphan.attempt, orphan.recordedAttempt);
 }
 
 /** The interrupted attempt (issues 112/123): the current one named, the
  *  historical record disowned — a human must not read attempt 1's outcome as
  *  attempt 2's result. */
-function renderFallen(key: string, attempt: number, recordedAttempt: number | null): string {
+function renderInterrupted(key: string, attempt: number, recordedAttempt: number | null): string {
   const history =
     recordedAttempt === null
       ? "no outcome record on disk"

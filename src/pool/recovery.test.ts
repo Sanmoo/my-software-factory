@@ -57,7 +57,6 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       kind: "interruption",
       attempt: 1,
       at: "2026-01-01T00:00:00.000Z",
-      recoveries: 3,
     });
   });
 
@@ -83,7 +82,6 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       kind: "interruption",
       attempt: 2,
       at: "2026-01-01T00:00:00.000Z",
-      recoveries: 1,
     });
   });
 

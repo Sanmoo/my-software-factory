@@ -42,7 +42,7 @@ export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [];
 
 /**
  * The recovery budget (issue 123): an interruption (an attempt that ended
- * with no outcome record) is not a failure, so it never consumes a attempt —
+ * with no outcome record) is not a failure, so it never consumes an attempt —
  * it spends this finite, persisted allowance instead. Values fixed by the
  * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
  */

@@ -149,7 +149,7 @@ export function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number):
  * end without a PR. A `pr-open` record is a success and resets the count; a
  * self-report is the worker's own stop, not a failure (issue 123).
  */
-export function recordedFailure(record: OutcomeRecord | null): boolean {
+export function isRecordedFailure(record: OutcomeRecord | null): boolean {
   return record?.class === "clean-without-pr";
 }
 
@@ -159,7 +159,7 @@ export function recordedFailure(record: OutcomeRecord | null): boolean {
  * handles. One rule, shared by collection and by the derivation that settles
  * an unreconciled failure (issue 123).
  */
-export function recordSettlesFailure(
+export function ownFailureRecord(
   record: OutcomeRecord | null,
   attempt: number,
 ): OutcomeRecord | null {
@@ -185,8 +185,6 @@ type AttemptCommentInput = Pick<
   "attempt" | "record" | "workDir" | "workspace"
 >;
 
-type BlockedCommentInput = AttemptCommentInput;
-
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
  * before deciding to resume. The header names the failed attempt; the outcome
@@ -194,7 +192,7 @@ type BlockedCommentInput = AttemptCommentInput;
  * instead of being presented as this attempt's outcome. The evidence of the
  * attempt follows, independent of the record.
  */
-export async function blockedCommentBody(input: BlockedCommentInput): Promise<string> {
+export async function blockedCommentBody(input: AttemptCommentInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   return (
     `worker blocked after 2 consecutive failed attempts (attempt ${input.attempt}) — ` +
@@ -203,7 +201,7 @@ export async function blockedCommentBody(input: BlockedCommentInput): Promise<st
 }
 
 /** The outcome of the named attempt: another attempt's record is absence here. */
-function describeOutcome({ attempt, record }: BlockedCommentInput): string {
+function describeOutcome({ attempt, record }: AttemptCommentInput): string {
   const own = ownOutcomeRecord(record, attempt);
   if (own !== null) return `the exact outcome record:\n\n${JSON.stringify(own, null, 2)}`;
   if (record === null) return "interrupted: no outcome record was written for this attempt";

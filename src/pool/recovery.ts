@@ -22,12 +22,15 @@ import type { OutcomeClass } from "../state/outcome.js";
 /** Disk name stays PT-BR with the rest of the registry. */
 export const RECOVERY_FILENAME = "recuperacao.json";
 
+/** Why the budget is spent: the attempt ended without an outcome record. */
+export const INTERRUPTION_REASON = "worker-interrupted";
+
 /** One consumed recovery: which attempt it continued, its wait and when. */
 export interface RecoveryEvent {
   /** 0-based index; the wait schedule is indexed by it. */
   index: number;
-  /** Why the attempt was interrupted; the only cause today is the absence of an outcome record. */
-  reason: string;
+  /** Why the attempt was interrupted — the single cause: no outcome record. */
+  reason: typeof INTERRUPTION_REASON;
   /** The backoff this recovery is granted; the loop waits it before the relaunch. */
   waitMs: number;
   /** The attempt the recovery continues — the same number, never a new one. */
@@ -41,7 +44,7 @@ export interface RecoveryEvent {
  * which consumes the attempt and enters the fall ruler).
  */
 export type RecoveryStop =
-  | { kind: "interruption"; attempt: number; at: string; recoveries: number }
+  | { kind: "interruption"; attempt: number; at: string }
   | { kind: "failure"; attempt: number; at: string; outcome: OutcomeClass };
 
 export interface RecoveryLedger {
@@ -60,7 +63,7 @@ export function emptyLedger(): RecoveryLedger {
 }
 
 export type RecoveryDecision =
-  | { decision: "recover"; index: number; waitMs: number; consumed: number }
+  | { decision: "recover"; waitMs: number; consumed: number }
   | { decision: "pause-help"; consumed: number; reason: string };
 
 /**
@@ -119,7 +122,7 @@ function isStop(value: unknown): value is RecoveryStop {
   const stop = value as Record<string, unknown>;
   if (positiveInteger(stop["attempt"]) === null || typeof stop["at"] !== "string") return false;
   if (stop["kind"] === "failure") return typeof stop["outcome"] === "string";
-  return stop["kind"] === "interruption" && nonNegativeInteger(stop["recoveries"]) !== null;
+  return stop["kind"] === "interruption";
 }
 
 async function writeLedger(workDir: string, ledger: RecoveryLedger): Promise<void> {
@@ -143,7 +146,6 @@ export function recoveryDecision(ledger: RecoveryLedger, policy: RecoveryPolicy)
   const index = ledger.consumed;
   return {
     decision: "recover",
-    index,
     waitMs: policy.waitsMs[Math.min(index, policy.waitsMs.length - 1)] ?? 0,
     consumed: index + 1,
   };
@@ -169,7 +171,7 @@ export async function consumeRecovery(
   workDir: string,
   policy: RecoveryPolicy,
   attempt: number,
-  reason: string,
+  reason: typeof INTERRUPTION_REASON,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
   const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
@@ -178,13 +180,13 @@ export async function consumeRecovery(
   if (decision.decision === "pause-help") {
     await writeLedger(workDir, {
       ...ledger,
-      lastStop: { kind: "interruption", attempt, at, recoveries: decision.consumed },
+      lastStop: { kind: "interruption", attempt, at },
     });
     return decision;
   }
 
   const event: RecoveryEvent = {
-    index: decision.index,
+    index: ledger.consumed,
     reason,
     waitMs: decision.waitMs,
     attempt,
@@ -194,7 +196,7 @@ export async function consumeRecovery(
     attempt,
     consumed: decision.consumed,
     events: [...ledger.events, event],
-    lastStop: { kind: "interruption", attempt, at, recoveries: decision.consumed },
+    lastStop: { kind: "interruption", attempt, at },
   });
   return decision;
 }

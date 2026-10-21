@@ -16,7 +16,7 @@ import {
   readOutcomeRecord,
   blockedCommentBody,
   repairFallComment,
-  recordSettlesFailure,
+  ownFailureRecord,
   selfReportedBlocked,
   type OutcomeRecord,
 } from "./outcome.js";
@@ -579,7 +579,7 @@ async function deriveUnreconciledAttempt(
     // the outcome in `msf status`.
     return { ref, state: "idle" };
   }
-  if (recordSettlesFailure(record, ledger.lastAttempt) !== null) {
+  if (ownFailureRecord(record, ledger.lastAttempt) !== null) {
     return deriveUnreconciledFailure(ref, dir, workspace, ledger.lastAttempt, record);
   }
 
