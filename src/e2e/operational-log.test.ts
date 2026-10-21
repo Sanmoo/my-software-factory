@@ -12,7 +12,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 
 /**
  * Observed through the loop's log callback and the built CLI; `status` and the
@@ -102,6 +102,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };

@@ -10,7 +10,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 
 /**
  * End-to-end of issue 100 at the sweep seam, with real disk: the tracker's
@@ -72,6 +72,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };

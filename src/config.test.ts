@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS } from "./config.js";
+import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY } from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -184,6 +184,66 @@ describe("config", () => {
   test("profile-skip-dangling-links must be a boolean when given", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
     assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
+  });
+
+  // ---- the interruption-recovery budget (issue 123) ----
+
+  test("the recovery budget defaults to the #111 values: 3 recoveries, waits 1/4/16 s", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.recovery, DEFAULT_RECOVERY_POLICY);
+    assert.deepEqual(config.recovery, { maxRecoveries: 3, waitsMs: [1_000, 4_000, 16_000] });
+  });
+
+  test("the recovery budget is configurable — the value and the backoff are the operator's", () => {
+    const path = writeYaml(
+      dir,
+      [
+        "worker-gh-account: bot",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: [Sanmoo/a]",
+        "recovery:",
+        "  max: 1",
+        "  waits-ms: [250, 1000]",
+      ].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.recovery, { maxRecoveries: 1, waitsMs: [250, 1000] });
+  });
+
+  test("a partially given recovery mapping keeps the default for the missing key", () => {
+    const path = writeYaml(
+      dir,
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "recovery:", "  max: 0"].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.recovery, { maxRecoveries: 0, waitsMs: DEFAULT_RECOVERY_POLICY.waitsMs });
+  });
+
+  test("recovery.max must be a non-negative integer when given", () => {
+    for (const bad of ["-1", "1.5", '"three"']) {
+      const path = writeYaml(
+        dir,
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `recovery:\n  max: ${bad}`].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /recovery\.max/, `rejected: ${bad}`);
+    }
+  });
+
+  test("recovery.waits-ms must be a non-empty list of non-negative milliseconds when given", () => {
+    for (const bad of ["[]", "[1, -2]", "[1, nope]", "3"]) {
+      const path = writeYaml(
+        dir,
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `recovery:\n  waits-ms: ${bad}`].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /recovery\.waits-ms/, `rejected: ${bad}`);
+    }
   });
 
   test("notifications can be explicitly disabled — the factory then runs silently", () => {

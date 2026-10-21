@@ -40,6 +40,24 @@ export const DEFAULT_LABELS: Labels = {
  */
 export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [];
 
+/**
+ * The recovery budget (issue 123): an interruption (an attempt that ended
+ * with no outcome record) is not a failure, so it never consumes a attempt —
+ * it spends this finite, persisted allowance instead. Values fixed by the
+ * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
+ */
+export interface RecoveryPolicy {
+  /** Automatic recoveries allowed for one attempt; 0 pauses on the 1st interruption. */
+  maxRecoveries: number;
+  /** Wait before each recovery, by index; the last value repeats. */
+  waitsMs: readonly number[];
+}
+
+export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
+  maxRecoveries: 3,
+  waitsMs: [1_000, 4_000, 16_000],
+};
+
 export interface Labels {
   ready: string;
   claimed: string;
@@ -65,6 +83,8 @@ export interface Config {
   /** Stale (dangling) profile links are skipped and logged instead of
    * blocking the launch. Off by default — fail closed (ticket 17). */
   profileSkipDanglingLinks: boolean;
+  /** The interruption-recovery budget: finite and separate from the attempts. */
+  recovery: RecoveryPolicy;
   notifications: boolean;
   /** Where the config was loaded from. */
   configPath: string;
@@ -111,6 +131,7 @@ export function loadConfig(filePath: string): Config {
   const labels = optionalLabels(doc);
   const profileAllowedRoots = optionalProfileAllowedRoots(doc);
   const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
+  const recovery = optionalRecovery(doc);
   const notifications = optionalNotifications(doc);
 
   return {
@@ -122,6 +143,7 @@ export function loadConfig(filePath: string): Config {
     labels,
     profileAllowedRoots,
     profileSkipDanglingLinks,
+    recovery,
     notifications,
     configPath: absolute,
   };
@@ -199,6 +221,36 @@ function optionalProfileAllowedRoots(doc: Record<string, unknown>): string[] {
 
 function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean {
   return optionalBoolean(doc, "profile-skip-dangling-links", false);
+}
+
+function optionalRecovery(doc: Record<string, unknown>): RecoveryPolicy {
+  const value = doc["recovery"];
+  if (value === undefined) return { ...DEFAULT_RECOVERY_POLICY };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(`config field "recovery" must be a mapping when given`);
+  }
+  const given = value as Record<string, unknown>;
+
+  const max = given["max"];
+  if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
+    throw new ConfigError(`config field "recovery.max" must be a non-negative integer when given`);
+  }
+  const maxRecoveries = (max as number | undefined) ?? DEFAULT_RECOVERY_POLICY.maxRecoveries;
+
+  const waits = given["waits-ms"];
+  if (
+    waits !== undefined &&
+    (!Array.isArray(waits) ||
+      waits.length === 0 ||
+      waits.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0))
+  ) {
+    throw new ConfigError(
+      `config field "recovery.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
+    );
+  }
+  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_RECOVERY_POLICY.waitsMs];
+
+  return { maxRecoveries, waitsMs };
 }
 
 function optionalNotifications(doc: Record<string, unknown>): boolean {
