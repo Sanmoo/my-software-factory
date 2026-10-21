@@ -13,6 +13,14 @@ import {
 } from "./notify/port.js";
 import { workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
+  githubRepository,
+  pullRequestIdentity,
+  ticketUrl,
+  workOfIssueRef,
+} from "./tracker/identity.js";
+import { reservationRecordOf, reserveWork } from "./pool/reservation.js";
+import { recordPrAssociation } from "./pool/pr-association.js";
+import {
   deriveTrackerState,
   deriveReserved,
   repairSignature,
@@ -1015,8 +1023,13 @@ export class SweepEngine {
       logClaim(this.log, key);
       // The reservation comes first (issue 98): if the tracker write fails, the
       // next sweep re-claims and reuses this directory instead of leaving a mark
-      // with no footprint.
+      // with no footprint. Its own facts (source + destination + presentation)
+      // land on disk with it (issue 125), so a restart reads the Work from the
+      // registry instead of reconstructing it from the current configuration.
       mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
+      const work = workOfIssueRef(ref);
+      const url = ticketUrl(work.ticket);
+      await reserveWork(workspace, reservationRecordOf(work, url === undefined ? {} : { url }));
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
@@ -1446,6 +1459,17 @@ export class SweepEngine {
       workDir: dir,
       workspace,
     });
+
+    // An open PR is a persisted association of this Work (issue 125): a
+    // restart correlates the PR from disk, and a later execution appends its
+    // own PR instead of replacing the earlier association.
+    if (prConfirmed && pr !== null) {
+      await recordPrAssociation(dir, {
+        work: workOfIssueRef(ref),
+        pullRequest: pullRequestIdentity(githubRepository(ref.repo), pr.number),
+        attempt,
+      });
+    }
 
     let resulting: OperationalClass | null;
     let next: Launchable | null = null;

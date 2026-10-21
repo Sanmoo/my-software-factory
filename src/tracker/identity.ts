@@ -129,6 +129,14 @@ export function issueRefOfTicket(ticket: TicketIdentity): IssueRef | null {
   return ticket.provider === "github" ? issueRefOf(ticket) : null;
 }
 
+/** The operator-facing link of a ticket — presentation, never identity. */
+export function ticketUrl(ticket: TicketIdentity): string | undefined {
+  if (ticket.provider === "github") {
+    return `https://${ticket.site}/${ticket.repo}/issues/${ticket.number}`;
+  }
+  return ticket.url;
+}
+
 export function isGitHubSource(source: TicketSource): boolean {
   return source.provider === "github" && source.site === GITHUB_SITE;
 }
@@ -139,4 +147,52 @@ export function workOfIssueRef(ref: IssueRef): WorkIdentity {
     ticket: githubTicket(ref.repo, ref.number),
     destination: githubRepository(ref.repo),
   };
+}
+
+/**
+ * Validation of identities read back from disk. A persisted reservation whose
+ * facts do not match these shapes is UNKNOWN — never silently reinterpreted.
+ */
+export function isTicketIdentity(value: unknown): value is TicketIdentity {
+  if (value === null || typeof value !== "object") return false;
+  const ticket = value as Record<string, unknown>;
+  if (typeof ticket["site"] !== "string" || ticket["site"] === "") return false;
+  if (typeof ticket["stableId"] !== "string" || ticket["stableId"] === "") return false;
+  if (typeof ticket["key"] !== "string" || ticket["key"] === "") return false;
+  if (ticket["provider"] === "jira") {
+    return ticket["url"] === undefined || typeof ticket["url"] === "string";
+  }
+  if (ticket["provider"] !== "github") return false;
+  return (
+    typeof ticket["repo"] === "string" &&
+    ticket["repo"] !== "" &&
+    typeof ticket["number"] === "number" &&
+    Number.isInteger(ticket["number"]) &&
+    ticket["number"] >= 1
+  );
+}
+
+export function isRepositoryIdentity(value: unknown): value is RepositoryIdentity {
+  if (value === null || typeof value !== "object") return false;
+  const repository = value as Record<string, unknown>;
+  return (
+    repository["provider"] === "github" &&
+    typeof repository["site"] === "string" &&
+    repository["site"] !== "" &&
+    typeof repository["repo"] === "string" &&
+    repository["repo"] !== ""
+  );
+}
+
+export function isPullRequestIdentity(value: unknown): value is PullRequestIdentity {
+  if (value === null || typeof value !== "object") return false;
+  const pullRequest = value as Record<string, unknown>;
+  return (
+    pullRequest["provider"] === "github" &&
+    pullRequest["site"] === (pullRequest["repository"] as { site?: unknown } | null)?.site &&
+    isRepositoryIdentity(pullRequest["repository"]) &&
+    typeof pullRequest["number"] === "number" &&
+    Number.isInteger(pullRequest["number"]) &&
+    pullRequest["number"] >= 1
+  );
 }
