@@ -84,12 +84,18 @@ describe("work key — the registry's identity anchor", () => {
     assert.equal(workOfAnchor(anchor, anchor.stableId).ticket.provider, "jira");
   });
 
-  test("an unsupported GitHub site is named, never silently folded into github.com", () => {
+  test("a GitHub site other than github.com gets its own key, never github.com's legacy one", () => {
     const enterprise: WorkIdentity = {
       ticket: { provider: "github", site: "ghe.example", repo: "Sanmoo/my-tasks", number: 7, stableId: "7", key: "#7" },
       destination: githubRepository("Sanmoo/my-tasks"),
     };
-    assert.throws(() => workKeyOf(enterprise), /only github\.com has a key and branch convention/);
+    const key = workKeyOf(enterprise);
+    assert.notEqual(key, "Sanmoo/my-tasks#7", "the legacy key belongs to github.com alone");
+    const anchor = anchorOfKey(key);
+    assert.ok(anchor !== null);
+    assert.equal(anchor.site, "ghe.example");
+    assert.equal(anchor.number, 7);
+    assert.deepEqual(workOfAnchor(anchor, "#7"), enterprise);
   });
 
   test("unrecognized dir names are not works", () => {

@@ -97,14 +97,14 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     const alpha = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
     const beta = jiraWork({ site: "beta.atlassian.net", stableId: "10001", key: "ABC-1" });
 
-    const alphaReservation = await reserveWork(
+    const alphaReservation = reserveWork(
       layout,
       reservationRecordOf(alpha, {
         title: "Alpha request",
         url: "https://alpha.atlassian.net/browse/ABC-1",
       }),
     );
-    const betaReservation = await reserveWork(
+    const betaReservation = reserveWork(
       layout,
       reservationRecordOf(beta, {
         title: "Beta request",
@@ -143,12 +143,12 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     // The worker's artifacts and the persisted PR association, written per dir.
     writeAttempt(alphaReservation.dir, 1, 41, alphaPrepared.branch);
     writeAttempt(betaReservation.dir, 1, 42, betaPrepared.branch);
-    await recordPrAssociation(alphaReservation.dir, {
+    recordPrAssociation(alphaReservation.dir, {
       work: alpha,
       pullRequest: pullRequestIdentity(githubRepository(REPO), 41),
       attempt: 1,
     });
-    await recordPrAssociation(betaReservation.dir, {
+    recordPrAssociation(betaReservation.dir, {
       work: beta,
       pullRequest: pullRequestIdentity(githubRepository(REPO), 42),
       attempt: 1,
@@ -182,8 +182,8 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     assert.equal((await readOutcomeRecord(betaEntry.dir))?.pr?.branch, betaPrepared.branch);
 
     // PR associations stay correlated too.
-    const alphaPrs = await readPrAssociations(alphaEntry.dir);
-    const betaPrs = await readPrAssociations(betaEntry.dir);
+    const alphaPrs = readPrAssociations(alphaEntry.dir);
+    const betaPrs = readPrAssociations(betaEntry.dir);
     assert.equal(alphaPrs.state === "persisted" ? activePullRequest(alphaPrs.record)?.number : null, 41);
     assert.equal(betaPrs.state === "persisted" ? activePullRequest(betaPrs.record)?.number : null, 42);
 
@@ -203,7 +203,7 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
 
   test("an interrupted non-GitHub attempt resumes in the same dir, with the same attempt and branch", async () => {
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
-    const { dir } = await reserveWork(layout, reservationRecordOf(work));
+    const { dir } = reserveWork(layout, reservationRecordOf(work));
     const git = gitWork();
     const prepared = await git.prepareWorkFor(work);
 
@@ -229,23 +229,23 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
 
   test("a later attempt of the same Work appends its PR while the earlier one stays readable", async () => {
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
-    const { dir } = await reserveWork(layout, reservationRecordOf(work));
+    const { dir } = reserveWork(layout, reservationRecordOf(work));
 
     writeAttempt(dir, 1, 41, branchOfWork(work));
-    await recordPrAssociation(dir, {
+    recordPrAssociation(dir, {
       work,
       pullRequest: pullRequestIdentity(githubRepository(REPO), 41),
       attempt: 1,
     });
     writeAttempt(dir, 2, 42, branchOfWork(work));
-    await recordPrAssociation(dir, {
+    recordPrAssociation(dir, {
       work,
       pullRequest: pullRequestIdentity(githubRepository(REPO), 42),
       attempt: 2,
     });
 
     assert.deepEqual(await readAttemptLedger(dir), { lastAttempt: 2, recordedAttempt: 2 });
-    const prs = await readPrAssociations(dir);
+    const prs = readPrAssociations(dir);
     assert.equal(prs.state, "persisted");
     if (prs.state !== "persisted") return;
     assert.equal(activePullRequest(prs.record)?.number, 42);
@@ -263,11 +263,11 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     const original = jiraWork(ticket);
     const rerouted = jiraWork({ ...ticket, repo: OTHER_REPO });
 
-    const first = await reserveWork(layout, reservationRecordOf(original, { title: "original destination" }));
+    const first = reserveWork(layout, reservationRecordOf(original, { title: "original destination" }));
     writeAttempt(first.dir, 1, 41, branchOfWork(original));
     const beforeKeys = (await scanReservations(layout)).map((entry) => entry.key);
 
-    const second = await reserveWork(layout, reservationRecordOf(rerouted, { title: "new destination" }));
+    const second = reserveWork(layout, reservationRecordOf(rerouted, { title: "new destination" }));
     assert.notEqual(second.dir, first.dir);
 
     // The earlier reservation is not moved, renamed or rewritten.
@@ -318,7 +318,7 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     assert.equal(expanded.branchCreated, false, "the branch existed already, never recreated");
 
     // Persisting the facts for the next launch writes into the SAME dir.
-    const written = await reserveWork(layout, reservationRecordOf(legacy, { url: "https://github.com/Sanmoo/my-tasks/issues/7" }));
+    const written = reserveWork(layout, reservationRecordOf(legacy, { url: "https://github.com/Sanmoo/my-tasks/issues/7" }));
     assert.equal(written.dir, legacyDir);
     assert.equal(written.created, true);
     const read = await scanReservations(layout);
@@ -329,8 +329,8 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
   test("an unreadable reservation stays visible and never blocks the other Works", async () => {
     const broken = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
     const healthy = jiraWork({ site: "beta.atlassian.net", stableId: "10001", key: "ABC-1" });
-    const brokenDir = (await reserveWork(layout, reservationRecordOf(broken))).dir;
-    const healthyDir = (await reserveWork(layout, reservationRecordOf(healthy))).dir;
+    const brokenDir = (reserveWork(layout, reservationRecordOf(broken))).dir;
+    const healthyDir = (reserveWork(layout, reservationRecordOf(healthy))).dir;
     writeFileSync(join(brokenDir, "reserva.json"), "{ truncated", "utf8");
 
     const entries = await scanReservations(layout);

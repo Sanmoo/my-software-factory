@@ -113,15 +113,6 @@ export function workIdentity(ticket: TicketIdentity, destination: RepositoryIden
   return { ticket, destination };
 }
 
-/**
- * The only GitHub site with a decided registry-key and branch convention.
- * An enterprise host is named, never silently folded into github.com.
- */
-export function requireSupportedGitHubSite(site: string): void {
-  if (site !== GITHUB_SITE) {
-    throw new Error(`GitHub site ${site} is unsupported: only ${GITHUB_SITE} has a key and branch convention`);
-  }
-}
 
 export function workIdentityKey(work: WorkIdentity): string {
   return `${ticketIdentityKey(work.ticket)}/${repositoryIdentityKey(work.destination)}`;

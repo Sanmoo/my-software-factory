@@ -1047,10 +1047,7 @@ export class SweepEngine {
           );
         }
       } catch (error) {
-        this.log(
-          `reservation of ${key} could not be persisted ` +
-            `(${error instanceof Error ? error.message : String(error)}) — launching on the dir key`,
-        );
+        this.log(`reservation of ${key} could not be persisted (${describeError(error)}) — launching on the dir key`);
       }
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
@@ -1482,22 +1479,19 @@ export class SweepEngine {
       workspace,
     });
 
-    // A known PR — open, merged or closed — is a persisted association of this
-    // Work (issue 125): a restart correlates it from disk, and a later attempt
-    // appends its own PR instead of replacing the earlier association. A record
-    // that cannot be read or written is reported and never changes the ruling
-    // above — the Work's transition is the domain decision, the record is its
-    // evidence.
+    // A known PR — open, merged or closed — is persisted beside the Work
+    // (issue 125): a restart correlates it from disk, and a later attempt
+    // appends its own. Persistence never changes the ruling above.
     if (pr !== null) {
       try {
-        await recordPrAssociation(dir, {
+        recordPrAssociation(dir, {
           work: workOfIssueRef(ref),
           pullRequest: pullRequestIdentity(githubRepository(ref.repo), pr.number),
           attempt,
         });
       } catch (error) {
         this.log(
-          `PR association of ${key} was not persisted (${error instanceof Error ? error.message : String(error)}) — ` +
+          `PR association of ${key} was not persisted (${describeError(error)}) — ` +
             "the ruling stands and the earlier evidence is untouched",
         );
       }

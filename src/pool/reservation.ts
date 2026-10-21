@@ -12,18 +12,11 @@ import {
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import {
-  readPersistedRecord,
-  readPersistedRecordSync,
-  writePersistedRecordSync,
-  type PersistedFacts,
-  type PersistedFile,
-} from "./persisted.js";
+import { readPersistedRecord, writePersistedRecord, type PersistedFacts, type PersistedFile } from "./persisted.js";
 import {
   anchorOfKey,
   anchorOfWork,
   keyOfAnchor,
-  readableKeyOf,
   workOfAnchor,
   workKeyOf,
   type WorkAnchor,
@@ -134,7 +127,7 @@ export function reserveWork(
   // Synchronous on purpose: the launch path reserves the dir, persists its
   // facts and claims without yielding, so concurrent launches keep their age
   // order (issue 98).
-  const existing = readPersistedRecordSync(dir, RESERVATION_FILE);
+  const existing = readPersistedRecord(dir, RESERVATION_FILE);
   if (existing.state === "persisted") {
     const existingWork = workIdentity(existing.record.ticket, existing.record.destination);
     if (keyOfAnchor(anchorOfWork(existingWork)) !== keyOfAnchor(anchorOfWork(work))) {
@@ -152,12 +145,12 @@ export function reserveWork(
   }
   if (existing.state === "unreadable") return { key, dir, created: false, reservation: existing };
 
-  writePersistedRecordSync(dir, RESERVATION_FILENAME, record);
+  writePersistedRecord(dir, RESERVATION_FILENAME, record);
   return { key, dir, created: true, reservation: { state: "persisted", record } };
 }
 
 /** The persisted facts of a work dir; `absent` when the dir predates the record. */
-export function readReservation(dir: string): Promise<ReservationFacts> {
+export function readReservation(dir: string): ReservationFacts {
   return readPersistedRecord(dir, RESERVATION_FILE);
 }
 
@@ -177,7 +170,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
     const key = relative(works, dir).split(sep).join("/");
     const anchor = anchorOfKey(key);
     if (anchor === null) continue;
-    const reservation = await readReservation(dir);
+    const reservation = readReservation(dir);
 
     if (reservation.state === "persisted") {
       const persistedWork = workIdentity(reservation.record.ticket, reservation.record.destination);
@@ -235,7 +228,7 @@ function hasWorkAncestor(key: string): boolean {
  *  an authoritative identity. Any other provider's key carries no readable
  *  ticket key, so no Work is invented without the persisted record. */
 function legacyWork(anchor: WorkAnchor): WorkIdentity | null {
-  return anchor.provider === "github" ? workOfAnchor(anchor, readableKeyOf(anchor)) : null;
+  return anchor.provider === "github" ? workOfAnchor(anchor, `#${anchor.stableId}`) : null;
 }
 
 const RESERVATION_FILE: PersistedFile<ReservationRecord> = {

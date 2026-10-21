@@ -13,6 +13,11 @@ export function operationalLog(log?: (message: string) => void): (message: strin
   return log === undefined ? () => {} : (message) => log(utcStamp(message));
 }
 
+/** One line of an error's message — for a log line, never a stack. */
+export function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** ISO 8601 UTC at second precision — `2026-07-17T13:05:00Z`, never an offset. */
 function isoUtc(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");

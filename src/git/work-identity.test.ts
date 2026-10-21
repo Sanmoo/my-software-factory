@@ -92,12 +92,14 @@ describe("git work identity — branches and worktrees per Work", () => {
     assert.notEqual(branchOfWork(jiraWork({ site: "alpha.atlassian.net", stableId: "7" })), branchOfWork(githubWork(7)));
   });
 
-  test("an unsupported GitHub site has no branch convention — a loud error, never github.com's branch", () => {
+  test("a GitHub site other than github.com never borrows github.com's legacy branch", () => {
     const enterprise: WorkIdentity = {
       ticket: { provider: "github", site: "ghe.example", repo: REPO, number: 7, stableId: "7", key: "#7" },
       destination: githubRepository(REPO),
     };
-    assert.throws(() => branchOfWork(enterprise), /only github\.com has a key and branch convention/);
+    const branch = branchOfWork(enterprise);
+    assert.notEqual(branch, workBranchName(7), "the legacy branch belongs to github.com alone");
+    assert.match(branch, /^agent-github\./);
   });
 
   test("two Works of the same repo prepare independent branches and worktrees, and a round in one never touches the other", async () => {
