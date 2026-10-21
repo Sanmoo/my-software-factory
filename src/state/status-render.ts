@@ -9,6 +9,7 @@ import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
+import type { DuplicateWorkers } from "./liveness.js";
 import type { RecoveryBudget } from "../config.js";
 
 /**
@@ -37,6 +38,17 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ...section(
       "running (worker alive)",
       liveness.state === "known" ? liveness.running.map(renderRunning) : null,
+      cap,
+    ),
+  );
+
+  // Multiplicity is a fact, not a rendering accident (issue 118): two
+  // containers of one work are two rows above AND named here, because the
+  // operator must decide — the factory neither chooses an owner nor ends one.
+  lines.push(
+    ...section(
+      "duplicate workers (more than one container for the same work — a human decision is needed)",
+      liveness.state === "known" ? liveness.duplicates.map(renderDuplicates) : null,
       cap,
     ),
   );
@@ -115,10 +127,21 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   return lines.join("\n");
 }
 
-/** One live worker: the work, how long it has run, which attempt it carries. */
+/** One live worker: the work, how long it has run, which attempt it carries
+ *  and which container — the container is the identity duplicates are read by. */
 function renderRunning(worker: RunningWorker): string {
   const attempt = worker.attempt === null ? "" : `, attempt ${worker.attempt}`;
-  return `${worker.key} (${formatAge(worker.ageMs)}${attempt})`;
+  return `${worker.key} (${formatAge(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
+}
+
+/** The duplicate anomaly: the count per work, with no owner chosen. */
+function renderDuplicates(entry: DuplicateWorkers): string {
+  return `${entry.key} — ${entry.containers} containers carry this work; nothing was chosen or ended automatically`;
+}
+
+/** The container id short enough to read: Docker's own 12-character form. */
+function shortId(containerId: string): string {
+  return containerId.slice(0, 12);
 }
 
 /** One interrupted attempt: the attempt itself, and the record that is NOT its own. */

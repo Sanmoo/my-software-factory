@@ -77,6 +77,17 @@ A work whose attempt is being carried out by a live worker right now.
 **Orphaned**:
 A work whose current attempt was interrupted (no outcome record of its own) and with no worker running: awaiting the factory's next reconciliation. An older attempt's record on disk is history, never this attempt's outcome.
 
+**Surviving worker**:
+A worker whose container is still alive after the factory process that launched it ended. The factory recognises it from Docker, keeps its work reserved, counts its slot and reconciles its end from the artifacts and the tracker — it never launches a substitute over it, and recognising it spends no attempt and no recovery.
+_Avoid_: Orphan, when the worker is alive.
+
+**Liveness unknown**:
+Docker did not answer — a failure, a timeout or an invalid answer. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
+_Avoid_: No workers, when the answer is missing.
+
+**Duplicate workers**:
+More than one live container carrying the same work. Each occupies a slot and the work is not launched again; the factory chooses no owner and ends nothing, and asks the operator to decide.
+
 **Archived work**:
 A work that reached done, whose artifacts were moved to the archive.
 

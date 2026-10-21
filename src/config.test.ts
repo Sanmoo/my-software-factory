@@ -4,7 +4,13 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET } from "./config.js";
+import {
+  loadConfig,
+  DEFAULT_CONCURRENCY,
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RECOVERY_BUDGET,
+} from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -244,6 +250,55 @@ describe("config", () => {
       );
       assert.throws(() => loadConfig(path), /recovery\.waits-ms/, `rejected: ${bad}`);
     }
+  });
+
+  // ---- the liveness policy (issue 118) ----
+
+  test("the unavailability warning defaults to 60 s of continuous Docker silence", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.liveness, DEFAULT_LIVENESS_POLICY);
+    assert.equal(config.liveness.unavailableWarnMs, 60_000);
+  });
+
+  test("the warning threshold is configurable — the operator fits it to the environment", () => {
+    const path = writeYaml(
+      dir,
+      [
+        "worker-gh-account: bot",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: [Sanmoo/a]",
+        "liveness:",
+        "  unavailable-warn-ms: 5000",
+      ].join("\n"),
+    );
+
+    assert.equal(loadConfig(path).liveness.unavailableWarnMs, 5_000);
+  });
+
+  test("liveness.unavailable-warn-ms must be a non-negative number of milliseconds when given", () => {
+    for (const bad of ["-1", '"60s"', "[1]"]) {
+      const path = writeYaml(
+        dir,
+        [
+          "worker-gh-account: bot",
+          "worker-model: opencode-go/glm-5.3-flash",
+          "repos: [Sanmoo/a]",
+          `liveness:\n  unavailable-warn-ms: ${bad}`,
+        ].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /liveness\.unavailable-warn-ms/, `rejected: ${bad}`);
+    }
+  });
+
+  test("a non-mapping liveness value is refused instead of silently ignored", () => {
+    const path = writeYaml(
+      dir,
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "liveness: 60"].join("\n"),
+    );
+    assert.throws(() => loadConfig(path), /liveness/);
   });
 
   test("notifications can be explicitly disabled — the factory then runs silently", () => {

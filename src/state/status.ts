@@ -14,7 +14,14 @@ import {
   type UnbackedClaim,
   type UnmarkedReservation,
 } from "./derive.js";
-import { dockerWorkerProbe, type LiveWorker, type LivenessProbe } from "./liveness.js";
+import {
+  dockerWorkerProbe,
+  duplicateWorkers,
+  probeLiveness,
+  type DuplicateWorkers,
+  type LivenessProbe,
+  type LiveWorker,
+} from "./liveness.js";
 
 /**
  * `msf status`: derivation on demand through the port (it works with the
@@ -34,6 +41,10 @@ import { dockerWorkerProbe, type LiveWorker, type LivenessProbe } from "./livene
  * Issue 100: the SAME single derivation returns the pool and the
  * reconciliation (unbacked claim, unmarked reservation) from one open-issues
  * read per repo.
+ *
+ * Issue 118: the liveness facts are read and interpreted ONCE, by the same
+ * functions the operational cycle uses (probeLiveness, duplicateWorkers), so
+ * status and the operation never disagree about the same Docker answer.
  */
 
 /** A work a live worker is carrying right now: the container's facts + the attempt. */
@@ -48,10 +59,17 @@ export interface RunningWorker extends LiveWorker {
  *  never its result). */
 export type OrphanedAttempt = AttemptWithoutOwnOutcome;
 
-/** What the probe could say: the two states, or that it could not tell. */
+/** What the probe could say: the live workers, or that it could not tell. */
 export type Liveness =
   | { state: "unknown" }
-  | { state: "known"; running: RunningWorker[]; orphaned: OrphanedAttempt[] };
+  | {
+      state: "known";
+      /** One row per container: two workers of one work are two rows. */
+      running: RunningWorker[];
+      /** The works carried by more than one container (issue 118). */
+      duplicates: DuplicateWorkers[];
+      orphaned: OrphanedAttempt[];
+    };
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
@@ -114,11 +132,11 @@ async function classifyLiveness(
   layout: WorkspaceLayout,
   probe: LivenessProbe,
 ): Promise<Liveness> {
-  const live = await probeOrNull(probe);
-  if (live === null) return { state: "unknown" };
+  const observation = await probeLiveness(probe);
+  if (observation.state === "unknown") return { state: "unknown" };
 
   const running = await Promise.all(
-    live.map(async (worker) => ({
+    observation.workers.map(async (worker) => ({
       ...worker,
       attempt: await readLastAttempt(workDirOfKey(layout, worker.key)),
     })),
@@ -127,15 +145,7 @@ async function classifyLiveness(
   return {
     state: "known",
     running,
+    duplicates: duplicateWorkers(observation.workers),
     orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key)),
   };
-}
-
-/** The probe's answer, or null when it cannot answer at all. */
-async function probeOrNull(probe: LivenessProbe): Promise<LiveWorker[] | null> {
-  try {
-    return await probe();
-  } catch {
-    return null;
-  }
 }

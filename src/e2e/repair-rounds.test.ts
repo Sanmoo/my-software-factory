@@ -10,7 +10,7 @@ import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config, DEFAULT_LIVENESS_POLICY} from "../config.js";
 import { readRepairCycle } from "../pool/repair.js";
 
 /**
@@ -99,6 +99,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };

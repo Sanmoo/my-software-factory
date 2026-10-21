@@ -10,8 +10,10 @@ import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { utcStamp } from "./log.js";
 import { deriveStatus } from "./state/status.js";
+import { dockerWorkerProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
+import { WORKER_IMAGE } from "./worker-image.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { TrackerPort } from "./tracker/port.js";
@@ -45,6 +47,9 @@ export interface WiredSeams {
   git?: GitWork;
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
+  /** The liveness probe; default is the real read-only Docker probe over the
+   *  workspace (issue 118) — tests pass a fake one, the binary has no flag. */
+  probe?: LivenessProbe;
 }
 
 export interface WireRunOptions {
@@ -74,7 +79,19 @@ export async function wireRunDeps(
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   const notifier = seams.notifier ?? new LinuxNotifier();
-  return { config, tracker, runtime, git, workspace, notifier, log: (message) => console.log(message) };
+  // The operational liveness read (issue 118): the same read-only Docker probe
+  // `msf status` uses, so the two never disagree about the same facts.
+  const probe = seams.probe ?? dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: workspace.works });
+  return {
+    config,
+    tracker,
+    runtime,
+    git,
+    workspace,
+    notifier,
+    probe,
+    log: (message) => console.log(message),
+  };
 }
 
 /** The real runtime: Sandcastle, demanding the model and the keyring token

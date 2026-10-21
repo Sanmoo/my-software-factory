@@ -39,6 +39,8 @@ profile-allowed-roots:
   - ~/meus-dotfiles         # every root a profile link really points into
   - ~/.agents
 # profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
+# liveness:
+#   unavailable-warn-ms: 60000        # one notice after this long without Docker
 EOF
 ```
 
@@ -134,6 +136,14 @@ consecutive one blocks it, and an exhausted budget pauses it and asks for help;
 a PR waiting for you stays parked; a merge you already did becomes done →
 archive). A repair fall resumes on the same branch and PR (see GLOSSARY.md).
 
+A worker that survived the factory death is recognised from Docker: its work
+stays reserved, it keeps its slot, and when it ends the factory reconciles the
+result from the artifacts and the tracker — no substitute, no new attempt and no
+recovery is spent for recognising it. If Docker stops answering, launches pause
+and resume by themselves when it answers again; one notice is raised after
+`liveness.unavailable-warn-ms` (60 s by default) and nothing is killed, blocked
+or archived meanwhile.
+
 ## (c) Status — the trail, factory stopped
 
 ```sh
@@ -158,7 +168,9 @@ The report never deletes, moves or archives anything; a released work
 (reservation + pool label) is normal and is never reported. Without Docker the
 two liveness lines read `liveness unknown (docker not reachable)`; the works
 carrying attempt evidence are still listed, unclassified, and the rest of the
-report is unchanged.
+report is unchanged. A work carried by more than one container lists each
+container and a **duplicate workers** line: nothing was chosen or ended, and
+the decision is yours.
 
 ## (d) Local desktop notifications (issue 93)
 

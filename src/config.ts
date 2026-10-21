@@ -58,6 +58,22 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
   waitsMs: [1_000, 4_000, 16_000],
 };
 
+/**
+ * The liveness observation of the factory (issue 118): while Docker does not
+ * answer, the factory cannot tell a live worker from a dead one, so it stops
+ * launching instead of guessing. The warning threshold is how long the
+ * unavailability must last before the operator is told — the diagnosis starts
+ * at the first failure, the notice is once per episode.
+ */
+export interface LivenessPolicy {
+  /** Continuous unavailability before the one notice of an episode; 60 s by default. */
+  unavailableWarnMs: number;
+}
+
+export const DEFAULT_LIVENESS_POLICY: LivenessPolicy = {
+  unavailableWarnMs: 60_000,
+};
+
 export interface Labels {
   ready: string;
   claimed: string;
@@ -85,6 +101,8 @@ export interface Config {
   profileSkipDanglingLinks: boolean;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
+  /** How the operational cycle reads Docker's silence (issue 118). */
+  liveness: LivenessPolicy;
   notifications: boolean;
   /** Where the config was loaded from. */
   configPath: string;
@@ -132,6 +150,7 @@ export function loadConfig(filePath: string): Config {
   const profileAllowedRoots = optionalProfileAllowedRoots(doc);
   const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
   const recovery = optionalRecovery(doc);
+  const liveness = optionalLiveness(doc);
   const notifications = optionalNotifications(doc);
 
   return {
@@ -144,6 +163,7 @@ export function loadConfig(filePath: string): Config {
     profileAllowedRoots,
     profileSkipDanglingLinks,
     recovery,
+    liveness,
     notifications,
     configPath: absolute,
   };
@@ -256,6 +276,22 @@ function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
 
 function optionalNotifications(doc: Record<string, unknown>): boolean {
   return optionalBoolean(doc, "notifications", DEFAULT_NOTIFICATIONS);
+}
+
+function optionalLiveness(doc: Record<string, unknown>): LivenessPolicy {
+  const value = doc.liveness;
+  if (value === undefined) return { ...DEFAULT_LIVENESS_POLICY };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(`config field "liveness" must be a mapping when given`);
+  }
+  const given = value as Record<string, unknown>;
+  const warn = given["unavailable-warn-ms"];
+  if (warn !== undefined && (typeof warn !== "number" || !Number.isFinite(warn) || warn < 0)) {
+    throw new ConfigError(
+      `config field "liveness.unavailable-warn-ms" must be a non-negative number of milliseconds when given`,
+    );
+  }
+  return { unavailableWarnMs: (warn as number | undefined) ?? DEFAULT_LIVENESS_POLICY.unavailableWarnMs };
 }
 
 function optionalBoolean(doc: Record<string, unknown>, key: string, fallback: boolean): boolean {
