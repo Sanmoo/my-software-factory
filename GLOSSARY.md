@@ -1,3 +1,12 @@
+# Factory
+
+The factory turns eligible requested changes into reviewed changes for the operator. This vocabulary distinguishes factory activity from the issue tracker's own lifecycle.
+
+## Language
+
+**Factory**:
+The service that turns eligible work into reviewed changes for the operator.
+
 **Work**:
 A piece of requested change the operator wants completed.
 
