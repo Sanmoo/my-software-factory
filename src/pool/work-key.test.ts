@@ -89,7 +89,7 @@ describe("work key — the registry's identity anchor", () => {
       ticket: { provider: "github", site: "ghe.example", repo: "Sanmoo/my-tasks", number: 7, stableId: "7", key: "#7" },
       destination: githubRepository("Sanmoo/my-tasks"),
     };
-    assert.throws(() => workKeyOf(enterprise), /only github\.com is supported/);
+    assert.throws(() => workKeyOf(enterprise), /only github\.com has a key and branch convention/);
   });
 
   test("unrecognized dir names are not works", () => {

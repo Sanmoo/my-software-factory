@@ -53,6 +53,17 @@ describe("git work identity — branches and worktrees per Work", () => {
     return localGitWork({ reposDir, remoteUrl: (repo) => remote.barePath(repo) });
   }
 
+  test("the worktree path is injective — two branches never share a managed worktree dir", () => {
+    const repoDir = join(root, "repos", "Sanmoo#my-tasks");
+    assert.notEqual(workerWorktreePath(repoDir, "a/b"), workerWorktreePath(repoDir, "a-b"));
+    assert.notEqual(workerWorktreePath(repoDir, "a%2Fb"), workerWorktreePath(repoDir, "a/b"));
+    assert.equal(
+      workerWorktreePath(repoDir, "agent-issue-7"),
+      join(repoDir, ".sandcastle", "worktrees", "agent-issue-7"),
+      "the legacy branch's worktree path is unchanged",
+    );
+  });
+
   test("a GitHub Work keeps the legacy branch — existing remote branches remain the work's own", () => {
     assert.equal(branchOfWork(githubWork(7)), workBranchName(7));
     assert.equal(branchOfWork(githubWork(7)), "agent-issue-7");
@@ -86,7 +97,7 @@ describe("git work identity — branches and worktrees per Work", () => {
       ticket: { provider: "github", site: "ghe.example", repo: REPO, number: 7, stableId: "7", key: "#7" },
       destination: githubRepository(REPO),
     };
-    assert.throws(() => branchOfWork(enterprise), /only github\.com is supported/);
+    assert.throws(() => branchOfWork(enterprise), /only github\.com has a key and branch convention/);
   });
 
   test("two Works of the same repo prepare independent branches and worktrees, and a round in one never touches the other", async () => {

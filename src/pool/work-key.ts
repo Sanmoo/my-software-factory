@@ -3,6 +3,7 @@ import {
   githubRepository,
   githubTicket,
   jiraTicket,
+  requireSupportedGitHubSite,
   type RepositoryIdentity,
   type TicketProvider,
   type WorkIdentity,
@@ -42,9 +43,7 @@ const RECORD_KEY = /^([a-z]+)@([^@]+)@([^@]+)@([^@]+)$/;
 export function anchorOfWork(work: WorkIdentity): WorkAnchor {
   const { ticket, destination } = work;
   if (ticket.provider === "github") {
-    if (ticket.site !== GITHUB_SITE) {
-      throw new Error(`GitHub site ${ticket.site} has no on-disk key: only ${GITHUB_SITE} is supported`);
-    }
+    requireSupportedGitHubSite(ticket.site);
     return {
       provider: "github",
       site: ticket.site,
