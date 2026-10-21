@@ -24,6 +24,7 @@ import {
   selfReportedBlocked,
   ownOutcomeRecord,
   interruptionPausedCommentBody,
+  type OutcomeRecord,
   type OutcomeRuling,
 } from "./state/outcome.js";
 import {
@@ -332,8 +333,7 @@ export class SweepEngine {
           // A WRITTEN failure the factory died before ruling: it consumes the
           // attempt and the ruler applies as at collection (issue 123).
           const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-          const own = ownOutcomeRecord(await readOutcomeRecord(dir), decision.attempt);
-          if (own !== null) await recordFailure(dir, decision.attempt, own.class);
+          await this.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
           if (decision.decision === "release") {
             this.log(
               `derived ${workKey(decision.ref)}: unreconciled failure (the factory died before ruling it) — ` +
@@ -1073,8 +1073,7 @@ export class SweepEngine {
         };
       }
     } else if (ruling.decision === "release") {
-      const own = ownOutcomeRecord(record, attempt);
-      if (own !== null) await recordFailure(dir, attempt, own.class);
+      await this.settleFailure(dir, attempt, record);
       this.log(
         `collected ${key}: failure without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
@@ -1082,8 +1081,7 @@ export class SweepEngine {
       await this.applyRelease(ref);
       resulting = "eligible";
     } else {
-      const own = ownOutcomeRecord(record, attempt);
-      if (own !== null) await recordFailure(dir, attempt, own.class);
+      await this.settleFailure(dir, attempt, record);
       this.log(
         `collected ${key}: 2nd consecutive failure — blocked, the attempt's outcome goes to the issue`,
       );
@@ -1117,6 +1115,16 @@ export class SweepEngine {
       }
     }
     return next;
+  }
+
+  /**
+   * Persist the WRITTEN failure that ended the attempt (issue 123): the next
+   * attempt starts with a full interruption budget, and `msf status` says the
+   * attempt was consumed. An absent/other-attempt record is no failure here.
+   */
+  private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
+    const own = ownOutcomeRecord(record, attempt);
+    if (own !== null) await recordFailure(dir, attempt, own.class);
   }
 
   /** The 1st-failure release (the ruler's mirrored swap): claimed→ready back,

@@ -39,9 +39,6 @@ profile-allowed-roots:
   - ~/meus-dotfiles         # every root a profile link really points into
   - ~/.agents
 # profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
-# recovery:                           # an interruption is NOT a failure (issue 123)
-#   max: 3                            # recoveries per attempt, then pause + help
-#   waits-ms: [1000, 4000, 16000]     # the backoff before each relaunch
 EOF
 ```
 

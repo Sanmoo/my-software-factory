@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { WorkspaceLayout } from "../layout.js";
 import type { RecoveryPolicy } from "../config.js";
 import type { RepairAttempt } from "../pool/repair.js";
-import { renderWaits } from "../pool/recovery.js";
+import { exhaustedReason } from "../pool/recovery.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
@@ -163,12 +163,14 @@ function isBlockedSelfReport(facts: OutcomeFacts): boolean {
   return facts.blockedLabelOnIssue || selfReportedBlocked(facts.record, facts.attempt);
 }
 
-/** What a blocked comment needs from the ruler's facts — the attempt that
- *  failed, its raw record (possibly another attempt's) and its evidence. */
-type BlockedCommentInput = Pick<
+/** What a comment about one attempt needs from the ruler's facts — the
+ *  attempt, its raw record (possibly another attempt's) and its evidence. */
+type AttemptCommentInput = Pick<
   OutcomeFacts,
   "attempt" | "record" | "workDir" | "workspace"
 >;
+
+type BlockedCommentInput = AttemptCommentInput;
 
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
@@ -198,13 +200,8 @@ function describeOutcome({ attempt, record }: BlockedCommentInput): string {
 
 /** What the pause of an exhausted recovery budget needs: the interrupted
  *  attempt, the configured allowance and the attempt's evidence. */
-export interface InterruptionPausedInput {
-  attempt: number;
+export interface InterruptionPausedInput extends AttemptCommentInput {
   policy: RecoveryPolicy;
-  /** desfecho.json as read from disk — history, never this attempt's outcome. */
-  record: OutcomeRecord | null;
-  workDir: string;
-  workspace: WorkspaceLayout;
 }
 
 /**
@@ -216,9 +213,8 @@ export interface InterruptionPausedInput {
 export async function interruptionPausedCommentBody(input: InterruptionPausedInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   const header =
-    `attempt ${input.attempt} was interrupted and the recovery budget is exhausted — ` +
-    `${input.policy.maxRecoveries} automatic recoveries (waits ${renderWaits(input.policy.waitsMs)}) ` +
-    "were already used for this attempt; no attempt was consumed.";
+    `attempt ${input.attempt} was interrupted and ${exhaustedReason(input.policy)} — ` +
+    "no attempt was consumed.";
   return [header, describeOutcome(input), "", renderWorkEvidence(evidence)].join("\n\n");
 }
 
