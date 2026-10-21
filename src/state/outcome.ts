@@ -213,7 +213,7 @@ function describeOutcome({ attempt, record }: AttemptCommentInput): string {
   if (record === null) return "interrupted: no outcome record was written for this attempt";
   return (
     "interrupted: no outcome record of its own was written " +
-    `(the record on disk belongs to attempt ${record.attempt})`
+    `(${describeForeignRecord(record)})`
   );
 }
 
@@ -300,8 +300,18 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
   if (record === null) return "ended without an outcome record";
   return (
     "ended without an outcome record of its own " +
-    `(the record on disk belongs to attempt ${record.attempt})`
+    `(${describeForeignRecord(record)})`
   );
+}
+
+/**
+ * The one rendering of the history fact "the record on disk is another
+ * attempt's": the collection's rejection (issue 143), the block comment and
+ * the repair comment all name it through here, so the operator's wording
+ * cannot drift apart.
+ */
+export function describeForeignRecord(record: OutcomeRecord): string {
+  return `the record on disk belongs to attempt ${record.attempt}`;
 }
 
 /**

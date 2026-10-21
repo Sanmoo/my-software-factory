@@ -296,9 +296,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // presented as the current attempt's result.
     if (record !== null) {
       lastOutcome.push({ key, workDir: dir, record });
-      // The same criterion the ruler and the collection apply: the record is
-      // not this attempt's, so the attempt is shown without an own outcome
-      // (issue 143).
+      // The same criterion the ruler and the collection apply (issue 143).
       if (ownOutcomeRecord(record, lastAttempt) === null) {
         attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
       }

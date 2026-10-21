@@ -9,6 +9,7 @@ import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker
 import { DEFAULT_LABELS } from "../config.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import {
+  describeForeignRecord,
   ownOutcomeRecord,
   readOutcomeRecord,
   type OutcomeRecord,
@@ -516,8 +517,8 @@ export class SandcastleRuntime implements WorkerRuntime {
   /**
    * The outcome the runtime observed: the class of THIS attempt's record, or
    * the absence (issue 143). A record left by another attempt is absence here
-   * — never that attempt's verdict read as this session's result — and the
-   * attempt's log names the mismatch so the diagnosis needs no guessing.
+   * — never that attempt's outcome read as this session's — and the attempt's
+   * log names the mismatch so the diagnosis needs no guessing.
    */
   private async observedOutcome(request: WorkRequest): Promise<SessionResult["outcome"]> {
     const record: OutcomeRecord | null = await readOutcomeRecord(request.workDir);
@@ -526,9 +527,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     if (record !== null) {
       this.event(request, "outcome-record-rejected", {
         recordedAttempt: record.attempt,
-        reason:
-          `the outcome record on disk belongs to attempt ${record.attempt}, not to attempt ` +
-          `${request.attempt} — the session wrote no record of its own`,
+        reason: `${describeForeignRecord(record)} — attempt ${request.attempt} wrote no record of its own`,
       });
     }
     return "abrupt-death";
