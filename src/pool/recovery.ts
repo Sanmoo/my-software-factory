@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RecoveryPolicy } from "../config.js";
+import type { RecoveryBudget } from "../config.js";
 import type { OutcomeClass } from "../state/outcome.js";
 
 /**
@@ -52,12 +52,11 @@ export interface RecoveryLedger {
   lastStop: RecoveryStop | null;
   /** The highest attempt that ended in a WRITTEN failure — the fall ruler's
    *  consecutiveness fact at a crash, never overwritten by an interruption. */
-  lastFailureAttempt: number | null;
+  lastFallAttempt: number | null;
 }
 
-/** The honest initial state: no recovery was ever consumed. */
 export function emptyLedger(): RecoveryLedger {
-  return { attempt: 1, consumed: 0, events: [], lastStop: null, lastFailureAttempt: null };
+  return { attempt: 1, consumed: 0, events: [], lastStop: null, lastFallAttempt: null };
 }
 
 export type RecoveryDecision =
@@ -92,7 +91,7 @@ function parseLedger(value: unknown): RecoveryLedger {
     consumed: nonNegativeInteger(record["consumed"]) ?? 0,
     events: Array.isArray(record["events"]) ? record["events"].filter(isEvent) : [],
     lastStop: isStop(record["lastStop"]) ? record["lastStop"] : null,
-    lastFailureAttempt: positiveInteger(record["lastFailureAttempt"]),
+    lastFallAttempt: positiveInteger(record["lastFallAttempt"]),
   };
 }
 
@@ -133,18 +132,18 @@ async function writeLedger(workDir: string, ledger: RecoveryLedger): Promise<voi
  * by index (the last value repeats for longer schedules) or the pause that asks
  * the operator for help.
  */
-export function recoveryDecision(ledger: RecoveryLedger, policy: RecoveryPolicy): RecoveryDecision {
-  if (ledger.consumed >= policy.maxRecoveries) {
+export function recoveryDecision(ledger: RecoveryLedger, budget: RecoveryBudget): RecoveryDecision {
+  if (ledger.consumed >= budget.maxRecoveries) {
     return {
       decision: "pause-help",
       consumed: ledger.consumed,
-      reason: exhaustedReason(policy),
+      reason: exhaustedReason(budget),
     };
   }
   const index = ledger.consumed;
   return {
     decision: "recover",
-    waitMs: policy.waitsMs[Math.min(index, policy.waitsMs.length - 1)] ?? 0,
+    waitMs: budget.waitsMs[Math.min(index, budget.waitsMs.length - 1)] ?? 0,
     consumed: index + 1,
   };
 }
@@ -152,11 +151,11 @@ export function recoveryDecision(ledger: RecoveryLedger, policy: RecoveryPolicy)
 /** What the next recovery would cost — the derivation's read-only view. */
 export async function peekRecovery(
   workDir: string,
-  policy: RecoveryPolicy,
+  budget: RecoveryBudget,
   attempt: number,
 ): Promise<RecoveryDecision> {
   const ledger = await readRecoveryLedger(workDir);
-  return recoveryDecision(budgetForAttempt(ledger, attempt), policy);
+  return recoveryDecision(budgetForAttempt(ledger, attempt), budget);
 }
 
 /**
@@ -167,12 +166,12 @@ export async function peekRecovery(
  */
 export async function consumeRecovery(
   workDir: string,
-  policy: RecoveryPolicy,
+  budget: RecoveryBudget,
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
   const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
-  const decision = recoveryDecision(ledger, policy);
+  const decision = recoveryDecision(ledger, budget);
   const at = now().toISOString();
   if (decision.decision === "pause-help") {
     await writeLedger(workDir, {
@@ -213,25 +212,27 @@ export async function recordFailure(
   await writeLedger(workDir, {
     ...current,
     lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
-    lastFailureAttempt: Math.max(current.lastFailureAttempt ?? 0, attempt),
+    lastFallAttempt: Math.max(current.lastFallAttempt ?? 0, attempt),
   });
 }
 
-/** The same ledger for a different attempt: the budget is per attempt. */
+/** The same ledger for a different attempt: the allowance is per attempt, the
+ *  events stay as the work's history. */
 function budgetForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
   if (ledger.attempt === attempt) return ledger;
-  return { ...ledger, attempt, consumed: 0, events: [] };
+  return { ...ledger, attempt, consumed: 0 };
 }
 
 /** The pause's reason, naming the configured value and backoff. */
-export function exhaustedReason(policy: RecoveryPolicy): string {
+export function exhaustedReason(budget: RecoveryBudget): string {
   return (
-    `the recovery budget is exhausted: ${policy.maxRecoveries} automatic recoveries ` +
-    `(waits ${renderWaits(policy.waitsMs)}) were already used for this attempt`
+    `the recovery budget is exhausted: ${budget.maxRecoveries} automatic recoveries ` +
+    `(waits ${renderWaits(budget.waitsMs)}) were already used for this attempt`
   );
 }
 
-/** The waits in the operator's words: 1s/4s/16s. */
+/** The waits in the operator's words: 1s/4s/16s — sub-second waits keep their
+ *  milliseconds, so a configured 250 ms is never reported as "0s". */
 export function renderWaits(waitsMs: readonly number[]): string {
-  return waitsMs.map((wait) => `${Math.round(wait / 1000)}s`).join("/");
+  return waitsMs.map((wait) => (wait % 1000 === 0 ? `${wait / 1000}s` : `${wait}ms`)).join("/");
 }

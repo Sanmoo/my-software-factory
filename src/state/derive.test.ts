@@ -11,7 +11,7 @@ import {
   renderUnbackedClaim,
   renderUnmarkedReservation,
 } from "./derive.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
 
@@ -299,7 +299,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       DEFAULT_LABELS,
       "bot",
       layout,
-      DEFAULT_RECOVERY_POLICY,
+      DEFAULT_RECOVERY_BUDGET,
     );
     assert.ok(derived, "the work was derived");
     return derived;
@@ -452,7 +452,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
         DEFAULT_LABELS,
         "bot",
         layout,
-        DEFAULT_RECOVERY_POLICY,
+        DEFAULT_RECOVERY_BUDGET,
         inFlight,
       );
       assert.ok(derived);
@@ -579,6 +579,36 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.state, "fall", "a written failure is ruled as at collection");
       assert.equal(derived.decision, "release", "the 1st failure releases");
       assert.equal(derived.attempt, 2);
+    });
+
+    test("claimed, a stale pr-open record with no PR on the last attempt → fall: release, as at collection", async () => {
+      seedIssue(adapter, { repo: REPO, number: 29, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(29);
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "pr-open", attempt: 1, pr: { repo: REPO, number: 9, branch: "agent-issue-29" } }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 29);
+
+      assert.equal(derived.state, "fall", "the attempt wrote its own outcome; the ruler applies");
+      assert.equal(derived.decision, "release", "the 1st fall releases");
+    });
+
+    test("claimed, a blocked self-report whose label never landed → idle: reserved, never recovered", async () => {
+      seedIssue(adapter, { repo: REPO, number: 30, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(30);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "blocked-self-report", attempt: 1 }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 30);
+
+      assert.equal(derived.state, "idle", "a self-report is neither a fall to rule nor an interruption to recover");
     });
 
     test("claimed, a stale pr-open record with no PR and a later interrupted attempt → interrupted, never a fall", async () => {

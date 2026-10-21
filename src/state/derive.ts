@@ -1,4 +1,4 @@
-import type { Labels, RecoveryPolicy } from "../config.js";
+import type { Labels, RecoveryBudget } from "../config.js";
 import type {
   IssueComment,
   IssueRef,
@@ -16,7 +16,7 @@ import {
   readOutcomeRecord,
   blockedCommentBody,
   repairFallComment,
-  ownFailureRecord,
+  ownWrittenOutcome,
   selfReportedBlocked,
   type OutcomeRecord,
 } from "./outcome.js";
@@ -364,7 +364,7 @@ export async function deriveReserved(
   labels: Labels,
   workerAccount: string,
   workspace: WorkspaceLayout,
-  recovery: RecoveryPolicy,
+  recovery: RecoveryBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
   return Promise.all(
@@ -380,7 +380,7 @@ async function deriveReservedWork(
   labels: Labels,
   _workerAccount: string,
   workspace: WorkspaceLayout,
-  recovery: RecoveryPolicy,
+  recovery: RecoveryBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -558,7 +558,7 @@ async function deriveUnreconciledAttempt(
   ref: IssueRef,
   dir: string,
   workspace: WorkspaceLayout,
-  recovery: RecoveryPolicy,
+  recovery: RecoveryBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const ledger = await readAttemptLedger(dir);
@@ -575,11 +575,12 @@ async function deriveUnreconciledAttempt(
   const record = await readOutcomeRecord(dir);
   if (selfReportedBlocked(record, ledger.lastAttempt)) {
     // The worker reported blocked but the label never landed (an interrupted
-    // claim swap): nothing to recover and nothing to rule — the human sees
-    // the outcome in `msf status`.
+    // claim swap): a written outcome that is neither a failure to rule nor an
+    // interruption to recover — the work stays reserved, as collection's
+    // `record-only` leaves it, and the human sees it in `msf status`.
     return { ref, state: "idle" };
   }
-  if (ownFailureRecord(record, ledger.lastAttempt) !== null) {
+  if (ownWrittenOutcome(record, ledger.lastAttempt) !== null) {
     return deriveUnreconciledFailure(ref, dir, workspace, ledger.lastAttempt, record);
   }
 
@@ -607,11 +608,11 @@ async function deriveUnreconciledFailure(
   record: OutcomeRecord | null,
 ): Promise<ReservedDerivation> {
   const ledger = await readRecoveryLedger(dir);
-  // The consecutiveness fact is the attempt NUMBER of the last written failure,
-  // never the last stop: an interruption of the current attempt must not erase
-  // the failure of the one before it (the two paths of the ruler agree).
-  const previousWasFailure = ledger.lastFailureAttempt === attempt - 1;
-  if (!previousWasFailure) return { ref, state: "fall", decision: "release", attempt };
+  // The consecutiveness fact is the attempt NUMBER of the last fall, never the
+  // last stop: an interruption of the current attempt must not erase the fall
+  // of the one before it (the two paths of the ruler agree).
+  const previousWasFall = ledger.lastFallAttempt === attempt - 1;
+  if (!previousWasFall) return { ref, state: "fall", decision: "release", attempt };
   return {
     ref,
     state: "fall",

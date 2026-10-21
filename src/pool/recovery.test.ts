@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 
 import {
   consumeRecovery,
+  exhaustedReason,
   peekRecovery,
   readRecoveryLedger,
   recordFailure,
@@ -58,7 +59,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       attempt: 1,
       at: "2026-01-01T00:00:00.000Z",
     });
-    assert.equal(ledger.lastFailureAttempt, null, "an interruption is not a failure");
+    assert.equal(ledger.lastFallAttempt, null, "an interruption is not a failure");
   });
 
   test("the count survives a new process: a restart continues the budget instead of renewing it", async () => {
@@ -72,18 +73,29 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     assert.equal((await readRecoveryLedger(dir)).consumed, 1, "peeking never spends a recovery");
   });
 
-  test("the budget is per attempt: a new attempt starts from zero, the last stop stays as history", async () => {
+  test("the allowance is per attempt, the events stay as the work's history", async () => {
     await consumeRecovery(dir, POLICY, 1, NOW);
     await consumeRecovery(dir, POLICY, 1, NOW);
 
     const nextAttempt = await consumeRecovery(dir, POLICY, 2, NOW);
 
     assert.equal(nextAttempt.decision === "recover" && nextAttempt.consumed, 1, "attempt 2 has its own allowance");
-    assert.deepEqual((await readRecoveryLedger(dir)).lastStop, {
+    const ledger = await readRecoveryLedger(dir);
+    assert.deepEqual(ledger.lastStop, {
       kind: "interruption",
       attempt: 2,
       at: "2026-01-01T00:00:00.000Z",
     });
+    assert.deepEqual(
+      ledger.events.map((event) => event.attempt),
+      [1, 1, 2],
+      "the recoveries of the earlier attempt are never erased from the work's ledger",
+    );
+  });
+
+  test("a sub-second wait keeps its milliseconds in the operator's words — never a '0s'", () => {
+    const budget = { maxRecoveries: 1, waitsMs: [250, 1_000] };
+    assert.match(exhaustedReason(budget), /waits 250ms\/1s/);
   });
 
   test("a written failure consumes the attempt, records the stop, and the next attempt starts clean", async () => {
@@ -97,7 +109,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       at: "2026-01-01T00:00:00.000Z",
       outcome: "clean-without-pr",
     });
-    assert.equal(failed.lastFailureAttempt, 1, "the written failure is the consecutiveness fact");
+    assert.equal(failed.lastFallAttempt, 1, "the written failure is the consecutiveness fact");
     assert.equal(failed.consumed, 1, "the interrupted recoveries remain as history");
 
     const next = await peekRecovery(dir, POLICY, 2);
@@ -111,7 +123,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     const ledger = await readRecoveryLedger(dir);
     assert.equal(ledger.lastStop?.kind, "interruption");
     assert.equal(
-      ledger.lastFailureAttempt,
+      ledger.lastFallAttempt,
       1,
       "the fall ruler's consecutiveness fact survives the interruption of attempt 2",
     );
@@ -123,7 +135,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       consumed: 2,
       events: [],
       lastStop: null,
-      lastFailureAttempt: null,
+      lastFallAttempt: null,
     };
     const decision = recoveryDecision(ledger, { maxRecoveries: 3, waitsMs: [500] });
     assert.equal(decision.decision === "recover" && decision.waitMs, 500);
@@ -136,7 +148,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       consumed: 0,
       events: [],
       lastStop: null,
-      lastFailureAttempt: null,
+      lastFallAttempt: null,
     });
     assert.equal((await peekRecovery(dir, POLICY, 1)).decision, "recover");
   });
@@ -148,7 +160,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       consumed: 0,
       events: [],
       lastStop: null,
-      lastFailureAttempt: null,
+      lastFallAttempt: null,
     };
     assert.deepEqual(await readRecoveryLedger(dir), initial);
 
@@ -164,6 +176,6 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     assert.deepEqual(onDisk.events, [
       { index: 0, waitMs: 1_000, attempt: 1, at: "2026-01-01T00:00:00.000Z" },
     ]);
-    assert.equal(onDisk.lastFailureAttempt, null);
+    assert.equal(onDisk.lastFallAttempt, null);
   });
 });

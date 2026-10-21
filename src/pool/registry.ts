@@ -307,11 +307,12 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
-  attemptsWithoutOwnOutcome.sort((a, b) => byKey(a.key, b.key));
+  const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);
+  attemptsWithoutOwnOutcome.sort(byEntryKey);
   reservedWithoutAttempt.sort(byKey);
-  lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
-  repair.sort((a, b) => a.key.localeCompare(b.key));
-  recovery.sort((a, b) => a.key.localeCompare(b.key));
+  lastOutcome.sort(byEntryKey);
+  repair.sort(byEntryKey);
+  recovery.sort(byEntryKey);
 
   const archived = await workDirs(archive);
   return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };

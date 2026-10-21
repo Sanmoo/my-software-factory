@@ -10,7 +10,7 @@ import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fa
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { scanRegistry } from "../pool/registry.js";
 
@@ -90,7 +90,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -218,6 +218,42 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "blocked swapped away by the retomada");
     assert.ok(labels.includes(DEFAULT_LABELS.ready), "released back to the pool");
     assert.equal(runtime.launched.length, 3);
+  });
+
+  test("an interrupted retomada is recovered with the human's answer — the SAME attempt, the same material (issue 123)", async () => {
+    const config = makeConfig(1);
+    const { tracker, runtime, deps } = makeFactory(config, [
+      "clean-without-pr",
+      "clean-without-pr",
+      "abrupt-death",
+      "pr-open",
+    ]);
+
+    seedIssue(tracker, { repo: REPO, number: 3, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    await runOnce(deps); // attempt 1: a 1st fall, released
+    await runOnce(deps); // attempt 2: the 2nd fall, blocked with the marker
+    tracker.addComment({ repo: REPO, number: 3 }, "humano", "retome com a chave rotacionada");
+
+    // The retomada (attempt 3) dies without a record: the recovery continues
+    // the SAME attempt and must carry the answer that resumed it.
+    const sweep = await runOnce(deps);
+
+    assert.deepEqual(
+      runtime.launched.map((request) => request.attempt),
+      [1, 2, 3, 3],
+      "the third attempt was launched twice — never a fourth attempt",
+    );
+    assert.deepEqual(
+      sweep.collected.map((entry) => entry.ruling.decision),
+      ["interrupt", "reserve"],
+      "the interruption was absorbed and the recovered session opened the PR",
+    );
+    const recovered = runtime.launched.at(-1)!;
+    assert.equal(recovered.attempt, 3);
+    assert.ok(
+      JSON.stringify(recovered.material).includes("retome com a chave rotacionada"),
+      "the recovered retomada keeps the human's answer in its material",
+    );
   });
 
   // ---- checklist 3: PR closed without merge → rejected, blocked with a comment pointing at the PR ----

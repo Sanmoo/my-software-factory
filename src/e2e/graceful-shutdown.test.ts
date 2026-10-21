@@ -10,7 +10,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { installGhShim, isolatedEnv, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
@@ -92,7 +92,7 @@ describe("e2e: Ctrl-C shutdown — no new launches, in-flight workers conclude (
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
     };
@@ -235,12 +235,12 @@ describe("e2e: Ctrl-C shutdown — no new launches, in-flight workers conclude (
         `import { FakeTrackerAdapter, seedIssue } from ${JSON.stringify(new URL("../tracker/fake-adapter.js", import.meta.url).href)};`,
         `import { FakeWorkerRuntime } from ${JSON.stringify(new URL("../runtime/fake-runtime.js", import.meta.url).href)};`,
         `import { workBranchName } from ${JSON.stringify(new URL("../git/port.js", import.meta.url).href)};`,
-        `import { DEFAULT_LABELS } from ${JSON.stringify(new URL("../config.js", import.meta.url).href)};`,
+        `import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET } from ${JSON.stringify(new URL("../config.js", import.meta.url).href)};`,
         `import { ensureWorkspace } from ${JSON.stringify(new URL("../layout.js", import.meta.url).href)};`,
         "const [configPath, workspaceRoot, launchedFile, holdFile, resultFile] = process.argv.slice(2);",
         "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
         "const workspace = ensureWorkspace(workspaceRoot);",
-        "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { maxRecoveries: 3, waitsMs: [1, 1, 1] }, notifications: false, configPath };",
+        "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1, 1, 1] }, notifications: false, configPath };",
         "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
         "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
         "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 2, createdAt: '2026-01-02T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",

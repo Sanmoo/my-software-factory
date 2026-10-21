@@ -22,7 +22,8 @@ import {
   readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
-  ownFailureRecord,
+  isRecordedFailure,
+  ownWrittenOutcome,
   interruptionPausedCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
@@ -369,9 +370,8 @@ export class SweepEngine {
           break;
         }
         case "interrupted": {
-          // Absence of an outcome record is an interruption, not a failure
-          // (issue 123): the same attempt continues within the budget, or the
-          // exhausted budget pauses it and asks the operator for help.
+          // The same attempt continues within its budget; an exhausted budget
+          // pauses it and asks the operator for help (issue 123).
           if (decision.recovery.decision === "pause-help") {
             const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
             await this.pauseInterrupted(decision.ref, dir, decision.attempt, decision.recovery);
@@ -760,13 +760,7 @@ export class SweepEngine {
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(
-      tracker,
-      git,
-      ref,
-      kind === "resume" ? launchable.issueReplies : undefined,
-      repair,
-    );
+    const material = await launchMaterial(tracker, git, ref, launchable.issueReplies, repair);
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
     // and the registry dir) stays for the next run's reconciliation; the
@@ -1063,9 +1057,8 @@ export class SweepEngine {
       this.log(`collected ${key}: blocked self-report — the factory only records the outcome`);
       resulting = "reserved";
     } else if (ruling.decision === "interrupt") {
-      // Absence of an outcome record is an interruption, not a failure (issue
-      // 123): no attempt is consumed and the fall ruler never applies. A repair
-      // round is settled by its own reconciliation (issue 112) instead.
+      // No attempt is consumed and the fall ruler never applies (issue 123). A
+      // repair round is settled by its own reconciliation (issue 112) instead.
       resulting = "reserved";
       if (launchable.kind === "repair") {
         this.log(
@@ -1082,6 +1075,9 @@ export class SweepEngine {
           kind: "recover",
           createdAt: null,
           pr,
+          // A recovery continues the SAME launch: the material of an
+          // interrupted retomada keeps the human's answer.
+          ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
           attempt,
         };
       }
@@ -1129,11 +1125,12 @@ export class SweepEngine {
   /**
    * Persist the WRITTEN failure that ended the attempt (issue 123): the next
    * attempt starts with a full interruption budget, and `msf status` says the
-   * attempt was consumed. An absent/other-attempt record is no failure here.
+   * attempt was consumed. A missing or other-attempt record, or a record of a
+   * class that is not a failure (pr-open, self-report), settles nothing.
    */
   private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
-    const own = ownFailureRecord(record, attempt);
-    if (own !== null) await recordFailure(dir, attempt, own.class);
+    const own = ownWrittenOutcome(record, attempt);
+    if (own !== null && isRecordedFailure(own)) await recordFailure(dir, attempt, own.class);
   }
 
   /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,

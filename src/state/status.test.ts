@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
 import { consumeRecovery, recordFailure } from "../pool/recovery.js";
@@ -61,7 +61,7 @@ describe("status — derivation on demand + local registry scan", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -326,8 +326,8 @@ describe("status — derivation on demand + local registry scan", () => {
     // #30: interrupted twice — two recoveries consumed, the attempt kept.
     const interrupted = seedAttempt(30, 2);
     const now = () => new Date("2026-01-01T00:00:00Z");
-    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, now);
-    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, now);
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_BUDGET, 2, now);
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_BUDGET, 2, now);
     // #31: a written failure — the attempt was consumed.
     const failed = seedAttempt(31, 1);
     await recordFailure(failed, 1, "clean-without-pr", now);
