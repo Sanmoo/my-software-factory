@@ -4,7 +4,6 @@ import { join, relative, sep } from "node:path";
 
 import {
   SESSIONS_SUBDIR,
-  WORKSPACE_SUBPATHS,
   workDir,
   workspaceLayout,
   type WorkspaceLayout,
@@ -339,7 +338,9 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
 
 /** Work dirs are exactly <root>/<repo>#<n>: the scan never descends into a
  *  work, where a proof's disposable workspace or a session artifact may carry
- *  a work-like name of its own. */
+ *  a work-like name of its own. This status view stays GitHub-only; the
+ *  expanded registry (pool/reservation.ts scanReservations) is the reader that
+ *  also names reservations of other sources. */
 async function workDirs(root: string): Promise<string[]> {
   if (!existsSync(root)) return [];
   const dirs: string[] = [];

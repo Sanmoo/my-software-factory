@@ -34,8 +34,6 @@ export interface WorkAnchor {
   stableId: string;
   /** The destination repository name (code host identity). */
   repo: string;
-  /** The GitHub issue number; null for a non-GitHub ticket. */
-  number: number | null;
 }
 
 const LEGACY_GITHUB_KEY = /^(.+)#(\d+)$/;
@@ -43,21 +41,11 @@ const RECORD_KEY = /^([a-z]+)@([^@]+)@([^@]+)@([^@]+)$/;
 
 export function anchorOfWork(work: WorkIdentity): WorkAnchor {
   const { ticket, destination } = work;
-  if (ticket.provider === "github") {
-    return {
-      provider: "github",
-      site: ticket.site,
-      stableId: ticket.stableId,
-      repo: destination.repo,
-      number: ticket.number,
-    };
-  }
   return {
-    provider: "jira",
+    provider: ticket.provider,
     site: ticket.site,
     stableId: ticket.stableId,
     repo: destination.repo,
-    number: null,
   };
 }
 
@@ -79,12 +67,14 @@ export function workKeyOf(work: WorkIdentity): string {
   return keyOfAnchor(anchorOfWork(work));
 }
 
-/** The Work a key anchors, with the readable ticket key the key cannot carry. */
+/**
+ * The Work a key anchors, with the readable ticket key the key cannot carry
+ * (ignored for GitHub, whose readable key is the issue number).
+ */
 export function workOfAnchor(anchor: WorkAnchor, readableKey: string): WorkIdentity {
   const destination: RepositoryIdentity = githubRepository(anchor.repo);
   if (anchor.provider === "github") {
-    const number = anchor.number ?? Number(anchor.stableId);
-    return { ticket: githubTicketAt(anchor.site, anchor.repo, number), destination };
+    return { ticket: githubTicketAt(anchor.site, anchor.repo, Number(anchor.stableId)), destination };
   }
   return { ticket: jiraTicket({ site: anchor.site, stableId: anchor.stableId, key: readableKey }), destination };
 }
@@ -98,7 +88,6 @@ export function anchorOfKey(key: string): WorkAnchor | null {
       site: GITHUB_SITE,
       stableId: String(number),
       repo: legacy[1]!,
-      number,
     };
   }
 
@@ -110,14 +99,12 @@ export function anchorOfKey(key: string): WorkAnchor | null {
   if (provider !== "jira" && provider !== "github") return null;
   try {
     const stableId = decodeURIComponent(record[3]!);
-    const number = provider === "github" ? Number(stableId) : null;
-    if (number !== null && (!Number.isInteger(number) || number < 1)) return null;
+    if (provider === "github" && (!Number.isInteger(Number(stableId)) || Number(stableId) < 1)) return null;
     return {
       provider,
       site: decodeURIComponent(record[2]!),
       stableId,
       repo: decodeURIComponent(record[4]!),
-      number,
     };
   } catch {
     return null;
