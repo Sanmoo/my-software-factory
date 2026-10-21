@@ -14,7 +14,7 @@ A piece of requested change the operator wants completed.
 The issue-tracker item that requests a Work: a GitHub Issue or a Jira issue.
 
 **Ticket identity**:
-Provider + site + the provider's stable ticket id. A readable key or number is presentation only: it never stands in for the stable identity.
+Provider + site + the provider's stable ticket id (plus the repository for a GitHub issue). A readable key or number is presentation only: it never stands in for the stable identity.
 
 **Source**:
 The ticket provider and site a Work comes from.

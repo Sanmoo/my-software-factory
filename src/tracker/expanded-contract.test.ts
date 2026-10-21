@@ -20,7 +20,7 @@ import { SimulatedRepoHarness } from "./github-sim-harness.js";
 import { legacyTrackerPort } from "./legacy-bridge.js";
 import { PartialWriteError } from "./port.js";
 
-const REPO = "Sanmoo/expanded-sim";
+const REPO = "Sanmoo/sim-repo";
 const WORKER = "bot-do-samuca";
 const READY = "ready-for-agent";
 
@@ -309,5 +309,13 @@ describe("expanded contracts — the fake adapter", () => {
     assert.ok(feedback.known);
     assert.equal(feedback.value.pr?.identity.number, pr.number);
     assert.equal(feedback.value.pr?.identity.repository.repo, REPO);
+
+    const repair = await adapter.readPullRequestRepairFacts({
+      work: { ticket, destination: githubRepository(REPO) },
+      pullRequest: pr.identity,
+    });
+    assert.ok(repair.known);
+    assert.equal(repair.value.mergeState, "unknown");
+    assert.equal(repair.value.requiredChecks, null);
   });
 });

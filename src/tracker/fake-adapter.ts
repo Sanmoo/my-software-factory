@@ -34,11 +34,13 @@ import type {
 } from "./expanded-port.js";
 import { withPullRequestIdentity } from "./expanded-port.js";
 import {
+  githubRepository,
   githubTicket,
   isGitHubSource,
   issueRefOf,
   issueRefOfTicket,
-  type RepositoryIdentity,
+  pullRequestIdentity,
+  pullRequestIdentityKey,
   type TicketIdentity,
 } from "./identity.js";
 
@@ -532,11 +534,11 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
       if (detached !== undefined) return known({ pr: { ...detached }, comments: [], reviews: [] });
       const ref = this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
       if (ref === null) return notKnown;
-      return this.expandedFeedback(ref, target.work.destination);
+      return this.expandedFeedback(ref);
     }
     const ref = issueRefOfTicket(target.work.ticket);
     if (ref === null) return notKnown;
-    return this.expandedFeedback(ref, target.work.destination);
+    return this.expandedFeedback(ref);
   }
 
   async readPullRequestRepairFacts(target: WorkPullRequest): Promise<Known<PrRepairFacts>> {
@@ -544,7 +546,15 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
       const detached = this.standalonePullRequests.get(
         this.pullRequestKey(target.pullRequest.repository.repo, target.pullRequest.number),
       );
-      if (detached !== undefined) return known(defaultRepairFacts(detached.number, detached.baseBranch));
+      if (detached !== undefined) {
+        return known({
+          headSha: `head-${detached.number}`,
+          baseBranch: detached.baseBranch,
+          baseSha: `base-${detached.number}`,
+          mergeState: "unknown",
+          requiredChecks: null,
+        });
+      }
       const ref = this.issueRefOfPr(target.pullRequest.repository.repo, target.pullRequest.number);
       if (ref === null) return notKnown;
       return this.readPrRepairFacts(ref);
@@ -600,24 +610,21 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
     return this.pushBranch({ repo: input.destination.repo, branch: input.branch });
   }
 
-  private async expandedFeedback(
-    ref: IssueRef,
-    destination: RepositoryIdentity,
-  ): Promise<Known<ExpandedPrFeedback>> {
+  private async expandedFeedback(ref: IssueRef): Promise<Known<ExpandedPrFeedback>> {
     const feedback = await this.readPrFeedback(ref);
     if (!feedback.known) return notKnown;
     if (feedback.value.pr === null) {
       return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
     }
     return known({
-      pr: withPullRequestIdentity(feedback.value.pr, destination),
+      pr: withPullRequestIdentity(feedback.value.pr, githubRepository(ref.repo)),
       comments: feedback.value.comments,
       reviews: feedback.value.reviews,
     });
   }
 
   private pullRequestKey(repo: string, number: number): string {
-    return `${repo}#${number}`;
+    return pullRequestIdentityKey(pullRequestIdentity(githubRepository(repo), number));
   }
 
   private issueRefOfPr(repo: string, prNumber: number): IssueRef | null {
