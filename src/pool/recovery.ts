@@ -28,7 +28,7 @@ export interface RecoveryEvent {
   index: number;
   /** Why the attempt was interrupted; the only cause today is the absence of an outcome record. */
   reason: string;
-  /** The backoff actually observed before the relaunch. */
+  /** The backoff this recovery is granted; the loop waits it before the relaunch. */
   waitMs: number;
   /** The attempt the recovery continues — the same number, never a new one. */
   attempt: number;
@@ -158,7 +158,7 @@ export async function peekRecovery(
   attempt: number,
 ): Promise<RecoveryDecision> {
   const ledger = await readRecoveryLedger(workDir);
-  return recoveryDecision(scoped(ledger, attempt), policy);
+  return recoveryDecision(budgetForAttempt(ledger, attempt), policy);
 }
 
 /**
@@ -174,7 +174,7 @@ export async function consumeRecovery(
   reason: string,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
-  const ledger = scoped(await readRecoveryLedger(workDir), attempt);
+  const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
   const decision = recoveryDecision(ledger, policy);
   const at = now().toISOString();
   if (decision.decision === "pause-help") {
@@ -213,7 +213,7 @@ export async function recordFailure(
   now: () => Date = () => new Date(),
 ): Promise<void> {
   const ledger = await readRecoveryLedger(workDir);
-  const current = scoped(ledger, attempt);
+  const current = budgetForAttempt(ledger, attempt);
   await writeLedger(workDir, {
     ...current,
     lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
@@ -221,7 +221,7 @@ export async function recordFailure(
 }
 
 /** The same ledger for a different attempt: the budget is per attempt. */
-function scoped(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
+function budgetForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
   if (ledger.attempt === attempt) return ledger;
   return { attempt, consumed: 0, events: [], lastStop: ledger.lastStop };
 }
