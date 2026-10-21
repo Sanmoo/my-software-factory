@@ -11,9 +11,11 @@ import {
   classifyOutcome,
   blockedCommentBody,
   interruptionPausedCommentBody,
+  isRecordedFailure,
+  ownWrittenOutcome,
   DESFECHO_FILENAME,
 } from "./outcome.js";
-import { DEFAULT_RECOVERY_POLICY } from "../config.js";
+import { DEFAULT_RECOVERY_BUDGET } from "../config.js";
 
 /** A layout outside the filesystem — the evidence probes it and answers absent. */
 const FAKE_WORKSPACE: WorkspaceLayout = {
@@ -205,6 +207,19 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
+  test("a pr-open record is the attempt's own written outcome but never a failure (issue 123)", () => {
+    const record = { class: "pr-open" as const, attempt: 1 };
+
+    assert.equal(
+      ownWrittenOutcome(record, 1),
+      record,
+      "the fall ruler applies to an own written outcome that is not a self-report",
+    );
+    assert.equal(isRecordedFailure(record), false, "a success settles no failure stop in the diagnosis");
+    assert.equal(isRecordedFailure({ class: "clean-without-pr", attempt: 1 }), true);
+    assert.equal(isRecordedFailure({ class: "blocked-self-report", attempt: 1 }), false);
+  });
+
   test("prose is never read: an unknown record class is treated as absent (an interruption)", async () => {
     // readOutcomeRecord rejected it already — the ruler never even sees it.
     const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: true }));
@@ -303,7 +318,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
 
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_POLICY,
+      policy: DEFAULT_RECOVERY_BUDGET,
       record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
       workDir: dir,
       workspace: layout,
@@ -336,7 +351,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     const dir = makeWorkDir();
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_POLICY,
+      policy: DEFAULT_RECOVERY_BUDGET,
       record: null,
       workDir: dir,
       workspace: layout,
@@ -360,7 +375,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
 
     const comment = await interruptionPausedCommentBody({
       attempt: 3,
-      policy: DEFAULT_RECOVERY_POLICY,
+      policy: DEFAULT_RECOVERY_BUDGET,
       record: null,
       workDir: workDir(layout, ref.repo, ref.number),
       workspace: layout,

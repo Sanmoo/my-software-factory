@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
-import type { RecoveryPolicy } from "../config.js";
+import type { RecoveryBudget } from "../config.js";
 import type { RepairAttempt } from "../pool/repair.js";
 import { exhaustedReason } from "../pool/recovery.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
@@ -154,12 +154,12 @@ export function isRecordedFailure(record: OutcomeRecord | null): boolean {
 }
 
 /**
- * The record that ends an attempt as a failure/abandon for the ruler: its own
- * record, unless it is the blocked self-report the `record-only` ruling
- * handles. One rule, shared by collection and by the derivation that settles
- * an unreconciled failure (issue 123).
+ * The attempt's own written outcome, unless it is the blocked self-report the
+ * `record-only` ruling handles: the record that lets the fall ruler decide
+ * (issue 123). One rule, shared by collection and by the derivation that
+ * settles an unreconciled attempt.
  */
-export function ownFailureRecord(
+export function ownWrittenOutcome(
   record: OutcomeRecord | null,
   attempt: number,
 ): OutcomeRecord | null {
@@ -214,7 +214,7 @@ function describeOutcome({ attempt, record }: AttemptCommentInput): string {
 /** What the pause of an exhausted recovery budget needs: the interrupted
  *  attempt, the configured allowance and the attempt's evidence. */
 export interface InterruptionPausedInput extends AttemptCommentInput {
-  policy: RecoveryPolicy;
+  policy: RecoveryBudget;
 }
 
 /**

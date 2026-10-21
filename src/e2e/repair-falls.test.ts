@@ -12,7 +12,7 @@ import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../pool/repair.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
@@ -101,7 +101,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -913,7 +913,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: true,
       configPath: join(root, "msf.yaml"),
     };

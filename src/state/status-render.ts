@@ -9,7 +9,7 @@ import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
-import type { RecoveryPolicy } from "../config.js";
+import type { RecoveryBudget } from "../config.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -74,7 +74,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   lines.push(
     ...section(
       "recovery (interruptions absorbed by their own budget — separate from the attempts)",
-      view.registry.recovery.map((entry) => renderRecovery(entry.key, entry.ledger, view.recoveryPolicy)),
+      view.registry.recovery.map((entry) => renderRecovery(entry.key, entry.ledger, view.recoveryBudget)),
       cap,
     ),
   );
@@ -142,7 +142,7 @@ function renderInterrupted(key: string, attempt: number, recordedAttempt: number
  * an interruption (recoveries consumed, no attempt) or a failure (the attempt
  * was consumed). The configured value and backoff are always named.
  */
-function renderRecovery(key: string, ledger: RecoveryLedger, policy: RecoveryPolicy): string {
+function renderRecovery(key: string, ledger: RecoveryLedger, policy: RecoveryBudget): string {
   const spend = `${ledger.consumed}/${policy.maxRecoveries} recoveries (waits ${renderWaits(policy.waitsMs)})`;
   const attempt = `attempt ${ledger.attempt}`;
   const last = ledger.lastStop;

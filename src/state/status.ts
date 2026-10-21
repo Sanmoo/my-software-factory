@@ -1,4 +1,4 @@
-import type { Config, RecoveryPolicy } from "../config.js";
+import type { Config, RecoveryBudget } from "../config.js";
 import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import {
   readLastAttempt,
@@ -65,7 +65,7 @@ export interface StatusView {
   /** Running and Orphaned, or unknown when Docker could not answer. */
   liveness: Liveness;
   /** The configured interruption budget, so the view can name what it costs. */
-  recoveryPolicy: RecoveryPolicy;
+  recoveryBudget: RecoveryBudget;
 }
 
 /**
@@ -98,7 +98,7 @@ export async function deriveStatus(
     unmarkedReservations: state.unmarkedReservations,
     registry,
     liveness: await classifyLiveness(registry, layout, probe),
-    recoveryPolicy: config.recovery,
+    recoveryBudget: config.recovery,
   };
 }
 

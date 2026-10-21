@@ -12,7 +12,7 @@ import { localGitWork } from "../git/local.js";
 import { seedFixtureRemote, cleanupFixture } from "../git/local-fixtures.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
 import { installGhShim, runCli } from "./cli-harness.js";
@@ -97,7 +97,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
-      recovery: { ...DEFAULT_RECOVERY_POLICY },
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };

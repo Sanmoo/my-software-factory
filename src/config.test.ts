@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY } from "./config.js";
+import { loadConfig, DEFAULT_CONCURRENCY, DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET } from "./config.js";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "msf-config-"));
@@ -193,7 +193,7 @@ describe("config", () => {
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.recovery, DEFAULT_RECOVERY_POLICY);
+    assert.deepEqual(config.recovery, DEFAULT_RECOVERY_BUDGET);
     assert.deepEqual(config.recovery, { maxRecoveries: 3, waitsMs: [1_000, 4_000, 16_000] });
   });
 
@@ -223,7 +223,7 @@ describe("config", () => {
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.recovery, { maxRecoveries: 0, waitsMs: DEFAULT_RECOVERY_POLICY.waitsMs });
+    assert.deepEqual(config.recovery, { maxRecoveries: 0, waitsMs: DEFAULT_RECOVERY_BUDGET.waitsMs });
   });
 
   test("recovery.max must be a non-negative integer when given", () => {

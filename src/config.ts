@@ -46,14 +46,14 @@ export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [];
  * it spends this finite, persisted allowance instead. Values fixed by the
  * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
  */
-export interface RecoveryPolicy {
+export interface RecoveryBudget {
   /** Automatic recoveries allowed for one attempt; 0 pauses on the 1st interruption. */
   maxRecoveries: number;
   /** Wait before each recovery, by index; the last value repeats. */
   waitsMs: readonly number[];
 }
 
-export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
+export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
   maxRecoveries: 3,
   waitsMs: [1_000, 4_000, 16_000],
 };
@@ -84,7 +84,7 @@ export interface Config {
    * blocking the launch. Off by default — fail closed (ticket 17). */
   profileSkipDanglingLinks: boolean;
   /** The interruption-recovery budget: finite and separate from the attempts. */
-  recovery: RecoveryPolicy;
+  recovery: RecoveryBudget;
   notifications: boolean;
   /** Where the config was loaded from. */
   configPath: string;
@@ -223,9 +223,9 @@ function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean
   return optionalBoolean(doc, "profile-skip-dangling-links", false);
 }
 
-function optionalRecovery(doc: Record<string, unknown>): RecoveryPolicy {
+function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
   const value = doc["recovery"];
-  if (value === undefined) return { ...DEFAULT_RECOVERY_POLICY };
+  if (value === undefined) return { ...DEFAULT_RECOVERY_BUDGET };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(`config field "recovery" must be a mapping when given`);
   }
@@ -235,7 +235,7 @@ function optionalRecovery(doc: Record<string, unknown>): RecoveryPolicy {
   if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
     throw new ConfigError(`config field "recovery.max" must be a non-negative integer when given`);
   }
-  const maxRecoveries = (max as number | undefined) ?? DEFAULT_RECOVERY_POLICY.maxRecoveries;
+  const maxRecoveries = (max as number | undefined) ?? DEFAULT_RECOVERY_BUDGET.maxRecoveries;
 
   const waits = given["waits-ms"];
   if (
@@ -248,7 +248,7 @@ function optionalRecovery(doc: Record<string, unknown>): RecoveryPolicy {
       `config field "recovery.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
     );
   }
-  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_RECOVERY_POLICY.waitsMs];
+  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_RECOVERY_BUDGET.waitsMs];
 
   return { maxRecoveries, waitsMs };
 }
