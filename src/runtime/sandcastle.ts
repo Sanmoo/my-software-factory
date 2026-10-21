@@ -527,7 +527,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     if (record !== null) {
       this.event(request, "outcome-record-rejected", {
         recordedAttempt: record.attempt,
-        reason: `${describeForeignRecord(record)} — attempt ${request.attempt} wrote no record of its own`,
+        reason: `${describeForeignRecord(record.attempt)} — attempt ${request.attempt} wrote no outcome record of its own`,
       });
     }
     return "abrupt-death";

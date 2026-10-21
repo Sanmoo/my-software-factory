@@ -333,7 +333,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     outcome?: OutcomeRecord["class"];
     /** The attempt the written record declares; defaults to the launched one. */
     recordAttempt?: number;
-    /** A record body written verbatim — a shape the reader rejects (legacy/malformed). */
+    /** A record body written verbatim, whatever the reader makes of it (legacy, malformed). */
     rawRecord?: string;
     die?: string;
   }): SandcastleRuntime {
@@ -419,7 +419,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       attempt: 2,
     });
 
-    assert.equal(result.outcome, "abrupt-death", "the older attempt's verdict is history, not this session's result");
+    assert.equal(result.outcome, "abrupt-death", "the older attempt's outcome is history, not this session's outcome");
     const record = await readOutcomeRecord(request.workDir);
     assert.equal(record?.attempt, 1, "the record on disk stays untouched — it is the history of attempt 1");
     const rejected = readLines(join(request.workDir, "log-2.jsonl"))
