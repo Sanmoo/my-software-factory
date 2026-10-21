@@ -23,7 +23,6 @@ export interface TicketSource {
 export interface GitHubTicketIdentity {
   provider: "github";
   site: string;
-  /** The repository that holds the issue. */
   repo: string;
   /** The issue number — stable within this repo, never a Jira ticket. */
   number: number;
@@ -40,7 +39,6 @@ export interface JiraTicketIdentity {
   stableId: string;
   /** Human-readable key ("ABC-123"); presentation only, never identity. */
   key: string;
-  /** Human-facing link, when known. */
   url?: string;
 }
 
@@ -49,7 +47,6 @@ export type TicketIdentity = GitHubTicketIdentity | JiraTicketIdentity;
 export interface RepositoryIdentity {
   provider: "github";
   site: string;
-  /** "owner/name". */
   repo: string;
 }
 
@@ -57,7 +54,6 @@ export interface PullRequestIdentity {
   provider: "github";
   site: string;
   repository: RepositoryIdentity;
-  /** Stable PR number within the repository. */
   number: number;
 }
 

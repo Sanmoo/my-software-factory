@@ -911,7 +911,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
       return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
     }
     return known({
-      pr: withPullRequestIdentity(feedback.value.pr, target.work.destination),
+      pr: withPullRequestIdentity(feedback.value.pr, githubRepository(ref.repo)),
       comments: feedback.value.comments,
       reviews: feedback.value.reviews,
     });
