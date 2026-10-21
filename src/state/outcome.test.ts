@@ -243,7 +243,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         workDir: "/nowhere/trabalhos/Sanmoo/a#1",
         workspace: FAKE_WORKSPACE,
       });
-      assert.match(comment, /2 consecutive failed attempts/i);
+      assert.match(comment, /2 consecutive falls/i);
       assert.ok(comment.includes(JSON.stringify(record, null, 2)), "the exact desfecho JSON is embedded");
     });
 
@@ -256,7 +256,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
       });
       assert.match(comment, /attempt 3/);
       assert.match(comment, /interrupted: no outcome record was written/);
-      assert.ok(!comment.includes("fall"), "an interruption is never called a fall");
+      assert.ok(!comment.includes("abrupt fall"), "an interruption is never called an abrupt fall");
     });
   });
 });
@@ -326,7 +326,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     const ruling = await classifyOutcome(factsFor(dir, { record, attempt: 2, consecutiveFall: true }));
 
     assert.equal(ruling.decision, "block");
-    assert.match(ruling.comment, /2 consecutive failed attempts \(attempt 2\) — the exact outcome record:/);
+    assert.match(ruling.comment, /2 consecutive falls \(attempt 2\) — the exact outcome record:/);
     assert.ok(ruling.comment.includes(JSON.stringify(record, null, 2)), "the record's JSON is preserved");
     assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/log-2\.jsonl — present/);
     assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-2\.log — absent/);

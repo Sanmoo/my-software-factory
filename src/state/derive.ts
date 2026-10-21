@@ -607,10 +607,10 @@ async function deriveUnreconciledFailure(
   record: OutcomeRecord | null,
 ): Promise<ReservedDerivation> {
   const ledger = await readRecoveryLedger(dir);
-  const previousWasFailure =
-    ledger.lastStop !== null &&
-    ledger.lastStop.kind === "failure" &&
-    ledger.lastStop.attempt === attempt - 1;
+  // The consecutiveness fact is the attempt NUMBER of the last written failure,
+  // never the last stop: an interruption of the current attempt must not erase
+  // the failure of the one before it (the two paths of the ruler agree).
+  const previousWasFailure = ledger.lastFailureAttempt === attempt - 1;
   if (!previousWasFailure) return { ref, state: "fall", decision: "release", attempt };
   return {
     ref,

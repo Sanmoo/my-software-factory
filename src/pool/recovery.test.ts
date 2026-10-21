@@ -58,6 +58,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       attempt: 1,
       at: "2026-01-01T00:00:00.000Z",
     });
+    assert.equal(ledger.lastFailureAttempt, null, "an interruption is not a failure");
   });
 
   test("the count survives a new process: a restart continues the budget instead of renewing it", async () => {
@@ -96,40 +97,63 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       at: "2026-01-01T00:00:00.000Z",
       outcome: "clean-without-pr",
     });
+    assert.equal(failed.lastFailureAttempt, 1, "the written failure is the consecutiveness fact");
     assert.equal(failed.consumed, 1, "the interrupted recoveries remain as history");
 
-    const next = await recoveryDecisionAfterRestart(2);
+    const next = await peekRecovery(dir, POLICY, 2);
     assert.equal(next.decision === "recover" && next.consumed, 1, "a new attempt starts with a full budget");
   });
 
+  test("an interruption of the next attempt never erases the previous written failure", async () => {
+    await recordFailure(dir, 1, "clean-without-pr", NOW);
+    await consumeRecovery(dir, POLICY, 2, "worker-interrupted", NOW);
+
+    const ledger = await readRecoveryLedger(dir);
+    assert.equal(ledger.lastStop?.kind, "interruption");
+    assert.equal(
+      ledger.lastFailureAttempt,
+      1,
+      "the fall ruler's consecutiveness fact survives the interruption of attempt 2",
+    );
+  });
+
   test("a shorter schedule repeats its last wait instead of inventing one", () => {
-    const ledger: RecoveryLedger = { attempt: 1, consumed: 2, events: [], lastStop: null };
+    const ledger: RecoveryLedger = {
+      attempt: 1,
+      consumed: 2,
+      events: [],
+      lastStop: null,
+      lastFailureAttempt: null,
+    };
     const decision = recoveryDecision(ledger, { maxRecoveries: 3, waitsMs: [500] });
     assert.equal(decision.decision === "recover" && decision.waitMs, 500);
   });
 
   test("a legacy work dir with no ledger reads as the honest initial state", async () => {
     const ledger = await readRecoveryLedger(dir);
-    assert.deepEqual(ledger, { attempt: 1, consumed: 0, events: [], lastStop: null });
+    assert.deepEqual(ledger, {
+      attempt: 1,
+      consumed: 0,
+      events: [],
+      lastStop: null,
+      lastFailureAttempt: null,
+    });
     assert.equal((await peekRecovery(dir, POLICY, 1)).decision, "recover");
   });
 
   test("a corrupt ledger is the initial state too — never a crash, never invented recoveries", async () => {
     writeFileSync(join(dir, RECOVERY_FILENAME), "{not json", "utf8");
-    assert.deepEqual(await readRecoveryLedger(dir), {
+    const initial = {
       attempt: 1,
       consumed: 0,
       events: [],
       lastStop: null,
-    });
+      lastFailureAttempt: null,
+    };
+    assert.deepEqual(await readRecoveryLedger(dir), initial);
 
     writeFileSync(join(dir, RECOVERY_FILENAME), JSON.stringify({ attempt: "x", consumed: -2 }), "utf8");
-    assert.deepEqual(await readRecoveryLedger(dir), {
-      attempt: 1,
-      consumed: 0,
-      events: [],
-      lastStop: null,
-    });
+    assert.deepEqual(await readRecoveryLedger(dir), initial);
   });
 
   test("the ledger is written as an artifact of the work, readable after the process is gone", async () => {
@@ -141,8 +165,4 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     assert.equal(onDisk.events[0].waitMs, 1_000);
     assert.equal(onDisk.events[0].reason, "worker-interrupted");
   });
-
-  async function recoveryDecisionAfterRestart(attempt: number) {
-    return peekRecovery(dir, POLICY, attempt);
-  }
 });

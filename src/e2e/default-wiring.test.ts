@@ -115,8 +115,8 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.equal(feedback.value.pr.headBranch, "agent-issue-1");
 
     // The artifact contract on REAL disk (ticket 13): the session dir, the
-    // attempt log and the record the worker wrote — absence would be the
-    // abrupt-fall class, its presence is the pr-open the ruler collected.
+    // attempt log and the record the worker wrote — its absence would be an
+    // interruption, its presence is the pr-open the ruler collected.
     const work = workDir(layout, REPO, 1);
     assert.ok(existsSync(join(work, "sessao")));
     assert.ok(existsSync(join(work, "log-1.jsonl")));

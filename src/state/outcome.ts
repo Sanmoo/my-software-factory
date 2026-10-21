@@ -195,7 +195,7 @@ type AttemptCommentInput = Pick<
 export async function blockedCommentBody(input: AttemptCommentInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   return (
-    `worker blocked after 2 consecutive failed attempts (attempt ${input.attempt}) — ` +
+    `worker blocked after 2 consecutive falls (attempt ${input.attempt}) — ` +
     `${describeOutcome(input)}\n\n${renderWorkEvidence(evidence)}`
   );
 }
