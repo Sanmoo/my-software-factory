@@ -158,3 +158,11 @@ A remote head the repair attempt did not produce (a collaborator's push): the fa
 
 **Help notice**:
 A notification that work needs the operator on its issue, such as a help request, block or rejection; it points at the issue.
+
+**Retrospective**:
+The operator-invoked analysis over a window of finished works, reading their records to propose improvement items; it reviews what already ended, never a live incident.
+_Avoid_: Help request, when the work still waits for the operator on its issue.
+
+**Improvement item**:
+A candidate change to the factory or a target repo, proposed by a retrospective; it becomes ordinary work only when the operator approves it on the tracker.
+_Avoid_: Work, before that approval.
