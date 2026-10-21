@@ -148,8 +148,8 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
   }
 
   /** The durable state of the #100 incident: a charged round, the evidence it
-   *  addressed, and a LATER attempt whose log exists but whose record does not
-   *  (the abrupt fall). The record on disk is still attempt 1's. */
+   *  addressed, and a LATER attempt whose log exists but whose record does not.
+   *  The record on disk is still attempt 1's. */
   function seedFallenLegacyRound(
     number: number,
     cycle: RepairCycle = { usedRounds: 1, lastEvidence: signatureOf(number, OBSERVED), consecutiveFalls: 0, attempt: null },

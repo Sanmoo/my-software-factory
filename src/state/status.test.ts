@@ -226,7 +226,7 @@ describe("status — derivation on demand + local registry scan", () => {
         `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk)`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
-        "recovery (interruptions absorbed by their own budget — separate from the attempts): none",
+        "recovery (the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt): none",
         "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
@@ -335,7 +335,10 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
-    assert.match(text, /recovery \(interruptions absorbed by their own budget — separate from the attempts\): 2/);
+    assert.match(
+      text,
+      /recovery \(the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt\): 2/,
+    );
     assert.match(
       text,
       /#30 \(attempt 2: last stop was an interruption — no attempt consumed; 2\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
@@ -362,7 +365,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.deepEqual(view.registry.recovery, []);
     assert.match(
       renderStatus(view),
-      /recovery \(interruptions absorbed by their own budget — separate from the attempts\): none/,
+      /recovery \(the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt\): none/,
     );
     assert.equal(
       JSON.parse(readFileSync(join(dir, DESFECHO_FILENAME), "utf8")).class,
