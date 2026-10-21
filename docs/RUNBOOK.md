@@ -129,10 +129,10 @@ as you want; each round ends with the worker commenting what it addressed).
 You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
 round is an interruption: the SAME attempt is recovered after the configured
-backoff, and only an exhausted budget — or a written failure — pauses the work
-and asks for help; a PR waiting for you stays parked; a merge you already did
-becomes done → archive). A repair fall resumes on the same branch and PR (see
-GLOSSARY.md).
+backoff; a written failure still releases the work to the pool, its 2nd
+consecutive one blocks it, and an exhausted budget pauses it and asks for help;
+a PR waiting for you stays parked; a merge you already did becomes done →
+archive). A repair fall resumes on the same branch and PR (see GLOSSARY.md).
 
 ## (c) Status — the trail, factory stopped
 

@@ -611,7 +611,8 @@ async function deriveUnreconciledFailure(
   const ledger = await readRecoveryLedger(dir);
   // The consecutiveness fact is the attempt NUMBER of the last fall, never the
   // last stop: an interruption of the current attempt must not erase the fall
-  // of the one before it (the two paths of the ruler agree).
+  // of the one before it. Only ledger-era history carries it — a fall recorded
+  // before the ledger existed is not counted here.
   const previousWasFall = ledger.lastFallAttempt === attempt - 1;
   if (!previousWasFall) return { ref, state: "fall", decision: "release", attempt };
   return {
