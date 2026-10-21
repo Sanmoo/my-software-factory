@@ -9,7 +9,12 @@ import {
   workspaceLayout,
   type WorkspaceLayout,
 } from "../layout.js";
-import { readOutcomeRecord, isRecordedFailure, type OutcomeRecord } from "../state/outcome.js";
+import {
+  ownOutcomeRecord,
+  readOutcomeRecord,
+  isRecordedFailure,
+  type OutcomeRecord,
+} from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
@@ -291,7 +296,10 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // presented as the current attempt's result.
     if (record !== null) {
       lastOutcome.push({ key, workDir: dir, record });
-      if (record.attempt < lastAttempt) {
+      // The same criterion the ruler and the collection apply: the record is
+      // not this attempt's, so the attempt is shown without an own outcome
+      // (issue 143).
+      if (ownOutcomeRecord(record, lastAttempt) === null) {
         attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
       }
     } else if (hasAttemptEvidence(dir, logs)) {
