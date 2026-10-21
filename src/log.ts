@@ -17,12 +17,3 @@ export function operationalLog(log?: (message: string) => void): (message: strin
 function isoUtc(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
-
-/** A duration in the operator's words: 45s, 3m, 1h5m — one rendering, shared
- *  by the cycle's logs and the desktop notices. */
-export function formatDuration(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return `${Math.round(ms / 1000)}s`;
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
-}

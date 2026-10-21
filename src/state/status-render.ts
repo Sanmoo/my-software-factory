@@ -4,7 +4,7 @@ import {
   workKey,
 } from "./derive.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
-import { formatDuration } from "../log.js";
+import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";

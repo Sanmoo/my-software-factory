@@ -64,6 +64,9 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import {
+  capacityExcess,
+  idleWarningDue,
+  newDuplicates,
   observeSurvivorActivity,
   survivorWorkKeys,
   type SurvivorRecord,
@@ -78,15 +81,18 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { operationalLog, formatDuration } from "./log.js";
+import { operationalLog } from "./log.js";
+import { formatDuration } from "./format.js";
 import { mkdirSync } from "node:fs";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
  * the process is a loop — owner of time (the fixed 60 s tick), of the --once
  * boundary and of waking by event (end of worker vs tick). It interlaces the
- * four phases deciding nothing of the domain: decisions live in state/,
- * IO in tracker/ + pool/ + git/ + runtime/ (ticket 07).
+ * four phases deciding nothing of the domain: the states live in state/, the
+ * liveness policy and the survivor ledger in state/ + pool/, and IO in
+ * tracker/ + pool/ + git/ + runtime/ (ticket 07) — the loop only reads the
+ * facts and applies what they decide (issue 118).
  *
  * Ticket 14: the derivation of the tick covers the states of ALL reserved
  * works (done · done-fallback · rejected · feedback · resumable — state/
@@ -125,13 +131,19 @@ export interface LoopDeps {
   wait?: (ms: number) => Promise<void>;
 }
 
+/** The ruler's decided transition, as the sweep reports it (ticket 13). */
+export interface AppliedRuling {
+  decision: OutcomeRuling["decision"];
+  because: string;
+}
+
 export interface CollectedWork {
   ref: IssueRef;
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
   /** The ruler's decided transition, applied at the act (ticket 13). */
-  ruling: { decision: OutcomeRuling["decision"]; because: string };
+  ruling: AppliedRuling;
 }
 
 /** The facts that settle one attempt's end (issue 118): its own dir, its
@@ -149,7 +161,7 @@ interface AttemptEnd {
 interface RulingApplied {
   next: Launchable | null;
   prConfirmed: boolean;
-  ruling: { decision: OutcomeRuling["decision"]; because: string };
+  ruling: AppliedRuling;
 }
 
 export interface SweepResult {
@@ -713,11 +725,10 @@ export class SweepEngine {
     if (this.liveness.state !== "known") return settled;
     const workers = this.liveness.workers;
     const local = new Set(this.slots.workKeys);
-    const carried = workersByWork(workers);
 
     // Exit: a survivor a reliable probe no longer lists has ended.
     for (const key of [...this.survivors.keys()]) {
-      if (carried.has(key)) continue;
+      if (this.carriedKeys.has(key)) continue;
       this.survivors.delete(key);
       settled.add(key);
       await this.reconcileSurvivorExit(key);
@@ -760,9 +771,8 @@ export class SweepEngine {
     if (record === undefined) return;
     const observed = await observeSurvivorActivity(record, this.now());
     this.survivors.set(key, observed);
-    if (observed.idleWarned) return;
-    const idleMs = this.now() - observed.lastActivityAt;
-    if (idleMs < DEFAULT_IDLE_LIMIT_MS) return;
+    const idleMs = idleWarningDue(observed, this.now(), DEFAULT_IDLE_LIMIT_MS);
+    if (idleMs === null) return;
     this.survivors.set(key, { ...observed, idleWarned: true });
     this.log(
       `WARNING: surviving worker ${key} shows no verifiable activity for ${formatDuration(idleMs)} — ` +
@@ -780,10 +790,10 @@ export class SweepEngine {
    */
   private async announceDuplicates(): Promise<void> {
     if (this.liveness.state !== "known") return;
-    const current = new Set<string>();
-    for (const duplicate of duplicateWorkers(this.liveness.workers)) {
-      current.add(duplicate.key);
-      if (this.announcedDuplicates.has(duplicate.key)) continue;
+    const duplicates = duplicateWorkers(this.liveness.workers);
+    const announced = newDuplicates(this.announcedDuplicates, duplicates);
+    this.announcedDuplicates = new Set(duplicates.map((duplicate) => duplicate.key));
+    for (const duplicate of announced) {
       this.log(
         `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
           "no new launch for it, no owner chosen and nothing ended; a human decision is needed",
@@ -791,7 +801,6 @@ export class SweepEngine {
       const parsed = parseWorkKey(duplicate.key);
       if (parsed !== null) await this.deliverNotice(interventionNotice(parsed));
     }
-    this.announcedDuplicates = current;
   }
 
   /**
@@ -846,15 +855,20 @@ export class SweepEngine {
    */
   private observeCapacity(): void {
     if (this.liveness.state !== "known") return; // the unknown episode has its own line
-    const used = occupiedSlots(this.liveness.workers, new Set(this.slots.workKeys));
-    const over = used > this.deps.config.concurrency;
+    const excess = capacityExcess(
+      this.liveness.workers,
+      new Set(this.slots.workKeys),
+      this.deps.config.concurrency,
+    );
+    const over = excess > 0;
     if (over === this.overCapacity) return;
     this.overCapacity = over;
     this.log(
       over
-        ? `capacity exceeded: ${used} worker(s) alive with concurrency ${this.deps.config.concurrency} — ` +
-            "no new launch and nobody ended; capacity returns by itself when they finish"
-        : `capacity available again: ${used}/${this.deps.config.concurrency} worker(s) — launches resume automatically`,
+        ? `capacity exceeded: ${excess} more worker(s) alive than the concurrency ` +
+            `${this.deps.config.concurrency} allows — no new launch and nobody ended; ` +
+            "capacity returns by itself when they finish"
+        : `capacity available again within ${this.deps.config.concurrency} worker(s) — launches resume automatically`,
     );
   }
 
@@ -897,12 +911,12 @@ export class SweepEngine {
     for (;;) {
       const parked = this.parkedQueue.shift();
       if (parked !== undefined) {
-        if (this.carriedByWorker(workKey(parked.ref))) continue;
+        if (this.carriedKeys.has(workKey(parked.ref))) continue;
         return parked;
       }
       const entry = this.cache.shift();
       if (entry === undefined) return undefined;
-      if (this.carriedByWorker(workKey(entry.ref))) continue;
+      if (this.carriedKeys.has(workKey(entry.ref))) continue;
       return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
     }
   }
@@ -919,11 +933,6 @@ export class SweepEngine {
       occupiedSlots(this.liveness.workers, new Set(this.slots.workKeys)) <
       this.deps.config.concurrency
     );
-  }
-
-  /** A live container carries this work right now (dedup by the work key). */
-  private carriedByWorker(key: string): boolean {
-    return this.carriedKeys.has(key);
   }
 
   /** Ctrl-C: stop launching and stop replenishing finished slots. The

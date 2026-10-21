@@ -1,7 +1,5 @@
 import type { IssueRef } from "../tracker/port.js";
 
-export type NotificationKind = "review" | "help" | "intervention" | "factory-unavailable";
-
 /**
  * The factory's boundary with the operator's desktop: the CLI on the host
  * delivers, never the worker or Pi, so the container gains no graphical

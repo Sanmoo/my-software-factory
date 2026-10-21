@@ -1,6 +1,8 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "./attempt-logs.js";
+
 /**
  * Verifiable activity of a worker session (issue 112): the files the agents
  * THEMSELVES write under the dirs the container binds — the session dir (pi's
@@ -34,6 +36,26 @@ export interface ActivityDirs {
 }
 
 /**
+ * The verifiable-activity observation of one work: the session dir (the agent's
+ * transcripts, the worker's own and its subagents') and the work dir, minus the
+ * factory's own derived logs — the attempt's event log and Sandcastle's stdout
+ * log, which only echo the agent and would turn any factory line into proof of
+ * work. Shared by the runtime's own watchdog and the survivor watch.
+ */
+export async function workActivityDirs(workDir: string, sessionsDir: string): Promise<ActivityDirs> {
+  const [workNames, sessionNames] = await Promise.all([namesOf(workDir), namesOf(sessionsDir)]);
+  return {
+    dirs: [sessionsDir, workDir],
+    exclude: [
+      ...workNames.filter((name) => EVENT_LOG_PATTERN.test(name)).map((name) => join(workDir, name)),
+      ...sessionNames
+        .filter((name) => SANDCASTLE_LOG_PATTERN.test(name))
+        .map((name) => join(sessionsDir, name)),
+    ],
+  };
+}
+
+/**
  * One observation of the watched tree: every file's path, size and mtime. Two
  * equal stamps mean nothing was written between them.
  */
@@ -44,21 +66,23 @@ export async function readActivityStamp(input: ActivityDirs): Promise<string> {
   return entries.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
 }
 
+async function namesOf(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch {
+    // A dir that does not exist yet (or cannot be read) has no files to prove
+    // activity — never a reason to fail the launch.
+    return [];
+  }
+}
+
 async function collect(
   root: string,
   dir: string,
   excluded: ReadonlySet<string>,
   entries: string[],
 ): Promise<void> {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    // A dir that does not exist yet (or cannot be read) has no files to prove
-    // activity — never a reason to fail the launch.
-    return;
-  }
-  for (const name of names) {
+  for (const name of await namesOf(dir)) {
     const path = join(dir, name);
     if (excluded.has(path)) continue;
     let info: Awaited<ReturnType<typeof stat>>;

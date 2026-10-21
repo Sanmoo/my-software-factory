@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { formatDuration } from "../log.js";
+import { formatDuration } from "../format.js";
 import type { Notification, Notifier } from "./port.js";
 
 /** Runs the desktop command; injectable so tests need no desktop. */
