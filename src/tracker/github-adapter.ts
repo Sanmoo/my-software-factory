@@ -26,6 +26,29 @@ import {
   notKnown,
   PartialWriteError,
 } from "./port.js";
+import type {
+  ExpandedPrFeedback,
+  OpenPullRequestInput,
+  OpenTicket,
+  PullRequestRecord,
+  PullRequestTracker,
+  PushWorkBranchInput,
+  TicketBlocker,
+  TicketSelection,
+  TicketSnapshot,
+  TicketTracker,
+  WorkPullRequest,
+} from "./expanded-port.js";
+import {
+  GITHUB_SITE,
+  githubRepository,
+  githubTicket,
+  issueRefOf,
+  pullRequestIdentity,
+  workOfIssueRef,
+  type TicketIdentity,
+  type WorkIdentity,
+} from "./identity.js";
 
 /**
  * The real tracker adapter: GitHub over the `gh` CLI (ticket 16). The token
@@ -310,7 +333,7 @@ export interface GitHubTrackerAdapterOptions extends GitHubAdapterOptions {
   runner: CommandRunner;
 }
 
-export class GitHubTrackerAdapter implements TrackerPort {
+export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullRequestTracker {
   private readonly token: string;
   private readonly runner: CommandRunner;
   readonly account: string;
@@ -555,22 +578,26 @@ export class GitHubTrackerAdapter implements TrackerPort {
    *  linked to the issue, never a new one. No PR linked (yet) is a tolerated
    *  no-op — the derivation only schedules the reopen with a PR in hand. */
   async reopenPr(ref: IssueRef): Promise<WriteOutcome> {
-    const performed: string[] = [];
     const timeline = await this.apiOrNull<RestTimelineEvent[]>(
       `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
     );
-    if (!timeline) return { performed };
+    if (!timeline) return { performed: [] };
     const prNumber = linkedPrNumber(timeline);
-    if (prNumber === null) return { performed };
+    if (prNumber === null) return { performed: [] };
+    return this.reopenPullRequestAt(ref.repo, prNumber);
+  }
+
+  private async reopenPullRequestAt(repo: string, prNumber: number): Promise<WriteOutcome> {
+    const performed: string[] = [];
     try {
-      await this.api(`repos/${ref.repo}/pulls/${prNumber}`, {
+      await this.api(`repos/${repo}/pulls/${prNumber}`, {
         method: "PATCH",
         input: { state: "open" },
       });
     } catch (error) {
       throw new PartialWriteError(performed, (error as Error).message);
     }
-    performed.push(`pull ${ref.repo}#${prNumber} reopened`);
+    performed.push(`pull ${repo}#${prNumber} reopened`);
     return { performed };
   }
 
@@ -612,14 +639,26 @@ export class GitHubTrackerAdapter implements TrackerPort {
       if (!comments) return notKnown;
       return known({ pr: null, comments: comments.map(mapComment), reviews: [] });
     }
+    return known(this.legacyFeedback(await this.readPullRequestFeedbackAt(ref.repo, prNumber)));
+  }
+
+  /** The old TrackerPort shape: the explicit PR identity belongs to the expanded contract only. */
+  private legacyFeedback(feedback: ExpandedPrFeedback): PrFeedback {
+    if (feedback.pr === null) return { pr: null, comments: feedback.comments, reviews: feedback.reviews };
+    const { identity: _identity, ...pr } = feedback.pr;
+    return { pr, comments: feedback.comments, reviews: feedback.reviews };
+  }
+
+  private async readPullRequestFeedbackAt(repo: string, prNumber: number): Promise<ExpandedPrFeedback> {
     const [pull, comments, reviews, inline] = await Promise.all([
-      this.api<RestPull>(`repos/${ref.repo}/pulls/${prNumber}`),
-      this.api<RestComment[]>(`repos/${ref.repo}/issues/${prNumber}/comments`),
-      this.api<RestReview[]>(`repos/${ref.repo}/pulls/${prNumber}/reviews`),
-      this.api<RestInlineComment[]>(`repos/${ref.repo}/pulls/${prNumber}/comments`),
+      this.api<RestPull>(`repos/${repo}/pulls/${prNumber}`),
+      this.api<RestComment[]>(`repos/${repo}/issues/${prNumber}/comments`),
+      this.api<RestReview[]>(`repos/${repo}/pulls/${prNumber}/reviews`),
+      this.api<RestInlineComment[]>(`repos/${repo}/pulls/${prNumber}/comments`),
     ]);
-    return known({
+    return {
       pr: {
+        identity: pullRequestIdentity(githubRepository(repo), pull.number),
         number: pull.number,
         state: pull.state === "open" ? "open" : "closed",
         merged: pull.merged_at !== null,
@@ -649,7 +688,7 @@ export class GitHubTrackerAdapter implements TrackerPort {
           createdAt: comment.created_at,
         })),
       ],
-    });
+    };
   }
 
   /** 9e. Merge/CI facts of the open PR: head/base identity, mergeability and
@@ -662,14 +701,21 @@ export class GitHubTrackerAdapter implements TrackerPort {
     if (!timeline) return notKnown;
     const prNumber = linkedPrNumber(timeline);
     if (prNumber === null) return notKnown;
-    const pull = await this.apiOrNull<RestPull>(`repos/${ref.repo}/pulls/${prNumber}`);
+    return this.readPullRequestRepairFactsAt(ref.repo, prNumber);
+  }
+
+  private async readPullRequestRepairFactsAt(
+    repo: string,
+    prNumber: number,
+  ): Promise<Known<PrRepairFacts>> {
+    const pull = await this.apiOrNull<RestPull>(`repos/${repo}/pulls/${prNumber}`);
     if (!pull) return notKnown;
     return known({
       headSha: pull.head.sha,
       baseBranch: pull.base.ref,
       baseSha: pull.base.sha,
       mergeState: mergeStateOf(pull),
-      requiredChecks: await this.requiredChecksFor(ref.repo, pull.base.ref, pull.head.sha),
+      requiredChecks: await this.requiredChecksFor(repo, pull.base.ref, pull.head.sha),
     });
   }
 
@@ -728,19 +774,14 @@ export class GitHubTrackerAdapter implements TrackerPort {
 
   /** 9b. Open the PR of a work's branch, linked to the issue ("Closes #N"). */
   async openPr(input: OpenPrInput): Promise<PullRequest> {
-    const body = `Closes #${input.issueNumber}\n\n${AGENT_MARKER}`;
-    const pull = await this.api<{ number: number }>(`repos/${input.repo}/pulls`, {
-      method: "POST",
-      input: { title: input.title, head: input.headBranch, base: input.baseBranch, body },
-    });
-    return {
-      number: pull.number,
-      state: "open",
-      merged: false,
+    const opened = await this.openPullRequest({
+      work: workOfIssueRef({ repo: input.repo, number: input.issueNumber }),
       headBranch: input.headBranch,
       baseBranch: input.baseBranch,
-      author: this.workerAccount,
-    };
+      title: input.title,
+    });
+    const { identity: _identity, ...pr } = opened;
+    return pr;
   }
 
   /** 9c. Push a work's branch: git, with the credential helper baked into the clone. */
@@ -780,6 +821,160 @@ export class GitHubTrackerAdapter implements TrackerPort {
   /** GitHub has no native priority — the honest answer is null; age orders the pool. */
   async rank(_ref: IssueRef): Promise<Known<number | null>> {
     return known(null);
+  }
+
+  // ---- expanded ticket/PR contracts (issue 124) ----
+
+  async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
+    this.assertGitHubSource(selection.source.provider, selection.source.site);
+    const open = await this.listOpenIssues(selection.destination.repo);
+    return open.map((entry) => ({
+      ticket: githubTicket(entry.ref.repo, entry.ref.number),
+      title: entry.title,
+      createdAt: entry.createdAt,
+      labels: entry.labels,
+      assignees: entry.assignees,
+      hasOpenPr: entry.hasOpenPr,
+    }));
+  }
+
+  async readTicket(ticket: TicketIdentity): Promise<Known<TicketSnapshot>> {
+    const snapshot = await this.readIssue(issueRefOf(ticket));
+    if (!snapshot.known) return notKnown;
+    return known({
+      ticket,
+      title: snapshot.value.title,
+      body: snapshot.value.body,
+      state: snapshot.value.state,
+      stateReason: snapshot.value.stateReason,
+      labels: snapshot.value.labels,
+      assignees: snapshot.value.assignees,
+      createdAt: snapshot.value.createdAt,
+    });
+  }
+
+  async readTicketBlockers(ticket: TicketIdentity): Promise<Known<TicketBlocker[]>> {
+    const blockers = await this.readBlockers(issueRefOf(ticket));
+    if (!blockers.known) return notKnown;
+    return known(
+      blockers.value.map((blocker) => ({
+        ticket: githubTicket(blocker.ref.repo, blocker.ref.number),
+        state: blocker.state,
+      })),
+    );
+  }
+
+  claimTicket(ticket: TicketIdentity, account: string, readyLabel?: string): Promise<WriteOutcome> {
+    return this.claim(issueRefOf(ticket), account, readyLabel);
+  }
+
+  releaseTicketClaim(ticket: TicketIdentity, account: string, readyLabel?: string): Promise<WriteOutcome> {
+    return this.releaseClaim(issueRefOf(ticket), account, readyLabel);
+  }
+
+  blockTicketClaim(ticket: TicketIdentity, labels: Labels): Promise<WriteOutcome> {
+    return this.blockClaim(issueRefOf(ticket), labels);
+  }
+
+  resumeTicketClaim(ticket: TicketIdentity, labels: Labels): Promise<WriteOutcome> {
+    return this.resumeClaim(issueRefOf(ticket), labels);
+  }
+
+  markTicketDone(ticket: TicketIdentity): Promise<WriteOutcome> {
+    return this.markDone(issueRefOf(ticket));
+  }
+
+  commentOnTicket(ticket: TicketIdentity, body: string): Promise<WriteOutcome> {
+    return this.comment(issueRefOf(ticket), body);
+  }
+
+  readTicketComments(ticket: TicketIdentity): Promise<Known<IssueComment[]>> {
+    return this.readComments(issueRefOf(ticket));
+  }
+
+  rankTicket(ticket: TicketIdentity): Promise<Known<number | null>> {
+    return this.rank(issueRefOf(ticket));
+  }
+
+  async readPullRequestFeedback(target: WorkPullRequest): Promise<Known<ExpandedPrFeedback>> {
+    if (target.pullRequest !== null) {
+      return known(await this.readPullRequestFeedbackAt(target.pullRequest.repository.repo, target.pullRequest.number));
+    }
+    if (target.work.ticket.provider !== "github") return notKnown;
+    const feedback = await this.readPrFeedback(issueRefOf(target.work.ticket));
+    if (!feedback.known) return notKnown;
+    if (feedback.value.pr === null) {
+      return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
+    }
+    return known({
+      pr: this.withPullRequestIdentity(feedback.value.pr, target.work.destination.repo),
+      comments: feedback.value.comments,
+      reviews: feedback.value.reviews,
+    });
+  }
+
+  async readPullRequestRepairFacts(target: WorkPullRequest): Promise<Known<PrRepairFacts>> {
+    if (target.pullRequest !== null) {
+      return this.readPullRequestRepairFactsAt(target.pullRequest.repository.repo, target.pullRequest.number);
+    }
+    if (target.work.ticket.provider !== "github") return notKnown;
+    return this.readPrRepairFacts(issueRefOf(target.work.ticket));
+  }
+
+  async openPullRequest(input: OpenPullRequestInput): Promise<PullRequestRecord> {
+    const pull = await this.api<{ number: number }>(`repos/${input.work.destination.repo}/pulls`, {
+      method: "POST",
+      input: {
+        title: input.title,
+        head: input.headBranch,
+        base: input.baseBranch,
+        body: this.pullRequestBody(input.work),
+      },
+    });
+    return {
+      identity: pullRequestIdentity(githubRepository(input.work.destination.repo), pull.number),
+      number: pull.number,
+      state: "open",
+      merged: false,
+      headBranch: input.headBranch,
+      baseBranch: input.baseBranch,
+      author: this.workerAccount,
+    };
+  }
+
+  /** GitHub ticket: closing syntax; any other source: its key/link, never a
+   *  fabricated GitHub issue number. */
+  private pullRequestBody(work: WorkIdentity): string {
+    if (work.ticket.provider === "github") {
+      return `Closes #${work.ticket.number}\n\n${AGENT_MARKER}`;
+    }
+    const link = work.ticket.url === undefined ? work.ticket.key : `${work.ticket.key} (${work.ticket.url})`;
+    return `Ticket: ${link}\n\n${AGENT_MARKER}`;
+  }
+
+  reopenPullRequest(target: WorkPullRequest): Promise<WriteOutcome> {
+    if (target.pullRequest !== null) {
+      return this.reopenPullRequestAt(target.pullRequest.repository.repo, target.pullRequest.number);
+    }
+    if (target.work.ticket.provider !== "github") return Promise.resolve({ performed: [] });
+    return this.reopenPr(issueRefOf(target.work.ticket));
+  }
+
+  pushWorkBranch(input: PushWorkBranchInput): Promise<WriteOutcome> {
+    return this.pushBranch({ repo: input.destination.repo, branch: input.branch });
+  }
+
+  private assertGitHubSource(provider: string, site: string): void {
+    if (provider !== "github" || site !== GITHUB_SITE) {
+      throw new Error(`the GitHub adapter cannot list ${provider} tickets from ${site}`);
+    }
+  }
+
+  private withPullRequestIdentity(pull: PullRequest, repo: string): PullRequestRecord {
+    return {
+      ...pull,
+      identity: pullRequestIdentity(githubRepository(repo), pull.number),
+    };
   }
 
   // ---- internals ----

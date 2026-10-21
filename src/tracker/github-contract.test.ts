@@ -15,6 +15,7 @@ import {
   runSmokeCycle,
 } from "./smoke-cycle.js";
 import type { IssueRef, OpenIssue, ReadCost, TrackerPort } from "./port.js";
+import { legacyTrackerPort } from "./legacy-bridge.js";
 
 /**
  * The ticket-16 proof the fake cannot give: the REAL GitHub adapter satisfying
@@ -59,9 +60,9 @@ class SimulatedRepoHarness implements ContractHarness {
     };
   }
 
-  getAdapter(): GitHubTrackerAdapter {
+  getAdapter(): TrackerPort {
     if (!this.adapter) throw new Error("harness reset has not run yet");
-    return this.adapter;
+    return legacyTrackerPort(this.adapter, this.adapter);
   }
 
   async reset(): Promise<void> {

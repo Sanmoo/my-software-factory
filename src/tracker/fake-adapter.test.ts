@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { FakeTrackerAdapter } from "./fake-adapter.js";
 import { runTrackerContractSuite, type ContractHarness } from "./contract.js";
+import { legacyTrackerPort } from "./legacy-bridge.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
@@ -29,7 +30,7 @@ function makeHarness(): ContractHarness {
     repo: "Sanmoo/fake-target",
     workerAccount: "bot-do-samuca",
     claimedLabel: "agent-claimed",
-    getAdapter: () => adapter,
+    getAdapter: () => legacyTrackerPort(adapter, adapter),
     readCost: () => adapter.readCost(),
     reset: async () => {
       adapter = freshAdapter();
