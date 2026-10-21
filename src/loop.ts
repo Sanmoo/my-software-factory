@@ -2,8 +2,16 @@ import type { Config } from "./config.js";
 import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
-import { helpNotice, reviewNotice, type Notifier, type WorkNotification } from "./notify/port.js";
-import { workDir, type WorkspaceLayout } from "./layout.js";
+import {
+  helpNotice,
+  reviewNotice,
+  factoryUnavailableNotice,
+  interventionNotice,
+  describeNotification,
+  type Notification,
+  type Notifier,
+} from "./notify/port.js";
+import { workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
   deriveTrackerState,
   deriveReserved,
@@ -33,6 +41,8 @@ import {
   scanReservedWorks,
   archiveDoneWork,
   readAttemptLedger,
+  readLastAttempt,
+  parseWorkKey,
   type ReservedWorkEntry,
 } from "./pool/registry.js";
 import {
@@ -51,10 +61,27 @@ import {
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
-import { consumeRecovery, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
+import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
-import { operationalLog } from "./log.js";
+import {
+  observeSurvivorActivity,
+  survivorWorkKeys,
+  type SurvivorRecord,
+} from "./pool/survivors.js";
+import {
+  DEFAULT_PROBE_TIMEOUT_MS,
+  duplicateWorkers,
+  occupiedSlots,
+  probeLiveness,
+  workersByWork,
+  type LivenessObservation,
+  type LivenessProbe,
+} from "./state/liveness.js";
+import { DEFAULT_IDLE_LIMIT_MS, readActivityStamp } from "./runtime/activity.js";
+import { operationalLog, formatDuration } from "./log.js";
 import { mkdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
@@ -86,6 +113,15 @@ export interface LoopDeps {
   log?: (message: string) => void;
   /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
+  /** The liveness probe the operational cycle reads before deciding anything
+   *  that could replace a worker (issue 118). The composition (wireRunDeps)
+   *  supplies the real read-only Docker probe; absent means this process sees
+   *  only its own launches. Never a CLI flag — tests inject a fake probe. */
+  probe?: LivenessProbe;
+  /** The bound of one probe query; a hung Docker call is unknown, never a stall. */
+  probeTimeoutMs?: number;
+  /** The cycle's clock; tests inject one to exercise deadlines without waiting. */
+  now?: () => number;
   /** The backoff seam before a recovery relaunch (issue 123): production waits
    *  on a real timer; a test injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
@@ -118,6 +154,18 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
  * An action's announced class can differ from this derivation class — a
  * released fall lands eligible.
  */
+/**
+ * The derivations that presume a worker has stopped (issue 118): while Docker
+ * cannot answer, archiving an attempt whose worker may be alive, or spending
+ * an attempt/recovery on a silence, are exactly the presumptions to avoid.
+ */
+const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = new Set([
+  "done",
+  "done-fallback",
+  "fall",
+  "interrupted",
+]);
+
 const RESERVED_OPERATIONAL_CLASS = {
   done: null,
   "done-fallback": null,
@@ -267,6 +315,23 @@ export class SweepEngine {
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
 
+  // ---- liveness and the surviving workers (issue 118) ----
+  /** The latest probe answer — read before every decision that could replace
+   *  a worker; `unknown` suspends launches instead of guessing. */
+  private liveness: LivenessObservation = { state: "known", workers: [] };
+  /** The workers a reliable probe showed and this process did not launch. */
+  private readonly survivors = new Map<string, SurvivorRecord>();
+  /** The recoveries the ended survivors' reconciliation asks for, flushed by
+   *  the next derivation (a recovery is never spent while liveness is unknown). */
+  private survivorRecoveries: Launchable[] = [];
+  /** The current Docker-unavailability episode: when it began and whether its
+   *  one warning was already raised. */
+  private livenessEpisode: { unknownSince: number; warned: boolean } | null = null;
+  /** The works whose duplicate containers were already reported. */
+  private announcedDuplicates = new Set<string>();
+  /** The last reported capacity verdict, so the change is said once. */
+  private overCapacity = false;
+
   // Prepare (clone/fetch/branch) touches the shared clone of a repo — two
   // first-launches of the same repo must not race inside it (ticket 12
   // introduced the parallelism; the serialization stays local to prepares,
@@ -291,21 +356,35 @@ export class SweepEngine {
   async deriveAndAct(): Promise<ReservedDerivation[]> {
     const { config, tracker, workspace } = this.deps;
 
+    // The liveness facts come FIRST (issue 118): a decision that could
+    // substitute a worker or end its resources reads them, and the survivor
+    // ledger keeps the executions that outlived a previous factory process.
+    await this.observeLiveness();
+    const settled = await this.observeSurvivors();
+    this.observeCapacity();
+    const suspended = this.liveness.state === "unknown";
+    const surviving =
+      this.liveness.state === "known" ? [...workersByWork(this.liveness.workers).keys()] : [];
+
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
     // re-launch it and does not act on a terminal state mid-flight). The
     // in-flight set also goes INTO the derivation (ticket 18): a zero-
     // footprint claim inside it is a legit launch between the claim and the
     // worker's first write — held; outside it, an interruption to recover.
-    const inFlight = new Set(this.slots.workKeys);
+    // Surviving workers and the works just settled join it (issue 118): a
+    // live worker keeps its work reserved, and a settled exit is not decided
+    // twice in the same sweep.
+    const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
     const reservedDirs = await scanReservedWorks(workspace);
     const reservedWorks = reservedDirs.filter((work) => !inFlight.has(workKey(work.ref)));
 
     // The repair reconciliation runs BEFORE the derivation (issue 112): a
     // repair attempt that fell is settled against the remote first, so the
     // derivation reads the verdict (resume, block, or uncertainty) instead of
-    // a charged round that never published.
-    await this.reconcileRepairAttempts(reservedDirs, inFlight);
+    // a charged round that never published. Unknown liveness holds it too
+    // (issue 118): a worker may still be writing the branch its verdict reads.
+    if (!suspended) await this.reconcileRepairAttempts(reservedDirs, inFlight);
 
     const derived = await deriveReserved(
       tracker,
@@ -319,7 +398,15 @@ export class SweepEngine {
 
     // The actions state/ decided — executed here, in the loop's IO duty.
     const parked: Launchable[] = [];
+    const heldWhileUnknown: string[] = [];
     for (const decision of derived) {
+      // Liveness unknown means no worker can be ruled out (issue 118): a
+      // decision that would archive/clean, spend the attempt or its recovery
+      // budget must wait for a reliable answer — never presume a stop.
+      if (suspended && HOLDS_WHILE_LIVENESS_UNKNOWN.has(decision.state)) {
+        heldWhileUnknown.push(workKey(decision.ref));
+        continue;
+      }
       switch (decision.state) {
         case "done": {
           this.log(`derived ${workKey(decision.ref)}: issue closed — done; archiving artifacts, cleaning branches`);
@@ -445,8 +532,19 @@ export class SweepEngine {
           break; // idle / unknown: nothing to decide
       }
     }
+    if (heldWhileUnknown.length > 0) {
+      this.log(
+        `liveness unknown — held ${heldWhileUnknown.length} decision(s) that presume a worker stopped: ` +
+          `${byKey(heldWhileUnknown).join(", ")}; nothing was consumed, archived or cleaned`,
+      );
+    }
     parked.sort(byParkedPriority);
-    this.parkedQueue = parked;
+    // A recovery for a survivor's ended attempt joins the queue (issue 118);
+    // while liveness is unknown the pending recoveries are preserved untouched
+    // — the launch gate keeps them from starting.
+    this.parkedQueue = suspended
+      ? parked
+      : [...this.survivorRecoveries.splice(0), ...parked].sort(byParkedPriority);
 
     // The pool AND the reconciliation from ONE open-issues read per repo
     // (issue 100): the cached pool of the latest derivation (replenishment
@@ -523,6 +621,213 @@ export class SweepEngine {
     this.announced.set(workKey(ref), resulting);
   }
 
+  // ---- liveness and the surviving workers (issue 118) ----
+
+  /**
+   * Ask the probe (bounded) and keep the episode bookkeeping. One observation
+   * per derived sweep: the decisions below read THAT answer, and the next tick
+   * asks again — coherence, not atomicity between probe and launch.
+   */
+  private async observeLiveness(): Promise<void> {
+    const observation = await probeLiveness(
+      this.deps.probe ?? (() => Promise.resolve([])),
+      this.deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+    );
+    this.liveness = observation;
+    if (observation.state === "unknown") this.enterUnavailableEpisode(observation.reason);
+    else this.closeUnavailableEpisode();
+  }
+
+  /**
+   * The first failure diagnoses the cause; the notice fires ONCE, when the
+   * configured continuous unavailability is reached, and never repeats in the
+   * same episode. Nothing here asks the human for anything: a reliable answer
+   * resumes the factory by itself.
+   */
+  private async enterUnavailableEpisode(reason: string): Promise<void> {
+    const now = this.now();
+    if (this.livenessEpisode === null) {
+      this.livenessEpisode = { unknownSince: now, warned: false };
+      this.log(
+        `liveness unknown (${reason}) — new launches suspended; workers, reservations and evidence preserved, ` +
+          "no attempt or recovery spent",
+      );
+    }
+    const episode = this.livenessEpisode;
+    if (episode.warned) return;
+    const unavailableForMs = now - episode.unknownSince;
+    if (unavailableForMs < this.deps.config.liveness.unavailableWarnMs) return;
+    episode.warned = true;
+    this.log(
+      `WARNING: Docker has not answered for ${formatDuration(unavailableForMs)} — the factory keeps launching nothing ` +
+        "and preserves every worker and reservation; it resumes automatically when the probe answers",
+    );
+    await this.deliverNotice(factoryUnavailableNotice(unavailableForMs));
+  }
+
+  /** A reliable answer closes the episode and lets launches resume by themselves. */
+  private closeUnavailableEpisode(): void {
+    if (this.livenessEpisode === null) return;
+    const lasted = this.now() - this.livenessEpisode.unknownSince;
+    this.livenessEpisode = null;
+    this.log(
+      `liveness reliable again after ${formatDuration(lasted)} — new launches resume automatically (nothing was lost)`,
+    );
+  }
+
+  /**
+   * Recognise the workers a reliable probe shows but this process did not
+   * launch, and settle the ones it no longer shows. Returns the works settled
+   * this sweep: the derivation must not decide them a second time. Nothing
+   * here launches, attaches, kills or numbers an attempt — recognition is
+   * observation.
+   */
+  private async observeSurvivors(): Promise<Set<string>> {
+    const settled = new Set<string>();
+    if (this.liveness.state !== "known") return settled;
+    const workers = this.liveness.workers;
+    const local = new Set(this.slots.workKeys);
+    const carried = workersByWork(workers);
+
+    // Exit: a survivor a reliable probe no longer lists has ended.
+    for (const key of [...this.survivors.keys()]) {
+      if (carried.has(key)) continue;
+      this.survivors.delete(key);
+      settled.add(key);
+      await this.reconcileSurvivorExit(key);
+    }
+
+    // Recognition: a work carried by a container this process did not launch.
+    for (const key of survivorWorkKeys(workers, local)) {
+      if (this.survivors.has(key)) continue;
+      const parsed = parseWorkKey(key);
+      if (parsed === null) continue;
+      const dir = workDirOfKey(this.deps.workspace, key);
+      const attempt = await readLastAttempt(dir);
+      this.survivors.set(key, {
+        key,
+        dir,
+        attempt,
+        activityStamp: null,
+        lastActivityAt: this.now(),
+        idleWarned: false,
+      });
+      this.log(
+        `recognizing surviving worker ${key}: a live container carries it` +
+          `${attempt === null ? "" : ` (attempt ${attempt})`} — its work stays reserved, it occupies a slot, ` +
+          "no substitute is launched and no recovery is consumed",
+      );
+    }
+
+    for (const key of [...this.survivors.keys()]) await this.watchSurvivorActivity(key);
+
+    this.announceDuplicates();
+    return settled;
+  }
+
+  /**
+   * Verifiable activity keeps a survivor accounted for; silence past the
+   * runtime's idle limit only WARNS (issue 118) — never a kill, a substitute
+   * or a freed slot, and never the same warning twice.
+   */
+  private async watchSurvivorActivity(key: string): Promise<void> {
+    const record = this.survivors.get(key);
+    if (record === undefined) return;
+    const observed = await observeSurvivorActivity(record, this.now());
+    this.survivors.set(key, observed);
+    if (observed.idleWarned) return;
+    const idleMs = this.now() - observed.lastActivityAt;
+    if (idleMs < DEFAULT_IDLE_LIMIT_MS) return;
+    this.survivors.set(key, { ...observed, idleWarned: true });
+    this.log(
+      `WARNING: surviving worker ${key} shows no verifiable activity for ${formatDuration(idleMs)} — ` +
+        "the factory keeps its slot and launches no substitute; it does not end a worker it did not launch " +
+        "(a human decision is needed)",
+    );
+    const parsed = parseWorkKey(key);
+    if (parsed !== null) await this.deliverNotice(interventionNotice(parsed));
+  }
+
+  /**
+   * The duplicate anomaly, said once per appearance: several containers of one
+   * work are several occupied slots, no new launch for that work and no owner
+   * chosen or ended — the evidence stays for the human.
+   */
+  private async announceDuplicates(): Promise<void> {
+    if (this.liveness.state !== "known") return;
+    const current = new Set<string>();
+    for (const duplicate of duplicateWorkers(this.liveness.workers)) {
+      current.add(duplicate.key);
+      if (this.announcedDuplicates.has(duplicate.key)) continue;
+      this.log(
+        `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
+          "no new launch for it, no owner chosen and nothing ended; a human decision is needed",
+      );
+      const parsed = parseWorkKey(duplicate.key);
+      if (parsed !== null) await this.deliverNotice(interventionNotice(parsed));
+    }
+    this.announcedDuplicates = current;
+  }
+
+  /**
+   * A survivor's exit, confirmed by a reliable probe: the ordinary ruler on
+   * the attempt's own artifacts and the current tracker — never the in-memory
+   * launch this process never had, and never an older attempt's outcome.
+   */
+  private async reconcileSurvivorExit(key: string): Promise<void> {
+    const parsed = parseWorkKey(key);
+    if (parsed === null) return;
+    const dir = workDir(this.deps.workspace, parsed.repo, parsed.number);
+    const attempt = await readLastAttempt(dir);
+    if (attempt === null) {
+      this.log(
+        `survivor ${key} ended with no attempt evidence on disk — the derivation settles the bare reservation`,
+      );
+      return;
+    }
+    // The consecutiveness is the persisted ledger's fact (a written failure),
+    // never an older record on disk or a previous launch's memory.
+    const ledger = await readRecoveryLedger(dir);
+    const consecutiveFall = ledger.lastFallAttempt === attempt - 1;
+    const cycle = await readRepairCycle(dir);
+    const repairing = cycle.attempt !== null && cycle.attempt.attempt === attempt;
+    const ended: Launchable = {
+      ref: parsed,
+      kind: repairing ? "repair" : "claim",
+      createdAt: null,
+      pr: null,
+    };
+    this.log(
+      `survivor ${key} ended: attempt ${attempt} confirmed finished by a reliable probe — ` +
+        `reconciling by its artifacts and the tracker${repairing ? " (the attempt was a repair round)" : ""}`,
+    );
+    const outcome = await this.applyEnd(ended, dir, attempt, consecutiveFall, "survivor");
+    if (outcome.next !== null) this.survivorRecoveries.push(outcome.next);
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
+  }
+
+  /**
+   * The capacity verdict (issue 118): survivors above the configured
+   * concurrency suspend launches and END NOBODY; when the live workforce drops
+   * back below the limit, capacity returns without any human act.
+   */
+  private observeCapacity(): void {
+    if (this.liveness.state !== "known") return; // the unknown episode has its own line
+    const used = occupiedSlots(this.liveness.workers, new Set(this.slots.workKeys));
+    const over = used > this.deps.config.concurrency;
+    if (over === this.overCapacity) return;
+    this.overCapacity = over;
+    this.log(
+      over
+        ? `capacity exceeded: ${used} worker(s) alive with concurrency ${this.deps.config.concurrency} — ` +
+            "no new launch and nobody ended; capacity returns by itself when they finish"
+        : `capacity available again: ${used}/${this.deps.config.concurrency} worker(s) — launches resume automatically`,
+    );
+  }
+
   /**
    * Phase 3 (launches): fill every free slot — first the parked reserved
    * works (feedback rounds, retomadas: they already hold the claim), then
@@ -531,7 +836,12 @@ export class SweepEngine {
    */
   fillSlots(): Promise<void>[] {
     const started: Promise<void>[] = [];
-    while (!this.slots.full) {
+    // Unknown liveness suspends EVERY launch — including the replenishment a
+    // collection triggers (issue 118): without a reliable answer the factory
+    // could put a substitute over a live worker.
+    if (this.stopping || this.liveness.state !== "known") return started;
+    while (!this.slots.full && this.hasCapacity()) {
+      // Ctrl-C perceived between two launches stops the rest of them.
       if (this.stopping) break;
       const launchable = this.takeNextLaunchable();
       if (launchable === undefined) break;
@@ -551,13 +861,43 @@ export class SweepEngine {
     return started;
   }
 
-  /** The parked reserved works first, then the cached pool — each by age. */
+  /** The parked reserved works first, then the cached pool — each by age. A
+   *  work a live container carries is never relaunched (issue 118): a survivor
+   *  keeps its work reserved whatever the tracker's label says. */
   private takeNextLaunchable(): Launchable | undefined {
-    const parked = this.parkedQueue.shift();
-    if (parked !== undefined) return parked;
-    const entry = this.cache.shift();
-    if (entry === undefined) return undefined;
-    return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
+    for (;;) {
+      const parked = this.parkedQueue.shift();
+      if (parked !== undefined) {
+        if (this.carriedByWorker(workKey(parked.ref))) continue;
+        return parked;
+      }
+      const entry = this.cache.shift();
+      if (entry === undefined) return undefined;
+      if (this.carriedByWorker(workKey(entry.ref))) continue;
+      return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null };
+    }
+  }
+
+  /**
+   * Free capacity for one more launch (issue 118): every live container counts
+   * once — a local launch Docker already shows is not counted twice — and a
+   * survivor set above the configured concurrency suspends launches without
+   * ending anybody.
+   */
+  private hasCapacity(): boolean {
+    if (this.liveness.state !== "known") return false;
+    return (
+      occupiedSlots(this.liveness.workers, new Set(this.slots.workKeys)) <
+      this.deps.config.concurrency
+    );
+  }
+
+  /** A live container carries this work right now. */
+  private carriedByWorker(key: string): boolean {
+    return (
+      this.liveness.state === "known" &&
+      this.liveness.workers.some((worker) => worker.key === key)
+    );
   }
 
   /** Ctrl-C: stop launching and stop replenishing finished slots. The
@@ -1005,11 +1345,9 @@ export class SweepEngine {
   }
 
   /**
-   * Collection at the act: the ruler (ticket 13, extended by 14/123) on
-   * structured facts alone — the outcome record (absence = an interruption),
-   * the PR fact and the label facts from the port, and the registry's
-   * consecutiveness. The decided transition is applied here; an interruption
-   * returns the SAME attempt as the next launch (issue 123).
+   * Collection at the act: the ruler applied to the worker this process
+   * launched. The result is what the launch returned; the facts the ruler
+   * reads are still the attempt's own artifacts and the tracker.
    */
   private async collect(
     launchable: Launchable,
@@ -1017,12 +1355,47 @@ export class SweepEngine {
     attempt: number,
     consecutiveFall: boolean,
   ): Promise<Launchable | null> {
+    const outcome = await this.applyEnd(
+      launchable,
+      result.request.workDir,
+      attempt,
+      consecutiveFall,
+      "collected",
+    );
+    this.collected.push({
+      ref: launchable.ref,
+      result,
+      prConfirmed: outcome.prConfirmed,
+      ruling: outcome.ruling,
+    });
+    return outcome.next;
+  }
+
+  /**
+   * The ruler at the act of an end (ticket 13, extended by 14/123; survivor
+   * ends by issue 118) on structured facts alone — the outcome record (absence
+   * = an interruption), the PR fact and the label facts from the port, and the
+   * registry's consecutiveness. The decided transition is applied here; an
+   * interruption returns the SAME attempt as the next launch (issue 123).
+   * `origin` only names the actor in the operator's log: a survivor's end is
+   * reconciled by these same facts, never by the launch object this process
+   * never had.
+   */
+  private async applyEnd(
+    launchable: Launchable,
+    dir: string,
+    attempt: number,
+    consecutiveFall: boolean,
+    origin: "collected" | "survivor",
+  ): Promise<{
+    next: Launchable | null;
+    prConfirmed: boolean;
+    ruling: { decision: OutcomeRuling["decision"]; because: string };
+  }> {
     const { config, tracker, workspace } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
-    // The dir the session actually used: the record read and the evidence of
-    // the blocked comment name that one dir.
-    const dir = result.request.workDir;
+    const said = origin === "survivor" ? "survivor" : "collected";
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -1047,14 +1420,14 @@ export class SweepEngine {
       // The terminal state was reached while this claim was held (the
       // human's merge closed the issue mid-flight — ticket 14): archive the
       // artifacts and clean the branches, nothing is released or recorded.
-      this.log(`collected ${key}: issue closed — done; artifacts archived, branches cleaned`);
+      this.log(`${said} ${key}: issue closed — done; artifacts archived, branches cleaned`);
       await this.finishWork(ref);
       resulting = null;
     } else if (ruling.decision === "reserve") {
-      this.log(`collected ${key}: PR open — stays reserved, waiting for the human`);
+      this.log(`${said} ${key}: PR open — stays reserved, waiting for the human`);
       resulting = "reserved";
     } else if (ruling.decision === "record-only") {
-      this.log(`collected ${key}: blocked self-report — the factory only records the outcome`);
+      this.log(`${said} ${key}: blocked self-report — the factory only records the outcome`);
       resulting = "reserved";
     } else if (ruling.decision === "interrupt") {
       // No attempt is consumed and the fall ruler never applies (issue 123). A
@@ -1062,12 +1435,12 @@ export class SweepEngine {
       resulting = "reserved";
       if (launchable.kind === "repair") {
         this.log(
-          `collected ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
+          `${said} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
             "settles its publication before another round (issue 112)",
         );
       } else {
         this.log(
-          `collected ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
+          `${said} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
             "number and the recovery budget answers it",
         );
         next = {
@@ -1084,7 +1457,7 @@ export class SweepEngine {
     } else if (ruling.decision === "release") {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `collected ${key}: fall without PR — release (claimed→ready back; ` +
+        `${said} ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
       await this.applyRelease(ref);
@@ -1092,34 +1465,31 @@ export class SweepEngine {
     } else {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
+        `${said} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
       );
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";
     }
     this.announce(ref, resulting);
-    this.collected.push({
-      ref,
-      result,
-      prConfirmed,
-      ruling: { decision: ruling.decision, because: ruling.because },
-    });
 
     // One notice per new occurrence: an applied block already notified help
     // (applyBlockWithComment), so here only the label/self-report of a work
     // the ruler did not block. Help wins over review; the state decision is
     // untouched. The self-report counts only for THIS attempt — desfecho.json
-    // survives between attempts.
+    // survives between attempts. A survivor's end is a review occurrence too:
+    // its open PR reaches the operator even though this process never
+    // launched it (issue 118).
     if (needsOccurrenceNotice(ruling)) {
       const selfReportedNow = selfReportedBlocked(record, attempt);
-      const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
+      const isReviewLaunch =
+        origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
       if (blockedLabelOnIssue || selfReportedNow) {
         await this.deliverNotice(helpNotice(ref));
       } else if (isReviewLaunch && prConfirmed && pr !== null) {
         await this.deliverNotice(reviewNotice(ref, pr.number));
       }
     }
-    return next;
+    return { next, prConfirmed, ruling: { decision: ruling.decision, because: ruling.because } };
   }
 
   /**
@@ -1161,8 +1531,9 @@ export class SweepEngine {
     await this.deps.git.cleanupDoneWork(ref);
   }
 
-  /** Best-effort delivery of one occurrence notice; a failure only logs. */
-  private async deliverNotice(notification: WorkNotification): Promise<void> {
+  /** Best-effort delivery of one occurrence notice; a failure only logs. A
+   *  delivery failure never turns unknown safety into permission to launch. */
+  private async deliverNotice(notification: Notification): Promise<void> {
     if (!this.deps.config.notifications) return;
     const notifier = this.deps.notifier;
     if (notifier === undefined) return;
@@ -1170,16 +1541,18 @@ export class SweepEngine {
       await notifier.notify(notification);
     } catch (error) {
       this.log(
-        `local notification failed (${notification.kind} ${workKey(notification.ref)}): ` +
+        `local notification failed (${describeNotification(notification)}): ` +
           `${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  /** A collected work never stays launchable in this process's memory. */
+  /** A collected work never stays launchable in this process's memory — nor
+   *  does a survivor's pending recovery for it. */
   private discardFromCacheAndParked(key: string): void {
     this.cache = this.cache.filter((entry) => workKey(entry.ref) !== key);
     this.parkedQueue = this.parkedQueue.filter((entry) => workKey(entry.ref) !== key);
+    this.survivorRecoveries = this.survivorRecoveries.filter((entry) => workKey(entry.ref) !== key);
   }
 
   private serializePrepare<T>(repo: string, prepare: () => Promise<T>): Promise<T> {

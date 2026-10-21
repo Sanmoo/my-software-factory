@@ -10,7 +10,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config, DEFAULT_LIVENESS_POLICY} from "../config.js";
 import { installGhShim, isolatedEnv, runCli, spawnCli, waitFor, type GhShim } from "./cli-harness.js";
 
 /**
@@ -93,6 +93,7 @@ describe("e2e: Ctrl-C shutdown — no new launches, in-flight workers conclude (
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
     };

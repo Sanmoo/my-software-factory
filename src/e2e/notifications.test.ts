@@ -13,7 +13,7 @@ import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } 
 import type { IssueRef } from "../tracker/port.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config, DEFAULT_LIVENESS_POLICY} from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 
 const REPO = "Sanmoo/my-tasks";
@@ -88,6 +88,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications,
       configPath: join(dir, "msf.yaml"),
     };
@@ -430,7 +431,11 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     await runOnce(deps);
 
     assert.equal(notifier.notifications.length, 2, "one notice per work — never an aggregate");
-    const byRef = new Map(notifier.notifications.map((notice) => [`${notice.ref.repo}#${notice.ref.number}`, notice]));
+    const byRef = new Map(
+      notifier.notifications
+        .filter((notice) => notice.kind !== "factory-unavailable")
+        .map((notice) => [`${notice.ref.repo}#${notice.ref.number}`, notice]),
+    );
     assert.equal(byRef.size, 2);
     const first = byRef.get(`${REPO}#11`);
     const second = byRef.get(`${REPO}#12`);

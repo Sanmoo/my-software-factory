@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import type { Notifier, WorkNotification } from "./port.js";
+import { formatDuration } from "../log.js";
+import type { Notification, Notifier } from "./port.js";
 
 /** Runs the desktop command; injectable so tests need no desktop. */
 export type SendNotification = (command: string, args: string[]) => Promise<void>;
@@ -15,7 +16,7 @@ export interface LinuxNotifierOptions {
 export class LinuxNotifier implements Notifier {
   constructor(private readonly options: LinuxNotifierOptions = {}) {}
 
-  async notify(notification: WorkNotification): Promise<void> {
+  async notify(notification: Notification): Promise<void> {
     const { title, body } = renderNotification(notification);
     const send = this.options.send ?? defaultSend;
     await send("notify-send", ["--app-name=msf", title, body]);
@@ -23,12 +24,30 @@ export class LinuxNotifier implements Notifier {
 }
 
 /** Composed from the structured kind only — never agent prose. */
-export function renderNotification(notification: WorkNotification): { title: string; body: string } {
+export function renderNotification(notification: Notification): { title: string; body: string } {
+  if (notification.kind === "factory-unavailable") {
+    // The factory's own occurrence (issue 118): no work is invented, and no
+    // issue receives a comment for Docker's silence.
+    return {
+      title: "msf: factory — Docker unreachable",
+      body:
+        `Docker has not answered for ${formatDuration(notification.unavailableForMs)}: new launches are suspended. ` +
+        "Live workers and reservations are preserved, and the factory resumes on its own when Docker answers again.",
+    };
+  }
   const work = `${notification.ref.repo}#${notification.ref.number}`;
   if (notification.kind === "review") {
     return {
       title: `msf: ${work} — review requested`,
       body: `A PR is open and waiting for your review.\n${notification.url}`,
+    };
+  }
+  if (notification.kind === "intervention") {
+    return {
+      title: `msf: ${work} — intervention needed`,
+      body:
+        "A worker of this work needs your decision: nothing was ended, replaced or chosen " +
+        `automatically.\n${notification.url}`,
     };
   }
   return {

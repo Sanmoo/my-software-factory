@@ -10,7 +10,7 @@ import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
-import { startActivityWatch, type ActivityWatch } from "./activity.js";
+import { DEFAULT_IDLE_LIMIT_MS, startActivityWatch, type ActivityWatch } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
@@ -184,7 +184,7 @@ export const WORKER_FLAG_ARGS: readonly string[] = [
 ];
 
 const PROFILE_SETUP_TIMEOUT_MS = 5 * 60 * 1000;
-const DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
+const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
 
 /**
  * The sandbox's own clock is a LAST RESORT behind the activity watchdog (issue

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import { LinuxNotifier, renderNotification } from "./linux.js";
-import type { WorkNotification } from "./port.js";
+import { factoryUnavailableNotice, interventionNotice, type WorkNotification } from "./port.js";
 
 const review: WorkNotification = {
   ref: { repo: "Sanmoo/my-tasks", number: 42 },
@@ -15,6 +15,31 @@ const help: WorkNotification = {
   kind: "help",
   url: "https://github.com/Sanmoo/my-tasks/issues/42",
 };
+
+describe("notify: the factory's own occurrence (issue 118)", () => {
+  test("a Docker-unavailable notice is identified as the factory's, names no work and invents no issue", () => {
+    const { title, body } = renderNotification(factoryUnavailableNotice(3 * 60_000));
+
+    assert.match(title, /factory/i);
+    assert.match(title, /docker/i);
+    assert.match(body, /3m/, "the continuous unavailability is named");
+    assert.match(body, /suspended/i);
+    assert.match(body, /preserved/i);
+    assert.match(body, /resumes on its own/i, "no human act is asked for");
+    assert.doesNotMatch(`${title}\n${body}`, /Sanmoo\/|my-tasks#/, "a factory occurrence never invents a work");
+  });
+
+  test("an intervention notice asks for a decision without claiming a block or an automatic act", () => {
+    const { title, body } = renderNotification(
+      interventionNotice({ repo: "Sanmoo/my-tasks", number: 42 }),
+    );
+
+    assert.match(title, /Sanmoo\/my-tasks#42/);
+    assert.match(title, /intervention/i);
+    assert.match(body, /nothing was ended, replaced or chosen/i);
+    assert.ok(body.includes("https://github.com/Sanmoo/my-tasks/issues/42"));
+  });
+});
 
 describe("notify: the Linux desktop backend", () => {
   test("a review notice identifies the work, states the reason and shows the PR address", () => {

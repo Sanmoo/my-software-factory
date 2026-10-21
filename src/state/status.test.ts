@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config, DEFAULT_LIVENESS_POLICY} from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
 import { consumeRecovery, recordFailure } from "../pool/recovery.js";
@@ -62,6 +62,7 @@ describe("status — derivation on demand + local registry scan", () => {
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -81,7 +82,11 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.pool.map((e) => e.ref.number), [1]);
-    assert.deepEqual(known(view), { state: "known", running: [], orphaned: [] }, "no container listed: no live worker");
+    assert.deepEqual(
+      known(view),
+      { state: "known", running: [], duplicates: [], orphaned: [] },
+      "no container listed: no live worker",
+    );
   });
 
   test("the registry view: reserved-without-attempt / attempts without an outcome / last outcome / archived", async () => {
@@ -121,13 +126,41 @@ describe("status — derivation on demand + local registry scan", () => {
       tracker,
       makeConfig(),
       layout,
-      fakeProbe({ key: `${REPO}#4`, ageMs: 13 * 60_000 }),
+      fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000 }),
     );
 
-    assert.deepEqual(known(view).running, [{ key: `${REPO}#4`, ageMs: 13 * 60_000, attempt: 2 }]);
+    assert.deepEqual(known(view).running, [
+      { key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000, attempt: 2 },
+    ]);
     assert.deepEqual(known(view).orphaned, [], "a live worker is never orphaned");
     const text = renderStatus(view);
-    assert.match(text, new RegExp(`running.*\\n\\s+${REPO}#4 \\(13m, attempt 2\\)`));
+    assert.match(
+      text,
+      new RegExp(`running.*\\n\\s+${REPO}#4 \\(13m, attempt 2, container aaaa00000004\\)`),
+    );
+  });
+
+  test("two containers of one work show as two workers and a duplicate diagnosis — never hidden by the work", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    seedAttempt(4, 1);
+
+    const view = await deriveStatus(
+      tracker,
+      makeConfig(),
+      layout,
+      fakeProbe(
+        { key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000 },
+        { key: `${REPO}#4`, containerId: "bbbb00000004", ageMs: 2 * 60_000 },
+      ),
+    );
+
+    const knownView = known(view);
+    assert.deepEqual(knownView.duplicates, [{ key: `${REPO}#4`, containers: 2 }], "the multiplicity is a fact");
+    assert.deepEqual(knownView.running.map((worker) => worker.containerId), ["aaaa00000004", "bbbb00000004"]);
+    assert.deepEqual(knownView.orphaned, [], "a work with two live workers is not orphaned");
+    const text = renderStatus(view);
+    assert.match(text, /duplicate workers \(more than one container for the same work — a human decision is needed\): 1/);
+    assert.match(text, new RegExp(`${REPO}#4 — 2 containers carry this work`), "the human sees the count");
   });
 
   test("a work with an outcome written and a live worker shows in running AND last outcome — the overlap, not a fused state", async () => {
@@ -143,14 +176,14 @@ describe("status — derivation on demand + local registry scan", () => {
       tracker,
       makeConfig(),
       layout,
-      fakeProbe({ key: `${REPO}#90`, ageMs: 2 * 60_000 }),
+      fakeProbe({ key: `${REPO}#90`, containerId: "bbbb00000090", ageMs: 2 * 60_000 }),
     );
 
     assert.deepEqual(known(view).running.map((worker) => worker.key), [`${REPO}#90`]);
     assert.deepEqual(view.registry.lastOutcome.map((e) => e.key), [`${REPO}#90`]);
     assert.deepEqual(known(view).orphaned, []);
     const text = renderStatus(view);
-    assert.match(text, new RegExp(`running[\\s\\S]*${REPO}#90 \\(2m, attempt 1\\)[\\s\\S]*last outcome[\\s\\S]*${REPO}#90 = pr-open \\(attempt 1\\)`));
+    assert.match(text, new RegExp(`running[\\s\\S]*${REPO}#90 \\(2m, attempt 1, container bbbb00000090\\)[\\s\\S]*last outcome[\\s\\S]*${REPO}#90 = pr-open \\(attempt 1\\)`));
   });
 
   test("a live worker whose work dir is gone shows no attempt number — the registry never invents one", async () => {
@@ -159,12 +192,14 @@ describe("status — derivation on demand + local registry scan", () => {
       tracker,
       makeConfig(),
       layout,
-      fakeProbe({ key: `${REPO}#77`, ageMs: 5 * 60_000 }),
+      fakeProbe({ key: `${REPO}#77`, containerId: "cccc00000077", ageMs: 5 * 60_000 }),
     );
 
-    assert.deepEqual(known(view).running, [{ key: `${REPO}#77`, ageMs: 5 * 60_000, attempt: null }]);
+    assert.deepEqual(known(view).running, [
+      { key: `${REPO}#77`, containerId: "cccc00000077", ageMs: 5 * 60_000, attempt: null },
+    ]);
     const text = renderStatus(view);
-    assert.match(text, new RegExp(`${REPO}#77 \\(5m\\)`));
+    assert.match(text, new RegExp(`${REPO}#77 \\(5m, container cccc00000077\\)`));
     assert.doesNotMatch(text, /attempt 0/);
   });
 
@@ -213,7 +248,7 @@ describe("status — derivation on demand + local registry scan", () => {
       tracker,
       makeConfig(),
       layout,
-      fakeProbe({ key: `${REPO}#4`, ageMs: 13 * 60_000 }),
+      fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000 }),
     );
 
     assert.equal(
@@ -221,7 +256,8 @@ describe("status — derivation on demand + local registry scan", () => {
       [
         "msf status (derived on demand — the factory may be stopped)",
         "running (worker alive): 1",
-        `  ${REPO}#4 (13m, attempt 1)`,
+        `  ${REPO}#4 (13m, attempt 1, container aaaa00000004)`,
+        "duplicate workers (more than one container for the same work — a human decision is needed): none",
         "orphaned (attempt interrupted — no outcome record of its own, no worker alive): 1",
         `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk)`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
@@ -423,7 +459,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedAttempt(4, 1);
     const before = readdirSync(layout.root, { recursive: true });
 
-    await deriveStatus(tracker, makeConfig(), layout, fakeProbe({ key: `${REPO}#4`, ageMs: 60_000 }));
+    await deriveStatus(tracker, makeConfig(), layout, fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 60_000 }));
 
     assert.deepEqual(readdirSync(layout.root, { recursive: true }), before);
   });

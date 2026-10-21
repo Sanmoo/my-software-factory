@@ -17,6 +17,14 @@ import { join } from "node:path";
  * effective idle limit still fires.
  */
 
+/**
+ * The factory's idle limit (issue 112), shared with the survivor watch of the
+ * operational cycle (issue 118): how long a session may go without verifiable
+ * activity before it counts as idle. The runtime measures it to end its own
+ * session; for a worker the process did not launch it only raises a warning.
+ */
+export const DEFAULT_IDLE_LIMIT_MS = 600_000;
+
 /** The two host dirs whose files prove the session's work, plus what to ignore. */
 export interface ActivityDirs {
   /** Every dir to watch (absolute); the same paths the container binds. */

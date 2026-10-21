@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
-import { dockerWorkerProbe, parseWorkerContainers } from "./liveness.js";
+import {
+  dockerWorkerProbe,
+  duplicateWorkers,
+  occupiedSlots,
+  parseWorkerContainers,
+  probeLiveness,
+} from "./liveness.js";
 
 /**
  * The liveness parser (issue 102): the interpretation of the Docker outputs is
@@ -40,8 +46,24 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     ]);
 
     assert.deepEqual(parseWorkerContainers(ps, inspect, WORKS, NOW), [
-      { key: "Sanmoo/my-software-factory#86", ageMs: 13 * 60_000 },
-      { key: "Sanmoo/my-tasks#4", ageMs: 90_000 },
+      { key: "Sanmoo/my-software-factory#86", containerId: "aaa111", ageMs: 13 * 60_000 },
+      { key: "Sanmoo/my-tasks#4", containerId: "bbb222", ageMs: 90_000 },
+    ]);
+  });
+
+  test("two containers of the same work are two workers — the count is never hidden by the work (issue 118)", () => {
+    const ps = "aaa111\nzzz999\n";
+    const inspect = JSON.stringify([
+      container("aaa111", "Sanmoo/my-tasks#4", "2026-02-01T11:47:00Z"),
+      container("zzz999", "Sanmoo/my-tasks#4", "2026-02-01T11:58:30Z"),
+    ]);
+
+    assert.deepEqual(parseWorkerContainers(ps, inspect, WORKS, NOW), [
+      { key: "Sanmoo/my-tasks#4", containerId: "aaa111", ageMs: 13 * 60_000 },
+      { key: "Sanmoo/my-tasks#4", containerId: "zzz999", ageMs: 90_000 },
+    ]);
+    assert.deepEqual(duplicateWorkers(parseWorkerContainers(ps, inspect, WORKS, NOW)), [
+      { key: "Sanmoo/my-tasks#4", containers: 2 },
     ]);
   });
 
@@ -57,7 +79,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
       container("zzz999", "Sanmoo/my-tasks#9", "2026-02-01T11:00:00Z"),
     ]);
     assert.deepEqual(parseWorkerContainers("aaa111", inspect, WORKS, NOW), [
-      { key: "Sanmoo/my-software-factory#86", ageMs: 13 * 60_000 },
+      { key: "Sanmoo/my-software-factory#86", containerId: "aaa111", ageMs: 13 * 60_000 },
     ]);
   });
 
@@ -81,6 +103,63 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
       () => parseWorkerContainers("aaa111", "docker: something went wrong", WORKS, NOW),
       /not JSON — liveness unknown/,
     );
+  });
+});
+
+describe("liveness — the shared interpretation (issue 118)", () => {
+  const workers = (pairs: Array<[string, string]>): Array<{ key: string; containerId: string; ageMs: number }> =>
+    pairs.map(([key, containerId]) => ({ key, containerId, ageMs: 60_000 }));
+
+  test("a worker seen by the process and by Docker occupies one slot, not two", () => {
+    const live = workers([["Sanmoo/a#1", "ctr-a1"]]);
+    assert.equal(occupiedSlots(live, new Set(["Sanmoo/a#1"])), 1, "the same worker is counted once");
+    assert.equal(occupiedSlots(live, new Set()), 1, "a survivor alone occupies its slot");
+    assert.equal(
+      occupiedSlots(workers([["Sanmoo/a#1", "ctr-a1"], ["Sanmoo/a#1", "ctr-a2"]]), new Set()),
+      2,
+      "distinct containers of one work are distinct slots",
+    );
+    assert.equal(
+      occupiedSlots([], new Set(["Sanmoo/a#1", "Sanmoo/a#2"])),
+      2,
+      "a launch Docker does not show yet still holds its slot",
+    );
+  });
+
+  test("multiplicity is one fact for status and the cycle: the works with more than one container", () => {
+    const live = workers([
+      ["Sanmoo/a#1", "ctr-a1"],
+      ["Sanmoo/a#2", "ctr-b1"],
+      ["Sanmoo/a#2", "ctr-b2"],
+      ["Sanmoo/a#3", "ctr-c1"],
+      ["Sanmoo/a#3", "ctr-c2"],
+    ]);
+    assert.deepEqual(duplicateWorkers(live), [
+      { key: "Sanmoo/a#2", containers: 2 },
+      { key: "Sanmoo/a#3", containers: 2 },
+    ]);
+    assert.deepEqual(duplicateWorkers(workers([["Sanmoo/a#1", "ctr-a1"]])), []);
+  });
+
+  test("a failing probe, an invalid answer or a timeout is unknown — never an empty factory", async () => {
+    const failure = await probeLiveness(() => Promise.reject(new Error("docker: daemon down")));
+    assert.deepEqual(failure, { state: "unknown", reason: "docker: daemon down" });
+
+    const invalid = await probeLiveness(async () => {
+      throw new Error("docker inspect output is not JSON — liveness unknown");
+    });
+    assert.equal(invalid.state, "unknown", "an unparseable answer is not a list of no workers");
+
+    // A probe that never answers is a probe that failed: the query is bounded.
+    const expired = await probeLiveness(() => new Promise(() => {}), 10);
+    assert.equal(expired.state, "unknown");
+    assert.match(expired.state === "unknown" ? expired.reason : "", /did not answer within 10ms/);
+
+    const reliable = await probeLiveness(async () => workers([["Sanmoo/a#1", "ctr-a1"]]));
+    assert.deepEqual(reliable, {
+      state: "known",
+      workers: [{ key: "Sanmoo/a#1", containerId: "ctr-a1", ageMs: 60_000 }],
+    });
   });
 });
 
@@ -137,12 +216,51 @@ describe("liveness — the real Docker shell", () => {
         const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
         assert.deepEqual(workers.map((worker) => worker.key), ["Sanmoo/my-tasks#7"]);
         assert.ok(workers[0]!.ageMs >= 0, "the age comes from the container's start");
+        assert.ok(
+          workers[0]!.containerId.startsWith(containerId.slice(0, 12)),
+          "the container's own identity is preserved",
+        );
       } finally {
         rmSync(worksRoot, { recursive: true, force: true });
         try {
           execFileSync("docker", ["rm", "-f", containerId], { stdio: "ignore" });
         } catch {
           // Already gone (the container's own --rm): nothing to clean up.
+        }
+      }
+    },
+  );
+
+  test(
+    "two real containers of one work are two workers in the count, never one",
+    { skip: dockerSkipReasonForFocusedRun, timeout: 60_000 },
+    async () => {
+      const worksRoot = mkdtempSync(join(tmpdir(), "msf-liveness-dup-"));
+      const workDir = join(worksRoot, "Sanmoo", "my-tasks#8");
+      mkdirSync(workDir, { recursive: true });
+      const start = (): string =>
+        execFileSync(
+          "docker",
+          ["run", "-d", "--rm", "--network", "none", "--entrypoint", "sleep", "-v", `${workDir}:/msf-work`, WORKER_IMAGE, "60"],
+          { encoding: "utf8" },
+        ).trim();
+      const first = start();
+      const second = start();
+      try {
+        const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
+        const seen = workers.filter((worker) => worker.key === "Sanmoo/my-tasks#8");
+        assert.equal(seen.length, 2, "both containers are reported, not collapsed into one row");
+        assert.equal(new Set(seen.map((worker) => worker.containerId)).size, 2);
+        assert.deepEqual(duplicateWorkers(workers), [{ key: "Sanmoo/my-tasks#8", containers: 2 }]);
+        assert.equal(occupiedSlots(workers, new Set()), 2);
+      } finally {
+        rmSync(worksRoot, { recursive: true, force: true });
+        for (const id of [first, second]) {
+          try {
+            execFileSync("docker", ["rm", "-f", id], { stdio: "ignore" });
+          } catch {
+            // Already gone (the container's own --rm).
+          }
         }
       }
     },

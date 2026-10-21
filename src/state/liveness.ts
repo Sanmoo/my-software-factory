@@ -18,10 +18,14 @@ const execFile = promisify(execFileCallback);
  * inject a fake probe, never a flag.
  */
 
-/** A live worker as the status sees it: its work and how long it has run. */
+/** A live worker as the factory sees it: its work, its container and how long
+ *  it has run. The container id is the identity (issue 118): two containers of
+ *  the same work are two workers, never one row. */
 export interface LiveWorker {
   /** "<repo>#<number>" — the same key the registry uses for the work dir. */
   key: string;
+  /** The container that carries it — the identity the counting de-duplicates on. */
+  containerId: string;
   /** Milliseconds since the container started (the worker's age). */
   ageMs: number;
 }
@@ -29,11 +33,95 @@ export interface LiveWorker {
 /** Reads the live workers now. Throws when Docker is unreachable. */
 export type LivenessProbe = () => Promise<LiveWorker[]>;
 
+/**
+ * The probe's answer (issue 118): the live containers, one entry each, or the
+ * honest unknown. A failure, a timeout or an invalid answer is NEVER an empty
+ * list — the operator's "no worker" and "cannot tell" are different facts.
+ */
+export type LivenessObservation =
+  | { state: "known"; workers: LiveWorker[] }
+  | { state: "unknown"; reason: string };
+
+/** Every probe query ends or fails within this bound; a hung Docker call must
+ *  not stall the cycles and the diagnostics forever. */
+export const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Ask the probe, bounded: the live containers or the unknown (a rejection, a
+ * timeout or an unparseable answer). Never throws, so every caller shares the
+ * same interpretation of Docker's silence.
+ */
+export async function probeLiveness(
+  probe: LivenessProbe,
+  timeoutMs: number = DEFAULT_PROBE_TIMEOUT_MS,
+): Promise<LivenessObservation> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const workers = await Promise.race([
+      probe(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`the probe did not answer within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+    return { state: "known", workers };
+  } catch (error) {
+    return { state: "unknown", reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** The containers of each work, as the operational decisions count them. */
+export function workersByWork(workers: readonly LiveWorker[]): Map<string, LiveWorker[]> {
+  const byWork = new Map<string, LiveWorker[]>();
+  for (const worker of workers) {
+    const seen = byWork.get(worker.key);
+    if (seen === undefined) byWork.set(worker.key, [worker]);
+    else seen.push(worker);
+  }
+  return byWork;
+}
+
+/** A work carried by more than one live container — the duplicate anomaly. */
+export interface DuplicateWorkers {
+  key: string;
+  containers: number;
+}
+
+/** The duplicate anomaly, from the same facts status and the cycle read. */
+export function duplicateWorkers(workers: readonly LiveWorker[]): DuplicateWorkers[] {
+  return [...workersByWork(workers)]
+    .filter(([, containers]) => containers.length > 1)
+    .map(([key, containers]) => ({ key, containers: containers.length }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/**
+ * The slots the live workforce occupies (issue 118): every distinct container
+ * counts once, and a local launch Docker already shows is not counted again —
+ * a worker seen by both is still ONE worker. A local launch Docker does not
+ * show yet (the container is starting) occupies its slot until collection.
+ */
+export function occupiedSlots(
+  workers: readonly LiveWorker[],
+  localWorkKeys: ReadonlySet<string>,
+): number {
+  const shown = new Set(workers.map((worker) => worker.key));
+  let localOnly = 0;
+  for (const key of localWorkKeys) if (!shown.has(key)) localOnly += 1;
+  return workers.length + localOnly;
+}
+
 export interface DockerProbeOptions {
   /** The worker image — the filter: only factory workers are listed. */
   image: string;
   /** The workspace's works root (<workspace>/trabalhos) the mounts resolve under. */
   worksRoot: string;
+  /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 /**
@@ -43,11 +131,15 @@ export interface DockerProbeOptions {
  */
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   return async () => {
-    const listing = await docker(["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"]);
+    const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    const listing = await docker(
+      ["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"],
+      timeoutMs,
+    );
     const ids = parseContainerIds(listing);
     // Nothing running: no inspect to pay for, no workers to correlate.
     if (ids.length === 0) return [];
-    const inspect = await docker(["inspect", ...ids]);
+    const inspect = await docker(["inspect", ...ids], timeoutMs);
     return parseWorkerContainers(listing, inspect, options.worksRoot, new Date());
   };
 }
@@ -57,8 +149,12 @@ function parseContainerIds(listing: string): string[] {
   return listing.split(/\s+/).filter((id) => id !== "");
 }
 
-async function docker(args: string[]): Promise<string> {
-  const { stdout } = await execFile("docker", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+async function docker(args: string[], timeoutMs: number): Promise<string> {
+  const { stdout } = await execFile("docker", args, {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: timeoutMs,
+  });
   return stdout;
 }
 
@@ -72,6 +168,10 @@ async function docker(args: string[]): Promise<string> {
  * The `ps` listing, not the inspect payload, says what is running now: the
  * inspect is intersected with it, so an inspect run that outlived its listing
  * cannot resurrect a dead container.
+ *
+ * One entry PER CONTAINER (issue 118): the container id is the identity, so
+ * two containers carrying the same work stay visible as two workers — the
+ * operational counting and the duplicate diagnosis depend on it.
  */
 export function parseWorkerContainers(
   psListing: string,
@@ -83,17 +183,17 @@ export function parseWorkerContainers(
   if (listed.length === 0) return [];
 
   const containers = parseInspectOutput(inspectJson);
-  const workers = new Map<string, LiveWorker>();
+  const workers: LiveWorker[] = [];
   for (const container of containers) {
     if (!listed.some((id) => container.Id.startsWith(id))) continue;
     const key = workKeyOfMounts(container.Mounts ?? [], worksRoot);
     if (key === null) continue;
-    const ageMs = ageOf(container, now);
-    // One work, one row: the oldest container is the worker that carries it.
-    const seen = workers.get(key);
-    if (seen === undefined || ageMs > seen.ageMs) workers.set(key, { key, ageMs });
+    workers.push({ key, containerId: container.Id, ageMs: ageOf(container, now) });
   }
-  return [...workers.values()].sort((a, b) => a.key.localeCompare(b.key));
+  return workers.sort(
+    (a, b) =>
+      a.key.localeCompare(b.key) || b.ageMs - a.ageMs || a.containerId.localeCompare(b.containerId),
+  );
 }
 
 /** Malformed inspect output is a probe failure, never "no workers": the

@@ -1,11 +1,11 @@
-import type { Notifier, WorkNotification } from "./port.js";
+import type { Notification, Notifier } from "./port.js";
 
 /** Recording notifier for tests; `failWith` simulates a delivery failure. */
 export class FakeNotifier implements Notifier {
-  readonly notifications: WorkNotification[] = [];
+  readonly notifications: Notification[] = [];
   failWith?: Error;
 
-  async notify(notification: WorkNotification): Promise<void> {
+  async notify(notification: Notification): Promise<void> {
     if (this.failWith !== undefined) throw this.failWith;
     this.notifications.push(notification);
   }
