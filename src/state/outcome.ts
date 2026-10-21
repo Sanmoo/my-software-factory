@@ -140,7 +140,7 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
  * file survives on disk as history and serves numbering/reconciliation, but
  * it never decides this attempt's transition.
  */
-export function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
+function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
   return record !== null && record.attempt === attempt ? record : null;
 }
 

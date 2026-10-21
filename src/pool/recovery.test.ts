@@ -161,8 +161,9 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     const onDisk = JSON.parse(readFileSync(join(dir, RECOVERY_FILENAME), "utf8"));
     assert.equal(onDisk.attempt, 1);
     assert.equal(onDisk.consumed, 1);
-    assert.equal(onDisk.events[0].index, 0);
-    assert.equal(onDisk.events[0].waitMs, 1_000);
-
+    assert.deepEqual(onDisk.events, [
+      { index: 0, waitMs: 1_000, attempt: 1, at: "2026-01-01T00:00:00.000Z" },
+    ]);
+    assert.equal(onDisk.lastFailureAttempt, null);
   });
 });
