@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
+import { eventLogName, sandcastleLogName } from "../runtime/attempt-logs.js";
 
 /**
  * The evidence of one fell attempt, pointed at by the blocked comment (issue
@@ -41,14 +42,14 @@ export async function readWorkEvidence(
   const shownDir = relative(workspace.root, dir).split(sep).join("/");
   const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
     presenceOf(dir),
-    presenceOf(join(dir, `log-${attempt}.jsonl`)),
-    presenceOf(join(dir, "sessao", `sandcastle-${attempt}.log`)),
+    presenceOf(join(dir, eventLogName(attempt))),
+    presenceOf(join(dir, "sessao", sandcastleLogName(attempt))),
   ]);
   return {
     workDir: { path: `${shownDir}/`, presence: dirPresence },
-    eventLog: { path: `${shownDir}/log-${attempt}.jsonl`, presence: logPresence },
+    eventLog: { path: `${shownDir}/${eventLogName(attempt)}`, presence: logPresence },
     sandcastleLog: {
-      path: `${shownDir}/sessao/sandcastle-${attempt}.log`,
+      path: `${shownDir}/sessao/${sandcastleLogName(attempt)}`,
       presence: sandcastlePresence,
     },
   };

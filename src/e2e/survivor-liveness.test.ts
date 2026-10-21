@@ -13,6 +13,8 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { deriveStatus } from "../state/status.js";
+import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
 import type { LiveWorker, LivenessProbe } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -439,6 +441,56 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       "the operator is asked about the duplicated work",
     );
     assert.deepEqual(await labelSet(tracker, 40), [DEFAULT_LABELS.ready], "no owner chosen, no block invented");
+  });
+
+  test("status and the cycle read the same liveness facts the same way: two containers, two workers, one duplicate", async () => {
+    const config = makeConfig(3);
+    const probe = probeOf(worker(90, "ctr000000090"), worker(90, "ctr000000091"));
+    const { tracker, deps, runtime, log } = makeFactory({ config, probe, outcomes: ["pr-open"] });
+    bindTracker(tracker);
+    seedReserved(90, [1]);
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    // The operator's view, derived on demand from the same probe and tracker.
+    const view = await deriveStatus(tracker, config, layout, probe);
+    assert.equal(view.liveness.state, "known");
+    if (view.liveness.state !== "known") return;
+    assert.equal(
+      view.liveness.running.filter((entry) => entry.key === `${REPO}#90`).length,
+      2,
+      "status counts both containers",
+    );
+    assert.deepEqual(view.liveness.duplicates, [{ key: `${REPO}#90`, containers: 2 }]);
+    assert.match(renderStatus(view), /duplicate workers[^\n]*: 1/);
+
+    // The cycle, from the SAME facts: the duplicated work is never launched,
+    // its two slots are respected and the other work advances.
+    const sweep = await runOnce(deps);
+    assert.deepEqual(runtime.launched.map((request) => request.ref.number), [1]);
+    assert.ok(!tracker.claimedOrder.includes(`${REPO}#90`), "the duplicated work is never claimed");
+    assert.ok(
+      log.some((line) => line.includes("duplicate workers for") && line.includes("2 containers")),
+      "the operation names the same multiplicity status shows",
+    );
+  });
+
+  test("status and the cycle agree on Unknown — including an inconclusive container identity", async () => {
+    const config = makeConfig(2);
+    const probe = failingProbe(
+      "worker-image container abc123 carries no work this workspace can name — " +
+        "its identity is inconclusive, liveness unknown",
+    );
+    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
+    bindTracker(tracker);
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const view = await deriveStatus(tracker, config, layout, probe);
+    assert.deepEqual(view.liveness, { state: "unknown" }, "status never guesses a worker set");
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "and neither does the cycle");
+    assert.equal(runtime.launched.length, 0);
+    assert.ok(log.some((line) => line.includes("identity is inconclusive")), "the cause is named");
   });
 
   test("a probe failure suspends launches, preserves workers, and consumes no attempt, recovery or block", async () => {

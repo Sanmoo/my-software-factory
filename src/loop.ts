@@ -77,11 +77,9 @@ import {
   type LivenessObservation,
   type LivenessProbe,
 } from "./state/liveness.js";
-import { DEFAULT_IDLE_LIMIT_MS, readActivityStamp } from "./runtime/activity.js";
+import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
 import { operationalLog, formatDuration } from "./log.js";
 import { mkdirSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
@@ -136,6 +134,24 @@ export interface CollectedWork {
   ruling: { decision: OutcomeRuling["decision"]; because: string };
 }
 
+/** The facts that settle one attempt's end (issue 118): its own dir, its
+ *  number, its consecutiveness and who ended it. */
+interface AttemptEnd {
+  dir: string;
+  attempt: number;
+  consecutiveFall: boolean;
+  /** A worker this process launched, or a survivor whose exit Docker confirmed. */
+  origin: "collected" | "survivor";
+}
+
+/** What applying the ruler produced: the next launch it asks for (if any), the
+ *  PR fact the sweep reports, and the ruling itself. */
+interface RulingApplied {
+  next: Launchable | null;
+  prConfirmed: boolean;
+  ruling: { decision: OutcomeRuling["decision"]; because: string };
+}
+
 export interface SweepResult {
   pool: PoolEntry[];
   /** The states derived for every reserved work this sweep (ticket 14). */
@@ -154,18 +170,6 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
  * An action's announced class can differ from this derivation class — a
  * released fall lands eligible.
  */
-/**
- * The derivations that presume a worker has stopped (issue 118): while Docker
- * cannot answer, archiving an attempt whose worker may be alive, or spending
- * an attempt/recovery on a silence, are exactly the presumptions to avoid.
- */
-const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = new Set([
-  "done",
-  "done-fallback",
-  "fall",
-  "interrupted",
-]);
-
 const RESERVED_OPERATIONAL_CLASS = {
   done: null,
   "done-fallback": null,
@@ -181,6 +185,22 @@ const RESERVED_OPERATIONAL_CLASS = {
   "repair-blocked": "reserved",
   "repair-fall-blocked": "reserved",
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
+
+/**
+ * The derivations that presume a worker has stopped (issue 118): while Docker
+ * cannot answer, archiving an attempt whose worker may be alive, spending an
+ * attempt or recovery on a silence, or publishing a block over a worker that
+ * may still be writing are exactly the presumptions to avoid.
+ */
+const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = new Set([
+  "done",
+  "done-fallback",
+  "fall",
+  "interrupted",
+  "rejected",
+  "repair-fall-blocked",
+  "repair-blocked",
+]);
 
 /** In-flight counts as reserved. Titles and order never enter — the schedule order stays untouched. */
 function operationalState(
@@ -319,6 +339,9 @@ export class SweepEngine {
   /** The latest probe answer — read before every decision that could replace
    *  a worker; `unknown` suspends launches instead of guessing. */
   private liveness: LivenessObservation = { state: "known", workers: [] };
+  /** The works a live container carries, from the same answer — the launch and
+   *  capacity decisions never ask Docker a second question of their own. */
+  private carriedKeys = new Set<string>();
   /** The workers a reliable probe showed and this process did not launch. */
   private readonly survivors = new Map<string, SurvivorRecord>();
   /** The recoveries the ended survivors' reconciliation asks for, flushed by
@@ -363,8 +386,7 @@ export class SweepEngine {
     const settled = await this.observeSurvivors();
     this.observeCapacity();
     const suspended = this.liveness.state === "unknown";
-    const surviving =
-      this.liveness.state === "known" ? [...workersByWork(this.liveness.workers).keys()] : [];
+    const surviving = [...this.carriedKeys];
 
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
@@ -634,6 +656,10 @@ export class SweepEngine {
       this.deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     );
     this.liveness = observation;
+    this.carriedKeys =
+      observation.state === "known"
+        ? new Set(observation.workers.map((worker) => worker.key))
+        : new Set();
     if (observation.state === "unknown") this.enterUnavailableEpisode(observation.reason);
     else this.closeUnavailableEpisode();
   }
@@ -665,7 +691,7 @@ export class SweepEngine {
     await this.deliverNotice(factoryUnavailableNotice(unavailableForMs));
   }
 
-  /** A reliable answer closes the episode and lets launches resume by themselves. */
+  /** A reliable answer closes the episode; launches resume without any human act. */
   private closeUnavailableEpisode(): void {
     if (this.livenessEpisode === null) return;
     const lasted = this.now() - this.livenessEpisode.unknownSince;
@@ -707,7 +733,6 @@ export class SweepEngine {
       this.survivors.set(key, {
         key,
         dir,
-        attempt,
         activityStamp: null,
         lastActivityAt: this.now(),
         idleWarned: false,
@@ -801,7 +826,12 @@ export class SweepEngine {
       `survivor ${key} ended: attempt ${attempt} confirmed finished by a reliable probe — ` +
         `reconciling by its artifacts and the tracker${repairing ? " (the attempt was a repair round)" : ""}`,
     );
-    const outcome = await this.applyEnd(ended, dir, attempt, consecutiveFall, "survivor");
+    const outcome = await this.applyEnd(ended, {
+      dir,
+      attempt,
+      consecutiveFall,
+      origin: "survivor",
+    });
     if (outcome.next !== null) this.survivorRecoveries.push(outcome.next);
   }
 
@@ -841,7 +871,6 @@ export class SweepEngine {
     // could put a substitute over a live worker.
     if (this.stopping || this.liveness.state !== "known") return started;
     while (!this.slots.full && this.hasCapacity()) {
-      // Ctrl-C perceived between two launches stops the rest of them.
       if (this.stopping) break;
       const launchable = this.takeNextLaunchable();
       if (launchable === undefined) break;
@@ -892,12 +921,9 @@ export class SweepEngine {
     );
   }
 
-  /** A live container carries this work right now. */
+  /** A live container carries this work right now (dedup by the work key). */
   private carriedByWorker(key: string): boolean {
-    return (
-      this.liveness.state === "known" &&
-      this.liveness.workers.some((worker) => worker.key === key)
-    );
+    return this.carriedKeys.has(key);
   }
 
   /** Ctrl-C: stop launching and stop replenishing finished slots. The
@@ -1355,13 +1381,12 @@ export class SweepEngine {
     attempt: number,
     consecutiveFall: boolean,
   ): Promise<Launchable | null> {
-    const outcome = await this.applyEnd(
-      launchable,
-      result.request.workDir,
+    const outcome = await this.applyEnd(launchable, {
+      dir: result.request.workDir,
       attempt,
       consecutiveFall,
-      "collected",
-    );
+      origin: "collected",
+    });
     this.collected.push({
       ref: launchable.ref,
       result,
@@ -1381,21 +1406,11 @@ export class SweepEngine {
    * reconciled by these same facts, never by the launch object this process
    * never had.
    */
-  private async applyEnd(
-    launchable: Launchable,
-    dir: string,
-    attempt: number,
-    consecutiveFall: boolean,
-    origin: "collected" | "survivor",
-  ): Promise<{
-    next: Launchable | null;
-    prConfirmed: boolean;
-    ruling: { decision: OutcomeRuling["decision"]; because: string };
-  }> {
+  private async applyEnd(launchable: Launchable, end: AttemptEnd): Promise<RulingApplied> {
+    const { dir, attempt, consecutiveFall, origin } = end;
     const { config, tracker, workspace } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
-    const said = origin === "survivor" ? "survivor" : "collected";
 
     const feedback = await tracker.readPrFeedback(ref);
     const pr = feedback.known ? feedback.value.pr : null;
@@ -1420,14 +1435,14 @@ export class SweepEngine {
       // The terminal state was reached while this claim was held (the
       // human's merge closed the issue mid-flight — ticket 14): archive the
       // artifacts and clean the branches, nothing is released or recorded.
-      this.log(`${said} ${key}: issue closed — done; artifacts archived, branches cleaned`);
+      this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
       await this.finishWork(ref);
       resulting = null;
     } else if (ruling.decision === "reserve") {
-      this.log(`${said} ${key}: PR open — stays reserved, waiting for the human`);
+      this.log(`${origin} ${key}: PR open — stays reserved, waiting for the human`);
       resulting = "reserved";
     } else if (ruling.decision === "record-only") {
-      this.log(`${said} ${key}: blocked self-report — the factory only records the outcome`);
+      this.log(`${origin} ${key}: blocked self-report — the factory only records the outcome`);
       resulting = "reserved";
     } else if (ruling.decision === "interrupt") {
       // No attempt is consumed and the fall ruler never applies (issue 123). A
@@ -1435,12 +1450,12 @@ export class SweepEngine {
       resulting = "reserved";
       if (launchable.kind === "repair") {
         this.log(
-          `${said} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
+          `${origin} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
             "settles its publication before another round (issue 112)",
         );
       } else {
         this.log(
-          `${said} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
+          `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
             "number and the recovery budget answers it",
         );
         next = {
@@ -1457,7 +1472,7 @@ export class SweepEngine {
     } else if (ruling.decision === "release") {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `${said} ${key}: fall without PR — release (claimed→ready back; ` +
+        `${origin} ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
       await this.applyRelease(ref);
@@ -1465,7 +1480,7 @@ export class SweepEngine {
     } else {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `${said} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
+        `${origin} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
       );
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";

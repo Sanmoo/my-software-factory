@@ -12,6 +12,7 @@ import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import { DEFAULT_IDLE_LIMIT_MS, startActivityWatch, type ActivityWatch } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
+import { eventLogName, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 const execFile = promisify(execFileCallback);
@@ -369,13 +370,13 @@ export class SandcastleRuntime implements WorkerRuntime {
     const watch = startActivityWatch({
       dirs: [sessionsDir, request.workDir],
       exclude: [
-        join(request.workDir, `log-${request.attempt}.jsonl`),
-        join(sessionsDir, `sandcastle-${request.attempt}.log`),
+        join(request.workDir, eventLogName(request.attempt)),
+        join(sessionsDir, sandcastleLogName(request.attempt)),
       ],
       idleMs,
       pollMs: this.activityPollMs,
       onIdle: (measured) => {
-        this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+        this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
           event: "activity-idle",
           attempt: request.attempt,
           idleMs: Math.round(measured),
@@ -499,7 +500,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       logging: {
         type: "file",
         // The attempt's readable log rides the session dir (inspection).
-        path: join(request.workDir, "sessao", `sandcastle-${request.attempt}.log`),
+        path: join(request.workDir, "sessao", sandcastleLogName(request.attempt)),
         onAgentStreamEvent: (event: AgentStreamEvent) => {
           this.agentEvent(request, event);
         },
@@ -514,7 +515,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
-    this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+    this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
       event,
       attempt: request.attempt,
       ...extra,
@@ -528,7 +529,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         : event.type === "toolCall"
           ? { event: "agent-tool", tool: event.name, args: event.formattedArgs }
           : { event: "agent-raw", line: event.line };
-    this.appendLine(join(request.workDir, `log-${request.attempt}.jsonl`), {
+    this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
       attempt: request.attempt,
       iteration: event.iteration,
       ...payload,

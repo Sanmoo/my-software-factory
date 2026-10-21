@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { readActivityStamp, type ActivityDirs } from "../runtime/activity.js";
+import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { LiveWorker } from "../state/liveness.js";
 
 /**
@@ -24,8 +25,6 @@ export interface SurvivorRecord {
   key: string;
   /** The work's registry dir, where its attempt evidence and logs live. */
   dir: string;
-  /** The attempt the registry numbered on disk when the worker was recognised. */
-  attempt: number | null;
   /** The activity stamp of the previous observation (null = baseline pending). */
   activityStamp: string | null;
   /** When verifiable activity was last seen (the cycle's clock). */
@@ -51,16 +50,24 @@ export function survivorWorkKeys(
  * any line the factory writes into false proof of life.
  */
 async function survivorActivityDirs(dir: string): Promise<ActivityDirs> {
-  let names: string[] = [];
+  const sessions = join(dir, "sessao");
+  const [workNames, sessionNames] = await Promise.all([namesOf(dir), namesOf(sessions)]);
+  const exclude = [
+    ...workNames.filter((name) => EVENT_LOG_PATTERN.test(name)).map((name) => join(dir, name)),
+    ...sessionNames
+      .filter((name) => SANDCASTLE_LOG_PATTERN.test(name))
+      .map((name) => join(sessions, name)),
+  ];
+  return { dirs: [sessions, dir], exclude };
+}
+
+/** The entries of a dir; one that cannot be read proves no activity. */
+async function namesOf(dir: string): Promise<string[]> {
   try {
-    names = await readdir(dir);
+    return await readdir(dir);
   } catch {
-    // A dir that cannot be read has no files to prove activity.
+    return [];
   }
-  const exclude = names
-    .filter((name) => /^log-\d+\.jsonl$/.test(name) || /^sandcastle-.*\.log$/.test(name))
-    .map((name) => join(dir, name));
-  return { dirs: [join(dir, "sessao"), dir], exclude };
 }
 
 /** One observation of a survivor's verifiable activity. */

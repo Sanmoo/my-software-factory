@@ -4,6 +4,7 @@ import {
   workKey,
 } from "./derive.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
+import { formatDuration } from "../log.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";
@@ -131,7 +132,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
  *  and which container — the container is the identity duplicates are read by. */
 function renderRunning(worker: RunningWorker): string {
   const attempt = worker.attempt === null ? "" : `, attempt ${worker.attempt}`;
-  return `${worker.key} (${formatAge(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
+  return `${worker.key} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
 }
 
 /** The duplicate anomaly: the count per work, with no owner chosen. */
@@ -216,12 +217,4 @@ function section(title: string, entries: readonly string[] | null, cap: number):
   const lines = [`${title}: ${entries.length}`, ...shown.map((entry) => `  ${entry}`)];
   if (entries.length > shown.length) lines.push(`  … and ${entries.length - shown.length} more`);
   return lines;
-}
-
-/** The worker's age, coarse enough to read at a glance: 40s, 13m, 2h5m. */
-function formatAge(ageMs: number): string {
-  const minutes = Math.floor(ageMs / 60_000);
-  if (minutes < 1) return `${Math.floor(ageMs / 1000)}s`;
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }

@@ -7,6 +7,7 @@ import { readOutcomeRecord, isRecordedFailure, type OutcomeRecord } from "../sta
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
+import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -87,7 +88,7 @@ async function attemptNumbers(workDir: string): Promise<number[]> {
   const entries = await readdir(workDir);
   const numbers: number[] = [];
   for (const entry of entries) {
-    const match = /^log-(\d+)\.jsonl$/.exec(entry);
+    const match = EVENT_LOG_PATTERN.exec(entry);
     if (match) numbers.push(Number(match[1]));
   }
   return numbers.sort((a, b) => a - b);
