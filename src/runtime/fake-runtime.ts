@@ -5,6 +5,7 @@ import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { eventLogName } from "./attempt-logs.js";
+import { SESSIONS_SUBDIR } from "../layout.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -64,7 +65,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
    * attempt's event log the moment the session is up (ticket 13). An attempt
    * that dies abruptly leaves exactly this — a start line and no end. */
   private startSession(request: WorkRequest): void {
-    mkdirSync(join(request.workDir, "sessao"), { recursive: true });
+    mkdirSync(join(request.workDir, SESSIONS_SUBDIR), { recursive: true });
     this.event(request, "session-start");
   }
 

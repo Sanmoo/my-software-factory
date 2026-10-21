@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { isAbsolute, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { WORKSPACE_SUBPATHS } from "../layout.js";
+import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
 import { parseWorkKey } from "../pool/registry.js";
 
 const execFile = promisify(execFileCallback);
@@ -116,6 +116,17 @@ export function occupiedSlots(
   return workers.length + localOnly;
 }
 
+/** How many slots the live workforce exceeds the configured concurrency by
+ *  (0 = within the limit): distinct containers, a local launch Docker already
+ *  shows counted once. */
+export function capacityExcess(
+  workers: readonly LiveWorker[],
+  localWorkKeys: ReadonlySet<string>,
+  concurrency: number,
+): number {
+  return Math.max(0, occupiedSlots(workers, localWorkKeys) - concurrency);
+}
+
 export interface DockerProbeOptions {
   /** The worker image — the filter: only factory workers are listed. */
   image: string;
@@ -188,10 +199,11 @@ export function parseWorkerContainers(
   for (const container of containers) {
     if (!listed.some((id) => container.Id.startsWith(id))) continue;
     const correlation = correlateWork(container.Mounts ?? [], worksRoot);
-    // Another workspace's worker is a decided fact: not ours. An identity that
+    // A container of the worker image without a work mount is not a worker; a
+    // work of ANOTHER workspace is a decided "not ours". An identity that
     // cannot be decided is UNKNOWN, never "no worker" (issue 118) — it may
     // still be one of ours.
-    if (correlation.kind === "foreign") continue;
+    if (correlation.kind === "foreign" || correlation.kind === "not-a-worker") continue;
     if (correlation.kind === "inconclusive") {
       throw new Error(
         `worker-image container ${container.Id} carries no work this workspace can name — ` +
@@ -244,31 +256,39 @@ interface InspectedContainer {
 type WorkCorrelation =
   | { kind: "ours"; key: string }
   | { kind: "foreign" }
-  | { kind: "inconclusive" };
+  | { kind: "inconclusive" }
+  | { kind: "not-a-worker" };
 
-/** A work dir as any factory lays it on disk: <workspace>/trabalhos/<repo>#<n>. */
-const WORK_UNDER_A_WORKS_DIR = new RegExp(
-  `(?:^|/)${WORKSPACE_SUBPATHS.works}/(.+#\\d+)(?:/sessao)?$`,
-);
+/**
+ * A mount that points at a work dir — <anywhere>/<repo>#<n>[/sessao]. A
+ * container of the worker image without one carries no work: it is an
+ * auxiliary container (a probe, a debug run), not a worker.
+ */
+const WORK_SHAPED_MOUNT = /(?:^|\/)[^/]+#\d+(?:\/${SESSIONS_SUBDIR})?$/;
 
 function correlateWork(mounts: Array<{ Source?: string }>, worksRoot: string): WorkCorrelation {
+  // The verdict is mount-ORDER independent: a named work of ours wins; a bind
+  // under OUR works root that names no work may be a moved work of ours (never
+  // "not ours"); a work-shaped mount under another works root belongs to
+  // another workspace; a container with no work mount anywhere is not a worker.
+  let ours: string | null = null;
+  let undecidable = false;
   let foreign = false;
   for (const mount of mounts) {
     const source = mount.Source;
     if (source === undefined) continue;
     const path = relative(worksRoot, source);
-    // Under THIS works root: the dir must name a work, or the identity is
-    // undecidable — which is decisive and never "not ours". (".." is
-    // absolute-path safe.)
     if (path !== "" && !path.startsWith("..") && !isAbsolute(path)) {
       // The sessions bind points at <work dir>/sessao — the work is its parent.
-      const name = path.split(sep).join("/").replace(/\/sessao$/, "");
-      return parseWorkKey(name) === null
-        ? { kind: "inconclusive" }
-        : { kind: "ours", key: name };
+      const name = path.split(sep).join("/").replace(new RegExp(`/${SESSIONS_SUBDIR}$`), "");
+      if (parseWorkKey(name) !== null) ours ??= name;
+      else undecidable = true;
+    } else if (WORK_SHAPED_MOUNT.test(source.split(sep).join("/"))) {
+      foreign = true;
     }
-    // Outside it: another workspace's worker, or a stranger's mount.
-    if (WORK_UNDER_A_WORKS_DIR.test(source.split(sep).join("/"))) foreign = true;
   }
-  return foreign ? { kind: "foreign" } : { kind: "inconclusive" };
+  if (ours !== null) return { kind: "ours", key: ours };
+  if (undecidable) return { kind: "inconclusive" };
+  if (foreign) return { kind: "foreign" };
+  return { kind: "not-a-worker" };
 }

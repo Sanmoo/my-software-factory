@@ -67,9 +67,27 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     ]);
   });
 
-  test("a worker-image container whose work cannot be named is unknown liveness, never 'no worker' (issue 118)", () => {
+  test("a worker-image container carrying no work dir is an auxiliary container, not a worker", () => {
     const ps = "ccc333\n";
-    const stranger = [{ Id: "ccc333", State: { Running: true, StartedAt: "2026-02-01T11:00:00Z" }, Mounts: [] }];
+    const auxiliary = [
+      {
+        Id: "ccc333",
+        State: { Running: true, StartedAt: "2026-02-01T11:00:00Z" },
+        Mounts: [{ Type: "bind", Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock" }],
+      },
+    ];
+    assert.deepEqual(parseWorkerContainers(ps, JSON.stringify(auxiliary), WORKS, NOW), []);
+  });
+
+  test("a work mount under our root that cannot be named is unknown liveness, never 'no worker' (issue 118)", () => {
+    const ps = "ccc333\n";
+    const stranger = [
+      {
+        Id: "ccc333",
+        State: { Running: true, StartedAt: "2026-02-01T11:00:00Z" },
+        Mounts: [{ Type: "bind", Source: `${WORKS}/moved-work-dir`, Destination: "/msf-work" }],
+      },
+    ];
     assert.throws(
       () => parseWorkerContainers(ps, JSON.stringify(stranger), WORKS, NOW),
       /ccc333.*identity is inconclusive.*liveness unknown/,
@@ -93,6 +111,25 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
       parseWorkerContainers(ps, JSON.stringify(foreign), WORKS, NOW),
       [],
       "a work under another works root belongs to another workspace",
+    );
+  });
+
+  test("the correlation verdict is mount-order independent: a named work wins over a stray bind", () => {
+    const ps = "fff666\n";
+    const mixed = [
+      {
+        Id: "fff666",
+        State: { Running: true, StartedAt: "2026-02-01T11:30:00Z" },
+        Mounts: [
+          { Type: "bind", Source: `${WORKS}/stray-dir`, Destination: "/extra" },
+          { Type: "bind", Source: `${WORKS}/Sanmoo/my-tasks#4`, Destination: "/msf-work" },
+        ],
+      },
+    ];
+    assert.deepEqual(
+      parseWorkerContainers(ps, JSON.stringify(mixed), WORKS, NOW),
+      [{ key: "Sanmoo/my-tasks#4", containerId: "fff666", ageMs: 30 * 60_000 }],
+      "the order of the mounts never changes the verdict",
     );
   });
 

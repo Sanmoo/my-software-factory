@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import type { WorkspaceLayout } from "../layout.js";
+import { SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 import { eventLogName, sandcastleLogName } from "../runtime/attempt-logs.js";
 
 /**
@@ -43,7 +43,7 @@ export async function readWorkEvidence(
   const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
     presenceOf(dir),
     presenceOf(join(dir, eventLogName(attempt))),
-    presenceOf(join(dir, "sessao", sandcastleLogName(attempt))),
+    presenceOf(join(dir, SESSIONS_SUBDIR, sandcastleLogName(attempt))),
   ]);
   return {
     workDir: { path: `${shownDir}/`, presence: dirPresence },

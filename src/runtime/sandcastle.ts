@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
+import { SESSIONS_SUBDIR } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
@@ -324,7 +325,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       // The footprint comes first (ticket 13): sessao/ and the attempt's log
       // exist before any outcome can exist. An abrupt death leaves exactly
       // this — the start line without an end, the record's absence.
-      const sessionsDir = join(request.workDir, "sessao");
+      const sessionsDir = join(request.workDir, SESSIONS_SUBDIR);
       mkdirSync(sessionsDir, { recursive: true });
       this.event(request, "session-start", {
         branch: request.branch,
@@ -373,7 +374,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     const idleMs = this.idleTimeoutSeconds * 1000;
     const controller = new AbortController();
     const watch = startActivityWatch({
-      ...(await workActivityDirs(request.workDir, sessionsDir)),
+      ...(await workActivityDirs(request.workDir)),
       idleMs,
       pollMs: this.activityPollMs,
       onIdle: (measured) => {
@@ -501,7 +502,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       logging: {
         type: "file",
         // The attempt's readable log rides the session dir (inspection).
-        path: join(request.workDir, "sessao", sandcastleLogName(request.attempt)),
+        path: join(request.workDir, SESSIONS_SUBDIR, sandcastleLogName(request.attempt)),
         onAgentStreamEvent: (event: AgentStreamEvent) => {
           this.agentEvent(request, event);
         },

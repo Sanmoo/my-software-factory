@@ -2,7 +2,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readdir, rename } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import { workspaceLayout, workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
+import {
+  SESSIONS_SUBDIR,
+  WORKSPACE_SUBPATHS,
+  workDir,
+  workspaceLayout,
+  type WorkspaceLayout,
+} from "../layout.js";
 import { readOutcomeRecord, isRecordedFailure, type OutcomeRecord } from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
@@ -79,7 +85,7 @@ export async function readLaunchFacts(
 /** The attempt evidence the runtime leaves at launch time: a per-attempt log
  *  or the session dir. Its absence is the bare reservation. */
 function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
-  return logs.length > 0 || existsSync(join(workDir, "sessao"));
+  return logs.length > 0 || existsSync(join(workDir, SESSIONS_SUBDIR));
 }
 
 /** The attempt numbers present in the registry dir, ascending. */
