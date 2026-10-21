@@ -17,7 +17,7 @@ import {
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { branchOfWork, repoCloneDir, workerWorktreePath } from "../git/port.js";
-import { readAttemptLedger, scanReservedWorks } from "../pool/registry.js";
+import { readAttemptLedger, readLaunchFacts, scanReservedWorks } from "../pool/registry.js";
 import { reservationRecordOf, reserveWork, scanReservations } from "../pool/reservation.js";
 import { activePullRequest, readPrAssociations, recordPrAssociation } from "../pool/pr-association.js";
 import { readOutcomeRecord } from "../state/outcome.js";
@@ -157,9 +157,10 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     // ---- RESTART: nothing but disk and the registry reader ----
     const afterRestart = await scanReservations(layout);
     assert.equal(afterRestart.length, 2);
-    const bySite = new Map(afterRestart.map((entry) => [entry.work.ticket.site, entry]));
+    const bySite = new Map(afterRestart.map((entry) => [entry.anchor.site, entry]));
     const alphaEntry = bySite.get("alpha.atlassian.net")!;
     const betaEntry = bySite.get("beta.atlassian.net")!;
+    assert.ok(alphaEntry.work !== null && betaEntry.work !== null, "a persisted reservation names its Work");
     assert.deepEqual(alphaEntry.work, alpha);
     assert.deepEqual(betaEntry.work, beta);
     assert.equal(alphaEntry.reservation.state, "persisted");
@@ -200,7 +201,33 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     assert.equal(await gitAsync(["rev-parse", betaPrepared.branch], cloneDir), betaRemoteHead);
   });
 
-  test("a later execution of the same Work appends its PR and attempt while the earlier ones remain readable", async () => {
+  test("an interrupted non-GitHub attempt resumes in the same dir, with the same attempt and branch", async () => {
+    const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
+    const { dir } = await reserveWork(layout, reservationRecordOf(work));
+    const git = gitWork();
+    const prepared = await git.prepareWorkFor(work);
+
+    // The attempt started and died with no outcome record: the interruption's
+    // own footprint on real disk (issue 123), never a fall.
+    writeFileSync(join(dir, "log-1.jsonl"), "", "utf8");
+    mkdirSync(join(dir, "sessao"), { recursive: true });
+
+    // A restart continues the SAME attempt; the branch is reused untouched and
+    // the Work still reads as itself from its reservation.
+    const facts = await readLaunchFacts(dir, 1);
+    assert.deepEqual(facts, { attempt: 1, previousFall: false });
+    const recovered = await git.prepareWorkFor(work);
+    assert.equal(recovered.branch, prepared.branch, "the interrupted branch is the same branch");
+    assert.equal(recovered.branchCreated, false, "recovery never recreates it");
+    assert.deepEqual(await readAttemptLedger(dir), { lastAttempt: 1, recordedAttempt: null });
+
+    const entries = await scanReservations(layout);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0]!.work !== null && entries[0]!.dir === dir);
+    assert.deepEqual(entries[0]!.work, work);
+  });
+
+  test("a later attempt of the same Work appends its PR while the earlier one stays readable", async () => {
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1" });
     const { dir } = await reserveWork(layout, reservationRecordOf(work));
 
@@ -311,7 +338,8 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     const brokenEntry = entries.find((entry) => entry.dir === brokenDir)!;
     const healthyEntry = entries.find((entry) => entry.dir === healthyDir)!;
     assert.equal(brokenEntry.reservation.state, "unreadable");
-    assert.equal(brokenEntry.work.ticket.site, "alpha.atlassian.net", "the dir key still anchors the Work");
+    assert.equal(brokenEntry.anchor.site, "alpha.atlassian.net", "the dir key still anchors the Work");
+    assert.equal(brokenEntry.work, null, "with no readable key on disk, no Work is invented");
     assert.equal(healthyEntry.reservation.state, "persisted");
     assert.deepEqual(healthyEntry.work, healthy);
 

@@ -1,6 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import {
   isPullRequestIdentity,
@@ -15,7 +12,7 @@ import {
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import { readPersistedRecord, type PersistedFacts } from "./persisted.js";
+import { readPersistedRecord, writePersistedRecord, type PersistedFacts } from "./persisted.js";
 
 /**
  * The persisted PR association (issue 125): which PRs a Work has had, kept in
@@ -132,8 +129,7 @@ export async function recordPrAssociation(
       },
     ],
   };
-  mkdirSync(dir, { recursive: true });
-  await writeFile(join(dir, PR_ASSOCIATIONS_FILENAME), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await writePersistedRecord(dir, PR_ASSOCIATIONS_FILENAME, record);
   return record;
 }
 

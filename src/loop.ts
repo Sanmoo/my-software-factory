@@ -1034,7 +1034,7 @@ export class SweepEngine {
         ...(launchable.title === undefined ? {} : { title: launchable.title }),
         ...(url === undefined ? {} : { url }),
       };
-      await reserveWork(workspace, reservationRecordOf(work, presentation));
+      reserveWork(workspace, reservationRecordOf(work, presentation));
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
@@ -1466,14 +1466,23 @@ export class SweepEngine {
     });
 
     // An open PR is a persisted association of this Work (issue 125): a
-    // restart correlates the PR from disk, and a later execution appends its
-    // own PR instead of replacing the earlier association.
+    // restart correlates the PR from disk, and a later attempt appends its own
+    // PR instead of replacing the earlier association. A record that cannot be
+    // read or written is reported and never changes the ruling above — the
+    // Work's transition is the domain decision, the record is its evidence.
     if (prConfirmed && pr !== null) {
-      await recordPrAssociation(dir, {
-        work: workOfIssueRef(ref),
-        pullRequest: pullRequestIdentity(githubRepository(ref.repo), pr.number),
-        attempt,
-      });
+      try {
+        await recordPrAssociation(dir, {
+          work: workOfIssueRef(ref),
+          pullRequest: pullRequestIdentity(githubRepository(ref.repo), pr.number),
+          attempt,
+        });
+      } catch (error) {
+        this.log(
+          `PR association of ${key} was not persisted (${error instanceof Error ? error.message : String(error)}) — ` +
+            "the ruling stands and the earlier evidence is untouched",
+        );
+      }
     }
 
     let resulting: OperationalClass | null;

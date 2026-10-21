@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -142,6 +142,50 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     // The ruler: PR open → reserve (the claim is held, waiting for the human).
     assert.equal(result.collected.length, 1);
     assert.equal(result.collected[0]!.ruling.decision, "reserve");
+  });
+
+  test("a corrupt reservation record never blocks the claim and is never overwritten", async () => {
+    writeConfig();
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    tracker.seedIssue({ repo: REPO, number: 1, title: "Add a greeting", createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+
+    // A partial/old write on real disk: unreadable, surfaced by the registry,
+    // never mistaken for absent and never replaced by the launch.
+    const work = workDir(layout, REPO, 1);
+    mkdirSync(work, { recursive: true });
+    writeFileSync(join(work, "reserva.json"), "{ truncated", "utf8");
+
+    const deps = await wiredDeps(tracker, runtime);
+    const result = await runOnce(deps);
+
+    assert.equal(result.launched.length, 1, "the unknown record does not block the work");
+    assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed]);
+    assert.equal(readFileSync(join(work, "reserva.json"), "utf8"), "{ truncated", "the evidence stays for a human");
+    const reservation = await readReservation(work);
+    assert.equal(reservation.state, "unreadable");
+  });
+
+  test("a corrupt PR association never aborts the collection's ruling", async () => {
+    writeConfig();
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    tracker.seedIssue({ repo: REPO, number: 1, title: "Add a greeting", createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+
+    const work = workDir(layout, REPO, 1);
+    mkdirSync(work, { recursive: true });
+    writeFileSync(join(work, "associacoes-pr.json"), "{ truncated", "utf8");
+
+    const deps = await wiredDeps(tracker, runtime);
+    const result = await runOnce(deps);
+
+    // The PR opened and the ruler decided; the unreadable record is reported
+    // but neither hides the PR nor skips the transition.
+    assert.equal(result.collected.length, 1);
+    assert.equal(result.collected[0]!.ruling.decision, "reserve");
+    assert.equal(result.collected[0]!.prConfirmed, true);
+    assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed], "the claim is held");
+    assert.equal(readFileSync(join(work, "associacoes-pr.json"), "utf8"), "{ truncated");
   });
 
   test("boot reconciliation after a crash: the interruption recovers the SAME attempt — no attempt consumed, no fall", async () => {
