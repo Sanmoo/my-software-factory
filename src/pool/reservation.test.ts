@@ -102,12 +102,18 @@ describe("reservation record — the Work's persisted source and destination", (
     const scanned = await scanReservations(layout);
     assert.equal(scanned.length, 1);
     assert.equal(scanned[0]!.reservation.state, "unreadable", "the mismatched record is not presented as this Work's");
-    assert.equal(scanned[0]!.work.ticket.site, "alpha.atlassian.net", "the dir key still anchors the Work");
+    assert.equal(scanned[0]!.anchor.site, "alpha.atlassian.net", "the dir key still anchors the Work");
+    assert.equal(scanned[0]!.work, null, "no readable Work is invented from the anchor");
 
-    await assert.rejects(
-      reserveWork(layout, reservationRecordOf(original)),
-      /already holds a different Work/,
-      "history is never replaced by a fresh record",
+    // Re-reserving reports the unknown and leaves the file untouched: the
+    // Work can still be launched, a human decides about the record.
+    const retry = await reserveWork(layout, reservationRecordOf(original));
+    assert.equal(retry.created, false);
+    assert.equal(retry.reservation.state, "unreadable");
+    assert.equal(
+      JSON.parse(readFileSync(join(dir, RESERVATION_FILENAME), "utf8")).ticket.site,
+      "beta.atlassian.net",
+      "the foreign record was not overwritten",
     );
   });
 
@@ -133,13 +139,13 @@ describe("reservation record — the Work's persisted source and destination", (
     const entries = await scanReservations(layout);
     assert.equal(entries.length, 1, "an unreadable record does not hide the reservation");
     assert.equal(entries[0]!.reservation.state, "unreadable");
-    assert.equal(entries[0]!.work.ticket.stableId, "10001", "the dir key still anchors the Work");
+    assert.equal(entries[0]!.anchor.stableId, "10001", "the dir key still anchors the Work");
+    assert.equal(entries[0]!.work, null);
 
-    await assert.rejects(
-      reserveWork(layout, reservationRecordOf(work)),
-      /unreadable/,
-      "history is never replaced by a fresh record",
-    );
+    // The Work is not blocked by its corrupt record, and the evidence stays.
+    const retry = await reserveWork(layout, reservationRecordOf(work));
+    assert.equal(retry.created, false);
+    assert.equal(retry.reservation.state, "unreadable");
     assert.equal(readFileSync(join(dir, RESERVATION_FILENAME), "utf8"), "{ not json");
   });
 
@@ -185,6 +191,7 @@ describe("reservation record — the Work's persisted source and destination", (
     // The old reservation still points at the old destination: configuration
     // never transfers already reserved work.
     const old = entries.find((entry) => entry.dir === first.dir)!;
+    assert.ok(old.work !== null);
     assert.equal(old.work.destination.repo, "Sanmoo/my-tasks");
     assert.equal(old.reservation.state, "persisted");
     const oldRecord = await readReservation(first.dir);

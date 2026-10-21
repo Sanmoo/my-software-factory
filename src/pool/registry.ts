@@ -180,6 +180,9 @@ export async function scanReservedWorks(
 ): Promise<ReservedWorkEntry[]> {
   const entries: ReservedWorkEntry[] = [];
   for (const entry of await scanReservations(workspace)) {
+    // `work` is null only for a non-GitHub dir with no trustworthy record —
+    // never a Work this legacy consumer could address.
+    if (entry.work === null) continue;
     const ref = issueRefOfTicket(entry.work.ticket);
     if (ref === null) continue;
     entries.push({ ref, dir: entry.dir });

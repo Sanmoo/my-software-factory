@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { readdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import { WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
@@ -12,8 +12,21 @@ import {
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import { readPersistedRecord, type PersistedFacts } from "./persisted.js";
-import { anchorOfKey, anchorOfWork, keyOfAnchor, readableKeyOf, workOfAnchor, workKeyOf } from "./work-key.js";
+import {
+  readPersistedRecord,
+  readPersistedRecordSync,
+  writePersistedRecordSync,
+  type PersistedFacts,
+} from "./persisted.js";
+import {
+  anchorOfKey,
+  anchorOfWork,
+  keyOfAnchor,
+  readableKeyOf,
+  workOfAnchor,
+  workKeyOf,
+  type WorkAnchor,
+} from "./work-key.js";
 
 /**
  * The reservation record (issue 125): the Work's own facts, persisted inside
@@ -59,7 +72,24 @@ export interface ReservationEntry {
   /** The dir key under <workspace>/trabalhos/ — the identity anchor. */
   key: string;
   dir: string;
-  work: WorkIdentity;
+  /** What the key names — always known, even when the record is not. */
+  anchor: WorkAnchor;
+  /**
+   * The Work as the disk names it: the persisted record, or the legacy GitHub
+   * key. Null when only the anchor is known — a non-GitHub dir whose record is
+   * missing or unreadable has no authoritative readable key, and none is
+   * invented from the stable id or the current configuration.
+   */
+  work: WorkIdentity | null;
+  reservation: ReservationFacts;
+}
+
+/** What reserving a Work did on disk; an unknown record is reported, never replaced. */
+export interface ReservationResult {
+  key: string;
+  dir: string;
+  /** True only when this call wrote the record. */
+  created: boolean;
   reservation: ReservationFacts;
 }
 
@@ -81,14 +111,15 @@ export function reservationRecordOf(
 
 /**
  * Persist the reservation of a Work. Idempotent: an existing record of the
- * SAME Work is kept untouched (its first reservedAt is history), a record of a
- * different Work or an unreadable one is refused — evidence is never
- * overwritten. Returns the dir so the caller launches in the same place.
+ * SAME Work is kept untouched (its first reservedAt is history). A record that
+ * cannot be trusted — unreadable, or naming another Work — is reported and
+ * never overwritten: an unknown record must not block the Work it describes,
+ * and the evidence must survive for a human. Only a broken invocation throws.
  */
-export async function reserveWork(
+export function reserveWork(
   workspace: WorkspaceLayout | string,
   record: ReservationRecord,
-): Promise<{ key: string; dir: string; created: boolean }> {
+): ReservationResult {
   if (!isReservationRecord(record)) {
     throw new ReservationError("invalid reservation record: not the reserva.json schema");
   }
@@ -97,24 +128,30 @@ export async function reserveWork(
   const work = workIdentity(record.ticket, record.destination);
   const key = workKeyOf(work);
   const dir = join(works, key);
-  mkdirSync(dir, { recursive: true });
 
-  const existing = await readReservation(dir);
+  // Synchronous on purpose: the launch path reserves the dir, persists its
+  // facts and claims without yielding, so concurrent launches keep their age
+  // order (issue 98).
+  const existing = readPersistedRecordSync(dir, RESERVATION_FILENAME, "a reservation record", isReservationRecord);
   if (existing.state === "persisted") {
     const existingWork = workIdentity(existing.record.ticket, existing.record.destination);
     if (keyOfAnchor(anchorOfWork(existingWork)) !== keyOfAnchor(anchorOfWork(work))) {
-      throw new ReservationError(
-        `reservation ${dir} already holds a different Work (${workIdentityKey(existingWork)})`,
-      );
+      return {
+        key,
+        dir,
+        created: false,
+        reservation: {
+          state: "unreadable",
+          reason: `${RESERVATION_FILENAME} names ${workIdentityKey(existingWork)}, not this Work`,
+        },
+      };
     }
-    return { key, dir, created: false };
+    return { key, dir, created: false, reservation: existing };
   }
-  if (existing.state === "unreadable") {
-    throw new ReservationError(`reservation ${dir} is unreadable (${existing.reason}); refusing to overwrite it`);
-  }
+  if (existing.state === "unreadable") return { key, dir, created: false, reservation: existing };
 
-  await writeFile(join(dir, RESERVATION_FILENAME), `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  return { key, dir, created: true };
+  writePersistedRecordSync(dir, RESERVATION_FILENAME, record);
+  return { key, dir, created: true, reservation: { state: "persisted", record } };
 }
 
 /** The persisted facts of a work dir; `absent` when the dir predates the record. */
@@ -143,14 +180,15 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
     if (reservation.state === "persisted") {
       const persistedWork = workIdentity(reservation.record.ticket, reservation.record.destination);
       if (keyOfAnchor(anchorOfWork(persistedWork)) === keyOfAnchor(anchor)) {
-        entries.push({ key, dir, work: persistedWork, reservation });
+        entries.push({ key, dir, anchor, work: persistedWork, reservation });
       } else {
         // The record and the dir disagree: keep the Work visible by its key,
         // and never present the mismatched facts as its own.
         entries.push({
           key,
           dir,
-          work: workOfAnchor(anchor, readableKeyOf(anchor)),
+          anchor,
+          work: legacyWork(anchor),
           reservation: {
             state: "unreadable",
             reason: `${RESERVATION_FILENAME} names ${workIdentityKey(persistedWork)}, not the Work of this dir key`,
@@ -159,7 +197,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
       }
       continue;
     }
-    entries.push({ key, dir, work: workOfAnchor(anchor, readableKeyOf(anchor)), reservation });
+    entries.push({ key, dir, anchor, work: legacyWork(anchor), reservation });
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
@@ -189,6 +227,13 @@ function hasWorkAncestor(key: string): boolean {
     if (anchorOfKey(parts.slice(0, end).join("/")) !== null) return true;
   }
   return false;
+}
+
+/** A GitHub dir is the issue of its destination repo itself: the legacy key is
+ *  an authoritative identity. Any other provider's key carries no readable
+ *  ticket key, so no Work is invented without the persisted record. */
+function legacyWork(anchor: WorkAnchor): WorkIdentity | null {
+  return anchor.provider === "github" ? workOfAnchor(anchor, readableKeyOf(anchor)) : null;
 }
 
 function isReservationRecord(value: unknown): value is ReservationRecord {
