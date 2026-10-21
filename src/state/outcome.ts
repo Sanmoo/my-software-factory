@@ -133,15 +133,10 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
 }
 
 /**
- * The record OF THIS ATTEMPT: a record left by another attempt is absent for
- * the current attempt's classification and diagnosis (issue 103) — the old
- * file survives on disk as history and serves numbering/reconciliation, but
- * it never decides this attempt's transition. A record without an `attempt`
- * (legacy) never parses, so it is absence too (issue 143).
- *
- * The ONE place the criterion "is this record this attempt's?" lives: the
- * collection path (runtime), the ruler and the status all call it, so they
- * cannot diverge (issue 143).
+ * The record OF THIS ATTEMPT, or null: the ONE place the criterion "is this
+ * record this attempt's?" lives — the collection path, the ruler and the
+ * status call it, so they cannot diverge (issue 143). A record without an
+ * `attempt` (legacy) never parses, so it is absence too.
  */
 export function ownOutcomeRecord(
   record: OutcomeRecord | null,
@@ -213,7 +208,7 @@ function describeOutcome({ attempt, record }: AttemptCommentInput): string {
   if (record === null) return "interrupted: no outcome record was written for this attempt";
   return (
     "interrupted: no outcome record of its own was written " +
-    `(${describeForeignRecord(record)})`
+    `(${describeForeignRecord(record.attempt)})`
   );
 }
 
@@ -300,18 +295,16 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
   if (record === null) return "ended without an outcome record";
   return (
     "ended without an outcome record of its own " +
-    `(${describeForeignRecord(record)})`
+    `(${describeForeignRecord(record.attempt)})`
   );
 }
 
 /**
  * The one rendering of the history fact "the record on disk is another
- * attempt's": the collection's rejection (issue 143), the block comment and
- * the repair comment all name it through here, so the operator's wording
- * cannot drift apart.
+ * attempt's", so the operator's wording cannot drift apart (issue 143).
  */
-export function describeForeignRecord(record: OutcomeRecord): string {
-  return `the record on disk belongs to attempt ${record.attempt}`;
+export function describeForeignRecord(attempt: number): string {
+  return `the record on disk belongs to attempt ${attempt}`;
 }
 
 /**
