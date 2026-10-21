@@ -89,17 +89,6 @@ export function workOfAnchor(anchor: WorkAnchor, readableKey: string): WorkIdent
   return { ticket: jiraTicket({ site: anchor.site, stableId: anchor.stableId, key: readableKey }), destination };
 }
 
-/**
- * The identity a registry key anchors, or null when the name is not a work dir.
- * A non-GitHub anchor comes back without its readable key (the stable id stands
- * in): the persisted reservation supplies the presentation.
- */
-export function workOfKey(key: string): WorkIdentity | null {
-  const anchor = anchorOfKey(key);
-  if (anchor === null) return null;
-  return workOfAnchor(anchor, readableKeyOf(anchor));
-}
-
 /** The presentation fallback a key alone can offer — never the authoritative key. */
 export function readableKeyOf(anchor: WorkAnchor): string {
   return anchor.provider === "github" ? `#${anchor.stableId}` : anchor.stableId;

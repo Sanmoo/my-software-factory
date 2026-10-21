@@ -13,6 +13,8 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { readOutcomeRecord } from "../state/outcome.js";
+import { readReservation } from "../pool/reservation.js";
+import { activePullRequest, readPrAssociations } from "../pool/pr-association.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 
 /**
@@ -122,6 +124,20 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.ok(existsSync(join(work, "log-1.jsonl")));
     const record = await readOutcomeRecord(work);
     assert.deepEqual(record, { class: "pr-open", attempt: 1, pr: { repo: REPO, number: 1, branch: "agent-issue-1" } });
+
+    // The launch persists the Work's own facts and the PR association on the
+    // same real path (issue 125): a restart reads them instead of the config.
+    const reservation = await readReservation(work);
+    assert.equal(reservation.state, "persisted");
+    if (reservation.state === "persisted") {
+      assert.equal(reservation.record.ticket.provider, "github");
+      assert.equal(reservation.record.ticket.stableId, "1");
+      assert.equal(reservation.record.destination.repo, REPO);
+      assert.equal(reservation.record.presentation.title, "Add a greeting");
+    }
+    const associations = await readPrAssociations(work);
+    assert.equal(associations.state, "persisted");
+    assert.equal(associations.state === "persisted" ? activePullRequest(associations.record)?.number : null, 1);
 
     // The ruler: PR open → reserve (the claim is held, waiting for the human).
     assert.equal(result.collected.length, 1);

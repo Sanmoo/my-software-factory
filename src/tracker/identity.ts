@@ -108,6 +108,11 @@ export function repositoryIdentityKey(repository: RepositoryIdentity): string {
   return `${repository.provider}:${repository.site}:${repository.repo}`;
 }
 
+/** The Work of a ticket delivered to a destination repository. */
+export function workIdentity(ticket: TicketIdentity, destination: RepositoryIdentity): WorkIdentity {
+  return { ticket, destination };
+}
+
 export function workIdentityKey(work: WorkIdentity): string {
   return `${ticketIdentityKey(work.ticket)}/${repositoryIdentityKey(work.destination)}`;
 }

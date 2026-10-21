@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -8,19 +8,21 @@ import {
   isTicketIdentity,
   pullRequestIdentityKey,
   repositoryIdentityKey,
+  workIdentity,
   workIdentityKey,
   type PullRequestIdentity,
   type RepositoryIdentity,
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
+import { readPersistedRecord, type PersistedFacts } from "./persisted.js";
 
 /**
  * The persisted PR association (issue 125): which PRs a Work has had, kept in
  * its registry dir as associacoes-pr.json. A PR number is only meaningful with
  * its repository, and the Work it delivers is fixed by its ticket identity —
  * so a restart correlates evidence instead of asking the current
- * configuration. A later execution appends its PR; earlier associations are
+ * configuration. A later attempt appends its PR; earlier associations are
  * never removed (a replaced PR stays inspectable).
  */
 
@@ -32,7 +34,7 @@ export type PrAssociationState = "active" | "historical";
 
 export interface PrAssociationEntry {
   pullRequest: PullRequestIdentity;
-  /** The execution (attempt) that opened it — the association's own fact. */
+  /** The attempt that opened it — the association's own fact. */
   attempt: number;
   openedAt: string;
   state: PrAssociationState;
@@ -46,10 +48,7 @@ export interface PrAssociationsRecord {
 }
 
 /** Absent is the honest empty state: a Work that never had a PR. */
-export type PrAssociationsFacts =
-  | { state: "persisted"; record: PrAssociationsRecord }
-  | { state: "absent" }
-  | { state: "unreadable"; reason: string };
+export type PrAssociationsFacts = PersistedFacts<PrAssociationsRecord>;
 
 export class PrAssociationError extends Error {
   constructor(message: string) {
@@ -64,28 +63,12 @@ export function activePullRequest(record: PrAssociationsRecord): PullRequestIden
   return active?.pullRequest ?? null;
 }
 
-export async function readPrAssociations(dir: string): Promise<PrAssociationsFacts> {
-  let raw: string;
-  try {
-    raw = await readFile(join(dir, PR_ASSOCIATIONS_FILENAME), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
-    return { state: "unreadable", reason: `cannot read ${PR_ASSOCIATIONS_FILENAME}: ${describe(error)}` };
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isPrAssociationsRecord(parsed)) {
-      return { state: "unreadable", reason: `${PR_ASSOCIATIONS_FILENAME} is not a PR association record` };
-    }
-    return { state: "persisted", record: parsed };
-  } catch (error) {
-    return { state: "unreadable", reason: `${PR_ASSOCIATIONS_FILENAME} is not valid JSON: ${describe(error)}` };
-  }
+export function readPrAssociations(dir: string): Promise<PrAssociationsFacts> {
+  return readPersistedRecord(dir, PR_ASSOCIATIONS_FILENAME, "a PR association record", isPrAssociationsRecord);
 }
 
 /**
- * Record the PR of an execution. Idempotent for the same Work and PR (a
+ * Record the PR of an attempt. Idempotent for the same Work and PR (a
  * feedback/repair round adds nothing); a new PR becomes the active one and the
  * previous one stays as history. An unreadable file or a file of another Work
  * is refused: history is never overwritten.
@@ -95,14 +78,14 @@ export async function recordPrAssociation(
   input: {
     work: WorkIdentity;
     pullRequest: PullRequestIdentity;
-    /** The execution that opened the PR. */
+    /** The attempt that opened the PR. */
     attempt: number;
     openedAt?: string;
   },
 ): Promise<PrAssociationsRecord> {
   const { work, pullRequest, attempt } = input;
   if (!Number.isInteger(attempt) || attempt < 1) {
-    throw new PrAssociationError(`invalid attempt ${attempt}: an association belongs to a numbered execution`);
+    throw new PrAssociationError(`invalid attempt ${attempt}: an association belongs to a numbered attempt`);
   }
   if (!isPullRequestIdentity(pullRequest)) {
     throw new PrAssociationError("invalid pull request identity");
@@ -122,9 +105,13 @@ export async function recordPrAssociation(
     facts.state === "persisted"
       ? facts.record
       : { version: 1 as const, ticket: work.ticket, destination: work.destination, associations: [] };
-  if (facts.state === "persisted" && workIdentityKey(workOf(existing)) !== workIdentityKey(work)) {
+  if (
+    facts.state === "persisted" &&
+    workIdentityKey(workIdentity(existing.ticket, existing.destination)) !== workIdentityKey(work)
+  ) {
     throw new PrAssociationError(
-      `PR associations of ${dir} belong to a different Work (${workIdentityKey(workOf(existing))})`,
+      `PR associations of ${dir} belong to a different Work ` +
+        `(${workIdentityKey(workIdentity(existing.ticket, existing.destination))})`,
     );
   }
 
@@ -148,10 +135,6 @@ export async function recordPrAssociation(
   mkdirSync(dir, { recursive: true });
   await writeFile(join(dir, PR_ASSOCIATIONS_FILENAME), `${JSON.stringify(record, null, 2)}\n`, "utf8");
   return record;
-}
-
-function workOf(record: PrAssociationsRecord): WorkIdentity {
-  return { ticket: record.ticket, destination: record.destination };
 }
 
 function isPrAssociationsRecord(value: unknown): value is PrAssociationsRecord {
@@ -181,8 +164,4 @@ function isPrAssociationsRecord(value: unknown): value is PrAssociationsRecord {
     else if (association["state"] !== "historical") return false;
   }
   return active <= 1;
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

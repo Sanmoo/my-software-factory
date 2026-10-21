@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import { githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
-import { anchorOfKey, keyOfAnchor, anchorOfWork, workKeyOf, workOfKey } from "./work-key.js";
+import { anchorOfKey, keyOfAnchor, anchorOfWork, workKeyOf, workOfAnchor } from "./work-key.js";
 
 /**
  * The on-disk work key is the identity anchor a reservation is read back
@@ -31,7 +31,9 @@ describe("work key — the registry's identity anchor", () => {
     const work = githubWork("Sanmoo/my-tasks", 7);
 
     assert.equal(workKeyOf(work), "Sanmoo/my-tasks#7");
-    assert.deepEqual(workOfKey("Sanmoo/my-tasks#7"), work);
+    const anchor = anchorOfKey("Sanmoo/my-tasks#7");
+    assert.ok(anchor !== null);
+    assert.deepEqual(workOfAnchor(anchor, "#7"), work);
   });
 
   test("two sites carrying the same readable key and stable ticket id get different dir keys", () => {
@@ -77,7 +79,9 @@ describe("work key — the registry's identity anchor", () => {
     // The readable key is NOT inside the anchor: it is presentation, read from
     // the persisted reservation instead.
     assert.ok(!("key" in anchor));
-    assert.equal(workOfKey(key)?.ticket.provider, "jira");
+    // The persisted reservation supplies the real readable key ("ABC-1");
+    // the anchor alone can only carry the stable id.
+    assert.equal(workOfAnchor(anchor, anchor.stableId).ticket.provider, "jira");
   });
 
   test("an unsupported GitHub site is named, never silently folded into github.com", () => {
