@@ -1,5 +1,3 @@
-## Language
-
 **Factory**:
 The service that turns eligible work into reviewed changes for the operator.
 
@@ -50,7 +48,7 @@ An attempt that ended without an outcome record: a SIGKILLed worker, a dead fact
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
 
 **Recovery budget**:
-The finite, per-work and persisted allowance of recoveries for one attempt (see `msf.yaml` for the default and the backoff). Exhausting it pauses the work and asks for help; it is separate from the attempt count.
+The finite, per-work and persisted allowance of recoveries for one attempt, with a configurable backoff. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
@@ -75,6 +73,9 @@ A work whose current attempt was interrupted (no outcome record of its own) and 
 
 **Archived work**:
 A work that reached done, whose artifacts were moved to the archive.
+
+**Abrupt death**:
+The runtime's structured fact for a session that ended with no outcome record: at collection, the fingerprint of an interruption.
 
 **Fall**:
 A WRITTEN failure or abandon of an attempt, ruled by the 1st/2nd-fall rule (1st releases, 2nd consecutive blocks). An interruption is never a fall.

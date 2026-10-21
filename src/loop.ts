@@ -22,7 +22,7 @@ import {
   readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
-  recordSettlesFailure,
+  ownFailureRecord,
   interruptionPausedCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
@@ -50,7 +50,12 @@ import {
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
-import { consumeRecovery, recordFailure, type RecoveryDecision } from "./pool/recovery.js";
+import {
+  consumeRecovery,
+  recordFailure,
+  INTERRUPTION_REASON,
+  type RecoveryDecision,
+} from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -70,9 +75,6 @@ import { mkdirSync } from "node:fs";
  */
 
 export const TICK_MS = 60_000;
-
-/** Why the recovery budget is spent (the ledger's event reason). */
-const INTERRUPTION_REASON = "worker-interrupted";
 
 /** The production backoff timer; tests inject {@link LoopDeps.wait}. */
 const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -163,6 +165,16 @@ function changedWorkKeys(
   }
   for (const key of previous.keys()) if (!next.has(key)) changed.push(key);
   return changed;
+}
+
+/** The rulings that end in an occurrence the operator must see (a block and
+ *  the done already notify; an interruption is absorbed by its budget). */
+function needsOccurrenceNotice(ruling: OutcomeRuling): boolean {
+  return (
+    ruling.decision === "reserve" ||
+    ruling.decision === "record-only" ||
+    ruling.decision === "release"
+  );
 }
 
 /** A recovery (no human age) goes first; the rest by creation age, then key. */
@@ -1111,11 +1123,7 @@ export class SweepEngine {
     // the ruler did not block. Help wins over review; the state decision is
     // untouched. The self-report counts only for THIS attempt — desfecho.json
     // survives between attempts.
-    if (
-      ruling.decision !== "done" &&
-      ruling.decision !== "block" &&
-      ruling.decision !== "interrupt"
-    ) {
+    if (needsOccurrenceNotice(ruling)) {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
       if (blockedLabelOnIssue || selfReportedNow) {
@@ -1133,7 +1141,7 @@ export class SweepEngine {
    * attempt was consumed. An absent/other-attempt record is no failure here.
    */
   private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
-    const own = recordSettlesFailure(record, attempt);
+    const own = ownFailureRecord(record, attempt);
     if (own !== null) await recordFailure(dir, attempt, own.class);
   }
 
