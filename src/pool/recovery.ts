@@ -197,9 +197,25 @@ export async function consumeRecovery(
 }
 
 /**
- * Record that the attempt wrote a failure/abandon outcome: the attempt is
- * consumed (the registry numbers the next one) and the interruption count of
- * this attempt no longer applies — the next attempt starts with a full budget.
+ * Persist that the attempt was interrupted as its last stop, spending nothing:
+ * the exhausted pause's diagnosis for `msf status`, independent of any grant.
+ */
+export async function recordInterruptionStop(
+  workDir: string,
+  attempt: number,
+  now: () => Date = () => new Date(),
+): Promise<void> {
+  const ledger = budgetForAttempt(await readRecoveryLedger(workDir), attempt);
+  await writeLedger(workDir, {
+    ...ledger,
+    lastStop: { kind: "interruption", attempt, at: now().toISOString() },
+  });
+}
+
+/**
+ * Record that the attempt wrote a failure outcome: the attempt is consumed
+ * (the registry numbers the next one) and the interruption count of this
+ * attempt no longer applies — the next attempt starts with a full budget.
  */
 export async function recordFailure(
   workDir: string,

@@ -593,12 +593,13 @@ async function deriveUnreconciledAttempt(
 }
 
 /**
- * The ruler for a failure the factory never applied: the on-disk record is the
- * attempt's own written failure, so it consumes the attempt. The 2nd
- * consecutive failure blocks (the interruption budget is NOT a fall count);
- * otherwise the 1st releases. The last interval — a death right after the
- * factory recorded the failure but before its transition — is read from the
- * recovery ledger, which settles the stop before the tracker write.
+ * The ruler for a written outcome the factory never applied: the on-disk
+ * record is the attempt's own (a written failure when the class is one), so the
+ * attempt is consumed and the ruler applies as at collection — the 2nd
+ * consecutive fall blocks, otherwise the 1st releases. The last interval — a
+ * death right after the factory settled the failure but before its transition —
+ * is read from the recovery ledger, which records the stop before the tracker
+ * write.
  */
 async function deriveUnreconciledFailure(
   ref: IssueRef,

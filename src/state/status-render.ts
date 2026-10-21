@@ -138,12 +138,12 @@ function renderInterrupted(key: string, attempt: number, recordedAttempt: number
 }
 
 /**
- * One work's interruption budget: what it cost and what ended the last stop —
- * an interruption (recoveries consumed, no attempt) or a failure (the attempt
- * was consumed). The configured value and backoff are always named.
+ * One work's interruption budget: what it cost and what ended the last stop.
+ * An interruption names the recoveries spent and the configured backoff; a
+ * failure names only the outcome class that consumed the attempt.
  */
-function renderRecovery(key: string, ledger: RecoveryLedger, policy: RecoveryBudget): string {
-  const spend = `${ledger.consumed}/${policy.maxRecoveries} recoveries (waits ${renderWaits(policy.waitsMs)})`;
+function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBudget): string {
+  const spend = `${ledger.consumed}/${budget.maxRecoveries} recoveries (waits ${renderWaits(budget.waitsMs)})`;
   const attempt = `attempt ${ledger.attempt}`;
   const last = ledger.lastStop;
   if (last === null) return `${key} (${attempt}: ${spend}; no stop settled yet)`;

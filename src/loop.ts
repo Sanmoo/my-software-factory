@@ -51,7 +51,7 @@ import {
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
-import { consumeRecovery, recordFailure, type RecoveryDecision } from "./pool/recovery.js";
+import { consumeRecovery, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -819,12 +819,12 @@ export class SweepEngine {
     decision: Extract<RecoveryDecision, { decision: "pause-help" }>,
   ): Promise<void> {
     const { workspace, config } = this.deps;
-    // Persist the exhausted stop for `msf status`: the peek consumed nothing,
-    // and granting is impossible at this count, so this only records it.
-    await consumeRecovery(dir, config.recovery, attempt);
+    // The exhausted pause spends nothing: it only records the stop that
+    // `msf status` reads.
+    await recordInterruptionStop(dir, attempt);
     const comment = await interruptionPausedCommentBody({
       attempt,
-      policy: config.recovery,
+      budget: config.recovery,
       record: await readOutcomeRecord(dir),
       workDir: dir,
       workspace,
@@ -1006,10 +1006,10 @@ export class SweepEngine {
 
   /**
    * Collection at the act: the ruler (ticket 13, extended by 14/123) on
-   * structured facts alone — the outcome record (absence = an interruption,
-   * never a failure), the PR fact and the label facts from the port, and the
-   * registry's consecutiveness. The decided transition is applied here; an
-   * interruption returns the SAME attempt as the next launch (issue 123).
+   * structured facts alone — the outcome record (absence = an interruption),
+   * the PR fact and the label facts from the port, and the registry's
+   * consecutiveness. The decided transition is applied here; an interruption
+   * returns the SAME attempt as the next launch (issue 123).
    */
   private async collect(
     launchable: Launchable,
@@ -1125,8 +1125,8 @@ export class SweepEngine {
   /**
    * Persist the WRITTEN failure that ended the attempt (issue 123): the next
    * attempt starts with a full interruption budget, and `msf status` says the
-   * attempt was consumed. A missing or other-attempt record, or a record of a
-   * class that is not a failure (pr-open, self-report), settles nothing.
+   * attempt was consumed. A missing or other-attempt record, or a class that
+   * is not a failure (pr-open, self-report), settles nothing.
    */
   private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
     const own = ownWrittenOutcome(record, attempt);
