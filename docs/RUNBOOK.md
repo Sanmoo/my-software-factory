@@ -222,9 +222,10 @@ address, with no window opened and no focus taken.
   for tests — the default wiring of `msf run` is all real; nothing on the
   binary's path can reach the fake adapter.
 - Every restart reconciles from disk + tracker: the registry
-  (`trabalhos/<repo>#<n>/`) holds the reservation and PR-association records,
-  the attempts, logs and outcome records; the tracker holds the labels and the
-  PR. No factory state lives in the process.
+  (`trabalhos/<repo>#<n>/` for GitHub, an identity dir per other source) holds
+  the reservation and PR-association records, the attempts, logs and outcome
+  records; the tracker holds the labels and the PR. No factory state lives in
+  the process.
 - **`Could not fetch from origin` on a retomada is expected, not a broken
   remote**: the work branch reaches the origin only when the worker
   publishes it (push + PR). A work that fell before publishing (blocked

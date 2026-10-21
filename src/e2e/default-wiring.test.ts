@@ -13,8 +13,8 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { readOutcomeRecord } from "../state/outcome.js";
-import { readReservation } from "../pool/reservation.js";
-import { activePullRequest, readPrAssociations } from "../pool/pr-association.js";
+import { RESERVATION_FILENAME, readReservation } from "../pool/reservation.js";
+import { PR_ASSOCIATIONS_FILENAME, activePullRequest, readPrAssociations } from "../pool/pr-association.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 
 /**
@@ -154,14 +154,14 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     // never mistaken for absent and never replaced by the launch.
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
-    writeFileSync(join(work, "reserva.json"), "{ truncated", "utf8");
+    writeFileSync(join(work, RESERVATION_FILENAME), "{ truncated", "utf8");
 
     const deps = await wiredDeps(tracker, runtime);
     const result = await runOnce(deps);
 
     assert.equal(result.launched.length, 1, "the unknown record does not block the work");
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed]);
-    assert.equal(readFileSync(join(work, "reserva.json"), "utf8"), "{ truncated", "the evidence stays for a human");
+    assert.equal(readFileSync(join(work, RESERVATION_FILENAME), "utf8"), "{ truncated", "the evidence stays for a human");
     const reservation = readReservation(work);
     assert.equal(reservation.state, "unreadable");
   });
@@ -174,7 +174,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
 
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
-    writeFileSync(join(work, "associacoes-pr.json"), "{ truncated", "utf8");
+    writeFileSync(join(work, PR_ASSOCIATIONS_FILENAME), "{ truncated", "utf8");
 
     const deps = await wiredDeps(tracker, runtime);
     const result = await runOnce(deps);
@@ -185,7 +185,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.equal(result.collected[0]!.ruling.decision, "reserve");
     assert.equal(result.collected[0]!.prConfirmed, true);
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed], "the claim is held");
-    assert.equal(readFileSync(join(work, "associacoes-pr.json"), "utf8"), "{ truncated");
+    assert.equal(readFileSync(join(work, PR_ASSOCIATIONS_FILENAME), "utf8"), "{ truncated");
   });
 
   test("boot reconciliation after a crash: the interruption recovers the SAME attempt — no attempt consumed, no fall", async () => {

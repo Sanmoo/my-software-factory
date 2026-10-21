@@ -69,7 +69,7 @@ export function activePullRequest(record: PrAssociationsRecord): PullRequestIden
 }
 
 export function readPrAssociations(dir: string): PrAssociationsFacts {
-  return readPersistedRecord(dir, PR_ASSOCIATION_FILE);
+  return readPersistedRecord(dir, PR_ASSOCIATIONS_FILE);
 }
 
 /**
@@ -165,12 +165,12 @@ function isPrAssociationsRecord(value: unknown): value is PrAssociationsRecord {
     if (typeof association["openedAt"] !== "string" || association["openedAt"] === "") return false;
     if (association["state"] !== "active" && association["state"] !== "historical") return false;
   }
-  // No single-active cap: a future Reexecution may keep earlier associations
-  // as its own records; this reader must not call that history unreadable.
+  // No single-active cap: earlier associations stay readable, so a later
+  // execution's records are never called unreadable.
   return true;
 }
 
-const PR_ASSOCIATION_FILE: PersistedFile<PrAssociationsRecord> = {
+const PR_ASSOCIATIONS_FILE: PersistedFile<PrAssociationsRecord> = {
   filename: PR_ASSOCIATIONS_FILENAME,
   what: "a PR association record",
   isRecord: isPrAssociationsRecord,

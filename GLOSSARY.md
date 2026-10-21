@@ -57,7 +57,7 @@ The factory's mark on the issue tracker that reserves work, together with assign
 The claim mark identifying work as already reserved and unavailable for another pickup.
 
 **Reservation**:
-The workspace record of a work, keeping its attempts and outcomes.
+The workspace record of a work: its source and destination facts, attempts, outcomes and PR associations.
 
 **Unbacked claim**:
 A factory claim mark on the tracker with no reservation in this workspace.

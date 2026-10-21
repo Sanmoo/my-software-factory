@@ -55,11 +55,12 @@ function encodeBranchComponent(value: string): string {
 }
 
 /**
- * The worktree Sandcastle manages for a branch inside the shared clone. The
- * path is a pure and injective function of the branch (`/` and `%` are
- * percent-encoded, so no two branch names share a path), and two Works of one
- * repository never land on the same worktree — git itself also refuses a
- * branch checked out twice.
+ * The path Sandcastle manages for one of our work branches inside the shared
+ * clone: a pure and injective function of the branch (`/` and `%` are
+ * percent-encoded, so no two branches share a path; our own names contain
+ * neither). For a branch outside that convention the caller falls back to
+ * whichever worktree holds it. Two Works of one repository never land on the
+ * same worktree — git also refuses a branch checked out twice.
  */
 export function workerWorktreePath(repoDir: string, branch: string): string {
   return join(repoDir, ".sandcastle", "worktrees", encodeURIComponent(branch));

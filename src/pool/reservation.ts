@@ -30,8 +30,7 @@ import {
  * reconstructing it from whatever configuration happens to be current.
  *
  * The dir key itself is the identity anchor (pool/work-key.ts); this record
- * adds the facts a key cannot carry (the Jira key/URL as it read when
- * reserved) and the ones a future tracker may present differently.
+ * adds the facts a key cannot carry (the readable ticket key and the link).
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
@@ -119,7 +118,7 @@ export function reserveWork(
     throw new ReservationError("invalid reservation record: not the reserva.json schema");
   }
 
-  const works = typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
+  const works = worksRoot(workspace);
   const work = workIdentity(record.ticket, record.destination);
   const key = workKeyOf(work);
   const dir = join(works, key);
@@ -162,7 +161,7 @@ export function readReservation(dir: string): ReservationFacts {
  * surfaced — because an unreadable reservation is never an absent one.
  */
 export async function scanReservations(workspace: WorkspaceLayout | string): Promise<ReservationEntry[]> {
-  const works = typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
+  const works = worksRoot(workspace);
   if (!existsSync(works)) return [];
 
   const entries: ReservationEntry[] = [];
@@ -196,6 +195,10 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function worksRoot(workspace: WorkspaceLayout | string): string {
+  return typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
 }
 
 /** Every dir under the registry root whose relative path is a Work key — a
