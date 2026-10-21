@@ -1,9 +1,13 @@
 /**
- * The tracker port: the factory's only boundary with the world of issues.
+ * The legacy tracker port (issue 124): the transitional shape existing
+ * consumers still speak. The expanded contracts split ticket operations from
+ * PR/code-host operations (`expanded-port.ts`); `legacyTrackerPort` bridges
+ * this shape onto them, and the bridge is removed once consumers migrate.
  *
  * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
- * speaks of works (trabalhos). A second real tracker (Jira) couples on the far
- * side of the same port. Contract from ticket 02 / prior art of v1:
+ * speaks of works (trabalhos). A Jira ticket adapter serves the expanded
+ * `TicketTracker`; GitHub serves both expanded ports. Contract from ticket
+ * 02 / prior art of v1:
  *
  *  - Writes are performed by the adapter only; confirmation is always by
  *    re-reading (ADR 0001). Adapters report the intents they performed, never
@@ -180,6 +184,10 @@ export class PartialWriteError extends Error {
 }
 
 /**
+ * @deprecated Transitional (issue 124): new code speaks `TicketTracker` /
+ * `PullRequestTracker`; existing consumers keep this shape through
+ * `legacyTrackerPort` until they migrate.
+ *
  * The 9 operations + rank (ticket 02, table 1), in port terms:
  *
  *   1. listOpenIssues   2. readIssue        3. readBlockers

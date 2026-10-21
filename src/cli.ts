@@ -7,6 +7,7 @@ import { parseCliArgs } from "./cli-args.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
+import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { utcStamp } from "./log.js";
 import { deriveStatus } from "./state/status.js";
@@ -65,12 +66,16 @@ export async function wireRunDeps(
   options: WireRunOptions = {},
 ): Promise<LoopDeps> {
   const seams = options.seams ?? {};
-  const tracker =
-    seams.tracker ??
-    (await createGitHubAdapter({
+  let tracker = seams.tracker;
+  if (tracker === undefined) {
+    // Production speaks the old TrackerPort through the transitional bridge;
+    // the real adapter itself serves the expanded ticket/PR contracts.
+    const github = await createGitHubAdapter({
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
-    }));
+    });
+    tracker = legacyTrackerPort(github, github);
+  }
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   const notifier = seams.notifier ?? new LinuxNotifier();

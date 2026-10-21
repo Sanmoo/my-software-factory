@@ -10,6 +10,21 @@ The service that turns eligible work into reviewed changes for the operator.
 **Work**:
 A piece of requested change the operator wants completed.
 
+**Ticket**:
+The issue-tracker item that requests a Work: a GitHub Issue or a Jira issue.
+
+**Ticket identity**:
+Provider + site + the provider's stable ticket id. A readable key or number is presentation only: it never stands in for the stable identity.
+
+**Source**:
+The ticket provider and site a Work comes from.
+
+**Destination**:
+The GitHub repository that receives a Work's code and PR.
+
+**Work identity**:
+The ticket identity plus the destination repository — what keeps Works from different providers, sites or destinations distinct even when keys/numbers coincide.
+
 **Worker**:
 The agent carrying out a work item on behalf of the operator.
 
