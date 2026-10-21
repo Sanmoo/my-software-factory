@@ -55,11 +55,14 @@ export interface RecoveryLedger {
   events: RecoveryEvent[];
   /** What ended the last attempt (or the one before, until a new one ends). */
   lastStop: RecoveryStop | null;
+  /** The highest attempt that ended in a WRITTEN failure — the fall ruler's
+   *  consecutiveness fact at a crash, never overwritten by an interruption. */
+  lastFailureAttempt: number | null;
 }
 
 /** The honest initial state: no recovery was ever consumed. */
 export function emptyLedger(): RecoveryLedger {
-  return { attempt: 1, consumed: 0, events: [], lastStop: null };
+  return { attempt: 1, consumed: 0, events: [], lastStop: null, lastFailureAttempt: null };
 }
 
 export type RecoveryDecision =
@@ -94,6 +97,7 @@ function parseLedger(value: unknown): RecoveryLedger {
     consumed: nonNegativeInteger(record["consumed"]) ?? 0,
     events: Array.isArray(record["events"]) ? record["events"].filter(isEvent) : [],
     lastStop: isStop(record["lastStop"]) ? record["lastStop"] : null,
+    lastFailureAttempt: positiveInteger(record["lastFailureAttempt"]),
   };
 }
 
@@ -193,7 +197,7 @@ export async function consumeRecovery(
     at,
   };
   await writeLedger(workDir, {
-    attempt,
+    ...ledger,
     consumed: decision.consumed,
     events: [...ledger.events, event],
     lastStop: { kind: "interruption", attempt, at },
@@ -217,13 +221,14 @@ export async function recordFailure(
   await writeLedger(workDir, {
     ...current,
     lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
+    lastFailureAttempt: Math.max(current.lastFailureAttempt ?? 0, attempt),
   });
 }
 
 /** The same ledger for a different attempt: the budget is per attempt. */
 function budgetForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {
   if (ledger.attempt === attempt) return ledger;
-  return { attempt, consumed: 0, events: [], lastStop: ledger.lastStop };
+  return { ...ledger, attempt, consumed: 0, events: [] };
 }
 
 /** The pause's reason, naming the configured value and backoff. */

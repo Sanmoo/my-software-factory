@@ -365,7 +365,7 @@ export class SweepEngine {
             this.announce(decision.ref, "eligible");
           } else {
             this.log(
-              `derived ${workKey(decision.ref)}: 2nd consecutive failure, unreconciled — ` +
+              `derived ${workKey(decision.ref)}: 2nd consecutive fall, unreconciled — ` +
                 "blocked with the attempt's diagnosis on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
@@ -1097,7 +1097,7 @@ export class SweepEngine {
     } else if (ruling.decision === "release") {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `collected ${key}: failure without PR — release (claimed→ready back; ` +
+        `collected ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
       await this.applyRelease(ref);
@@ -1105,7 +1105,7 @@ export class SweepEngine {
     } else {
       await this.settleFailure(dir, attempt, record);
       this.log(
-        `collected ${key}: 2nd consecutive failure — blocked, the attempt's outcome goes to the issue`,
+        `collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
       );
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";
@@ -1145,7 +1145,7 @@ export class SweepEngine {
     if (own !== null) await recordFailure(dir, attempt, own.class);
   }
 
-  /** The 1st-failure release (the ruler's mirrored swap): claimed→ready back,
+  /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,
    *  the assignee of the worker account released — the work re-enters the
    *  pool, the branch stays. One write pair, one helper: the derivation's
    *  unreconciled release and the collection's ruled release share it. */
