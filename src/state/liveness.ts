@@ -186,9 +186,18 @@ export function parseWorkerContainers(
   const workers: LiveWorker[] = [];
   for (const container of containers) {
     if (!listed.some((id) => container.Id.startsWith(id))) continue;
-    const key = workKeyOfMounts(container.Mounts ?? [], worksRoot);
-    if (key === null) continue;
-    workers.push({ key, containerId: container.Id, ageMs: ageOf(container, now) });
+    const correlation = correlateWork(container.Mounts ?? [], worksRoot);
+    // Another workspace's worker is a decided fact: not ours. An identity that
+    // cannot be decided is UNKNOWN, never "no worker" (issue 118) — it may
+    // still be one of ours.
+    if (correlation.kind === "foreign") continue;
+    if (correlation.kind === "inconclusive") {
+      throw new Error(
+        `worker-image container ${container.Id} carries no work this workspace can name — ` +
+          "its identity is inconclusive, liveness unknown",
+      );
+    }
+    workers.push({ key: correlation.key, containerId: container.Id, ageMs: ageOf(container, now) });
   }
   return workers.sort(
     (a, b) =>
@@ -224,18 +233,45 @@ interface InspectedContainer {
   Mounts?: Array<{ Source?: string }>;
 }
 
-/** The work key of the first mount that resolves under the works root. */
-function workKeyOfMounts(mounts: Array<{ Source?: string }>, worksRoot: string): string | null {
+/**
+ * What a worker-image container's mounts say about its work (issue 118): the
+ * work this workspace owns, a work of ANOTHER workspace (a sibling factory on
+ * the same host — a decided "not ours"), or an identity that cannot be
+ * decided. Only the first counts; the last fails the probe, because an
+ * inconclusive correlation never authorizes assuming no relevant worker.
+ */
+type WorkCorrelation =
+  | { kind: "ours"; key: string }
+  | { kind: "foreign" }
+  | { kind: "inconclusive" };
+
+/** A work dir as any factory lays it on disk: <somewhere>/trabalhos/<repo>#<n>. */
+const WORK_UNDER_TRABALHOS = /(?:^|\/)trabalhos\/(.+#\d+)(?:\/sessao)?$/;
+
+function correlateWork(mounts: Array<{ Source?: string }>, worksRoot: string): WorkCorrelation {
+  let undecidable = false;
+  let foreign = false;
   for (const mount of mounts) {
     const source = mount.Source;
     if (source === undefined) continue;
     const path = relative(worksRoot, source);
-    // Outside the works root: not a work's dir. (".." is absolute-path safe.)
-    if (path === "" || path.startsWith("..") || isAbsolute(path)) continue;
-    // The sessions bind points at <work dir>/sessao — the work is its parent.
-    const name = path.split(sep).join("/").replace(/\/sessao$/, "");
-    const parsed = parseWorkKey(name);
-    if (parsed !== null) return name;
+    // Under THIS works root: the dir must name a work. (".." is absolute-path safe.)
+    if (path !== "" && !path.startsWith("..") && !isAbsolute(path)) {
+      // The sessions bind points at <work dir>/sessao — the work is its parent.
+      const name = path.split(sep).join("/").replace(/\/sessao$/, "");
+      if (parseWorkKey(name) !== null) return { kind: "ours", key: name };
+      undecidable = true;
+      continue;
+    }
+    // Outside it: another workspace's worker, or a stranger's mount.
+    if (WORK_UNDER_TRABALHOS.test(mountPath(source))) foreign = true;
   }
-  return null;
+  if (undecidable) return { kind: "inconclusive" };
+  if (foreign) return { kind: "foreign" };
+  return { kind: "inconclusive" };
+}
+
+/** A mount source as a posix path, whatever the host separator. */
+function mountPath(source: string): string {
+  return source.split(sep).join("/");
 }

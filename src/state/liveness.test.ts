@@ -67,10 +67,48 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     ]);
   });
 
-  test("a container without a mount under the works root is not a factory worker", () => {
+  test("a worker-image container whose work cannot be named is unknown liveness, never 'no worker' (issue 118)", () => {
     const ps = "ccc333\n";
     const stranger = [{ Id: "ccc333", State: { Running: true, StartedAt: "2026-02-01T11:00:00Z" }, Mounts: [] }];
-    assert.deepEqual(parseWorkerContainers(ps, JSON.stringify(stranger), WORKS, NOW), []);
+    assert.throws(
+      () => parseWorkerContainers(ps, JSON.stringify(stranger), WORKS, NOW),
+      /ccc333.*identity is inconclusive.*liveness unknown/,
+      "an inconclusive correlation cannot authorize assuming no relevant worker",
+    );
+  });
+
+  test("another workspace's worker is decided, not ours — a sibling factory never makes liveness unknown", () => {
+    const ps = "ddd444\n";
+    const foreign = [
+      {
+        Id: "ddd444",
+        State: { Running: true, StartedAt: "2026-02-01T11:30:00Z" },
+        Mounts: [
+          { Type: "bind", Source: "/elsewhere/trabalhos/Sanmoo/my-tasks#4", Destination: "/msf-work" },
+          { Type: "bind", Source: "/elsewhere/trabalhos/Sanmoo/my-tasks#4/sessao", Destination: "/sessions" },
+        ],
+      },
+    ];
+    assert.deepEqual(
+      parseWorkerContainers(ps, JSON.stringify(foreign), WORKS, NOW),
+      [],
+      "a work under another works root belongs to another workspace",
+    );
+  });
+
+  test("a mount under THIS works root that names no work is inconclusive, never ignored", () => {
+    const ps = "eee555\n";
+    const ambiguous = [
+      {
+        Id: "eee555",
+        State: { Running: true, StartedAt: "2026-02-01T11:30:00Z" },
+        Mounts: [{ Type: "bind", Source: `${WORKS}/not-a-work-dir`, Destination: "/msf-work" }],
+      },
+    ];
+    assert.throws(
+      () => parseWorkerContainers(ps, JSON.stringify(ambiguous), WORKS, NOW),
+      /eee555.*identity is inconclusive/,
+    );
   });
 
   test("only the containers the listing reported count, even when inspect carries others", () => {

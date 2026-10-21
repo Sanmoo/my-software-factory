@@ -34,6 +34,8 @@ repos:
 # recovery:                       # an interruption is not a failure (issue 123)
 #   max: 3                        # recoveries per attempt; 0 pauses on the first
 #   waits-ms: [1000, 4000, 16000] # the backoff before each recovery relaunch
+# liveness:                       # Docker silence suspends launches (issue 118)
+#   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
 ```
 

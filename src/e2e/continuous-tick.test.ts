@@ -11,7 +11,12 @@ import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET, type Config, DEFAULT_LIVENESS_POLICY} from "../config.js";
+import {
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RECOVERY_BUDGET,
+  type Config,
+} from "../config.js";
 import { installGhShim, spawnCli } from "./cli-harness.js";
 
 /**

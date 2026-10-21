@@ -4,6 +4,7 @@ import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { eventLogName } from "./attempt-logs.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -69,7 +70,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
     const line = JSON.stringify({ event, attempt: request.attempt, ...extra });
-    appendFileSync(join(request.workDir, `log-${request.attempt}.jsonl`), `${line}\n`, "utf8");
+    appendFileSync(join(request.workDir, eventLogName(request.attempt)), `${line}\n`, "utf8");
   }
 
   private next(): ScriptedOutcome {

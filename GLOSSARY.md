@@ -82,11 +82,19 @@ A worker whose container is still alive after the factory process that launched 
 _Avoid_: Orphan, when the worker is alive.
 
 **Liveness unknown**:
-Docker did not answer — a failure, a timeout or an invalid answer. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
+Docker did not answer — a failure, a timeout, an invalid answer, or a worker container whose work this workspace cannot name. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
 _Avoid_: No workers, when the answer is missing.
 
 **Duplicate workers**:
 More than one live container carrying the same work. Each occupies a slot and the work is not launched again; the factory chooses no owner and ends nothing, and asks the operator to decide.
+
+**Intervention notice**:
+The operator's notice that a live worker needs a decision the factory will not make alone: duplicate containers of one work, or a survivor silent past the idle limit. It says nothing was ended, replaced or chosen.
+_Avoid_: Help notice, when the work is not blocked.
+
+**Factory notice**:
+The operator's notice about the factory itself, naming no work: Docker has not answered long enough for launches to stop. It is never posted on an issue.
+_Avoid_: Work notice, when no work is involved.
 
 **Archived work**:
 A work that reached done, whose artifacts were moved to the archive.
