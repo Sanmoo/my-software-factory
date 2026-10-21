@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { IssueRef } from "../tracker/port.js";
-import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
+import { requireSupportedGitHubSite, type WorkIdentity } from "../tracker/identity.js";
 
 /**
  * The git host side of the factory (ticket 10 / 15 decisions): one clone per
@@ -40,9 +40,7 @@ export function workBranchName(number: number): string {
 export function branchOfWork(work: WorkIdentity): string {
   const { ticket } = work;
   if (ticket.provider === "github") {
-    if (ticket.site !== GITHUB_SITE) {
-      throw new Error(`GitHub site ${ticket.site} has no branch convention: only ${GITHUB_SITE} is supported`);
-    }
+    requireSupportedGitHubSite(ticket.site);
     return workBranchName(ticket.number);
   }
   return (
@@ -59,12 +57,13 @@ function encodeBranchComponent(value: string): string {
 
 /**
  * The worktree Sandcastle manages for a branch inside the shared clone. The
- * path is a pure function of the branch, so two Works of one repository never
- * land on the same worktree (git itself also refuses a branch checked out
- * twice).
+ * path is a pure and injective function of the branch (`/` and `%` are
+ * percent-encoded, so no two branch names share a path), and two Works of one
+ * repository never land on the same worktree — git itself also refuses a
+ * branch checked out twice.
  */
 export function workerWorktreePath(repoDir: string, branch: string): string {
-  return join(repoDir, ".sandcastle", "worktrees", branch.replaceAll("/", "-"));
+  return join(repoDir, ".sandcastle", "worktrees", encodeURIComponent(branch));
 }
 
 /** Directory of the single clone of a target repo: <reposDir>/<owner>#<name>. */

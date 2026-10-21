@@ -28,8 +28,14 @@ Provider + site + the destination repository name; the code-host identity, never
 **PR identity**:
 The destination repository plus the PR number; always distinct from the ticket identity.
 
+**PR association**:
+The registry's record of the PR that currently delivers a Work, with the attempt that opened it; earlier associations remain as history.
+
 **Work identity**:
 The ticket identity plus the destination repository — what keeps Works from different providers, sites or destinations distinct even when keys/numbers coincide.
+
+**Work anchor**:
+The provider, site, stable ticket id and destination repository a registry key encodes: the Work's identity without its presentation data. A readable ticket key never enters it.
 
 **Worker**:
 The agent carrying out a work item on behalf of the operator.

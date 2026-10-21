@@ -1028,13 +1028,30 @@ export class SweepEngine {
       // with no footprint. Its own facts (source + destination + presentation)
       // land on disk with it (issue 125), so a restart reads the Work from the
       // registry instead of reconstructing it from the current configuration.
+      // The dir is the safety footprint of issue 98; the record is the Work's
+      // facts. A record that is unknown or cannot be written is reported and
+      // never blocks the claim: the dir key still anchors the Work.
       const work = workOfIssueRef(ref);
+      mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
       const url = ticketUrl(work.ticket);
       const presentation = {
         ...(launchable.title === undefined ? {} : { title: launchable.title }),
         ...(url === undefined ? {} : { url }),
       };
-      reserveWork(workspace, reservationRecordOf(work, presentation));
+      try {
+        const reservation = reserveWork(workspace, reservationRecordOf(work, presentation));
+        if (reservation.reservation.state === "unreadable") {
+          this.log(
+            `reservation of ${key} is unreadable (${reservation.reservation.reason}) — ` +
+              "keeping it and launching on the dir key",
+          );
+        }
+      } catch (error) {
+        this.log(
+          `reservation of ${key} could not be persisted ` +
+            `(${error instanceof Error ? error.message : String(error)}) — launching on the dir key`,
+        );
+      }
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
@@ -1465,12 +1482,13 @@ export class SweepEngine {
       workspace,
     });
 
-    // An open PR is a persisted association of this Work (issue 125): a
-    // restart correlates the PR from disk, and a later attempt appends its own
-    // PR instead of replacing the earlier association. A record that cannot be
-    // read or written is reported and never changes the ruling above — the
-    // Work's transition is the domain decision, the record is its evidence.
-    if (prConfirmed && pr !== null) {
+    // A known PR — open, merged or closed — is a persisted association of this
+    // Work (issue 125): a restart correlates it from disk, and a later attempt
+    // appends its own PR instead of replacing the earlier association. A record
+    // that cannot be read or written is reported and never changes the ruling
+    // above — the Work's transition is the domain decision, the record is its
+    // evidence.
+    if (pr !== null) {
       try {
         await recordPrAssociation(dir, {
           work: workOfIssueRef(ref),

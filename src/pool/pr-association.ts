@@ -12,7 +12,12 @@ import {
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import { readPersistedRecord, writePersistedRecord, type PersistedFacts } from "./persisted.js";
+import {
+  readPersistedRecord,
+  writePersistedRecord,
+  type PersistedFacts,
+  type PersistedFile,
+} from "./persisted.js";
 
 /**
  * The persisted PR association (issue 125): which PRs a Work has had, kept in
@@ -26,7 +31,7 @@ import { readPersistedRecord, writePersistedRecord, type PersistedFacts } from "
 /** Disk name stays PT-BR with the rest of the registry. */
 export const PR_ASSOCIATIONS_FILENAME = "associacoes-pr.json";
 
-/** The one factory-conducted PR is active; replaced ones stay as history. */
+/** The PR the Work currently has; replaced ones stay as history. */
 export type PrAssociationState = "active" | "historical";
 
 export interface PrAssociationEntry {
@@ -54,14 +59,17 @@ export class PrAssociationError extends Error {
   }
 }
 
-/** The Work's one factory-conducted PR, or null when none is associated yet. */
+/** The PR the Work currently has (the last one recorded), or null before any. */
 export function activePullRequest(record: PrAssociationsRecord): PullRequestIdentity | null {
-  const active = record.associations.find((entry) => entry.state === "active");
-  return active?.pullRequest ?? null;
+  for (let index = record.associations.length - 1; index >= 0; index -= 1) {
+    const entry = record.associations[index]!;
+    if (entry.state === "active") return entry.pullRequest;
+  }
+  return null;
 }
 
 export function readPrAssociations(dir: string): Promise<PrAssociationsFacts> {
-  return readPersistedRecord(dir, PR_ASSOCIATIONS_FILENAME, "a PR association record", isPrAssociationsRecord);
+  return readPersistedRecord(dir, PR_ASSOCIATION_FILE);
 }
 
 /**
@@ -141,7 +149,6 @@ function isPrAssociationsRecord(value: unknown): value is PrAssociationsRecord {
   if (!isRepositoryIdentity(record["destination"])) return false;
   if (!Array.isArray(record["associations"])) return false;
 
-  let active = 0;
   for (const entry of record["associations"]) {
     if (entry === null || typeof entry !== "object") return false;
     const association = entry as Record<string, unknown>;
@@ -156,8 +163,15 @@ function isPrAssociationsRecord(value: unknown): value is PrAssociationsRecord {
       return false;
     }
     if (typeof association["openedAt"] !== "string" || association["openedAt"] === "") return false;
-    if (association["state"] === "active") active += 1;
-    else if (association["state"] !== "historical") return false;
+    if (association["state"] !== "active" && association["state"] !== "historical") return false;
   }
-  return active <= 1;
+  // No single-active cap: a future Reexecution may keep earlier associations
+  // as its own records; this reader must not call that history unreadable.
+  return true;
 }
+
+const PR_ASSOCIATION_FILE: PersistedFile<PrAssociationsRecord> = {
+  filename: PR_ASSOCIATIONS_FILENAME,
+  what: "a PR association record",
+  isRecord: isPrAssociationsRecord,
+};

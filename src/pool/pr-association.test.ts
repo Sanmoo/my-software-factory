@@ -23,7 +23,7 @@ import { reservationRecordOf, reserveWork } from "./reservation.js";
 
 /**
  * The PR association on REAL disk: which PR belongs to which Work, kept with
- * its execution history so a restart (or a later execution) correlates the PR
+ * its Attempt history so a restart (or a later attempt) correlates the PR
  * instead of asking the current configuration.
  */
 
@@ -68,7 +68,7 @@ describe("PR association — the Work's persisted PR history", () => {
     assert.equal(read.record.associations[0]!.attempt, 1);
   });
 
-  test("a Later PR of a NEW execution is kept beside the earlier one — history is never overwritten", async () => {
+  test("a later PR of a later attempt is kept beside the earlier one — history is never overwritten", async () => {
     await recordPrAssociation(dir, { work, pullRequest: pr(42), attempt: 1 });
     await recordPrAssociation(dir, { work, pullRequest: pr(77), attempt: 3 });
 
@@ -94,7 +94,7 @@ describe("PR association — the Work's persisted PR history", () => {
     assert.equal(read.state, "persisted");
     if (read.state !== "persisted") return;
     assert.equal(read.record.associations.length, 1);
-    assert.equal(read.record.associations[0]!.attempt, 1, "the opening execution is the association's own fact");
+    assert.equal(read.record.associations[0]!.attempt, 1, "the opening attempt is the association's own fact");
     assert.equal(read.record.associations[0]!.openedAt, "2026-01-01T00:00:00.000Z");
   });
 

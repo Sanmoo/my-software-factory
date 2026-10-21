@@ -1,5 +1,4 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -13,56 +12,38 @@ export type PersistedFacts<T> =
   | { state: "absent" }
   | { state: "unreadable"; reason: string };
 
-export async function readPersistedRecord<T>(
-  dir: string,
-  filename: string,
-  what: string,
-  isRecord: (value: unknown) => value is T,
-): Promise<PersistedFacts<T>> {
-  let raw: string;
-  try {
-    raw = await readFile(join(dir, filename), "utf8");
-  } catch (error) {
-    return factsOfReadError<T>(filename, error);
-  }
-  return parsePersistedRecord(raw, filename, what, isRecord);
+/** The file a work dir persists one kind of record in. */
+export interface PersistedFile<T> {
+  filename: string;
+  /** What the reader calls the record in its diagnosis (e.g. "a reservation record"). */
+  what: string;
+  isRecord: (value: unknown) => value is T;
 }
 
-/** The same read, synchronous: the launch path must not yield the event loop
- *  between its dir reservation and the claim (issue 98's order). */
-export function readPersistedRecordSync<T>(
-  dir: string,
-  filename: string,
-  what: string,
-  isRecord: (value: unknown) => value is T,
-): PersistedFacts<T> {
-  let raw: string;
-  try {
-    raw = readFileSync(join(dir, filename), "utf8");
-  } catch (error) {
-    return factsOfReadError<T>(filename, error);
-  }
-  return parsePersistedRecord(raw, filename, what, isRecord);
+export async function readPersistedRecord<T>(dir: string, file: PersistedFile<T>): Promise<PersistedFacts<T>> {
+  return readPersistedRecordSync(dir, file);
 }
 
-function parsePersistedRecord<T>(
-  raw: string,
-  filename: string,
-  what: string,
-  isRecord: (value: unknown) => value is T,
-): PersistedFacts<T> {
+/**
+ * The same read, synchronously: the launch path must not yield the event loop
+ * between its dir reservation and the claim (issue 98's order).
+ */
+export function readPersistedRecordSync<T>(dir: string, file: PersistedFile<T>): PersistedFacts<T> {
+  let raw: string;
+  try {
+    raw = readFileSync(join(dir, file.filename), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
+    return { state: "unreadable", reason: `cannot read ${file.filename}: ${describeError(error)}` };
+  }
+
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return { state: "unreadable", reason: `${filename} is not ${what}` };
+    if (!file.isRecord(parsed)) return { state: "unreadable", reason: `${file.filename} is not ${file.what}` };
     return { state: "persisted", record: parsed };
   } catch (error) {
-    return { state: "unreadable", reason: `${filename} is not valid JSON: ${describeError(error)}` };
+    return { state: "unreadable", reason: `${file.filename} is not valid JSON: ${describeError(error)}` };
   }
-}
-
-function factsOfReadError<T>(filename: string, error: unknown): PersistedFacts<T> {
-  if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
-  return { state: "unreadable", reason: `cannot read ${filename}: ${describeError(error)}` };
 }
 
 /**
@@ -71,24 +52,17 @@ function factsOfReadError<T>(filename: string, error: unknown): PersistedFacts<T
  * one — the difference between "older facts" and "unreadable".
  */
 export async function writePersistedRecord(dir: string, filename: string, record: unknown): Promise<void> {
-  mkdirSync(dir, { recursive: true });
-  const temp = tempPath(dir, filename);
-  await writeFile(temp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  await rename(temp, join(dir, filename));
+  writePersistedRecordSync(dir, filename, record);
 }
 
 export function writePersistedRecordSync(dir: string, filename: string, record: unknown): void {
   mkdirSync(dir, { recursive: true });
-  const temp = tempPath(dir, filename);
+  const temp = join(dir, `.${filename}.${process.pid}.${writeCounter++}.tmp`);
   writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   renameSync(temp, join(dir, filename));
 }
 
 let writeCounter = 0;
-
-function tempPath(dir: string, filename: string): string {
-  return join(dir, `.${filename}.${process.pid}.${writeCounter++}.tmp`);
-}
 
 export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
