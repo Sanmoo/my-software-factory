@@ -1476,8 +1476,8 @@ export class SweepEngine {
     });
 
     // A known PR — open, merged or closed — is persisted beside the Work
-    // (issue 125): a restart correlates it from disk, and a later attempt
-    // appends its own. Persistence never changes the ruling above.
+    // (issue 125): the facts survive a restart, and a later attempt appends
+    // its own. Persistence never changes the ruling above.
     if (pr !== null) {
       try {
         recordPrAssociation(dir, {

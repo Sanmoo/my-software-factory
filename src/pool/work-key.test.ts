@@ -94,7 +94,7 @@ describe("work key — the registry's identity anchor", () => {
     const anchor = anchorOfKey(key);
     assert.ok(anchor !== null);
     assert.equal(anchor.site, "ghe.example");
-    assert.equal(anchor.number, 7);
+    assert.equal(anchor.stableId, "7");
     assert.deepEqual(workOfAnchor(anchor, "#7"), enterprise);
   });
 
