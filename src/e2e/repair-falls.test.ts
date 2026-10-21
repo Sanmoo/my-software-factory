@@ -12,7 +12,7 @@ import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../pool/repair.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
@@ -101,6 +101,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -229,7 +230,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.match(comment, /automatic repair stopped after 2 consecutive repair attempts/i, "the human sees why");
     assert.match(
       comment,
-      /attempt 3 fell abruptly: no outcome record of its own was written \(the record on disk belongs to attempt 1\)/,
+      /attempt 3 ended without an outcome record of its own \(the record on disk belongs to attempt 1\)/,
       "the fallen attempt and the divergent record are named",
     );
     assert.match(comment, /not published \(the remote does not carry the attempt's commit\)/);
@@ -508,7 +509,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.match(
       comments.value.at(-1)!.body,
       /attempt 3 ended normally \(its outcome record says "clean-without-pr"\) but nothing reached the remote/,
-      "a normal end without publication is named as such — never invented as an abrupt fall",
+      "a normal end without publication is named as such — never invented as an ended-without-record",
     );
     assert.equal((await readRepairCycle(workDir(layout, REPO, 106))).usedRounds, 0, "the round was not charged");
   });
@@ -912,6 +913,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(root, "msf.yaml"),
     };

@@ -10,7 +10,7 @@ import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fa
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { scanRegistry } from "../pool/registry.js";
 
@@ -90,6 +90,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -99,7 +100,20 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes });
     const git = new RecordingGitWork();
-    return { tracker, runtime, git, deps: { config, tracker, runtime, git, workspace: layout, log: () => {} } as LoopDeps };
+    return {
+      tracker,
+      runtime,
+      git,
+      deps: {
+        config,
+        tracker,
+        runtime,
+        git,
+        workspace: layout,
+        log: () => {},
+        wait: async () => {},
+      } as LoopDeps,
+    };
   }
 
   async function labelsOf(tracker: FakeTrackerAdapter, number: number): Promise<string[]> {
@@ -353,9 +367,9 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(launchOf(second.launched, 10)?.request.attempt, 2, "the registry numbered the round");
   });
 
-  // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an abrupt fall ----
+  // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an interruption (issue 123) ----
 
-  test("an orphan claim with zero footprint is released by the sweep, then re-claimed and launched as attempt 1", async () => {
+  test("an orphan claim with zero footprint is recovered as attempt 1 — never released, never a fall", async () => {
     const config = makeConfig(2);
     const { tracker, runtime, deps } = makeFactory(config, ["pr-open"]);
 
@@ -366,17 +380,20 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     await tracker.claim({ repo: REPO, number: 7 }, config.workerGhAccount, DEFAULT_LABELS.ready);
     mkdirSync(workDir(layout, REPO, 7), { recursive: true });
 
-    // Sweep #2 (--once): the orphan is an abrupt fall — released back to the
-    // pool in the very same sweep, then re-claimed and launched as attempt 1.
+    // Sweep #2 (--once): absence of a session is an interruption, not a
+    // failure — the SAME attempt 1 is recovered and launched, the claim held.
     const sweep = await runOnce(deps);
-    const fall = sweep.reserved.find((decision) => decision.ref.number === 7);
-    assert.ok(fall, "the orphan was derived as a reserved work");
-    assert.equal(fall.state, "fall", "the orphan claim is an abrupt fall (story 22)");
-    assert.ok(fall.state === "fall" && fall.decision === "release", "1st fall: release");
+    const interrupted = sweep.reserved.find((decision) => decision.ref.number === 7);
+    assert.ok(interrupted, "the orphan was derived as a reserved work");
+    assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption (issue 123)");
+    assert.ok(
+      interrupted.state === "interrupted" && interrupted.attempt === 1,
+      "zero evidence numbers attempt 1, and the recovery continues it",
+    );
 
-    assert.equal(runtime.launched.length, 1, "the released work was picked up again in the same sweep");
-    assert.equal(runtime.launched[0]?.attempt, 1, "the registry honestly reports attempt 1 (zero evidence)");
-    assert.ok((await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.claimed), "re-claimed by this sweep");
-    assert.ok(!(await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.ready), "never stuck claimed-and-idle again");
+    assert.equal(runtime.launched.length, 1, "the interrupted attempt was recovered in the same sweep");
+    assert.equal(runtime.launched[0]?.attempt, 1, "the SAME attempt continues — no attempt was consumed");
+    assert.ok((await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.claimed), "the claim is held (re-asserted)");
+    assert.ok(!(await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.ready), "never released back to the pool");
   });
 });

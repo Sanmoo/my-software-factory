@@ -42,10 +42,19 @@ A reservation whose work carries no factory mark at all.
 A reservation with no attempt evidence yet: the claim landed, but the worker has not.
 
 **Attempt**:
-One try by a worker to carry out a work, counted per work.
+One logical try by a worker to carry out a work, counted per work. It survives infrastructure interruptions: recovering an interrupted attempt does not start or consume another.
 
 **Outcome**:
 The verdict of how an attempt ended.
+
+**Interruption**:
+An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container, a hard stop. It is not a failure: it consumes no attempt and never enters the fall ruler.
+
+**Recovery**:
+The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
+
+**Recovery budget**:
+The finite, per-work and persisted allowance of recoveries for one attempt (default 3, waits 1/4/16 s, configurable). Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
@@ -66,13 +75,19 @@ _Avoid_: Attempt, when referring to starting again after delivery or cancellatio
 A work whose attempt is being carried out by a live worker right now.
 
 **Orphaned**:
-A work whose current attempt ended without an outcome record of its own and with no worker running: an abrupt fall awaiting the factory's next reconciliation. An older attempt's record on disk is history, never this attempt's outcome.
+A work whose current attempt was interrupted (no outcome record of its own) and with no worker running: awaiting the factory's next reconciliation. An older attempt's record on disk is history, never this attempt's outcome.
 
 **Archived work**:
 A work that reached done, whose artifacts were moved to the archive.
 
+**Abrupt death**:
+The runtime's structured fact for a session that ended with no outcome record: at collection, the fingerprint of an interruption.
+
+**Fall**:
+A WRITTEN failure or abandon of an attempt, ruled by the 1st/2nd-fall rule (1st releases, 2nd consecutive blocks). An interruption is never a fall.
+
 **Block**:
-A work the factory stopped driving (2nd consecutive worker fall, 2nd consecutive Repair fall, or PR closed without merge) until a human answers on its issue.
+A work the factory stopped driving (2nd consecutive failed attempt, exhausted recovery budget, 2nd consecutive Repair fall, or PR closed without merge) until a human answers on its issue.
 
 **Occurrence**:
 A new act that needs human continuity, such as a PR awaiting attention, a help request or a block; never an ordinary sweep.

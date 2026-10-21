@@ -11,7 +11,7 @@ import {
   renderUnbackedClaim,
   renderUnmarkedReservation,
 } from "./derive.js";
-import { DEFAULT_LABELS } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
 
@@ -293,7 +293,14 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
   });
 
   async function deriveOne(number: number) {
-    const [derived] = await deriveReserved(adapter, [entry(number)], DEFAULT_LABELS, "bot", layout);
+    const [derived] = await deriveReserved(
+      adapter,
+      [entry(number)],
+      DEFAULT_LABELS,
+      "bot",
+      layout,
+      DEFAULT_RECOVERY_POLICY,
+    );
     assert.ok(derived, "the work was derived");
     return derived;
   }
@@ -419,7 +426,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     assert.equal(derived.state, "idle");
   });
 
-  describe("ticket 05 Q3 — the unreconciled fall (a factory death is an abrupt fall by definition)", () => {
+  describe("ticket 05 Q3 / issue 123 — the claimed work the factory did not settle", () => {
     let root: string;
     let layout: WorkspaceLayout;
 
@@ -438,67 +445,68 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       return path;
     }
 
-    async function deriveFrom(path: string, number: number) {
+    async function deriveFrom(path: string, number: number, inFlight?: Set<string>) {
       const [derived] = await deriveReserved(
         adapter,
         [{ ref: ref(number), dir: path }],
         DEFAULT_LABELS,
         "bot",
         layout,
+        DEFAULT_RECOVERY_POLICY,
+        inFlight,
       );
       assert.ok(derived);
       return derived;
     }
 
-    test("claimed, zero attempt evidence, NOT in the engine's in-flight set → orphan: fall → release (ticket 18)", async () => {
+    test("claimed, zero attempt evidence, NOT in the engine's in-flight set → interrupted: attempt 1 is recovered", async () => {
       seedIssue(adapter, { repo: REPO, number: 19, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(19); // the dir exists; nothing was ever written inside
 
       const derived = await deriveFrom(path, 19);
-      assert.equal(derived.state, "fall", "an orphan claim is an abrupt fall (story 22) — never held forever");
-      assert.equal(derived.decision, "release", "zero evidence is honestly a 1st fall: release (branch preserved)");
+      assert.equal(derived.state, "interrupted", "an orphan claim is an interruption, never a failure");
+      assert.equal(derived.attempt, 1, "no attempt evidence numbers attempt 1");
+      assert.equal(derived.recovery.decision, "recover");
+      assert.equal(derived.recovery.decision === "recover" && derived.recovery.waitMs, 1_000);
     });
 
-    test("claimed, zero attempt evidence, IN the engine's in-flight set → idle: a legit launch is held, never released", async () => {
+    test("claimed, zero attempt evidence, IN the engine's in-flight set → idle: a legit launch is held, never recovered", async () => {
       seedIssue(adapter, { repo: REPO, number: 24, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(24); // claimed, dir created, the worker not yet up — zero footprint so far
 
-      const [derived] = await deriveReserved(
-        adapter,
-        [{ ref: ref(24), dir: path }],
-        DEFAULT_LABELS,
-        "bot",
-        layout,
-        new Set([`${REPO}#24`]),
-      );
-      assert.ok(derived);
-      assert.equal(derived.state, "idle", "this process holds the launch — no false release mid-flight");
+      const derived = await deriveFrom(path, 24, new Set([`${REPO}#24`]));
+      assert.equal(derived.state, "idle", "this process holds the launch — no false recovery mid-flight");
     });
 
-    test("claimed, no PR, no worker in flight, first crash → fall: release (the work re-enters the pool)", async () => {
+    test("claimed, no PR, a crash without an outcome record → interrupted: the SAME attempt is recovered (no fall)", async () => {
       seedIssue(adapter, { repo: REPO, number: 20, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(20);
       writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8"); // the crash footprint: an attempt started, no record
 
       const derived = await deriveFrom(path, 20);
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "release");
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.attempt, 1, "the interrupted attempt keeps its number");
+      assert.equal(derived.recovery.decision, "recover");
     });
 
-    test("claimed, no PR, two attempts without records → fall: blocked with the absence stated", async () => {
+    test("claimed, no PR, TWO interrupted attempts do not block: the last attempt is recovered", async () => {
       seedIssue(adapter, { repo: REPO, number: 21, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(21);
       writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
       writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
 
       const derived = await deriveFrom(path, 21);
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "block");
-      assert.match(derived.comment, /attempt 2/);
-      assert.match(derived.comment, /no outcome record/i);
+      assert.equal(derived.state, "interrupted", "a second interruption is still not a failure");
+      assert.equal(derived.attempt, 2);
+      assert.equal(derived.recovery.decision, "recover");
+      assert.equal(
+        derived.recovery.decision === "recover" && derived.recovery.consumed,
+        1,
+        "the recovery budget, not the fall ruler, answers the interruption",
+      );
     });
 
-    test("claimed, no PR, a recorded clean fall followed by a crash → fall: blocked (2nd consecutive)", async () => {
+    test("claimed, no PR, a written failure followed by a crash → interrupted: the crash is NOT the 2nd consecutive fall", async () => {
       seedIssue(adapter, { repo: REPO, number: 22, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(22);
       writeFileSync(
@@ -506,46 +514,33 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
         JSON.stringify({ class: "clean-without-pr", attempt: 1 }),
         "utf8",
       );
-      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8"); // the crashed attempt 2
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8"); // the interrupted attempt 2
 
       const derived = await deriveFrom(path, 22);
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "block");
-      assert.match(derived.comment, /attempt 2/);
-      assert.match(derived.comment, /no outcome record was written/);
-      assert.match(
-        derived.comment,
-        /the record on disk belongs to attempt 1/,
-        "the previous attempt's record is named as divergent, never as this fall's outcome (issue 103)",
-      );
-      assert.ok(
-        !derived.comment.includes(JSON.stringify({ class: "clean-without-pr", attempt: 1 }, null, 2)),
-        "the old record's JSON is not embedded",
+      assert.equal(derived.state, "interrupted", "the interruption never enters the fall ruler");
+      assert.equal(derived.attempt, 2);
+      assert.equal(derived.recovery.decision, "recover");
+      assert.deepEqual(
+        await readOutcomeRecord(path),
+        { class: "clean-without-pr", attempt: 1 },
+        "the historical record survives untouched",
       );
     });
 
-    test("issue 103 — a real absence still shows all three locations, absent ones included", async () => {
+    test("issue 103 — the interrupted attempt's own evidence is shown, never the old record as its outcome", async () => {
       seedIssue(adapter, { repo: REPO, number: 25, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(25);
       writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
       writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
 
       const derived = await deriveFrom(path, 25);
-
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "block");
-      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/ — present/);
-      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/log-2\.jsonl — present/);
-      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#25\/sessao\/sandcastle-2\.log — absent/);
-      assert.ok(!derived.comment.includes(path), "no absolute host path is shown");
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.attempt, 2);
     });
 
-    test("issue 103 — reproduces #91: attempt 3 fell with attempt 1's blocked-self-report on disk", async () => {
+    test("issue 103 — an old blocked-self-report is history; the interrupted attempt is recovered, not blocked", async () => {
       seedIssue(adapter, { repo: REPO, number: 91, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(91);
-      // The truth of #91: attempts 1-3 ran; only attempt 1 wrote a record (a
-      // self-report the operator already answered); attempts 2 and 3 died
-      // abruptly — attempt 3 with a partial sandcastle log.
       for (const attempt of [1, 2, 3]) {
         writeFileSync(join(path, `log-${attempt}.jsonl`), '{}\n', "utf8");
       }
@@ -559,17 +554,9 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
 
       const derived = await deriveFrom(path, 91);
 
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "block", "two consecutive falls with no tracker fact of higher priority");
-      assert.match(derived.comment, /2 consecutive falls \(attempt 3\)/);
-      assert.match(derived.comment, /abrupt fall: no outcome record was written/);
-      assert.match(derived.comment, /the record on disk belongs to attempt 1/);
-      assert.ok(
-        !derived.comment.includes('"class": "blocked-self-report"'),
-        "the answered attempt-1 self-report is not presented as attempt 3's outcome",
-      );
-      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/log-3\.jsonl — present/);
-      assert.match(derived.comment, /trabalhos\/Sanmoo\/a#91\/sessao\/sandcastle-3\.log — present/);
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.attempt, 3, "the current attempt is the one with no record of its own");
+      assert.equal(derived.recovery.decision, "recover");
       // History survives: the old record is still readable on disk.
       assert.deepEqual(await readOutcomeRecord(path), {
         class: "blocked-self-report",
@@ -578,7 +565,23 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       });
     });
 
-    test("claimed, no PR, an attempt recorded pr-open… impossible here (a PR fact would have handled it) — a stale pr-open record with no PR heals as a 1st fall", async () => {
+    test("claimed, no PR, an attempt wrote its own failure but the factory died before ruling it → fall: release", async () => {
+      seedIssue(adapter, { repo: REPO, number: 26, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(26);
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "clean-without-pr", attempt: 2 }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 26);
+      assert.equal(derived.state, "fall", "a written failure is ruled as at collection");
+      assert.equal(derived.decision, "release", "the 1st failure releases");
+      assert.equal(derived.attempt, 2);
+    });
+
+    test("claimed, a stale pr-open record with no PR and a later interrupted attempt → interrupted, never a fall", async () => {
       seedIssue(adapter, { repo: REPO, number: 23, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(23);
       writeFileSync(
@@ -589,8 +592,58 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
 
       const derived = await deriveFrom(path, 23);
-      assert.equal(derived.state, "fall");
-      assert.equal(derived.decision, "release", "one abrupt attempt after a non-fall record: 1st fall, release");
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.attempt, 2);
+    });
+
+    test("the recovery count is persisted per work: a restarted factory continues it instead of renewing it", async () => {
+      seedIssue(adapter, { repo: REPO, number: 28, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(28);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({ attempt: 1, consumed: 2, events: [], lastStop: null }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 28);
+
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.recovery.decision, "recover");
+      assert.equal(
+        derived.recovery.decision === "recover" && derived.recovery.consumed,
+        3,
+        "the third recovery is the last one the persisted budget allows",
+      );
+      assert.equal(
+        derived.recovery.decision === "recover" && derived.recovery.waitMs,
+        16_000,
+        "the wait continues the configured schedule at the index already consumed",
+      );
+    });
+
+    test("the exhausted budget pauses the work: no recovery is granted, the operator is asked", async () => {
+      seedIssue(adapter, { repo: REPO, number: 27, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(27);
+      writeFileSync(join(path, "log-3.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 3,
+          consumed: 3,
+          events: [],
+          lastStop: null,
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 27);
+      assert.equal(derived.state, "interrupted");
+      assert.equal(derived.recovery.decision, "pause-help");
+      assert.match(
+        derived.recovery.decision === "pause-help" ? derived.recovery.reason : "",
+        /budget is exhausted: 3 automatic recoveries/,
+      );
     });
   });
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,10 +9,11 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { archiveDoneWork, parseWorkKey, readLaunchFacts, scanRegistry, scanReservedWorks } from "./registry.js";
 
 /**
- * The registry (pool/registry.ts, ticket 13): reads back the per-work
- * artifacts the runtime wrote on real disk — desfecho.json (absent = abrupt
- * fall), log-<n>.jsonl, sessao/ — and derives the launch facts (attempt
- * number + consecutiveness of falls) and the status view.
+ * The registry (pool/registry.ts, ticket 13; issue 123): reads back the
+ * per-work artifacts the runtime wrote on real disk — desfecho.json (absent =
+ * an interruption, never a failure), log-<n>.jsonl, sessao/ and
+ * recuperacao.json — and derives the launch facts (attempt number + the
+ * recorded-failure consecutiveness) and the status view.
  */
 
 describe("registry — reading the artifacts back (launch facts)", () => {
@@ -55,15 +56,52 @@ describe("registry — reading the artifacts back (launch facts)", () => {
     assert.deepEqual(read, { attempt: 3, previousFall: false });
   });
 
-  test("a previous attempt that wrote logs but no desfecho: it died abruptly — attempt counts, previous fall is true", async () => {
+  test("a previous attempt that wrote logs but no desfecho was INTERRUPTED: a new claim numbers the next attempt, but it is not a fall (issue 123)", async () => {
     mkdirSync(join(workDir, "sessao"), { recursive: true });
     writeFileSync(
       join(workDir, "log-1.jsonl"),
       '{"event":"session-start","attempt":1}\n',
       "utf8",
     );
+    // A claim path means the operator explicitly released the work: the next
+    // claim consumes a new attempt, as today. The interruption itself never
+    // feeds the fall ruler.
     const read = await readLaunchFacts(workDir);
-    assert.deepEqual(read, { attempt: 2, previousFall: true });
+    assert.deepEqual(read, { attempt: 2, previousFall: false });
+  });
+
+  test("a recovery continues the interrupted attempt: the SAME number, never a new one (issue 123)", async () => {
+    mkdirSync(join(workDir, "sessao"), { recursive: true });
+    writeFileSync(join(workDir, "log-1.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(workDir, "log-2.jsonl"), "{}\n", "utf8");
+    writeFileSync(
+      join(workDir, DESFECHO_FILENAME),
+      JSON.stringify({ class: "clean-without-pr", attempt: 1 }),
+      "utf8",
+    );
+
+    const read = await readLaunchFacts(workDir, 2);
+    assert.deepEqual(
+      read,
+      { attempt: 2, previousFall: true },
+      "attempt 2 continues; the recorded failure of attempt 1 stays the only fall fact",
+    );
+  });
+
+  test("a legacy work dir is read as it stands: the old record is neither rewritten nor reinterpreted", async () => {
+    mkdirSync(workDir, { recursive: true });
+    const legacy = { class: "clean-without-pr", attempt: 1 };
+    writeFileSync(join(workDir, DESFECHO_FILENAME), JSON.stringify(legacy), "utf8");
+    writeFileSync(join(workDir, "log-2.jsonl"), "{}\n", "utf8");
+
+    const read = await readLaunchFacts(workDir);
+
+    assert.deepEqual(read, { attempt: 3, previousFall: true }, "the old failure still numbers the next attempt");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(workDir, DESFECHO_FILENAME), "utf8")),
+      legacy,
+      "reading the history never rewrites the record",
+    );
   });
 
   test("an empty work dir (no attempt evidence): attempt 1, no prior fall", async () => {
@@ -72,13 +110,13 @@ describe("registry — reading the artifacts back (launch facts)", () => {
     assert.deepEqual(read, { attempt: 1, previousFall: false });
   });
 
-  test("the attempt number falls back to the highest log when the record is stale-less", async () => {
+  test("the attempt number falls back to the highest log when there is no record — and it is not a fall", async () => {
     mkdirSync(workDir, { recursive: true });
     for (const n of [1, 2, 3]) {
       writeFileSync(join(workDir, `log-${n}.jsonl`), "{}\n", "utf8");
     }
     const read = await readLaunchFacts(workDir);
-    assert.deepEqual(read, { attempt: 4, previousFall: true });
+    assert.deepEqual(read, { attempt: 4, previousFall: false });
   });
 });
 

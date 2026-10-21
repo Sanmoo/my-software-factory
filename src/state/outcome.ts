@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
+import type { RecoveryPolicy } from "../config.js";
 import type { RepairAttempt } from "../pool/repair.js";
+import { renderWaits } from "../pool/recovery.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
@@ -52,10 +54,11 @@ export interface OutcomeRecord {
 
 /**
  * The umbrella classification of a collection, no matter how the record got
- * there: `abrupt-fall` is written by no one — its fact IS the absence, so it
- * never appears in the artifact vocabulary, only in the ruler's reasoning.
+ * there: `no-outcome` is written by no one — it names the FACT of an absent
+ * record (a SIGKILLed worker, a dead factory process, a dead container, a
+ * hard stop) without turning it into a failure of the attempt (issue 123).
  */
-export type ObservedClass = OutcomeClass | "abrupt-fall";
+export type ObservedClass = OutcomeClass | "no-outcome";
 
 /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
@@ -68,10 +71,15 @@ export type OutcomeRuling =
   | { decision: "reserve"; because: "pr-open" }
   /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
   | { decision: "record-only"; because: "blocked-self-report" }
-  /** Class 2: fall without PR, 1st consecutive — release (claimed→ready; the branch stays). */
+  /** The attempt wrote no outcome record: an INTERRUPTION, not a failure
+   * (issue 123). The loop absorbs it with the recovery budget; the attempt
+   * keeps its number and never enters the fall ruler. */
+  | { decision: "interrupt"; because: "no-outcome" }
+  /** A written failure/abandon without PR, 1st consecutive — release
+   * (claimed→ready; the branch stays). */
   | { decision: "release"; because: "fall-first" }
-  /** Class 3/4: fall without PR, 2nd consecutive — blocked + comment carrying this
-   *  attempt's outcome (or its explicit absence) and the attempt's evidence. */
+  /** A written failure/abandon without PR, 2nd consecutive — blocked + comment
+   *  carrying this attempt's outcome and its evidence. */
   | { decision: "block"; because: "fall-second"; comment: string };
 
 /** The structured facts the ruler reads — no prose, ever (the two-rulers
@@ -85,7 +93,8 @@ export interface OutcomeFacts {
   prOpen: boolean;
   /** The port's fact: the blocked label is on the issue (the worker's self-report). */
   blockedLabelOnIssue: boolean;
-  /** The registry's fact from launch time: the previous attempt on this branch also fell. */
+  /** The registry's fact from launch time: the previous attempt on this branch
+   *  also ended in a written failure. Interruptions never set it (issue 123). */
   consecutiveFall: boolean;
   /** The attempt being collected (the registry's launch fact) — names the fall in the
    *  blocked comment, and owns the record: a record of another attempt is absent here. */
@@ -99,23 +108,30 @@ export interface OutcomeFacts {
 }
 
 /**
- * The factory's ruler (ticket 13), applied at collection (loop) on structured
- * facts alone. Priority is the vocabulary of the six classes:
+ * The factory's ruler (ticket 13; amended by issue 123), applied at collection
+ * (loop) on structured facts alone. Priority is the vocabulary of the classes:
  *   1/5. PR open → reserve, no fall recorded (pre-existing PR included);
  *   6. blocked self-report → only recorded (the worker posted marker + label);
- *   then any end without PR is the one fall (ticket 05 Q1): absent record =
- *   abrupt fall — 1st consecutive → release, 2nd consecutive → blocked + comment.
+ *   4. no own record → INTERRUPTION: the recovery budget absorbs it and the
+ *      same attempt is relaunched — never the fall ruler (issue 123);
+ *   2/3. a written failure/abandon without PR: 1st consecutive → release,
+ *      2nd consecutive → blocked + comment.
  *
  * The record is consulted only when it belongs to the collected attempt (issue
  * 103): a crash never inherits the previous attempt's verdict — its own
- * absence is the abrupt fall.
+ * absence is an interruption, not a failure.
  */
 export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
 
-  // Fall without PR — clean or abrupt, the ruler is a single one.
+  // No outcome record of this attempt: an interruption, never a failure.
+  if (ownOutcomeRecord(facts.record, facts.attempt) === null) {
+    return { decision: "interrupt", because: "no-outcome" };
+  }
+
+  // A written failure/abandon without PR — the fall ruler applies.
   if (facts.consecutiveFall) {
     return {
       decision: "block",
@@ -132,7 +148,7 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
  * file survives on disk as history and serves numbering/reconciliation, but
  * it never decides this attempt's transition.
  */
-function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
+export function ownOutcomeRecord(record: OutcomeRecord | null, attempt: number): OutcomeRecord | null {
   return record !== null && record.attempt === attempt ? record : null;
 }
 
@@ -148,7 +164,7 @@ function isBlockedSelfReport(facts: OutcomeFacts): boolean {
 }
 
 /** What a blocked comment needs from the ruler's facts — the attempt that
- *  fell, its raw record (possibly another attempt's) and its evidence. */
+ *  failed, its raw record (possibly another attempt's) and its evidence. */
 type BlockedCommentInput = Pick<
   OutcomeFacts,
   "attempt" | "record" | "workDir" | "workspace"
@@ -156,15 +172,15 @@ type BlockedCommentInput = Pick<
 
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
- * before deciding to resume. The header names the fallen attempt; the outcome
+ * before deciding to resume. The header names the failed attempt; the outcome
  * is the current attempt's own record — a divergent record is named as such
- * instead of being presented as this fall's outcome. The evidence of the
+ * instead of being presented as this attempt's outcome. The evidence of the
  * attempt follows, independent of the record.
  */
 export async function blockedCommentBody(input: BlockedCommentInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   return (
-    `worker blocked after 2 consecutive falls (attempt ${input.attempt}) — ` +
+    `worker blocked after 2 consecutive failed attempts (attempt ${input.attempt}) — ` +
     `${describeOutcome(input)}\n\n${renderWorkEvidence(evidence)}`
   );
 }
@@ -173,11 +189,37 @@ export async function blockedCommentBody(input: BlockedCommentInput): Promise<st
 function describeOutcome({ attempt, record }: BlockedCommentInput): string {
   const own = ownOutcomeRecord(record, attempt);
   if (own !== null) return `the exact outcome record:\n\n${JSON.stringify(own, null, 2)}`;
-  if (record === null) return "abrupt fall: no outcome record was written";
+  if (record === null) return "interrupted: no outcome record was written for this attempt";
   return (
-    "abrupt fall: no outcome record was written " +
+    "interrupted: no outcome record of its own was written " +
     `(the record on disk belongs to attempt ${record.attempt})`
   );
+}
+
+/** What the pause of an exhausted recovery budget needs: the interrupted
+ *  attempt, the configured allowance and the attempt's evidence. */
+export interface InterruptionPausedInput {
+  attempt: number;
+  policy: RecoveryPolicy;
+  /** desfecho.json as read from disk — history, never this attempt's outcome. */
+  record: OutcomeRecord | null;
+  workDir: string;
+  workspace: WorkspaceLayout;
+}
+
+/**
+ * The block comment of an interruption whose recovery budget ran out (issue
+ * 123): the attempt was NOT a failure — no attempt was consumed — but the
+ * factory will not relaunch it forever. It names the configured value and
+ * backoff (the operator can adjust them) and the attempt's own evidence.
+ */
+export async function interruptionPausedCommentBody(input: InterruptionPausedInput): Promise<string> {
+  const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
+  const header =
+    `attempt ${input.attempt} was interrupted and the recovery budget is exhausted — ` +
+    `${input.policy.maxRecoveries} automatic recoveries (waits ${renderWaits(input.policy.waitsMs)}) ` +
+    "were already used for this attempt; no attempt was consumed.";
+  return [header, describeOutcome(input), "", renderWorkEvidence(evidence)].join("\n\n");
 }
 
 /** What the repair-fall comment needs: the fallen attempt and the reason the
@@ -230,26 +272,28 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
 
 /**
  * How the attempt ended without publishing, from the record facts alone: a
- * normal end (its own record exists) or an abrupt fall — whose own record is
- * absent, with an older attempt's record named as history, never as this
- * attempt's outcome (issue 103's rule, reused here).
+ * normal end (its own record exists) or an end with no record at all, with an
+ * older attempt's record named as history, never as this attempt's outcome
+ * (issue 103's rule, reused here). The repair ledger, not the attempt ruler,
+ * counts this end (issue 112/123).
  */
 function describeRepairEnding(record: OutcomeRecord | null, attempt: number): string {
   const own = ownOutcomeRecord(record, attempt);
   if (own !== null) {
     return `ended normally (its outcome record says "${own.class}") but nothing reached the remote`;
   }
-  if (record === null) return "fell abruptly: no outcome record was written";
+  if (record === null) return "ended without an outcome record";
   return (
-    "fell abruptly: no outcome record of its own was written " +
+    "ended without an outcome record of its own " +
     `(the record on disk belongs to attempt ${record.attempt})`
   );
 }
 
 /**
  * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt — absence is itself the class "abrupt fall"
- * (dead process, restart, garbage), and the ruler applies from there.
+ * invalid or corrupt. Absence is the FACT "no-outcome" — an interruption of
+ * the attempt, never a failure of it (issue 123) — and the recovery budget,
+ * never the fall ruler, answers it.
  */
 export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {
   let raw: string;

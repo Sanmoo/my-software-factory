@@ -22,6 +22,8 @@ import {
   readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
+  ownOutcomeRecord,
+  interruptionPausedCommentBody,
   type OutcomeRuling,
 } from "./state/outcome.js";
 import {
@@ -47,6 +49,7 @@ import {
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
+import { consumeRecovery, recordFailure, type RecoveryDecision } from "./pool/recovery.js";
 import { Slots } from "./pool/slots.js";
 import { operationalLog } from "./log.js";
 import { mkdirSync } from "node:fs";
@@ -67,6 +70,12 @@ import { mkdirSync } from "node:fs";
 
 export const TICK_MS = 60_000;
 
+/** Why the recovery budget is spent (the ledger's event reason). */
+const INTERRUPTION_REASON = "worker-interrupted";
+
+/** The production backoff timer; tests inject {@link LoopDeps.wait}. */
+const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface LoopDeps {
   config: Config;
   tracker: TrackerPort;
@@ -78,6 +87,9 @@ export interface LoopDeps {
   log?: (message: string) => void;
   /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
+  /** The backoff seam before a recovery relaunch (issue 123): production waits
+   *  on a real timer; a test injects one to observe the configured schedule. */
+  wait?: (ms: number) => Promise<void>;
 }
 
 export interface CollectedWork {
@@ -113,6 +125,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   rejected: "reserved",
   idle: "reserved",
   fall: "reserved",
+  interrupted: "reserved",
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
@@ -185,8 +198,9 @@ function renderPoolSummary(
   return detail === "" ? head : `${head} — ${detail}`;
 }
 
-/** What a launch starts as: a new claim, a parked feedback round, a retomada or a repair. */
-type LaunchKind = "claim" | "feedback" | "resume" | "repair";
+/** What a launch starts as: a new claim, a parked feedback round, a retomada, a
+ *  repair — or the recovery of an interrupted attempt (issue 123). */
+type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover";
 
 interface Launchable {
   ref: IssueRef;
@@ -201,6 +215,8 @@ interface Launchable {
   repair?: RepairTrigger;
   /** The unpublished attempt this repair takes over (issue 112), when resuming. */
   resuming?: RepairAttempt | null;
+  /** The interrupted attempt a recovery continues — the SAME number (issue 123). */
+  attempt?: number;
 }
 
 /**
@@ -261,7 +277,7 @@ export class SweepEngine {
     // re-launch it and does not act on a terminal state mid-flight). The
     // in-flight set also goes INTO the derivation (ticket 18): a zero-
     // footprint claim inside it is a legit launch between the claim and the
-    // worker's first write — held; outside it, an orphan — an abrupt fall.
+    // worker's first write — held; outside it, an interruption to recover.
     const inFlight = new Set(this.slots.workKeys);
     const reservedDirs = await scanReservedWorks(workspace);
     const reservedWorks = reservedDirs.filter((work) => !inFlight.has(workKey(work.ref)));
@@ -278,6 +294,7 @@ export class SweepEngine {
       config.labels,
       config.workerGhAccount,
       workspace,
+      config.recovery,
       inFlight,
     );
 
@@ -312,20 +329,57 @@ export class SweepEngine {
           break;
         }
         case "fall": {
+          // A WRITTEN failure the factory died before ruling: it consumes the
+          // attempt and the ruler applies as at collection (issue 123).
+          const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
+          const own = ownOutcomeRecord(await readOutcomeRecord(dir), decision.attempt);
+          if (own !== null) await recordFailure(dir, decision.attempt, own.class);
           if (decision.decision === "release") {
             this.log(
-              `derived ${workKey(decision.ref)}: unreconciled fall (the factory died on it) — ` +
+              `derived ${workKey(decision.ref)}: unreconciled failure (the factory died before ruling it) — ` +
                 "release (claimed→ready back; the branch stays)",
             );
             await this.applyRelease(decision.ref);
             this.announce(decision.ref, "eligible");
           } else {
             this.log(
-              `derived ${workKey(decision.ref)}: unreconciled fall, 2nd consecutive — ` +
+              `derived ${workKey(decision.ref)}: 2nd consecutive failure, unreconciled — ` +
                 "blocked with the attempt's diagnosis on the issue",
             );
             await this.applyBlockWithComment(decision.ref, decision.comment);
             this.announce(decision.ref, "reserved");
+          }
+          break;
+        }
+        case "interrupted": {
+          // Absence of an outcome record is an interruption, not a failure
+          // (issue 123): the same attempt continues within the budget, or the
+          // exhausted budget pauses it and asks the operator for help.
+          if (decision.recovery.decision === "pause-help") {
+            const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
+            // Persist the exhausted stop for `msf status` (the peek consumed
+            // nothing; granting is impossible at this count).
+            await consumeRecovery(dir, config.recovery, decision.attempt, INTERRUPTION_REASON);
+            this.log(
+              `derived ${workKey(decision.ref)}: attempt ${decision.attempt} was interrupted and ` +
+                `${decision.recovery.reason} — blocked, asking the operator for help (no attempt was consumed)`,
+            );
+            await this.pauseInterrupted(decision.ref, dir, decision.attempt, decision.recovery);
+          } else {
+            this.log(
+              `derived ${workKey(decision.ref)}: attempt ${decision.attempt} was interrupted (no outcome record) — ` +
+                `recovery ${decision.recovery.consumed}/${config.recovery.maxRecoveries} will continue it after ` +
+                `${decision.recovery.waitMs}ms`,
+            );
+            parked.push({
+              ref: decision.ref,
+              kind: "recover",
+              // A recovery waits for nothing human: it sorts before the parked
+              // feedback rounds, which carry their own creation time.
+              createdAt: "",
+              pr: null,
+              attempt: decision.attempt,
+            });
           }
           break;
         }
@@ -542,7 +596,10 @@ export class SweepEngine {
   private async launchAndCollect(launchable: Launchable): Promise<void> {
     const key = workKey(launchable.ref);
     try {
-      await this.launchOnce(launchable);
+      // An interruption inside the session returns the SAME attempt as a
+      // recovery to launch next, in the same held slot (issue 123).
+      let next: Launchable | null = launchable;
+      while (next !== null) next = await this.launchOnce(next);
     } finally {
       // The work stays reconcilable by the next derivation even when the
       // collection's transition fails: its claim is already on the tracker.
@@ -555,7 +612,7 @@ export class SweepEngine {
 
   /** Claim (or resume), prepare, launch and collect one work; replenish in
    * the same cycle. The reservation lands BEFORE any launch. */
-  private async launchOnce(launchable: Launchable): Promise<void> {
+  private async launchOnce(launchable: Launchable): Promise<Launchable | null> {
     const { config, tracker, runtime, git, workspace } = this.deps;
     const { ref, kind } = launchable;
     const key = workKey(ref);
@@ -579,6 +636,14 @@ export class SweepEngine {
         `repair round for ${key}: ${launchable.repair?.reasons.join(" + ") ?? "a confirmed impediment"} reactivated the worker — ` +
           "same branch, same PR, no human comment needed",
       );
+    } else if (kind === "recover") {
+      this.log(
+        `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
+          "the same attempt continues (no new attempt, branch preserved)",
+      );
+      // The claim swap itself may have been interrupted (issue 98): re-asserting
+      // the idempotent claim heals it without releasing the work to the pool.
+      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
     }
@@ -620,7 +685,7 @@ export class SweepEngine {
           `repair round for ${key} skipped: the remote head could not be read — ` +
             "its reconciliation stays pending and nothing is launched (the next sweep retries)",
         );
-        return;
+        return null;
       }
       if (observed.headSha !== repair.pinnedHeadSha) {
         this.log(
@@ -633,7 +698,7 @@ export class SweepEngine {
           // change, and the next derivation asks the human for a reconciliation.
           await this.markConcurrentChange(ref, resuming, observed.headSha);
         }
-        return;
+        return null;
       }
     }
 
@@ -653,14 +718,15 @@ export class SweepEngine {
       );
     }
 
-    // The registry numbers the attempt and remembers the previous fall —
-    // both are disk facts of this work, not process state (ticket 13).
+    // The registry numbers the attempt and remembers the previous WRITTEN
+    // failure — both are disk facts of this work, not process state (ticket
+    // 13; an interruption never counts as a fall, issue 123).
     const dir = workDir(workspace, ref.repo, ref.number);
-    const facts = await readLaunchFacts(dir);
+    const facts = await readLaunchFacts(dir, kind === "recover" ? launchable.attempt : undefined);
     if (kind === "resume" && facts.previousFall) {
       // Ticket 14's decision: the human's answer resets the consecutive
-      // fall count — the blocked valve already did its job and was addressed;
-      // a new fall starts a fresh count (1st → release again).
+      // failure count — the blocked valve already did its job and was
+      // addressed; a new failure starts a fresh count (1st → release again).
       facts.previousFall = false;
     }
     if (kind === "resume") {
@@ -697,7 +763,28 @@ export class SweepEngine {
     // caller releases the slot.
     if (this.stopping) {
       this.log(`the launch of ${key} stopped before the worker started — the reservation stays for reconciliation`);
-      return;
+      return null;
+    }
+    // The recovery is GRANTED and persisted before the wait and the relaunch
+    // (issue 123): a death during the backoff or the session continues the
+    // count instead of renewing the allowance. An exhausted budget pauses the
+    // work and asks the operator for help — never another blind relaunch.
+    if (kind === "recover") {
+      const decision = await consumeRecovery(dir, config.recovery, facts.attempt, INTERRUPTION_REASON);
+      if (decision.decision === "pause-help") {
+        this.log(`recovery of ${key} paused: ${decision.reason} — the work is blocked and asks for help`);
+        await this.pauseInterrupted(ref, dir, facts.attempt, decision);
+        return null;
+      }
+      this.log(
+        `recovery ${decision.consumed}/${config.recovery.maxRecoveries} for ${key} — ` +
+          `attempt ${facts.attempt} keeps its number; waiting ${decision.waitMs}ms before the relaunch`,
+      );
+      await this.wait(decision.waitMs);
+      if (this.stopping) {
+        this.log(`the recovery of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
+        return null;
+      }
     }
     const result = await runtime.launch({
       ref,
@@ -710,7 +797,37 @@ export class SweepEngine {
     });
     this.launched.push(result);
 
-    await this.collect(launchable, result, facts.attempt, facts.previousFall);
+    return this.collect(launchable, result, facts.attempt, facts.previousFall);
+  }
+
+  /** The backoff before a recovery relaunch (the injected seam or a real timer). */
+  private async wait(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    await (this.deps.wait ?? sleepMs)(ms);
+  }
+
+  /** The exhausted recovery budget: block the work and ask the operator for
+   *  help, naming the configured value and backoff — no attempt was consumed. */
+  private async pauseInterrupted(
+    ref: IssueRef,
+    dir: string,
+    attempt: number,
+    decision: Extract<RecoveryDecision, { decision: "pause-help" }>,
+  ): Promise<void> {
+    const { workspace, config } = this.deps;
+    const comment = await interruptionPausedCommentBody({
+      attempt,
+      policy: config.recovery,
+      record: await readOutcomeRecord(dir),
+      workDir: dir,
+      workspace,
+    });
+    this.log(
+      `the interrupted attempt ${attempt} of ${workKey(ref)} is paused (${decision.reason}) — ` +
+        "blocked with the evidence; a human decision is needed",
+    );
+    await this.applyBlockWithComment(ref, comment);
+    this.announce(ref, "reserved");
   }
 
   /**
@@ -881,17 +998,18 @@ export class SweepEngine {
   }
 
   /**
-   * Collection at the act: the ruler (ticket 13, extended by 14) on
-   * structured facts alone — the outcome record (absence = abrupt fall), the
-   * PR fact and the label facts from the port, and the registry's
-   * consecutiveness. The decided transition is applied here.
+   * Collection at the act: the ruler (ticket 13, extended by 14/123) on
+   * structured facts alone — the outcome record (absence = an interruption,
+   * never a failure), the PR fact and the label facts from the port, and the
+   * registry's consecutiveness. The decided transition is applied here; an
+   * interruption returns the SAME attempt as the next launch (issue 123).
    */
   private async collect(
     launchable: Launchable,
     result: SessionResult,
     attempt: number,
     consecutiveFall: boolean,
-  ): Promise<void> {
+  ): Promise<Launchable | null> {
     const { config, tracker, workspace } = this.deps;
     const ref = launchable.ref;
     const key = workKey(ref);
@@ -917,6 +1035,7 @@ export class SweepEngine {
     });
 
     let resulting: OperationalClass | null;
+    let next: Launchable | null = null;
     if (ruling.decision === "done") {
       // The terminal state was reached while this claim was held (the
       // human's merge closed the issue mid-flight — ticket 14): archive the
@@ -930,17 +1049,43 @@ export class SweepEngine {
     } else if (ruling.decision === "record-only") {
       this.log(`collected ${key}: blocked self-report — the factory only records the outcome`);
       resulting = "reserved";
+    } else if (ruling.decision === "interrupt") {
+      // Absence of an outcome record is an interruption, not a failure (issue
+      // 123): no attempt is consumed and the fall ruler never applies. A repair
+      // round is settled by its own reconciliation (issue 112) instead.
+      resulting = "reserved";
+      if (launchable.kind === "repair") {
+        this.log(
+          `collected ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
+            "settles its publication before another round (issue 112)",
+        );
+      } else {
+        this.log(
+          `collected ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
+            "number and the recovery budget answers it",
+        );
+        next = {
+          ref,
+          kind: "recover",
+          createdAt: "",
+          pr,
+          attempt,
+        };
+      }
     } else if (ruling.decision === "release") {
+      const own = ownOutcomeRecord(record, attempt);
+      if (own !== null) await recordFailure(dir, attempt, own.class);
       this.log(
-        `collected ${key}: fall without PR — release (claimed→ready back; ` +
+        `collected ${key}: failure without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
       await this.applyRelease(ref);
       resulting = "eligible";
     } else {
+      const own = ownOutcomeRecord(record, attempt);
+      if (own !== null) await recordFailure(dir, attempt, own.class);
       this.log(
-        `collected ${key}: 2nd consecutive fall — blocked, the attempt's outcome ` +
-          "(or its absence) goes to the issue",
+        `collected ${key}: 2nd consecutive failure — blocked, the attempt's outcome goes to the issue`,
       );
       await this.applyBlockWithComment(ref, ruling.comment);
       resulting = "reserved";
@@ -958,7 +1103,11 @@ export class SweepEngine {
     // the ruler did not block. Help wins over review; the state decision is
     // untouched. The self-report counts only for THIS attempt — desfecho.json
     // survives between attempts.
-    if (ruling.decision !== "done" && ruling.decision !== "block") {
+    if (
+      ruling.decision !== "done" &&
+      ruling.decision !== "block" &&
+      ruling.decision !== "interrupt"
+    ) {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch = launchable.kind === "claim" || launchable.kind === "feedback";
       if (blockedLabelOnIssue || selfReportedNow) {
@@ -967,9 +1116,10 @@ export class SweepEngine {
         await this.deliverNotice(reviewNotice(ref, pr.number));
       }
     }
+    return next;
   }
 
-  /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,
+  /** The 1st-failure release (the ruler's mirrored swap): claimed→ready back,
    *  the assignee of the worker account released — the work re-enters the
    *  pool, the branch stays. One write pair, one helper: the derivation's
    *  unreconciled release and the collection's ruled release share it. */

@@ -1,4 +1,4 @@
-import type { Labels } from "../config.js";
+import type { Labels, RecoveryPolicy } from "../config.js";
 import type {
   IssueComment,
   IssueRef,
@@ -12,8 +12,15 @@ import type {
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
 import { type WorkspaceLayout } from "../layout.js";
-import { readOutcomeRecord, blockedCommentBody, repairFallComment } from "./outcome.js";
-import { readReconciliationFacts } from "../pool/registry.js";
+import {
+  readOutcomeRecord,
+  blockedCommentBody,
+  repairFallComment,
+  ownOutcomeRecord,
+  type OutcomeRecord,
+} from "./outcome.js";
+import { readAttemptLedger } from "../pool/registry.js";
+import { peekRecovery, readRecoveryLedger, type RecoveryDecision } from "../pool/recovery.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
@@ -331,11 +338,16 @@ export type ReservedDerivation =
   /** Parked, nothing to decide: waiting for the human (PR open, worker last;
    * blocked without answer) — or a released work the pool owns. */
   | { ref: IssueRef; state: "idle" }
-  /** An unreconciled fall: the claimed work's session ended without the
-   * factory acting on it (a factory death) — release, or block with the
-   * attempt's diagnosis on the 2nd consecutive fall (ticket 05 Q3). */
-  | { ref: IssueRef; state: "fall"; decision: "release" }
+  /** A written failure the factory did not rule yet (it died between the
+   *  record and the transition): release, or block on the 2nd consecutive
+   *  failure — the ruler applies as at collection (ticket 05 Q3). */
+  | { ref: IssueRef; state: "fall"; decision: "release"; attempt: number }
   | { ref: IssueRef; state: "fall"; decision: "block"; comment: string; attempt: number }
+  /** An INTERRUPTION (issue 123): the claimed work's attempt ended without an
+   *  outcome record (a dead factory/worker/container, a hard stop). It is not
+   *  a failure: the same attempt is recovered within the persisted budget, or
+   *  the exhausted budget pauses the work and asks the operator for help. */
+  | { ref: IssueRef; state: "interrupted"; attempt: number; recovery: RecoveryDecision }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -351,10 +363,13 @@ export async function deriveReserved(
   labels: Labels,
   workerAccount: string,
   workspace: WorkspaceLayout,
+  recovery: RecoveryPolicy,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
   return Promise.all(
-    reserved.map((work) => deriveReservedWork(port, work, labels, workerAccount, workspace, inFlight)),
+    reserved.map((work) =>
+      deriveReservedWork(port, work, labels, workerAccount, workspace, recovery, inFlight),
+    ),
   );
 }
 
@@ -364,6 +379,7 @@ async function deriveReservedWork(
   labels: Labels,
   _workerAccount: string,
   workspace: WorkspaceLayout,
+  recovery: RecoveryPolicy,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -504,11 +520,11 @@ async function deriveReservedWork(
     return { ref, state: "idle" };
   }
 
-  // No PR, not blocked: a claimed work without a worker in flight is an
-  // unreconciled fall (the collection never happened — a factory death is an
-  // abrupt fall by definition); anything else is parked — in flight or
-  // waiting for the human — or a released work, whose state is the pool's
-  // business, not this one's.
+  // No PR, not blocked: a claimed work without a worker in flight ended
+  // without the factory settling it (the collection never happened). The
+  // registry says whether that end was an interruption or a written failure
+  // (issue 123); anything else is parked — in flight or waiting for the
+  // human — or a released work, whose state is the pool's business.
   if (issue.value.labels.includes(labels.claimed)) {
     // A pending reconciliation holds the claim even when the PR cannot be
     // read: releasing it would hand the work back to the pool while its
@@ -517,61 +533,91 @@ async function deriveReservedWork(
     if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
       return { ref, state: "idle" };
     }
-    return deriveUnreconciledFall(ref, work.dir, workspace, inFlight);
+    return deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
   }
   return { ref, state: "idle" };
 }
 
 /**
- * The unreconciled fall (ticket 05 Q3, derived in 14; orphans in 18): a
- * claimed work with no PR and no worker in flight is a session that ended
- * without the factory acting on it — a factory death is an abrupt fall by
- * definition. The ruler applies from the crash footprint alone: 1st fall →
- * release; 2nd consecutive → blocked with the attempt's diagnosis.
+ * The claimed work whose attempt the factory did not settle (ticket 05 Q3,
+ * derived in 14; orphans in 18; interruption vs failure in 123). The registry
+ * decides which question is being asked:
  *
- * Ticket 18 (story 22): the derivation itself cannot see the process, so
- * the engine hands its in-flight set in. A claim with ZERO attempt evidence
- * is only held when THIS process holds its launch (between the claim and
- * the worker's first write); outside the set it is an ORPHAN — a death
- * between the claim and the spawn — and the same ruler applies from the
- * empty registry: the disk honestly reports attempt 1 with no previous
- * fall, so the 1st fall releases (story 17: the work devolves to the pool).
+ *  - the last attempt wrote NO outcome record: an INTERRUPTION. Absence is not
+ *    a failure, so the 1st/2nd-fall ruler never applies — the attempt keeps its
+ *    number and the recovery budget decides (recover, or pause and ask help);
+ *  - the last attempt wrote a failure/abandon record: the factory died between
+ *    the record and its transition — the fall ruler applies as at collection;
+ *  - a claim with zero attempt evidence: an interruption of attempt 1 (a death
+ *    between the claim and the spawn). Inside THIS process's in-flight set the
+ *    claim is a legitimate launch between the claim and the worker's first
+ *    write — held, never recovered behind its back.
  */
-async function deriveUnreconciledFall(
+async function deriveUnreconciledAttempt(
   ref: IssueRef,
   dir: string,
   workspace: WorkspaceLayout,
+  recovery: RecoveryPolicy,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
-  const recon = await readReconciliationFacts(dir);
-  if (recon.lastAttempt === 0) {
-    // A claim with zero attempt evidence: no session ever started (a death
-    // between the claim and the spawn). In this process's in-flight set the
-    // claim is legitimately held — a worker is between the claim and its
-    // first write; the sweep's own derivation must not release it.
+  const ledger = await readAttemptLedger(dir);
+  if (ledger.lastAttempt === 0) {
     if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
-    // An orphan: nothing fell on disk (no logs, no session, no record), but
-    // no process holds the claim either — held forever would contradict the
-    // ruler. The empty registry reads as attempt 1, no previous fall: the
-    // 1st fall releases (claimed→ready back, branch preserved).
-    return { ref, state: "fall", decision: "release" };
+    return {
+      ref,
+      state: "interrupted",
+      attempt: 1,
+      recovery: await peekRecovery(dir, recovery, 1),
+    };
   }
-  if (!recon.consecutiveFall) return { ref, state: "fall", decision: "release" };
-  // The record on disk may belong to an earlier attempt (issue 103): the
-  // comment only names it as divergent — its absence for THIS attempt is the
-  // abrupt fall — and always points at this attempt's own evidence.
+
   const record = await readOutcomeRecord(dir);
+  const own = ownOutcomeRecord(record, ledger.lastAttempt);
+  if (own !== null && own.class === "blocked-self-report") {
+    // The worker reported blocked but the label never landed (an interrupted
+    // claim swap): nothing to recover and nothing to rule — the human sees
+    // the outcome in `msf status`.
+    return { ref, state: "idle" };
+  }
+  if (own !== null) {
+    return deriveUnreconciledFailure(ref, dir, workspace, ledger.lastAttempt, record);
+  }
+
+  return {
+    ref,
+    state: "interrupted",
+    attempt: ledger.lastAttempt,
+    recovery: await peekRecovery(dir, recovery, ledger.lastAttempt),
+  };
+}
+
+/**
+ * The ruler for a failure the factory never applied: the on-disk record is the
+ * attempt's own written failure, so it consumes the attempt. The 2nd
+ * consecutive failure blocks (the interruption budget is NOT a fall count);
+ * otherwise the 1st releases. The last interval — a death right after the
+ * factory recorded the failure but before its transition — is read from the
+ * recovery ledger, which settles the stop before the tracker write.
+ */
+async function deriveUnreconciledFailure(
+  ref: IssueRef,
+  dir: string,
+  workspace: WorkspaceLayout,
+  attempt: number,
+  record: OutcomeRecord | null,
+): Promise<ReservedDerivation> {
+  const ledger = await readRecoveryLedger(dir);
+  const previousWasFailure =
+    ledger.lastStop !== null &&
+    ledger.lastStop.kind === "failure" &&
+    ledger.lastStop.attempt === attempt - 1;
+  if (!previousWasFailure) return { ref, state: "fall", decision: "release", attempt };
   return {
     ref,
     state: "fall",
     decision: "block",
-    comment: await blockedCommentBody({
-      attempt: recon.lastAttempt,
-      record,
-      workDir: dir,
-      workspace,
-    }),
-    attempt: recon.lastAttempt,
+    attempt,
+    comment: await blockedCommentBody({ attempt, record, workDir: dir, workspace }),
   };
 }
 

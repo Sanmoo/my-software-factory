@@ -1,4 +1,4 @@
-import type { Config } from "../config.js";
+import type { Config, RecoveryPolicy } from "../config.js";
 import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import {
   readLastAttempt,
@@ -27,7 +27,9 @@ import { dockerWorkerProbe, type LiveWorker, type LivenessProbe } from "./livene
  * outcomes: the overlap is honest, never fused into a third state. Without
  * Docker the liveness is unknown — named, never guessed — and the
  * registry-only view stays complete. No reports are written: the per-work
- * artifacts are the interface.
+ * artifacts are the interface — including the interruption-recovery ledger,
+ * which says whether the last stop consumed a recovery or a failure (issue
+ * 123).
  *
  * Issue 100: the SAME single derivation returns the pool and the
  * reconciliation (unbacked claim, unmarked reservation) from one open-issues
@@ -40,9 +42,10 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
-/** A fallen attempt as the status names it (issue 112): the registry's own
- *  fact, under the status vocabulary — the attempt with no record of its own,
- *  and the attempt the record on disk belongs to (history, never its result). */
+/** An interrupted attempt as the status names it (issues 112/123): the
+ *  registry's own fact, under the status vocabulary — the attempt with no
+ *  record of its own, and the attempt the record on disk belongs to (history,
+ *  never its result). */
 export type OrphanedAttempt = AttemptWithoutOwnOutcome;
 
 /** What the probe could say: the two states, or that it could not tell. */
@@ -61,6 +64,8 @@ export interface StatusView {
   registry: RegistryView;
   /** Running and Orphaned, or unknown when Docker could not answer. */
   liveness: Liveness;
+  /** The configured interruption budget, so the view can name what it costs. */
+  recoveryPolicy: RecoveryPolicy;
 }
 
 /**
@@ -93,6 +98,7 @@ export async function deriveStatus(
     unmarkedReservations: state.unmarkedReservations,
     registry,
     liveness: await classifyLiveness(registry, layout, probe),
+    recoveryPolicy: config.recovery,
   };
 }
 

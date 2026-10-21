@@ -4,10 +4,12 @@ import {
   workKey,
 } from "./derive.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
+import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { RepairViewEntry } from "../pool/registry.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
+import type { RecoveryPolicy } from "../config.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -41,7 +43,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(
     ...section(
-      "orphaned (attempt without its own outcome record, no worker alive)",
+      "orphaned (attempt interrupted — no outcome record of its own, no worker alive)",
       liveness.state === "known" ? liveness.orphaned.map(renderOrphaned) : null,
       cap,
     ),
@@ -52,7 +54,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   if (liveness.state === "unknown" && view.registry.attemptsWithoutOwnOutcome.length > 0) {
     lines.push(
       ...section(
-        "attempts without their own outcome (Running or Orphaned — only Docker can tell)",
+        "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell)",
         view.registry.attemptsWithoutOwnOutcome.map((entry) =>
           renderFallen(entry.key, entry.attempt, entry.recordedAttempt),
         ),
@@ -65,6 +67,14 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ...section(
       "reserved without attempt (the claim landed, no attempt evidence on disk)",
       view.registry.reservedWithoutAttempt,
+      cap,
+    ),
+  );
+
+  lines.push(
+    ...section(
+      "recovery (interruptions absorbed by their own budget — separate from the attempts)",
+      view.registry.recovery.map((entry) => renderRecovery(entry.key, entry.ledger, view.recoveryPolicy)),
       cap,
     ),
   );
@@ -111,19 +121,36 @@ function renderRunning(worker: RunningWorker): string {
   return `${worker.key} (${formatAge(worker.ageMs)}${attempt})`;
 }
 
-/** One fallen attempt: the attempt itself, and the record that is NOT its own. */
+/** One interrupted attempt: the attempt itself, and the record that is NOT its own. */
 function renderOrphaned(orphan: OrphanedAttempt): string {
   return renderFallen(orphan.key, orphan.attempt, orphan.recordedAttempt);
 }
 
-/** The fallen attempt (issue 112): the current one named, the historical record
- *  disowned — a human must not read attempt 1's outcome as attempt 2's result. */
+/** The interrupted attempt (issues 112/123): the current one named, the
+ *  historical record disowned — a human must not read attempt 1's outcome as
+ *  attempt 2's result. */
 function renderFallen(key: string, attempt: number, recordedAttempt: number | null): string {
   const history =
     recordedAttempt === null
       ? "no outcome record on disk"
       : `the record on disk is attempt ${recordedAttempt}'s — history, not this attempt's`;
-  return `${key} (attempt ${attempt} fell — ${history})`;
+  return `${key} (attempt ${attempt} was interrupted — ${history})`;
+}
+
+/**
+ * One work's interruption budget: what it cost and what ended the last stop —
+ * an interruption (recoveries consumed, no attempt) or a failure (the attempt
+ * was consumed). The configured value and backoff are always named.
+ */
+function renderRecovery(key: string, ledger: RecoveryLedger, policy: RecoveryPolicy): string {
+  const spend = `${ledger.consumed}/${policy.maxRecoveries} recoveries (waits ${renderWaits(policy.waitsMs)})`;
+  const attempt = `attempt ${ledger.attempt}`;
+  const last = ledger.lastStop;
+  if (last === null) return `${key} (${attempt}: ${spend}; no stop settled yet)`;
+  if (last.kind === "interruption") {
+    return `${key} (${attempt}: last stop was an interruption — no attempt consumed; ${spend})`;
+  }
+  return `${key} (${attempt}: last stop was a failure (${last.outcome}) — the attempt was consumed)`;
 }
 
 /**

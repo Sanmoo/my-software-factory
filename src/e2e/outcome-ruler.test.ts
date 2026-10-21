@@ -12,7 +12,7 @@ import { localGitWork } from "../git/local.js";
 import { seedFixtureRemote, cleanupFixture } from "../git/local-fixtures.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
 import { installGhShim, runCli } from "./cli-harness.js";
@@ -97,6 +97,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -114,7 +115,15 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       tracker,
       runtime,
       git,
-      deps: { config, tracker, runtime, git, workspace: layout, log: () => {} } as LoopDeps,
+      deps: {
+        config,
+        tracker,
+        runtime,
+        git,
+        workspace: layout,
+        log: () => {},
+        wait: async () => {},
+      } as LoopDeps,
     };
   }
 
@@ -250,14 +259,14 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(runtime.launched.length, 2, "attempt 2 was launched once (no thrash on blocked works)");
   });
 
-  test("issue 103 — the collection route diagnoses the CURRENT attempt when the record on disk is the previous one's", async () => {
+  test("issue 103 — an attempt that dies without a record is an interruption; the previous attempt's record is history", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    // Attempt 1 ends clean without a PR (a fall, recorded); attempt 2 dies
-    // abruptly — attempt 1's record is the only outcome record left on disk.
-    const factory = makeFactory(config, tracker, ["clean-without-pr", "abrupt-death"]);
+    // Attempt 1 ends clean without a PR (a written failure, ruled); attempt 2
+    // dies without a record — attempt 1's record is the only one left on disk.
+    const factory = makeFactory(config, tracker, ["clean-without-pr", "abrupt-death", "pr-open"]);
     factory.runtime.hold = (request) => {
       if (request.attempt === 2) {
         // The sandcastle log attempt 2 left behind — killed mid-sentence.
@@ -270,58 +279,132 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(first.collected[0]?.ruling?.decision, "release");
 
     const second = await runOnce(factory.deps);
-    assert.equal(second.launched[0]?.request.attempt, 2);
-    assert.equal(second.collected[0]?.ruling?.decision, "block");
-    assert.equal(second.collected[0]?.ruling?.because, "fall-second");
-
-    const comment = await lastCommentOf(tracker, 1);
-    assert.match(comment, /2 consecutive falls \(attempt 2\)/);
-    assert.match(comment, /abrupt fall: no outcome record was written/);
-    assert.match(comment, /the record on disk belongs to attempt 1/);
-    assert.ok(
-      !comment.includes('"class": "clean-without-pr"'),
-      "the previous attempt's record is never presented as attempt 2's outcome",
+    assert.deepEqual(
+      second.launched.map((launch) => launch.request.attempt),
+      [2, 2],
+      "the interrupted attempt 2 is recovered as attempt 2 — the attempt is never consumed",
     );
-    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
-    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — present/);
+    assert.equal(second.collected[0]?.ruling?.decision, "interrupt");
+    assert.equal(second.collected[0]?.ruling?.because, "no-outcome");
+    assert.equal(second.collected[1]?.ruling?.decision, "reserve", "the recovered session opened the PR");
 
-    // The old record stays as history for numbering and reconciliation.
+    // Nothing blocked, no comment: an interruption is not a failure (issue 123).
+    const labels = await labelsOf(tracker, 1);
+    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "an interruption never blocks");
+    const comments = await tracker.readComments({ repo: REPO, number: 1 });
+    assert.ok(comments.known && comments.value.length === 0, "no blocked comment for an interruption");
+
+    // The recovered attempt wrote its own record — attempt 2, never attempt 3.
     const onDisk = JSON.parse(readFileSync(join(workDir(layout, REPO, 1), DESFECHO_FILENAME), "utf8"));
-    assert.equal(onDisk.attempt, 1);
-    assert.equal(onDisk.class, "clean-without-pr");
+    assert.equal(onDisk.attempt, 2);
+    assert.equal(onDisk.class, "pr-open");
   });
 
-  // ---- class 4: NO outcome record → abrupt fall, same ruler ----
+  // ---- class 4: NO outcome record → an interruption, absorbed by its budget ----
 
-  test("class 4 — two abrupt deaths in a row: release then blocked with the absence stated", async () => {
+  test("class 4 — two interrupted sessions in a row: the SAME attempt continues, the work is never blocked", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const { deps, tracker: t } = makeFactory(config, tracker, ["abrupt-death"]);
-    const first = await runOnce(deps);
-    assert.equal(first.collected[0]?.ruling?.decision, "release");
+    const { deps, tracker: t, runtime } = makeFactory(config, tracker, [
+      "abrupt-death",
+      "abrupt-death",
+      "pr-open",
+    ]);
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.collected[0]?.ruling?.decision, "interrupt");
+    assert.equal(sweep.collected[1]?.ruling?.decision, "interrupt", "the 2nd interruption does not block either");
+    assert.equal(sweep.collected[2]?.ruling?.decision, "reserve", "the third session opened the PR");
 
-    const second = await runOnce(deps);
-    assert.equal(second.collected[0]?.ruling?.decision, "block");
-    assert.equal(second.collected[0]?.ruling?.because, "fall-second");
-
+    assert.deepEqual(
+      runtime.launched.map((launch) => launch.attempt),
+      [1, 1, 1],
+      "every relaunch keeps attempt 1 — no attempt was consumed",
+    );
     const labels = await labelsOf(t, 1);
-    assert.ok(labels.includes(DEFAULT_LABELS.blocked));
-    const comment = await lastCommentOf(t, 1);
-    assert.match(comment, /attempt 2/);
-    assert.match(comment, /no outcome record/i, "the absence of the record is the exact outcome");
-    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/ — present/);
-    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
-    assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — absent/);
+    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "two interruptions never block the work");
+    assert.ok(labels.includes(DEFAULT_LABELS.claimed), "the claim is held through the recoveries");
+    const comments = await t.readComments({ repo: REPO, number: 1 });
+    assert.ok(comments.known && comments.value.length === 0, "no help request before the budget runs out");
 
-    // The runtime left the launch evidence: session dir + per-attempt logs,
-    // but no desfecho — the registry's own footprint of the abrupt fall.
+    // The runtime left the launch evidence: one session dir and ONE attempt
+    // log, written three times by the same attempt — no new attempt number.
     const wd = workDir(layout, REPO, 1);
     assert.ok(existsSync(join(wd, "sessao")));
     assert.ok(existsSync(join(wd, "log-1.jsonl")));
-    assert.ok(existsSync(join(wd, "log-2.jsonl")));
-    assert.ok(!existsSync(join(wd, DESFECHO_FILENAME)));
+    assert.ok(!existsSync(join(wd, "log-2.jsonl")));
+    const record = JSON.parse(readFileSync(join(wd, DESFECHO_FILENAME), "utf8"));
+    assert.equal(record.attempt, 1, "the record belongs to the attempt the recoveries continued");
+  });
+
+  test("an operator release explicitly ends an interrupted attempt: the next claim is a NEW attempt, as today (issue 123)", async () => {
+    const config = makeConfig(1);
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+
+    // The factory died on attempt 1 (a log, no record). The operator does not
+    // want the recovery: they explicitly release the work back to the pool —
+    // the act that ends the attempt, which therefore consumes it as today.
+    const wd = workDir(layout, REPO, 1);
+    mkdirSync(wd, { recursive: true });
+    writeFileSync(join(wd, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
+    await tracker.releaseClaim({ repo: REPO, number: 1 }, config.workerGhAccount, DEFAULT_LABELS.ready);
+
+    const { deps, runtime } = makeFactory(config, tracker, ["pr-open"]);
+    const sweep = await runOnce(deps);
+
+    assert.equal(sweep.reserved[0]?.state, "idle", "a released work is the pool's business, not a recovery");
+    assert.equal(runtime.launched.length, 1);
+    assert.equal(runtime.launched[0]?.attempt, 2, "the explicit operator act ended attempt 1 — attempt 2 starts");
+    assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed], "re-claimed, not blocked");
+    assert.ok(!existsSync(join(wd, "recuperacao.json")), "no recovery was consumed: the operator chose the end");
+  });
+
+  test("the recovery budget: 3 recoveries at the configured 1/4/16 s waits, then pause and ask for help", async () => {
+    const config = makeConfig(1);
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const waits: number[] = [];
+    const factory = makeFactory(config, tracker, ["abrupt-death"]);
+    factory.deps.wait = async (ms) => {
+      waits.push(ms);
+    };
+    const before = await tracker.readComments({ repo: REPO, number: 1 });
+    assert.ok(before.known);
+    const commentsBefore = before.value.length;
+
+    const result = await runOnce(factory.deps);
+
+    // Attempt 1 launched, interrupted -> recovery 1 -> interrupted -> recovery
+    // 2 -> interrupted -> recovery 3 -> interrupted -> exhausted: pause + help.
+    assert.deepEqual(waits, [1_000, 4_000, 16_000], "the configured backoff was observed, in order");
+    assert.deepEqual(
+      result.launched.map((launch) => launch.request.attempt),
+      [1, 1, 1, 1],
+      "four sessions, all on the SAME attempt",
+    );
+    assert.equal(
+      result.collected.filter((entry) => entry.ruling.decision === "interrupt").length,
+      4,
+      "all four sessions were interruptions, never failures",
+    );
+    const labels = await labelsOf(tracker, 1);
+    assert.ok(labels.includes(DEFAULT_LABELS.blocked), "an exhausted budget pauses the work");
+    const comments = await tracker.readComments({ repo: REPO, number: 1 });
+    assert.ok(comments.known);
+    assert.equal(comments.value.length, commentsBefore + 1, "exactly one help request");
+    const body = comments.value.at(-1)!.body;
+    assert.match(body, /attempt 1 was interrupted and the recovery budget is exhausted/);
+    assert.match(body, /3 automatic recoveries \(waits 1s\/4s\/16s\) were already used/);
+    assert.match(body, /no attempt was consumed/);
+    assert.match(body, /trabalhos\/Sanmoo\/my-tasks#1\/log-1\.jsonl — present/);
+    assert.equal(
+      JSON.parse(readFileSync(join(workDir(layout, REPO, 1), "recuperacao.json"), "utf8")).consumed,
+      3,
+      "the persisted budget holds the three recoveries",
+    );
   });
 
   // ---- class 5: PR already existing → reserved, no launch, no fall recorded ----
@@ -473,7 +556,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     if (result.stdout.includes("liveness unknown (docker not reachable)")) {
       assert.match(
         result.stdout,
-        /attempts without their own outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1 \(attempt 1 fell — no outcome record on disk\)/,
+        /interrupted attempts without their own outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1 \(attempt 1 was interrupted — no outcome record on disk\)/,
       );
     } else {
       assert.match(result.stdout, /orphaned \([^\n]*\): 1\n\s+Sanmoo\/my-tasks#1/);

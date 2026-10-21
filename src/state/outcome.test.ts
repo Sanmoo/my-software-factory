@@ -10,8 +10,10 @@ import {
   readOutcomeRecord,
   classifyOutcome,
   blockedCommentBody,
+  interruptionPausedCommentBody,
   DESFECHO_FILENAME,
 } from "./outcome.js";
+import { DEFAULT_RECOVERY_POLICY } from "../config.js";
 
 /** A layout outside the filesystem — the evidence probes it and answers absent. */
 const FAKE_WORKSPACE: WorkspaceLayout = {
@@ -73,7 +75,7 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
     assert.equal(record.attempt, 1);
   });
 
-  test("the absence of the record is itself the class 'abrupt fall' (null, no error)", async () => {
+  test("the absence of the record is the fact 'no-outcome' (null, no error)", async () => {
     const record = await readOutcomeRecord(dir);
     assert.equal(record, null);
   });
@@ -84,7 +86,7 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
     assert.equal(record, null);
   });
 
-  test("a corrupt record is treated as absent (abrupt fall), not a crash", async () => {
+  test("a corrupt record is treated as absent (no-outcome), not a crash", async () => {
     writeFileSync(join(dir, DESFECHO_FILENAME), "{not json", "utf8");
     const record = await readOutcomeRecord(dir);
     assert.equal(record, null);
@@ -129,21 +131,29 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  describe("class 4 — NO outcome record: abrupt fall, the same ruler as 2/3", () => {
-    test("an absent record is a fall — the 1st releases", async () => {
+  describe("class 4 — NO outcome record: an interruption, never a failure (issue 123)", () => {
+    test("an absent record interrupts the attempt — no release, no block, no fall counted", async () => {
       const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: false }));
-      assert.equal(ruling.decision, "release");
-      assert.equal(ruling.because, "fall-first");
+      assert.equal(ruling.decision, "interrupt");
+      assert.equal(ruling.because, "no-outcome");
     });
 
-    test("an absent record after a previous fall blocks, with the abrupt class in the comment", async () => {
+    test("an absent record never blocks, even after a previous failure — the interruption is not the 2nd fall", async () => {
       const ruling = await classifyOutcome(
         facts({ record: null, consecutiveFall: true, attempt: 3 }),
       );
-      assert.equal(ruling.decision, "block");
-      assert.equal(ruling.because, "fall-second");
-      assert.match(ruling.comment, /attempt 3/);
-      assert.match(ruling.comment, /no outcome record/i);
+      assert.equal(ruling.decision, "interrupt");
+    });
+
+    test("a record of another attempt is absent for this attempt: an interruption, not a fall", async () => {
+      const ruling = await classifyOutcome(
+        facts({
+          record: { class: "clean-without-pr", attempt: 1 },
+          attempt: 3,
+          consecutiveFall: true,
+        }),
+      );
+      assert.equal(ruling.decision, "interrupt", "the other attempt's failure is history, never this one's");
     });
   });
 
@@ -195,10 +205,10 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  test("prose is never read: an unknown record class is treated as absent (abrupt fall)", async () => {
+  test("prose is never read: an unknown record class is treated as absent (an interruption)", async () => {
     // readOutcomeRecord rejected it already — the ruler never even sees it.
     const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: true }));
-    assert.equal(ruling.decision, "block");
+    assert.equal(ruling.decision, "interrupt");
   });
 
   describe("ticket 14 — the terminal state is read at the act too", () => {
@@ -221,7 +231,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 
   describe("the blocked comment carries the exact outcome (the desfecho, verbatim)", () => {
-    test("a recorded fall embeds the exact record JSON", async () => {
+    test("a recorded failure embeds the exact record JSON", async () => {
       const record = {
         class: "clean-without-pr" as const,
         attempt: 2,
@@ -233,11 +243,11 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         workDir: "/nowhere/trabalhos/Sanmoo/a#1",
         workspace: FAKE_WORKSPACE,
       });
-      assert.match(comment, /2 consecutive falls/i);
+      assert.match(comment, /2 consecutive failed attempts/i);
       assert.ok(comment.includes(JSON.stringify(record, null, 2)), "the exact desfecho JSON is embedded");
     });
 
-    test("an abrupt fall embeds a structured statement of absence", async () => {
+    test("an interruption is described as an interruption, never as a fall", async () => {
       const comment = await blockedCommentBody({
         attempt: 3,
         record: null,
@@ -245,7 +255,8 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         workspace: FAKE_WORKSPACE,
       });
       assert.match(comment, /attempt 3/);
-      assert.match(comment, /no outcome record/i);
+      assert.match(comment, /interrupted: no outcome record was written/);
+      assert.ok(!comment.includes("fall"), "an interruption is never called a fall");
     });
   });
 });
@@ -282,36 +293,28 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     const record = { class: "blocked-self-report" as const, attempt: 1 };
 
     const second = await classifyOutcome(factsFor(dir, { record, attempt: 3, consecutiveFall: true }));
-    assert.equal(second.decision, "block", "the current attempt fell without a record of its own");
-    assert.equal(second.because, "fall-second");
-
-    const first = await classifyOutcome(factsFor(dir, { record, attempt: 3, consecutiveFall: false }));
-    assert.equal(
-      first.decision,
-      "release",
-      "the old self-report never decides the current attempt — not even record-only",
-    );
+    assert.equal(second.decision, "interrupt", "the current attempt was interrupted, not failed");
+    assert.equal(second.because, "no-outcome");
   });
 
-  test("the header names the fallen attempt and explains the divergent record; the old JSON is not embedded", async () => {
+  test("the pause comment names the interrupted attempt and explains the divergent record; the old JSON is not embedded", async () => {
     const dir = makeWorkDir();
     writeFileSync(join(dir, "log-3.jsonl"), "{}\n", "utf8");
 
-    const ruling = await classifyOutcome(
-      factsFor(dir, {
-        record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
-        attempt: 3,
-        consecutiveFall: true,
-      }),
-    );
+    const comment = await interruptionPausedCommentBody({
+      attempt: 3,
+      policy: DEFAULT_RECOVERY_POLICY,
+      record: { class: "blocked-self-report", attempt: 1, paths: { log: "log-1.jsonl" } },
+      workDir: dir,
+      workspace: layout,
+    });
 
-    assert.equal(ruling.decision, "block");
-    assert.match(ruling.comment, /2 consecutive falls \(attempt 3\)/);
-    assert.match(ruling.comment, /abrupt fall: no outcome record was written/);
-    assert.match(ruling.comment, /the record on disk belongs to attempt 1/);
+    assert.match(comment, /attempt 3 was interrupted and the recovery budget is exhausted/);
+    assert.match(comment, /interrupted: no outcome record of its own was written/);
+    assert.match(comment, /the record on disk belongs to attempt 1/);
     assert.ok(
-      !ruling.comment.includes('"class": "blocked-self-report"'),
-      "the old record is never presented as this fall's outcome",
+      !comment.includes('"class": "blocked-self-report"'),
+      "the old record is never presented as this attempt's outcome",
     );
   });
 
@@ -323,7 +326,7 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     const ruling = await classifyOutcome(factsFor(dir, { record, attempt: 2, consecutiveFall: true }));
 
     assert.equal(ruling.decision, "block");
-    assert.match(ruling.comment, /2 consecutive falls \(attempt 2\) — the exact outcome record:/);
+    assert.match(ruling.comment, /2 consecutive failed attempts \(attempt 2\) — the exact outcome record:/);
     assert.ok(ruling.comment.includes(JSON.stringify(record, null, 2)), "the record's JSON is preserved");
     assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/log-2\.jsonl — present/);
     assert.match(ruling.comment, /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-2\.log — absent/);
@@ -331,38 +334,40 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
 
   test("without paths the three locations still show, all relative to the named workspace", async () => {
     const dir = makeWorkDir();
-    const ruling = await classifyOutcome(
-      factsFor(dir, { record: null, attempt: 3, consecutiveFall: true }),
-    );
+    const comment = await interruptionPausedCommentBody({
+      attempt: 3,
+      policy: DEFAULT_RECOVERY_POLICY,
+      record: null,
+      workDir: dir,
+      workspace: layout,
+    });
 
-    assert.equal(ruling.decision, "block");
     for (const path of [
       `${relativeDir}/`,
       `${relativeDir}/log-3.jsonl`,
       `${relativeDir}/sessao/sandcastle-3.log`,
     ]) {
-      assert.ok(ruling.comment.includes(path), `${path} is shown`);
+      assert.ok(comment.includes(path), `${path} is shown`);
     }
-    assert.match(ruling.comment, /relative to the factory workspace on the host/);
-    assert.match(ruling.comment, /workspace of msf\.yaml/);
-    assert.ok(!ruling.comment.includes(root), "no absolute host path is shown");
+    assert.match(comment, /relative to the factory workspace on the host/);
+    assert.match(comment, /workspace of msf\.yaml/);
+    assert.ok(!comment.includes(root), "no absolute host path is shown");
   });
 
-  test("an unverifiable location stays in the comment — a query error is not absence", async () => {
+  test("an unverifiable location stays in the pause comment — a query error is not absence", async () => {
     // A self-referential symlink: the query fails, the location is unknown.
     symlinkSync("sessao", join(makeWorkDir(), "sessao"));
 
-    const ruling = await classifyOutcome(
-      factsFor(workDir(layout, ref.repo, ref.number), {
-        record: null,
-        attempt: 3,
-        consecutiveFall: true,
-      }),
-    );
+    const comment = await interruptionPausedCommentBody({
+      attempt: 3,
+      policy: DEFAULT_RECOVERY_POLICY,
+      record: null,
+      workDir: workDir(layout, ref.repo, ref.number),
+      workspace: layout,
+    });
 
-    assert.equal(ruling.decision, "block");
     assert.match(
-      ruling.comment,
+      comment,
       /trabalhos\/Sanmoo\/my-tasks#91\/sessao\/sandcastle-3\.log — could not be verified/,
     );
   });

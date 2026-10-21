@@ -5,6 +5,7 @@ import { join, relative, sep } from "node:path";
 import { workspaceLayout, workDir, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import { readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
+import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import type { IssueRef } from "../tracker/port.js";
 
@@ -12,50 +13,62 @@ import type { IssueRef } from "../tracker/port.js";
  * The registry (ticket 13): the reader of what survives a process death.
  * Slots are only in memory (pool/slots.ts); everything else about a work is
  * an artifact in real disk under <workspace>/trabalhos/<repo>#<n>/ —
- * desfecho.json (written by the runtime when it can; its absence is the
- * class "abrupt fall"), log-<n>.jsonl (the attempt's event log) and sessao/
- * (the session dir) — and the reconciliation of a restart is nothing but
- * reading them back here (ticket 05 Q3). Names on disk stay PT-BR.
+ * desfecho.json (written by the runtime when it can; its absence is an
+ * INTERRUPTION of the attempt, not a failure — issue 123), log-<n>.jsonl (the
+ * attempt's event log), sessao/ (the session dir) and recuperacao.json (the
+ * interruption-recovery budget) — and the reconciliation of a restart is
+ * nothing but reading them back here (ticket 05 Q3). Names on disk stay PT-BR.
  */
 
 /** The facts a launch derives from the registry before a worker is born. */
 export interface LaunchFacts {
   /** 1st, 2nd... attempt on the same branch (WorkRequest.attempt). */
   attempt: number;
-  /** True when the previous attempt on this branch ended in a fall —
-   * clean (recorded) or abrupt (evidence of an attempt without a record).
-   * The ruler uses it for the 2-consecutive-falls → blocked transition; the
-   * attempt numbers themselves cannot lie because desfecho.json + the
-   * per-attempt logs are the previous attempt's own footprint. */
+  /** True when the previous attempt on this branch ended in a WRITTEN failure
+   * (a recorded failure/abandon outcome). An interruption — an attempt with no
+   * outcome record — never sets it: it never enters the fall ruler (issue 123). */
   previousFall: boolean;
 }
 
 /**
  * Read the launch facts of a work from its registry dir. A work that never
  * launched (no dir, no evidence) is attempt 1 with no prior fall; a recorded
- * previous attempt numbers the next one; a previous attempt with logs but no
- * record wrote nothing at its end — it abruptly fell.
+ * previous attempt numbers the next one. A previous attempt with logs but no
+ * record was INTERRUPTED: it does not number a new attempt by itself — a
+ * recovery continues it (pass `continueAttempt`, issue 123) — and it is not a
+ * fall.
  */
-export async function readLaunchFacts(workDir: string): Promise<LaunchFacts> {
-  if (!existsSync(workDir)) return { attempt: 1, previousFall: false };
+export async function readLaunchFacts(
+  workDir: string,
+  continueAttempt?: number,
+): Promise<LaunchFacts> {
+  if (!existsSync(workDir)) return { attempt: continueAttempt ?? 1, previousFall: false };
 
-  const record = await readOutcomeRecord(workDir);
-  if (record) {
-    const logs = await attemptNumbers(workDir);
-    // A stale record: an attempt started (logs) after the last recorded one.
-    // Its consecutiveness is still the record's — the extra attempt without
-    // a record only exists mid-flight or after a PR-confirmed collection
-    // (which is never a fall).
-    const attempt = Math.max(record.attempt + 1, (logs.at(-1) ?? 0) + 1);
-    return { attempt, previousFall: record.class === "clean-without-pr" };
+  const { logs, record } = await attemptsAndRecord(workDir);
+  // The last RECORDED attempt is the only fall fact: an interrupt attempt
+  // writes nothing, so it neither resets nor feeds the consecutive count.
+  const previousFall = record?.class === "clean-without-pr";
+
+  if (continueAttempt !== undefined) {
+    // A recovery continues the interrupted attempt: the SAME number in the
+    // artifact, the branch preserved. A record of an earlier attempt is
+    // history and never makes this attempt's continuation a fall.
+    return { attempt: continueAttempt, previousFall: previousFall && (record?.attempt ?? 0) < continueAttempt };
   }
 
-  // No record: either nothing ever happened (empty dir) or the previous
-  // attempt died before writing — abrupt fall. The session dir and the
-  // per-attempt logs are the evidence the runtime leaves at launch time.
-  const logs = await attemptNumbers(workDir);
+  if (record) {
+    // A stale record: an attempt started (logs) after the last recorded one.
+    // Its consecutiveness is still the record's — the extra attempt without
+    // a record only exists mid-flight or as an interruption recovery.
+    const attempt = Math.max(record.attempt + 1, (logs.at(-1) ?? 0) + 1);
+    return { attempt, previousFall };
+  }
+
+  // No record: either nothing ever happened (a bare reservation) or the
+  // previous attempt was interrupted. The session dir and the per-attempt
+  // logs are the evidence the runtime leaves at launch time.
   if (hasAttemptEvidence(workDir, logs)) {
-    return { attempt: logs.at(-1)! + 1, previousFall: true };
+    return { attempt: logs.at(-1)! + 1, previousFall: false };
   }
 
   return { attempt: 1, previousFall: false };
@@ -77,32 +90,6 @@ async function attemptNumbers(workDir: string): Promise<number[]> {
     if (match) numbers.push(Number(match[1]));
   }
   return numbers.sort((a, b) => a - b);
-}
-
-/** The facts a sweep derives about an unreconciled fall (ticket 14): the
- * crashed attempt's number, and whether the session before it also fell. */
-export interface ReconciliationFacts {
-  /** The number of the last attempt (the one that fell unreconciled). */
-  lastAttempt: number;
-  /** True when the fall is a 2nd consecutive one: at least two attempts
-   * without a record after the last record, or exactly one abrupt attempt
-   * right after a recorded fall. */
-  consecutiveFall: boolean;
-}
-
-/**
- * The crash footprint replayed from disk (ticket 05 Q3): the attempts are
- * the logs' numbers; the abrupt attempts are the ones after the last record.
- * The ruler applies from there — 1st fall releases, 2nd consecutive blocks.
- */
-export async function readReconciliationFacts(workDir: string): Promise<ReconciliationFacts> {
-  const { logs, record } = await attemptsAndRecord(workDir);
-  const lastRecorded = record?.attempt ?? 0;
-  const lastAttempt = lastAttemptOf(logs, record);
-  const abruptCount = lastAttempt - lastRecorded;
-  const lastRecordedFall = record?.class === "clean-without-pr";
-  const consecutiveFall = abruptCount >= 2 || (abruptCount === 1 && lastRecordedFall);
-  return { lastAttempt, consecutiveFall };
 }
 
 /**
@@ -220,10 +207,11 @@ export interface LastOutcomeEntry {
 }
 
 /**
- * A work whose CURRENT attempt carries no outcome record of its own — the fall
- * awaiting reconciliation (issue 112). It is not the same thing as "no record
- * on disk": an older attempt's record may sit there as history, and it never
- * becomes this attempt's outcome (issue 103's rule, now visible here too).
+ * A work whose CURRENT attempt carries no outcome record of its own — the
+ * interruption (or the repair fall, issue 112) awaiting reconciliation. It is
+ * not the same thing as "no record on disk": an older attempt's record may sit
+ * there as history, and it never becomes this attempt's outcome (issue 103's
+ * rule, now visible here too).
  */
 export interface AttemptWithoutOwnOutcome {
   key: string;
@@ -231,6 +219,12 @@ export interface AttemptWithoutOwnOutcome {
   attempt: number;
   /** The attempt the record on disk belongs to; null when there is no record. */
   recordedAttempt: number | null;
+}
+
+/** A work's interruption-recovery ledger as `msf status` reads it (issue 123). */
+export interface RecoveryViewEntry {
+  key: string;
+  ledger: RecoveryLedger;
 }
 
 /** The repair cycle of a work as `msf status` reads it (issue 112). */
@@ -252,13 +246,16 @@ export interface RepairViewEntry {
  */
 export interface RegistryView {
   /** Dirs whose current attempt has no outcome record of its own (a log or the
-   *  session dir as evidence) — a fall, whatever an older record says. */
+   *  session dir as evidence) — an interruption, whatever an older record says. */
   attemptsWithoutOwnOutcome: AttemptWithoutOwnOutcome[];
   /** Dirs with no outcome record and no attempt evidence — the reservation alone. */
   reservedWithoutAttempt: string[];
   lastOutcome: LastOutcomeEntry[];
   /** The repair cycle of every work that ran or is running an automatic round. */
   repair: RepairViewEntry[];
+  /** Works that went through an interruption: the budget spent and what ended
+   *  the last attempt (issue 123) — absent for works never interrupted. */
+  recovery: RecoveryViewEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
 }
@@ -275,6 +272,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const reservedWithoutAttempt: string[] = [];
   const lastOutcome: LastOutcomeEntry[] = [];
   const repair: RepairViewEntry[] = [];
+  const recovery: RecoveryViewEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
     const record = await readOutcomeRecord(dir);
@@ -301,15 +299,21 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         attempt === null ? null : await readWorkEvidence(layout, dir, attempt.attempt);
       repair.push({ key, cycle, evidence });
     }
+
+    // A legacy work dir has no recovery ledger and is not shown here: nothing
+    // is invented for a work that was never interrupted under this budget.
+    const ledger = await readRecoveryLedger(dir);
+    if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   attemptsWithoutOwnOutcome.sort((a, b) => byKey(a.key, b.key));
   reservedWithoutAttempt.sort(byKey);
   lastOutcome.sort((a, b) => a.key.localeCompare(b.key));
   repair.sort((a, b) => a.key.localeCompare(b.key));
+  recovery.sort((a, b) => a.key.localeCompare(b.key));
 
   const archived = await workDirs(archive);
-  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, archived };
+  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };
 }
 
 /** Directories under a registry root that look like <repo>#<n> work dirs. */

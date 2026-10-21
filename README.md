@@ -31,6 +31,9 @@ repos:
 #   - ~/.agents
 #   - ~/.local/share/omarchy
 # profile-skip-dangling-links: false  # stale profile links: fail closed
+# recovery:                       # an interruption is not a failure (issue 123)
+#   max: 3                        # recoveries per attempt; 0 pauses on the first
+#   waits-ms: [1000, 4000, 16000] # the backoff before each recovery relaunch
 # notifications: true
 ```
 

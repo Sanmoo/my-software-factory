@@ -10,7 +10,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 
 /**
  * The interruption matrix of the claim swap (issue 98) at the sweep seam, with
@@ -75,6 +75,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -91,7 +92,15 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     return {
       tracker,
       runtime,
-      deps: { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: (m) => logs?.push(m) },
+      deps: {
+        config,
+        tracker,
+        runtime,
+        git: new FakeGitWork(),
+        workspace: layout,
+        log: (m) => logs?.push(m),
+        wait: async () => {},
+      },
     };
   }
 
@@ -129,7 +138,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     assert.deepEqual(await assigneesOf(tracker, 7), [deps.config.workerGhAccount]);
   });
 
-  test("a claim that fails at the assignee write keeps the claim mark with its reservation — the orphan rule releases it", async () => {
+  test("a claim that fails at the assignee write keeps the claim mark with its reservation — the interruption recovery heals it", async () => {
     const { deps, tracker } = makeDeps(makeConfig());
     const reservation = workDir(layout, REPO, 7);
 
@@ -145,18 +154,19 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     assert.deepEqual(await assigneesOf(tracker, 7), [], "the assignee never landed");
 
     // The derivation sees a claimed work with a reservation and no session
-    // evidence: the orphan rule releases it on the 1st fall — and the pool of
-    // the same sweep already sees it back, so it is claimed and launched again
-    // in one tick (the release is a tracker write, the re-claim follows it).
+    // evidence: an interruption (issue 123), not a fall. The recovery keeps
+    // the SAME attempt, re-asserts the claim (healing the missing assignee)
+    // and launches in the same sweep.
     const second = await runOnce(deps);
-    assert.equal(second.reserved[0]?.state, "fall", "the interrupted claim is derived as a fall");
-    assert.equal(second.launched.length, 1, "the released work is re-claimed and launched in the same sweep");
+    assert.equal(second.reserved[0]?.state, "interrupted", "the interrupted claim is an interruption, not a failure");
+    assert.equal(second.launched.length, 1, "the interrupted claim is recovered in the same sweep");
     assert.equal(second.launched[0]?.request.workDir, reservation, "the reservation is reused, never duplicated");
+    assert.equal(second.launched[0]?.request.attempt, 1, "the same attempt continues (no attempt consumed)");
     assert.deepEqual(await labelsOf(tracker, 7), [DEFAULT_LABELS.claimed], "the padlock is back on");
-    assert.deepEqual(await assigneesOf(tracker, 7), [deps.config.workerGhAccount]);
+    assert.deepEqual(await assigneesOf(tracker, 7), [deps.config.workerGhAccount], "the claim swap is healed");
   });
 
-  test("a claim that fails removing the pool label keeps claim + pool label — the next sweeps release and re-claim", async () => {
+  test("a claim that fails removing the pool label keeps claim + pool label — the next sweep recovers it", async () => {
     const { deps, tracker } = makeDeps(makeConfig());
     const reservation = workDir(layout, REPO, 7);
 
@@ -171,12 +181,14 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     );
     assert.deepEqual(await assigneesOf(tracker, 7), [deps.config.workerGhAccount], "the assignee landed");
 
-    // One tick heals it: the derivation releases the interrupted claim (the
-    // padlock leaves last) and the same sweep's pool re-claims and launches it.
+    // One tick heals it: the derivation sees the interruption, the recovery
+    // re-asserts the claim (dropping the stale pool label) and launches the
+    // SAME attempt — nothing fell.
     const second = await runOnce(deps);
-    assert.equal(second.reserved[0]?.state, "fall");
-    assert.equal(second.launched.length, 1, "released and re-claimed in the same sweep");
+    assert.equal(second.reserved[0]?.state, "interrupted");
+    assert.equal(second.launched.length, 1, "recovered in the same sweep");
     assert.equal(second.launched[0]?.request.workDir, reservation, "the reservation is reused");
+    assert.equal(second.launched[0]?.request.attempt, 1, "the same attempt continues");
     assert.deepEqual(await labelsOf(tracker, 7), [DEFAULT_LABELS.claimed]);
   });
 
