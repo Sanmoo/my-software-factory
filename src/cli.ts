@@ -70,11 +70,11 @@ export async function wireRunDeps(
   if (tracker === undefined) {
     // Production speaks the old TrackerPort through the transitional bridge;
     // the real adapter itself serves the expanded ticket/PR contracts.
-    const github = await createGitHubAdapter({
+    const githubTracker = await createGitHubAdapter({
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
     });
-    tracker = legacyTrackerPort(github, github);
+    tracker = legacyTrackerPort(githubTracker, githubTracker);
   }
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });

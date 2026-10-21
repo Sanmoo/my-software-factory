@@ -128,6 +128,15 @@ export function issueRefOf(ticket: TicketIdentity): IssueRef {
   return { repo: ticket.repo, number: ticket.number };
 }
 
+/** The same conversion when the caller can legitimately have a non-GitHub ticket. */
+export function issueRefOfTicket(ticket: TicketIdentity): IssueRef | null {
+  return ticket.provider === "github" ? issueRefOf(ticket) : null;
+}
+
+export function isGitHubSource(source: TicketSource): boolean {
+  return source.provider === "github" && source.site === GITHUB_SITE;
+}
+
 /** The transitional bridge's conversion: an old ref to the explicit Work identity. */
 export function workOfIssueRef(ref: IssueRef): WorkIdentity {
   return {

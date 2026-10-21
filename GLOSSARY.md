@@ -22,6 +22,12 @@ The ticket provider and site a Work comes from.
 **Destination**:
 The GitHub repository that receives a Work's code and PR.
 
+**Repository identity**:
+Provider + site + the destination repository name; the code-host identity, never the ticket identity.
+
+**PR identity**:
+The destination repository plus the PR number; always distinct from the ticket identity.
+
 **Work identity**:
 The ticket identity plus the destination repository — what keeps Works from different providers, sites or destinations distinct even when keys/numbers coincide.
 

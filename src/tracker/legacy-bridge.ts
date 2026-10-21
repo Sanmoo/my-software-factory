@@ -7,6 +7,7 @@ import {
   workOfIssueRef,
 } from "./identity.js";
 import type { PullRequestTracker, TicketTracker } from "./expanded-port.js";
+import { legacyPullRequest } from "./expanded-port.js";
 import {
   known,
   notKnown,
@@ -118,9 +119,11 @@ export function legacyTrackerPort(
       if (feedback.value.pr === null) {
         return known({ pr: null, comments: feedback.value.comments, reviews: feedback.value.reviews });
       }
-      // The old shape carries no explicit PR identity; that belongs to the expanded contract.
-      const { identity: _identity, ...pr } = feedback.value.pr;
-      return known({ pr, comments: feedback.value.comments, reviews: feedback.value.reviews });
+      return known({
+        pr: legacyPullRequest(feedback.value.pr),
+        comments: feedback.value.comments,
+        reviews: feedback.value.reviews,
+      });
     },
 
     readPrRepairFacts(ref: IssueRef): Promise<Known<PrRepairFacts>> {
@@ -134,8 +137,7 @@ export function legacyTrackerPort(
         baseBranch: input.baseBranch,
         title: input.title,
       });
-      const { identity: _identity, ...pr } = opened;
-      return pr;
+      return legacyPullRequest(opened);
     },
 
     pushBranch(input: PushBranchInput): Promise<WriteOutcome> {
