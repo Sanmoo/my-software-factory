@@ -9,7 +9,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 
 /**
  * End-to-end of ticket 12: pool, claim and launch up to the outcome with PR.
@@ -99,6 +99,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -321,9 +322,9 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
 
       // A second, stateless sweep derives the same tracker with an EMPTY
       // in-flight set: the claim has its reservation on disk but ZERO attempt
-      // evidence, which is an orphan to it (ticket 18, story 22) — it falls
-      // the work (1st fall → release) and picks it up itself. The disk truth
-      // is honest: no session ever started. The claim mark protects the pool
+      // evidence — an interruption (issue 123), recovered as the SAME attempt
+      // with the claim re-asserted. The disk truth is honest: no session ever
+      // started, and no attempt was consumed. The claim mark protects the pool
       // within one derivation, never across processes — a freeze would hold
       // the work forever.
       const secondRuntime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
@@ -334,11 +335,19 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         git: new FakeGitWork(),
         workspace: layout,
         log: () => {},
+        wait: async () => {},
       });
-      const orphan = secondSweep.reserved.find((decision) => decision.ref.number === 1);
-      assert.ok(orphan && orphan.state === "fall" && orphan.decision === "release", "the stateless second sweep falls the claim with no attempt evidence");
-      assert.equal(secondRuntime.launched.length, 1, "the second sweep re-claims and launches the orphan");
-      assert.equal(secondRuntime.launched[0]?.attempt, 1, "the registry honestly reports attempt 1 (zero evidence)");
+      const interrupted = secondSweep.reserved.find((decision) => decision.ref.number === 1);
+      assert.ok(
+        interrupted && interrupted.state === "interrupted",
+        "the stateless second sweep reads the claim with no attempt evidence as an interruption",
+      );
+      assert.equal(secondRuntime.launched.length, 1, "the second sweep recovers the interrupted claim");
+      assert.equal(
+        secondRuntime.launched[0]?.attempt,
+        1,
+        "the SAME attempt continues — zero evidence numbers attempt 1, and no attempt was consumed",
+      );
 
       releaseWorker.resolve();
       await firstSweep;

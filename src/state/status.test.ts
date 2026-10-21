@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
+import { consumeRecovery, recordFailure } from "../pool/recovery.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
@@ -60,6 +61,7 @@ describe("status — derivation on demand + local registry scan", () => {
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
     };
@@ -185,7 +187,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /orphaned[^\n]*: liveness unknown \(docker not reachable\)/);
     assert.match(
       text,
-      /attempts without their own outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4 \(attempt 1 fell — no outcome record on disk\)/,
+      /interrupted attempts without their own outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4 \(attempt 1 was interrupted — no outcome record on disk\)/,
       "the registry-only view is still complete — the works are named, just not classified",
     );
     assert.match(text, /pool \(eligible\): 1/);
@@ -220,10 +222,11 @@ describe("status — derivation on demand + local registry scan", () => {
         "msf status (derived on demand — the factory may be stopped)",
         "running (worker alive): 1",
         `  ${REPO}#4 (13m, attempt 1)`,
-        "orphaned (attempt without its own outcome record, no worker alive): 1",
-        `  ${REPO}#5 (attempt 1 fell — no outcome record on disk)`,
+        "orphaned (attempt interrupted — no outcome record of its own, no worker alive): 1",
+        `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk)`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
+        "recovery (interruptions absorbed by their own budget — separate from the attempts): none",
         "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
@@ -253,9 +256,9 @@ describe("status — derivation on demand + local registry scan", () => {
     ]);
     assert.deepEqual(view.registry.lastOutcome.map((entry) => entry.record.attempt), [1]);
     const text = renderStatus(view);
-    assert.match(text, /#20 \(attempt 2 fell — the record on disk is attempt 1's — history, not this attempt's\)/);
+    assert.match(text, /#20 \(attempt 2 was interrupted — the record on disk is attempt 1's — history, not this attempt's\)/);
     assert.match(text, /last outcome: 1[\s\S]*#20 = pr-open \(attempt 1\)/);
-    assert.doesNotMatch(text, /attempt 2 fell[^\n]*pr-open/, "history is never presented as the current result");
+    assert.doesNotMatch(text, /attempt 2 was interrupted[^\n]*pr-open/, "history is never presented as the current result");
   });
 
   test("the repair section exposes the unpublished attempt, its local work and the pending reconciliation", async () => {
@@ -316,6 +319,56 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
     assert.match(text, /event log trabalhos\/Sanmoo\/my-tasks#23\/log-2\.jsonl present/);
     assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
+  });
+
+  test("the recovery section says whether the last stop was an interruption or a failure (issue 123)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    // #30: interrupted twice — two recoveries consumed, the attempt kept.
+    const interrupted = seedAttempt(30, 2);
+    const now = () => new Date("2026-01-01T00:00:00Z");
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, "worker-interrupted", now);
+    await consumeRecovery(interrupted, DEFAULT_RECOVERY_POLICY, 2, "worker-interrupted", now);
+    // #31: a written failure — the attempt was consumed.
+    const failed = seedAttempt(31, 1);
+    await recordFailure(failed, 1, "clean-without-pr", now);
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const text = renderStatus(view);
+
+    assert.match(text, /recovery \(interruptions absorbed by their own budget — separate from the attempts\): 2/);
+    assert.match(
+      text,
+      /#30 \(attempt 2: last stop was an interruption — no attempt consumed; 2\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
+      "the interruption names the consumed recoveries and the configured backoff",
+    );
+    assert.match(
+      text,
+      /#31 \(attempt 1: last stop was a failure \(clean-without-pr\) — the attempt was consumed\)/,
+    );
+    assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
+  });
+
+  test("a legacy work dir without a recovery ledger shows no recovery line — nothing is invented", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(32, 1);
+    writeFileSync(
+      join(dir, DESFECHO_FILENAME),
+      JSON.stringify({ class: "clean-without-pr", attempt: 1 }),
+      "utf8",
+    );
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(view.registry.recovery, []);
+    assert.match(
+      renderStatus(view),
+      /recovery \(interruptions absorbed by their own budget — separate from the attempts\): none/,
+    );
+    assert.equal(
+      JSON.parse(readFileSync(join(dir, DESFECHO_FILENAME), "utf8")).class,
+      "clean-without-pr",
+      "the legacy record is untouched",
+    );
   });
 
   test("a legacy reparo.json is read as it stands: rounds counted, no attempt or fall invented", async () => {

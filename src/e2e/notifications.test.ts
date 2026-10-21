@@ -13,7 +13,7 @@ import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } 
 import type { IssueRef } from "../tracker/port.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_RECOVERY_POLICY, type Config } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 
 const REPO = "Sanmoo/my-tasks";
@@ -87,6 +87,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       labels: { ...DEFAULT_LABELS },
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_POLICY },
       notifications,
       configPath: join(dir, "msf.yaml"),
     };
@@ -106,6 +107,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       workspace: layout,
       notifier,
       log: (message) => log.push(message),
+      wait: async () => {},
     };
     return { tracker, runtime, git, notifier, log, deps };
   }
@@ -125,6 +127,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       workspace: layout,
       notifier,
       log: (message) => log.push(message),
+      wait: async () => {},
     };
   }
 
@@ -224,24 +227,35 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.ok((await labelsOf(tracker, 3)).includes(DEFAULT_LABELS.blocked));
   });
 
-  test("two abrupt deaths follow the same ruler: the second one asks for help", async () => {
-    const config = makeConfig(1);
-    const { tracker, notifier, deps } = makeFactory(config, ["abrupt-death", "abrupt-death"]);
+  test("an interruption is recovered silently; exhausting the recovery budget blocks and asks for help", async () => {
+    // A budget of one: the 1st interruption is absorbed without a notice, the
+    // 2nd exhausts the allowance and asks the operator for help (issue 123).
+    const config: Config = { ...makeConfig(1), recovery: { maxRecoveries: 1, waitsMs: [1_000] } };
+    const { tracker, notifier, deps } = makeFactory(config, ["abrupt-death"]);
     seedIssue(tracker, { repo: REPO, number: 4, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    await runOnce(deps);
-    assert.equal(notifier.notifications.length, 0, "the first abrupt fall is released for a retry");
+    const result = await runOnce(deps);
 
-    const second = await runOnce(deps);
-    assert.equal(second.collected[0]?.ruling.decision, "block");
-    assert.equal(notifier.notifications.length, 1);
+    assert.equal(
+      result.collected.filter((entry) => entry.ruling.decision === "interrupt").length,
+      2,
+      "both sessions were interrupted — never ruled as failures",
+    );
+    assert.equal(notifier.notifications.length, 1, "only the exhausted budget is an operator action");
     assert.equal(notifier.notifications[0]?.kind, "help");
     assert.equal(notifier.notifications[0]?.url, issueAddress(4));
+    assert.ok((await labelsOf(tracker, 4)).includes(DEFAULT_LABELS.blocked));
+    assert.equal(result.launched.length, 2, "attempt 1 was launched twice — the SAME attempt, no new one");
+    assert.deepEqual(
+      result.launched.map((launch) => launch.request.attempt),
+      [1, 1],
+      "an interruption never increments the attempt",
+    );
   });
 
-  test("a stale blocked-self-report record from a previous attempt does not re-notify on a recordless resume", async () => {
+  test("a stale blocked-self-report record from a previous attempt does not re-notify on the resume", async () => {
     const config = makeConfig(1);
-    const { tracker, notifier, deps } = makeFactory(config, ["blocked-self-report", "abrupt-death"]);
+    const { tracker, notifier, deps } = makeFactory(config, ["blocked-self-report", "pr-open"]);
     seedIssue(tracker, { repo: REPO, number: 17, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     const first = await runOnce(deps);
@@ -274,20 +288,37 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(notifier.notifications.length, 2, "the handled rejection is not re-presented");
   });
 
-  test("a restart that APPLIES a new block during recovery notifies — an unreconciled 2nd fall is not invisible", async () => {
+  test("a restart that APPLIES a pending 2nd-failure block notifies — a written failure is never invisible", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 6, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
+    // The factory died after attempt 2 wrote its failure outcome but before it
+    // applied the ruler; the recovery ledger shows attempt 1's failure, so this
+    // is the 2nd consecutive failure — the block is due, not a recovery.
     const work = workDir(layout, REPO, 6);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
+    writeFileSync(join(work, "log-2.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 2 })}\n`, "utf8");
     writeFileSync(
       join(work, DESFECHO_FILENAME),
-      JSON.stringify({ class: "clean-without-pr", attempt: 1 }, null, 2),
+      JSON.stringify({ class: "clean-without-pr", attempt: 2 }, null, 2),
       "utf8",
     );
-    writeFileSync(join(work, "log-2.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 2 })}\n`, "utf8");
+    writeFileSync(
+      join(work, "recuperacao.json"),
+      JSON.stringify(
+        {
+          attempt: 1,
+          consumed: 0,
+          events: [],
+          lastStop: { kind: "failure", attempt: 1, at: NOW, outcome: "clean-without-pr" },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     const notifier = new FakeNotifier();
     const deps = makeDeps(config, tracker, new FakeWorkerRuntime({ tracker, outcomes: [] }), notifier);

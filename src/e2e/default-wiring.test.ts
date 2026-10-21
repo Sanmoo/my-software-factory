@@ -60,6 +60,10 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
         `  - ${REPO}`,
         "concurrency: 1",
         `workspace: ${join(dir, "ws")}`,
+        // The configured backoff, made instant for the suite: the schedule
+        // itself is asserted where the recovery is exercised.
+        "recovery:",
+        "  waits-ms: [0, 0, 0]",
       ].join("\n"),
       "utf8",
     );
@@ -124,14 +128,14 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.equal(result.collected[0]!.ruling.decision, "reserve");
   });
 
-  test("boot reconciliation after a crash: the reserved work is re-derived from disk + tracker — 1st fall releases and relaunches as attempt 2", async () => {
+  test("boot reconciliation after a crash: the interruption recovers the SAME attempt — no attempt consumed, no fall", async () => {
     writeConfig();
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // The crash footprint (ticket 05 Q3): a claimed work with an attempt
-    // log and no record — the factory died on it. NOTHING is in memory:
-    // the fresh sweep below is the restarted factory.
+    // The crash footprint (issue 123): a claimed work with an attempt log and
+    // no record — the factory died on it. NOTHING is in memory: the fresh
+    // sweep below is the restarted factory.
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
@@ -140,54 +144,65 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const deps = await wiredDeps(tracker, runtime);
     const result = await runOnce(deps);
 
-    // The derivation ruled the unreconciled fall (release) — and the pool
-    // picked the released work back up in the same sweep, numbered from the
-    // registry's crash footprint: attempt 2, never a re-run of attempt 1.
+    // The derivation read the crash as an INTERRUPTION and recovered the same
+    // attempt (issue 123): the record that lands is attempt 1's, never a new
+    // attempt number, and the work never left the claim.
     assert.equal(result.launched.length, 1);
-    assert.equal(result.launched[0]!.request.attempt, 2);
+    assert.equal(result.launched[0]!.request.attempt, 1, "the interrupted attempt keeps its number");
     const record = await readOutcomeRecord(workDir(layout, REPO, 1));
-    assert.ok(record && record.attempt === 2 && record.class === "pr-open");
+    assert.ok(record && record.attempt === 1 && record.class === "pr-open");
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed]);
     assert.ok((await tracker.readPrFeedback({ repo: REPO, number: 1 })).known);
   });
 
-  test("boot reconciliation after a crash: the 2nd consecutive fall blocks with this attempt's diagnosis on the issue", async () => {
+  test("boot reconciliation after a crash: two interruptions do not block — the last attempt is recovered", async () => {
     writeConfig();
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // The crash footprint of TWO attempts: attempt 1 recorded a clean end
-    // without a PR (a fall), attempt 2 died abruptly (log, no record).
+    // Two sessions started and died without a record: the old ruler blocked on
+    // the 2nd consecutive drop; the interruption rule never does (issue 123).
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
+    writeFileSync(join(work, "log-2.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 2 })}\n`, "utf8");
+
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const deps = await wiredDeps(tracker, runtime);
+    const result = await runOnce(deps);
+
+    assert.equal(result.launched.length, 1, "the interrupted attempt was recovered");
+    assert.equal(result.launched[0]!.request.attempt, 2, "the last interrupted attempt keeps its number");
+    assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed], "the work is never blocked by an interruption");
+  });
+
+  test("boot reconciliation after a crash: the exhausted recovery budget pauses the work and asks for help", async () => {
+    writeConfig();
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+
+    const work = workDir(layout, REPO, 1);
+    mkdirSync(work, { recursive: true });
+    writeFileSync(join(work, "log-3.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 3 })}\n`, "utf8");
     writeFileSync(
-      join(work, "desfecho.json"),
-      JSON.stringify({ class: "clean-without-pr", attempt: 1 }, null, 2),
+      join(work, "recuperacao.json"),
+      JSON.stringify({ attempt: 3, consumed: 3, events: [], lastStop: null }, null, 2),
       "utf8",
     );
-    writeFileSync(join(work, "log-2.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 2 })}\n`, "utf8");
 
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: [] });
     const deps = await wiredDeps(tracker, runtime);
     const result = await runOnce(deps);
 
-    // The valve (ticket 05 Q3): blocked with attempt 2's diagnosis on the
-    // issue, and NOTHING launched — a blocked work listens to the issue
-    // channel. The record on disk belongs to attempt 1, so it is named as
-    // divergent and never presented as this fall's outcome (issue 103).
-    assert.equal(result.launched.length, 0);
+    assert.equal(result.launched.length, 0, "no blind relaunch after the budget ran out");
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.blocked]);
     const comments = await tracker.readComments({ repo: REPO, number: 1 });
-    assert.ok(comments.known && comments.value.some((c) => c.body.includes("attempt 2")));
+    assert.ok(comments.known);
     const body = comments.value.at(-1)!.body;
-    assert.match(body, /the record on disk belongs to attempt 1/);
-    assert.match(body, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
-    assert.match(body, /trabalhos\/Sanmoo\/my-tasks#1\/sessao\/sandcastle-2\.log — absent/);
-
-    // The old record survives as history — numbering and reconciliation keep reading it.
-    const record = await readOutcomeRecord(work);
-    assert.ok(record && record.attempt === 1 && record.class === "clean-without-pr");
+    assert.match(body, /attempt 3 was interrupted and the recovery budget is exhausted/);
+    assert.match(body, /3 automatic recoveries \(waits 0s\/0s\/0s\)/, "the configured value and backoff are named");
+    assert.match(body, /no attempt was consumed/);
+    assert.match(body, /log-3\.jsonl — present/);
   });
 
   test("boot reconciliation with a PR waiting for the human: a restart launches nothing and holds the claim", async () => {

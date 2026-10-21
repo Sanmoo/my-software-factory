@@ -39,6 +39,9 @@ profile-allowed-roots:
   - ~/meus-dotfiles         # every root a profile link really points into
   - ~/.agents
 # profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
+# recovery:                           # an interruption is NOT a failure (issue 123)
+#   max: 3                            # recoveries per attempt, then pause + help
+#   waits-ms: [1000, 4000, 16000]     # the backoff before each relaunch
 EOF
 ```
 
@@ -128,9 +131,11 @@ as you want; each round ends with the worker commenting what it addressed).
 
 You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
-round becomes a fall → release or blocked; a PR waiting for you stays
-parked; a merge you already did becomes done → archive). A repair fall resumes
-on the same branch and PR (see GLOSSARY.md).
+round is an interruption: the SAME attempt is recovered after the configured
+backoff, and only an exhausted budget — or a written failure — pauses the work
+and asks for help; a PR waiting for you stays parked; a merge you already did
+becomes done → archive). A repair fall resumes on the same branch and PR (see
+GLOSSARY.md).
 
 ## (c) Status — the trail, factory stopped
 
@@ -140,10 +145,11 @@ msf status --all  # every entry, no cap
 ```
 
 Derives on demand from the tracker, the workspace disk and a read-only Docker
-probe: live workers (**running**), the attempts that fell with no worker alive
-(**orphaned**), the reservations, the **repair** cycles, last outcomes, the
-pool, archived dones — and the two reconciliation leftovers when tracker and
-workspace disagree:
+probe: live workers (**running**), the attempts interrupted with no worker
+alive (**orphaned**), the reservations, the **recovery** ledger (was the last
+stop an interruption, absorbed by its budget, or a failure that consumed the
+attempt), the **repair** cycles, last outcomes, the pool, archived dones — and
+the two reconciliation leftovers when tracker and workspace disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns the
   issue to the pool; its report warns that another factory or workspace may be
