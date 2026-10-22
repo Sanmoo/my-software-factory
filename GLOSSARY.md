@@ -75,13 +75,13 @@ One logical try by a worker to carry out a work, counted per work. It survives i
 The verdict of how an attempt ended.
 
 **Interruption**:
-An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container, a hard stop. It is not a failure: it consumes no attempt and never enters the fall ruler.
+An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container, a hard stop. It is not a failure: it consumes no attempt and never enters the fall ruler. A requested stop also ends an attempt without a record, but leaves its own persisted evidence and is never charged as an interruption (issue #146).
 
 **Recovery**:
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
 
 **Recovery budget**:
-The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
+The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count. A resume after a requested stop spends nothing from it.
 
 **Failed sweep**:
 A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.
