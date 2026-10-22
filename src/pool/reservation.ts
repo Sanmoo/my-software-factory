@@ -201,30 +201,29 @@ function worksRoot(workspace: WorkspaceLayout | string): string {
   return typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
 }
 
-/** Every dir under the registry root whose relative path is a Work key — a
- *  nested dir of a work (sessao/, the worker's files) is never a work. */
+/** The work dirs of the registry root, read at the layout's own depth only: a
+ *  one-segment key (a source other than github.com) sits directly under the
+ *  root, and a legacy GitHub "<owner>/<repo>#<n>" one level below. The scan
+ *  never descends further — a proof's disposable workspace or a session
+ *  artifact inside a work dir can carry a work-like name of its own, and it is
+ *  never a reservation of THIS workspace. */
 async function workDirs(root: string): Promise<string[]> {
-  const listed = await readdir(root, { recursive: true, withFileTypes: true });
   const dirs: string[] = [];
-  for (const entry of listed) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(entry.parentPath, entry.name);
-    const key = relative(root, dir).split(sep).join("/");
-    if (anchorOfKey(key) === null) continue;
-    // An ancestor that is already a Work key means this is that work's nested
-    // dir, not a Work of its own.
-    if (hasWorkAncestor(key)) continue;
-    dirs.push(dir);
+  for (const top of await readdir(root, { withFileTypes: true })) {
+    if (!top.isDirectory()) continue;
+    const topDir = join(root, top.name);
+    if (anchorOfKey(top.name) !== null) {
+      // A whole Work of its own: never descend into its artifacts.
+      dirs.push(topDir);
+      continue;
+    }
+    for (const nested of await readdir(topDir, { withFileTypes: true })) {
+      if (!nested.isDirectory()) continue;
+      if (anchorOfKey(`${top.name}/${nested.name}`) === null) continue;
+      dirs.push(join(topDir, nested.name));
+    }
   }
   return dirs.sort();
-}
-
-function hasWorkAncestor(key: string): boolean {
-  const parts = key.split("/");
-  for (let end = 1; end < parts.length; end += 1) {
-    if (anchorOfKey(parts.slice(0, end).join("/")) !== null) return true;
-  }
-  return false;
 }
 
 /** A GitHub dir is the issue of its destination repo itself: the legacy key is
