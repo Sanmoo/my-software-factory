@@ -16,10 +16,10 @@ const execFile = promisify(execFileCallback);
  * NOT a status read: that write lives in the runtime (runtime/worker-stop.ts).
  *
  * The interpretation of Docker's output is a PURE function over the canned
- * strings (parseWorkerContainers); the command shells (dockerWorkerProbe and
- * the `runningWorkerContainers` read the runtime's stop shares) are the only
- * parts that touch the machine, and they only read. The composition default —
- * tests inject a fake probe, never a flag.
+ * strings (parseWorkerContainers). Only two shells touch the machine, and both
+ * only read: dockerWorkerProbe and runningWorkerContainers, whose read the
+ * runtime's stop shares. The composition default: tests inject a fake probe,
+ * never a flag.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long

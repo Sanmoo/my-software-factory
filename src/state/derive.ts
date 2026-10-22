@@ -392,9 +392,10 @@ export type ReservedDerivation =
   | { ref: IssueRef; state: "fall"; decision: "release"; attempt: number }
   | { ref: IssueRef; state: "fall"; decision: "block"; comment: string; attempt: number }
   /** An INTERRUPTION (issue 123): the claimed work's attempt ended without an
-   *  outcome record (a dead factory/worker/container, a hard stop). It is not
-   *  a failure: the same attempt is recovered within the persisted budget, or
-   *  the exhausted budget pauses the work and asks the operator for help. */
+   *  outcome record (a dead factory, worker or container). It is not a
+   *  failure: the same attempt is recovered within the persisted budget, or
+   *  the exhausted budget pauses the work and asks the operator for help. A
+   *  requested stop is persisted as itself and is never read here. */
   | { ref: IssueRef; state: "interrupted"; attempt: number; recovery: RecoveryDecision }
   /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
    *  model provider error, so it retries on its own budget instead of the
