@@ -430,7 +430,11 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
     seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
     const logs: string[] = [];
-    const runtime = { launch: () => Promise.reject(new Error("boom")) };
+    const runtime = {
+      launch: () => Promise.reject(new Error("boom")),
+      requestStop: () => {},
+      forceStop: async () => {},
+    };
     const deps: LoopDeps = {
       config: makeConfig(),
       tracker,

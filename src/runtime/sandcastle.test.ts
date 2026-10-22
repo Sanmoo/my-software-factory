@@ -22,6 +22,7 @@ import {
   WORKER_FLAG_ARGS,
   defaultPreflight,
   dockerSocketFromHost,
+  latestPiSessionId,
   unixSocketPath,
   workerShapedDockerRun,
 } from "./sandcastle.js";
@@ -987,5 +988,153 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
       (captured?.idleTimeoutSeconds ?? 0) >= SHORT_IDLE_SECONDS * SANDBOX_BACKSTOP_FACTOR,
       "Sandcastle's timer never preempts the verified-activity limit",
     );
+  });
+});
+
+describe("sandcastle runtime — the requested stop and the native session resume (issue #146)", () => {
+  let root: string;
+  let workDir: string;
+  let request: WorkRequest;
+  let runOptions: RunOptions | undefined;
+  let runStarted: () => void;
+  let started: Promise<void>;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "msf-sandcastle-stop-"));
+    const profileDir = join(root, "perfil");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(join(profileDir, "auth.json"), "{}", "utf8");
+    workDir = join(root, "trabalhos", "Sanmoo#my-tasks#42");
+    mkdirSync(workDir, { recursive: true });
+    request = {
+      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      workDir,
+      branch: "agent-issue-42",
+      repoDir: join(root, "repos", "Sanmoo#my-tasks"),
+      baseBranch: "main",
+      attempt: 1,
+      material: { issue: { title: "The issue", body: "The body" }, diff: "" },
+    };
+    started = new Promise<void>((resolve) => (runStarted = resolve));
+    runOptions = undefined;
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** The options the launch handed over (read through a call, so the
+   *  compiler sees the closure's write, not the outer `undefined`). */
+  const captured = (): RunOptions | undefined => runOptions;
+
+  function makeRuntime(): SandcastleRuntime {
+    return new SandcastleRuntime({
+      model: MODEL,
+      token: "gh-token",
+      profileDir: join(root, "perfil"),
+      workspace: join(root, "fabrica"),
+      dockerSocket,
+      preflight: async () => {},
+      runSandcastle: async (options) => {
+        runOptions = options;
+        runStarted();
+        return emptyResult(request.branch);
+      },
+      dockerProvider: () => dummySandbox(),
+    });
+  }
+
+  test("a resume reopens the latest Pi session of the attempt; a new attempt starts fresh", async () => {
+    const sessionsDir = join(workDir, "sessao", "--sandbox-cwd--");
+    mkdirSync(sessionsDir, { recursive: true });
+    const older = join(sessionsDir, "2026-01-01T00-00-00-000Z_11111111-1111-1111-1111-111111111111.jsonl");
+    const newer = join(sessionsDir, "2026-01-02T00-00-00-000Z_22222222-2222-2222-2222-222222222222.jsonl");
+    const session = (id: string) => `${JSON.stringify({ type: "session", id })}\n`;
+    writeFileSync(older, session("11111111-1111-1111-1111-111111111111"), "utf8");
+    writeFileSync(newer, session("22222222-2222-2222-2222-222222222222"), "utf8");
+
+    assert.equal(await latestPiSessionId(join(workDir, "sessao")), "22222222-2222-2222-2222-222222222222");
+
+    await makeRuntime().launch({ ...request, resume: true });
+    assert.equal(
+      captured()?.resumeSession,
+      "22222222-2222-2222-2222-222222222222",
+      "the resumed attempt reopens its native session (ADR 0005)",
+    );
+
+    runOptions = undefined;
+    await makeRuntime().launch(request);
+    assert.equal(captured()?.resumeSession, undefined, "a fresh attempt never resumes another session");
+  });
+
+  test("an attempt with no session file to resume starts a fresh one instead of inventing continuity", async () => {
+    await makeRuntime().launch({ ...request, resume: true });
+    assert.equal(captured()?.resumeSession, undefined);
+    assert.equal(await latestPiSessionId(join(workDir, "sessao")), undefined);
+  });
+
+  test("a requested stop aborts the in-flight run and the launch promise settles with its aftermath", async () => {
+    let aborted: string | undefined;
+    const runtime = new SandcastleRuntime({
+      model: MODEL,
+      token: "gh-token",
+      profileDir: join(root, "perfil"),
+      workspace: join(root, "fabrica"),
+      dockerSocket,
+      preflight: async () => {},
+      runSandcastle: (options) =>
+        new Promise<RunResult>((_resolve, reject) => {
+          runOptions = options;
+          runStarted();
+          options.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = "the run was aborted";
+              reject(new Error("aborted by the factory"));
+            },
+            { once: true },
+          );
+        }),
+      dockerProvider: () => dummySandbox(),
+    });
+
+    const launched = runtime.launch(request);
+    await started;
+    runtime.requestStop(request.ref);
+    const result = await launched;
+
+    assert.equal(aborted, "the run was aborted", "the stop reaches the run's own signal");
+    assert.equal(result.outcome, "abrupt-death", "a stopped session ends without an outcome record");
+    const events = readFileSync(join(workDir, "log-1.jsonl"), "utf8")
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line) as { event: string });
+    assert.ok(
+      events.some((event) => event.event === "session-stop"),
+      "the log says the session ended by the requested stop, not by a broken run",
+    );
+  });
+
+  test("a stop requested before the run starts leaves no session footprint", async () => {
+    let called = false;
+    const runtime = new SandcastleRuntime({
+      model: MODEL,
+      token: "gh-token",
+      profileDir: join(root, "perfil"),
+      workspace: join(root, "fabrica"),
+      dockerSocket,
+      preflight: async () => {},
+      runSandcastle: async () => {
+        called = true;
+        return emptyResult(request.branch);
+      },
+      dockerProvider: () => dummySandbox(),
+    });
+
+    runtime.requestStop(request.ref);
+    const result = await runtime.launch(request);
+    assert.equal(result.outcome, "abrupt-death");
+    assert.equal(called, false, "the container was never started");
+    assert.equal(existsSync(join(workDir, "log-1.jsonl")), false, "no footprint for a worker that never started");
   });
 });

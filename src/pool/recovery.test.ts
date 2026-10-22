@@ -5,13 +5,18 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
 import {
+  confirmStopRequest,
   consumeRecovery,
+  consumeStopRequest,
   exhaustedReason,
   peekRecovery,
   readRecoveryLedger,
   recordFailure,
+  recordStopRequest,
+  recordUnconfirmedStop,
   RECOVERY_FILENAME,
   recoveryDecision,
+  refundRecovery,
   type RecoveryLedger,
 } from "./recovery.js";
 
@@ -177,5 +182,69 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       { index: 0, waitMs: 1_000, attempt: 1, at: "2026-01-01T00:00:00.000Z" },
     ]);
     assert.equal(onDisk.lastFallAttempt, null);
+  });
+
+  test("the requested stop is persisted as the operator's own, and its resume consumes nothing", async () => {
+    await recordStopRequest(dir, 2, NOW);
+    const ledger = await readRecoveryLedger(dir);
+    assert.deepEqual(ledger.lastStop, { kind: "stop-requested", attempt: 2, at: "2026-01-01T00:00:00.000Z" });
+    assert.equal(ledger.consumed, 0, "the stop is never charged");
+    assert.equal((await peekRecovery(dir, BUDGET, 2)).decision, "recover", "the budget is untouched");
+
+    // The resume launches: the record did its job and is consumed.
+    await consumeStopRequest(dir, 2);
+    assert.equal((await readRecoveryLedger(dir)).lastStop, null);
+
+    // A record of ANOTHER attempt is never consumed by this one.
+    await recordStopRequest(dir, 3, NOW);
+    await consumeStopRequest(dir, 2);
+    assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-requested");
+  });
+
+  test("an unconfirmed stop holds the work, and only a confirmed-gone probe turns it into the voluntary stop", async () => {
+    await recordUnconfirmedStop(dir, 4, "a worker of this work is still alive", NOW);
+    const held = await readRecoveryLedger(dir);
+    assert.deepEqual(held.lastStop, {
+      kind: "stop-unconfirmed",
+      attempt: 4,
+      at: "2026-01-01T00:00:00.000Z",
+      because: "a worker of this work is still alive",
+    });
+
+    // Another attempt's confirmation never touches this record.
+    await confirmStopRequest(dir, 3, NOW);
+    assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-unconfirmed");
+
+    await confirmStopRequest(dir, 4, NOW);
+    assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-requested");
+  });
+
+  test("a recovery whose relaunch the stop cancelled is returned; earlier consumption stays", async () => {
+    await consumeRecovery(dir, BUDGET, 1, NOW);
+    await consumeRecovery(dir, BUDGET, 1, NOW);
+    assert.equal((await readRecoveryLedger(dir)).consumed, 2);
+
+    assert.equal(await refundRecovery(dir, 2, 1), false, "another attempt's grant is not returned");
+    assert.equal(await refundRecovery(dir, 1, 2), false, "an event that does not exist is not invented");
+    assert.equal(await refundRecovery(dir, 1, 1), true);
+    const ledger = await readRecoveryLedger(dir);
+    assert.equal(ledger.consumed, 1, "only the cancelled grant returned");
+    assert.deepEqual(
+      ledger.events.map((event) => event.index),
+      [0],
+      "the earlier, legitimate recovery stays",
+    );
+    assert.equal(await refundRecovery(dir, 1, 1), false, "the same grant is never returned twice");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 1);
+  });
+
+  test("a corrupt or foreign stop record never crashes the reader and never invents a stop", async () => {
+    writeFileSync(
+      join(dir, RECOVERY_FILENAME),
+      JSON.stringify({ attempt: 1, consumed: 0, events: [], lastStop: { kind: "stop-requested" } }),
+      "utf8",
+    );
+    const ledger = await readRecoveryLedger(dir);
+    assert.equal(ledger.lastStop, null);
   });
 });

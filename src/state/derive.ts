@@ -407,6 +407,14 @@ export type ReservedDerivation =
       failure: ModelProviderFailure;
       modelProvider: ModelProviderDecision;
     }
+  /** The attempt ended by the operator's REQUESTED stop (issue #146): the same
+   *  attempt resumes on the next run, spending no recovery — a voluntary
+   *  restart is a lifecycle condition, never a fall or an interruption. */
+  | { ref: IssueRef; state: "stop-resume"; attempt: number }
+  /** The requested stop could not be confirmed (issue #146): the previous
+   *  worker may still be alive, so the work is held with the reason until a
+   *  later probe proves it gone. */
+  | { ref: IssueRef; state: "stop-unconfirmed"; attempt: number; because: string }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -637,16 +645,12 @@ async function deriveUnreconciledAttempt(
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const ledger = await readAttemptLedger(dir);
-  if (ledger.lastAttempt === 0) {
-    if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
-    return {
-      ref,
-      state: "interrupted",
-      attempt: 1,
-      recovery: await peekRecovery(dir, recovery, 1),
-    };
-  }
+  const current = ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt;
 
+  // A confirmed Outcome prevails over the interpretation of the stop (issue
+  // #146): the attempt really ended with a verdict, so a stop record left on
+  // top of it (the operator stopped the factory while that verdict was being
+  // applied) never turns the attempt into a voluntary resume.
   const record = await readOutcomeRecord(dir);
   if (selfReportedBlocked(record, ledger.lastAttempt)) {
     // The worker reported blocked but the label never landed (an interrupted
@@ -657,6 +661,28 @@ async function deriveUnreconciledAttempt(
   }
   if (ownWrittenOutcome(record, ledger.lastAttempt) !== null) {
     return deriveUnreconciledFailure(ref, dir, workspace, ledger.lastAttempt, record);
+  }
+
+  // The persisted stop of THIS attempt (issue #146): it says the operator
+  // ended the attempt deliberately, so it is neither an interruption to charge
+  // nor a failure to rule. An unconfirmed stop holds the work.
+  const ledgered = await readRecoveryLedger(dir);
+  const stop = ledgered.lastStop;
+  if (stop !== null && stop.attempt === current) {
+    if (stop.kind === "stop-requested") return { ref, state: "stop-resume", attempt: current };
+    if (stop.kind === "stop-unconfirmed") {
+      return { ref, state: "stop-unconfirmed", attempt: current, because: stop.because };
+    }
+  }
+
+  if (ledger.lastAttempt === 0) {
+    if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
+    return {
+      ref,
+      state: "interrupted",
+      attempt: 1,
+      recovery: await peekRecovery(dir, recovery, 1),
+    };
   }
 
   return {

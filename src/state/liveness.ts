@@ -12,7 +12,8 @@ const execFile = promisify(execFileCallback);
  * The liveness probe (issue 102, ADR 0002): the workers ARE containers, so
  * asking Docker is the only way `msf status` can tell a live worker from a
  * registry dir whose attempt died. Read-only by construction — the probe only
- * lists the worker image's containers and inspects them.
+ * lists the worker image's containers and inspects them. Ending a worker is
+ * NOT a status read: that write lives in the runtime (runtime/worker-stop.ts).
  *
  * The interpretation of Docker's output is a PURE function over the canned
  * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
@@ -152,9 +153,44 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
     const ids = parseContainerIds(listing);
     // Nothing running: no inspect to pay for, no workers to correlate.
     if (ids.length === 0) return [];
-    const inspect = await docker(["inspect", ...ids], timeoutMs);
+    const inspect = await inspectContainers(ids, timeoutMs);
     return parseWorkerContainers(listing, inspect, options.worksRoot, new Date());
   };
+}
+
+/**
+ * `docker inspect` over the listed ids. A container that left between the
+ * listing and its inspect is simply not running, so its absence is dropped
+ * instead of failing the whole probe — the confirmation of a stop (issue #146)
+ * reads liveness exactly while the runtime tears the container down. Any other
+ * unreadable answer still fails: the factory never guesses that a worker is
+ * gone.
+ */
+async function inspectContainers(ids: readonly string[], timeoutMs: number): Promise<string> {
+  try {
+    return await docker(["inspect", ...ids], timeoutMs);
+  } catch (error) {
+    if (!vanished(error)) throw error;
+  }
+  const found: string[] = [];
+  for (const id of ids) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await docker(["inspect", id], timeoutMs));
+    } catch (error) {
+      if (vanished(error)) continue;
+      throw error;
+    }
+    if (!Array.isArray(parsed)) throw new Error("docker inspect output is not a list — liveness unknown");
+    for (const container of parsed) found.push(JSON.stringify(container));
+  }
+  return `[${found.join(",")}]`;
+}
+
+/** The daemon's answer for an id that no longer exists (`docker inspect`). */
+function vanished(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such (object|container)/i.test(message);
 }
 
 /** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
@@ -292,4 +328,45 @@ function correlateWork(mounts: Array<{ Source?: string }>, worksRoot: string): W
   if (undecidable) return { kind: "inconclusive" };
   if (foreign) return { kind: "foreign" };
   return { kind: "not-a-worker" };
+}
+
+/**
+ * The forced stop of one work's workers (issue #146): remove the containers
+ * Docker says carry the work, then prove none is left. Resolves only on the
+ * proof; an unreadable daemon or a surviving container rejects with the
+ * reason — the factory never calls a stop safe on a guess.
+ */
+export function dockerWorkerForceStop(options: DockerProbeOptions): (key: string) => Promise<void> {
+  const probe = dockerWorkerProbe(options);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const running = async (key: string): Promise<string[]> =>
+    (await probe())
+      .filter((worker) => worker.key === key)
+      .map((worker) => worker.containerId);
+
+  return async (key: string) => {
+    const doomed = await running(key);
+    if (doomed.length > 0) {
+      try {
+        await docker(["rm", "-f", ...doomed], timeoutMs);
+      } catch {
+        // The runtime's own teardown may already be removing the same
+        // container ("removal ... already in progress"). The proof is the
+        // probe below, never this command's exit status.
+      }
+    }
+
+    // The proof: the container is gone. A removal already under way needs a
+    // moment to leave the listing; anything still there after the grace is a
+    // survivor the factory must not call stopped.
+    const deadline = Date.now() + 5_000;
+    let survivors = await running(key);
+    while (survivors.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      survivors = await running(key);
+    }
+    if (survivors.length > 0) {
+      throw new Error(`a worker of ${key} survived the forced stop (${survivors.length} container(s) still running)`);
+    }
+  };
 }

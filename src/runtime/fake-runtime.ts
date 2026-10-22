@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
+import type { IssueRef } from "../tracker/port.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
@@ -20,6 +21,13 @@ import { SESSIONS_SUBDIR } from "../layout.js";
  * A launch may also be told to die by a model provider outage: the fake records the
  * provider's failing stream line into the attempt's log (the same artifact the
  * real runtime writes), so the factory's own detection reads it (issue 144).
+ *
+ * Issue #146: the runtime also carries the stop contract. A cooperative
+ * request ends a parked launch as an abrupt death with no record — exactly the
+ * footprint of a stopped session; a forced stop ends it the same way and says
+ * the worker is gone. The options let a test choose a worker that ignores the
+ * request or a force that cannot confirm the end, the two failure modes the
+ * factory must survive without lying.
  */
 
 export type ScriptedOutcome = SessionResult["outcome"];
@@ -36,7 +44,37 @@ export interface FakeWorkerRuntimeOptions {
    *  provider's message becomes the failing stream line of the attempt's log.
    *  Null keeps the launch a plain abrupt death. */
   modelProviderErrors?: (request: WorkRequest, index: number) => string | null;
+  /** The worker ignores the cooperative request (a hung session): only the
+   * hold or the forced stop ends it. */
+  ignoreStop?: boolean;
+  /** The forced stop cannot confirm the end: the worker survives it. */
+  forceUnconfirmed?: boolean;
 }
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+/** The session of one launch while it can still be stopped. */
+interface FakeSession {
+  ref: IssueRef;
+  /** Ends the parked launch either way. */
+  wake: Deferred;
+  /** The cooperative request; the launch reports the stop through it. */
+  cooperative: Deferred;
+  /** The forced stop; the launch reports the stop through it. */
+  forced: Deferred;
+}
+
+/** The work key the factory uses: "<repo>#<n>". */
+const keyOf = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
 /** The launch of one work among a run's results, by issue number. Concurrent
  * admissions reach the runtime in no contractual order, so a test asks for the
@@ -50,9 +88,14 @@ export function launchOf(
 
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
+  /** The works a cooperative stop was requested for, in order. */
+  readonly stopRequests: string[] = [];
+  /** The works a forced stop was requested for, in order. */
+  readonly forcedStops: string[] = [];
   /** Instance-level hold hook — settable by tests after construction. */
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
   private readonly script: ScriptedOutcome[];
+  private readonly sessions = new Map<string, FakeSession>();
   private cursor = 0;
 
   constructor(private readonly options: FakeWorkerRuntimeOptions = {}) {
@@ -61,12 +104,67 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
-    const hold = this.hold ?? this.options.hold;
-    if (hold) await hold(request, index);
+    const key = keyOf(request.ref);
+    const session: FakeSession = {
+      ref: request.ref,
+      wake: deferred(),
+      cooperative: deferred(),
+      forced: deferred(),
+    };
+    this.sessions.set(key, session);
+
+    try {
+      const hold = this.hold ?? this.options.hold;
+      const work = hold === undefined ? Promise.resolve("work") : Promise.resolve(hold(request, index)).then(() => "work");
+      // A hung worker ignores the cooperative request: only its own hold or
+      // the forced stop ends it. The race is honest: a worker that finished
+      // before reacting to the stop still has its confirmed outcome.
+      const stopSource = this.options.ignoreStop === true ? session.forced.promise : session.wake.promise;
+      const stopped = stopSource.then(() => "stop");
+      const winner = await Promise.race([work, stopped]);
+      if (winner === "stop") return { request, outcome: "abrupt-death" };
+    } finally {
+      this.sessions.delete(key);
+    }
+
     this.startSession(request);
     const outcome = this.next();
     await this.apply(outcome, request, index);
     return { request, outcome };
+  }
+
+  /** Ask the session to end; the launch promise resolves with its aftermath. */
+  requestStop(ref: IssueRef): void {
+    const key = keyOf(ref);
+    this.stopRequests.push(key);
+    const session = this.sessions.get(key);
+    if (session === undefined) return;
+    session.cooperative.resolve();
+    if (this.options.ignoreStop !== true) session.wake.resolve();
+  }
+
+  /** Force the session gone; a fake container is instantly removed. */
+  async forceStop(ref: IssueRef): Promise<void> {
+    const key = keyOf(ref);
+    this.forcedStops.push(key);
+    if (this.options.forceUnconfirmed === true) {
+      throw new Error(`fake: the worker of ${key} survived the forced stop`);
+    }
+    const session = this.sessions.get(key);
+    if (session === undefined) return;
+    session.forced.resolve();
+    session.wake.resolve();
+  }
+
+  /** The sessions alive right now: a stopped launch still counts until it ended. */
+  async liveWorkers(): Promise<ReadonlyArray<{ key: string }>> {
+    return [...this.sessions.keys()].map((key) => ({ key }));
+  }
+
+  /** Resolves once a cooperative stop was requested for this work — the seam a
+   *  test's hold awaits to end voluntarily inside the cooperative window. */
+  whenStopRequested(ref: IssueRef): Promise<void> {
+    return this.sessions.get(keyOf(ref))?.cooperative.promise ?? Promise.resolve();
   }
 
   /** The attempt begins: the runtime writes the session dir and the

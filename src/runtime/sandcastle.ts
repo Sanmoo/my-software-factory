@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +8,9 @@ import { promisify } from "node:util";
 import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
-import { SESSIONS_SUBDIR } from "../layout.js";
+import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
+import { workKey } from "../state/derive.js";
+import { dockerWorkerForceStop } from "../state/liveness.js";
 import {
   describeForeignRecord,
   ownOutcomeRecord,
@@ -26,6 +29,7 @@ import {
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { IssueRef } from "../tracker/port.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -58,6 +62,26 @@ const execFile = promisify(execFileCallback);
  * record OF THIS ATTEMPT is read as the session's outcome: an earlier
  * attempt's record on disk is history and is logged as rejected (issue 143).
  */
+
+/** One running session of this runtime: its cooperative request and the
+ *  forced stop that ends it even when Sandcastle's unwind lags behind. */
+interface RunningSession {
+  ref: IssueRef;
+  stop: AbortController;
+  forced: Deferred;
+}
+
+/** A promise a stop (or the runtime) resolves exactly once. */
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 /** Inside the container: the agent dir is the writable COPY of the snapshot. */
 export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -282,6 +306,11 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly preflight: () => Promise<void>;
   private readonly piProvider: (model: string, options?: PiOptions) => AgentProvider;
 
+  /** The running sessions of this process, by work key — what a stop reaches. */
+  private readonly sessions = new Map<string, RunningSession>();
+  /** Keys whose stop was requested before their session registered. */
+  private readonly stopRequested = new Set<string>();
+
   constructor(options: SandcastleRuntimeOptions) {
     this.model = options.model;
     this.token = options.token;
@@ -311,9 +340,30 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
+    const key = workKey(request.ref);
+    // The session is registered BEFORE the preconditions (issue #146): a stop
+    // arriving during them reaches this launch instead of being lost in the
+    // window between the factory's check and the worker's start.
+    const session: RunningSession = { ref: request.ref, stop: new AbortController(), forced: deferred() };
+    this.sessions.set(key, session);
+    try {
+      return await this.launchRegistered(request, session);
+    } finally {
+      this.sessions.delete(key);
+    }
+  }
+
+  private async launchRegistered(request: WorkRequest, session: RunningSession): Promise<SessionResult> {
+    const stopSignal = session.stop.signal;
     // Preconditions BEFORE any footprint: infra and config failures are not
     // work falls — the factory fails fast with the reason (the v1's refusal).
     await this.preflight();
+
+    // Stopped while the preconditions ran: no footprint, no worker. The
+    // requested stop is not a session this runtime has to report.
+    if (stopSignal.aborted || this.stopRequested.has(workKey(request.ref))) {
+      return { request, outcome: "abrupt-death" };
+    }
 
     // The Docker socket the container inherits (ADR 0003), resolved with the
     // preconditions: a socket that vanished between the two is the factory's
@@ -335,30 +385,46 @@ export class SandcastleRuntime implements WorkerRuntime {
       // this — the start line without an end, the record's absence.
       const sessionsDir = join(request.workDir, SESSIONS_SUBDIR);
       mkdirSync(sessionsDir, { recursive: true });
+      // A recovery/resume reopens the attempt's native Pi session (ADR 0005)
+      // instead of starting one from reconstructed context.
+      const resumeSession = request.resume === true ? await latestPiSessionId(sessionsDir) : undefined;
       this.event(request, "session-start", {
         branch: request.branch,
         baseBranch: request.baseBranch,
         model: this.model,
         image: this.image,
+        ...(resumeSession === undefined ? {} : { resumeSession }),
         ...(warnings.length > 0 ? { profileWarnings: warnings } : {}),
       });
 
       // The verified-activity idle limit (issue 112): the watchdog aborts the
-      // run once nothing verifiable happened for the configured idle time.
+      // run once nothing verifiable happened for the configured idle time. The
+      // requested stop aborts the same run (issue #146): Sandcastle kills the
+      // agent subprocess and tears the container down before the promise
+      // settles.
       const watch = await this.activityWatch(request);
+      const runSignal = AbortSignal.any([watch.signal, stopSignal]);
       let outcome: SessionResult["outcome"];
+      // The forced stop settles the launch on its own (issue #146): the
+      // runtime confirmed the container gone through Docker, so waiting for
+      // Sandcastle's own unwind (which can outlive the container) would hold
+      // the factory hostage. The in-flight run keeps unwinding in the
+      // background with its rejection observed.
+      const run = this.runSandcastle(
+        this.runOptionsFor(request, snapshotDir, sessionsDir, dockerSocket, runSignal, resumeSession),
+      );
+      void run.catch(() => {});
       try {
-        await this.runSandcastle(
-          this.runOptionsFor(request, snapshotDir, sessionsDir, dockerSocket, watch.signal),
-        );
+        await Promise.race([run, session.forced.promise]);
         outcome = await this.observedOutcome(request);
       } catch (error) {
-        this.event(request, "session-failed", {
+        this.event(request, stopSignal.aborted ? "session-stop" : "session-failed", {
           reason: describeError(error),
         });
         outcome = "abrupt-death";
       } finally {
-        // The watch dies with the session: a resolved or failed run is not an idle.
+        // The watch dies with the session: a resolved, failed or forced run is
+        // not an idle.
         watch.stop();
       }
       this.event(request, "session-end", { outcome });
@@ -366,6 +432,36 @@ export class SandcastleRuntime implements WorkerRuntime {
     } finally {
       rmSync(snapshotDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * The cooperative stop (issue #146): Sandcastle aborts the in-flight agent
+   * and tears the sandbox down before the launch promise settles, so the
+   * request never abandons that promise. `forceStop` is the backstop for a
+   * worker that survives it.
+   */
+  requestStop(ref: IssueRef): void {
+    const key = workKey(ref);
+    this.stopRequested.add(key);
+    this.sessions.get(key)?.stop.abort();
+  }
+
+  /**
+   * Force the worker gone and prove it, through Docker (ADR 0002). Only after
+   * the container is confirmed gone does the launch settle: an unconfirmed end
+   * rejects and the launch stays owned, never declared safe.
+   */
+  async forceStop(ref: IssueRef): Promise<void> {
+    const key = workKey(ref);
+    this.stopRequested.add(key);
+    const session = this.sessions.get(key);
+    session?.stop.abort();
+    await this.forceStopper()(key);
+    session?.forced.resolve();
+  }
+
+  private forceStopper(): (key: string) => Promise<void> {
+    return dockerWorkerForceStop({ image: this.image, worksRoot: join(this.workspace, WORKSPACE_SUBPATHS.works) });
   }
 
   /**
@@ -422,6 +518,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     sessionsDir: string,
     dockerSocket: DockerSocket,
     signal: AbortSignal,
+    resumeSession?: string,
   ): RunOptions {
     const agent = this.piProvider(this.model, {
       // No implicit capture: the sessions bind does the persistence, the
@@ -474,6 +571,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,
       idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
+      ...(resumeSession === undefined ? {} : { resumeSession }),
       signal,
       name: `work-${request.ref.number}-attempt-${request.attempt}`,
       hooks: {
@@ -675,4 +773,53 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
 /** The idle span in the operator's units: 300 ms is not "0 seconds". */
 function formatIdle(idleMs: number): string {
   return idleMs < 1000 ? `${Math.round(idleMs)} ms` : `${(idleMs / 1000).toFixed(1)} s`;
+}
+
+/**
+ * The newest Pi session of an attempt's session dir (issue #146, ADR 0005):
+ * the id Sandcastle's `resumeSession` reopens on the host. The session files
+ * live under the work's `sessao/` bind, one dir per sandbox cwd; the id is the
+ * `id` of the session's first JSON line (the filename carries it too). No file
+ * means no native session to resume — the launch starts a fresh one rather
+ * than pretending continuity.
+ */
+export async function latestPiSessionId(sessionsDir: string): Promise<string | undefined> {
+  let files: string[];
+  try {
+    const entries = await readdir(sessionsDir, { recursive: true, withFileTypes: true });
+    files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+      .map((entry) => join(entry.parentPath, entry.name));
+  } catch {
+    return undefined;
+  }
+  const sessions = await Promise.all(
+    files.map(async (path) => {
+      try {
+        const stats = await stat(path);
+        return { path, at: stats.mtimeMs };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const newest = sessions
+    .filter((session): session is { path: string; at: number } => session !== null)
+    // The file name starts with the session's timestamp: two files written in
+    // the same millisecond still order — the newest one is the attempt's.
+    .sort((a, b) => b.at - a.at || b.path.localeCompare(a.path))[0];
+  return newest === undefined ? undefined : (await sessionIdOf(newest.path)) ?? undefined;
+}
+
+/** The session id of one JSONL file, from its first line or its filename. */
+async function sessionIdOf(path: string): Promise<string | null> {
+  try {
+    const first = (await readFile(path, "utf8")).split("\n", 1)[0] ?? "";
+    const parsed = JSON.parse(first) as { type?: string; id?: string };
+    if (parsed.type === "session" && typeof parsed.id === "string" && parsed.id !== "") return parsed.id;
+  } catch {
+    // Fall through to the filename's id.
+  }
+  const match = /_([0-9a-fA-F-]{36})\.jsonl$/.exec(path);
+  return match?.[1] ?? null;
 }

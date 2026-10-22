@@ -68,6 +68,14 @@ class PrAndHelpRuntime implements WorkerRuntime {
     await this.tracker.comment(request.ref, "help: the API contract needs a human decision");
     return result;
   }
+
+  requestStop(ref: IssueRef): void {
+    this.inner.requestStop(ref);
+  }
+
+  forceStop(ref: IssueRef): Promise<void> {
+    return this.inner.forceStop(ref);
+  }
 }
 
 describe("e2e: local notices for occurrences that need the human (issue 93)", () => {
