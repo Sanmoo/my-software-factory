@@ -243,7 +243,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           ``,
           `## This session CONTINUES attempt ${request.attempt}`,
           ``,
-          `The factory stopped on the operator's request and reopened the SAME native session (attempt ${request.attempt}, same branch) — this is a continuation, not a new attempt. Treat the work you already did in this conversation as done and keep going from where the stop caught you; the conversation is the memory, so do not redo what it already records.`,
+          `The factory ended this attempt before it finished (the operator's stop or an interruption) and reopened the SAME native session (attempt ${request.attempt}, same branch) — this is a continuation, not a new attempt. Treat the work you already did in this conversation as done and keep going from where the stop caught you; the conversation is the memory, so do not redo what it already records.`,
           ``,
           `Before repeating any EXTERNAL effect — a commit, a push, a PR, a comment, a label — read the real state first (\`git status\`, \`git log\`, \`gh pr view\`, \`gh issue view\`). If the effect already landed, do not repeat it. If the evidence is ambiguous (the effect may or may not have landed), do NOT repeat it blindly: self-report blocked with what you checked and what is uncertain, so a human reconciles the two sides.`,
         ]
