@@ -17,7 +17,7 @@ import type { WorkRequest } from "../runtime/port.js";
  * never a fake. The agent is deterministic (a `sleep`), so the test never
  * depends on LLM inference.
  *
- * Usage: node real-stop-driver.js <cooperative|forced> <host root>
+ * Usage: node real-stop-driver.js <cooperative|forced|abort> <host root>
  *
  * It prints one line to stdout: `MSF_STOP_RESULT=<json>`; diagnostics go to
  * stderr. Exit 0 only when the contract held.
@@ -65,8 +65,8 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function main(): Promise<void> {
-  if (MODE !== "cooperative" && MODE !== "forced") {
-    throw new Error(`unknown mode ${MODE}: use cooperative or forced`);
+  if (MODE !== "cooperative" && MODE !== "forced" && MODE !== "abort") {
+    throw new Error(`unknown mode ${MODE}: use cooperative, forced or abort`);
   }
   if (ROOT === undefined || !existsSync(ROOT)) throw new Error(`the root ${ROOT} does not exist`);
 
@@ -151,27 +151,34 @@ async function main(): Promise<void> {
   ]);
   if (!seenWorker) throw new Error("the worker container never appeared — the proof cannot proceed");
 
-  // The factory's two-phase contract, exactly as the loop applies it: the
-  // requested stop first, the forced stop at the end of the cooperative
-  // window (mode "cooperative"), or the second-signal escalation straight away
-  // (mode "forced"). The sandbox's agent here does not cooperate with the
-  // abort, which is precisely why the forced phase exists.
+  // The factory's contract, exactly as the loop applies it: the requested stop
+  // first, the forced stop at the end of the cooperative window (mode
+  // "cooperative"), or the second-signal escalation straight away (mode
+  // "forced"). Mode "abort" never forces: it proves the cooperative request
+  // alone ends the real container, through the runtime's own abort.
   const COOPERATIVE_WINDOW_MS = 10_000;
+  const ABORT_GRACE_MS = 60_000;
   let settledInWindow = false;
-  if (MODE === "cooperative") {
-    log("requesting the cooperative stop");
-    runtime.requestStop(request.ref);
+  let forced = false;
+  log(`requesting the cooperative stop (mode ${MODE})`);
+  runtime.requestStop(request.ref);
+  if (MODE === "abort") {
+    const settledByAbort = await waitForSettle(ABORT_GRACE_MS, () => launchSettled);
+    log(`the abort ${settledByAbort ? "settled the launch" : "did not settle the launch"} on its own`);
+  } else if (MODE === "cooperative") {
     settledInWindow = await waitForSettle(COOPERATIVE_WINDOW_MS, () => launchSettled);
     if (settledInWindow) {
       log("the session ended inside the cooperative window");
     } else {
-      log(`the cooperative window ended without the session ending; forcing the stop`);
+      log("the cooperative window ended without the session ending; forcing the stop");
       await runtime.forceStop(request.ref);
+      forced = true;
       log(`forced; the probe now sees: ${JSON.stringify((await probe()).map((w) => w.key))}`);
     }
   } else {
     log("escalating: forcing the stop now");
     await runtime.forceStop(request.ref);
+    forced = true;
     log(`forced; the probe now sees: ${JSON.stringify((await probe()).map((w) => w.key))}`);
   }
 
@@ -192,6 +199,7 @@ async function main(): Promise<void> {
     mode: MODE,
     workerSeen: seenWorker,
     settledInWindow,
+    forcedStop: forced,
     launchSettled: settled,
     outcome: outcome ?? null,
     surviving: surviving.map((worker) => worker.key),
@@ -199,6 +207,7 @@ async function main(): Promise<void> {
   process.stdout.write(`MSF_STOP_RESULT=${JSON.stringify(result)}\n`);
   if (surviving.length > 0) throw new Error(`a worker survived the ${MODE} stop: ${result.surviving.join(", ")}`);
   if (!settled) throw new Error(`the ${MODE} stop did not settle the launch`);
+  if (MODE === "abort" && forced) throw new Error("the abort mode forced a stop — the proof is void");
 }
 
 try {

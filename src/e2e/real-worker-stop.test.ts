@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { join, relative, resolve, sep } from "node:path";
 import { describe, test } from "node:test";
 
-import { dockerWorkerForceStop, dockerWorkerProbe } from "../state/liveness.js";
+import { dockerWorkerProbe } from "../state/liveness.js";
+import { dockerWorkerForceStop } from "../runtime/worker-stop.js";
 import { dockerSocketFromHost } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 
@@ -91,6 +92,9 @@ function repoRoot(): string {
 interface StopResult {
   mode: string;
   workerSeen: boolean;
+  /** The deadline or the second signal forced what the request left behind. */
+  forcedStop: boolean;
+  settledInWindow: boolean;
   launchSettled: boolean;
   outcome: string | null;
   surviving: string[];
@@ -101,7 +105,7 @@ interface StopResult {
  * its HOST path (so the daemon resolves the same paths the driver uses) and the
  * daemon socket joined by its group (ADR 0003).
  */
-function runDriver(mode: "cooperative" | "forced", testRoot: string): StopResult {
+function runDriver(mode: "cooperative" | "forced" | "abort", testRoot: string): StopResult {
   const hostRepo = hostPathOf(repoRoot());
   const hostRoot = hostPathOf(testRoot);
   const socket = dockerSocketFromHost();
@@ -154,7 +158,7 @@ function freshRoot(): string {
 }
 
 describe("e2e: the real worker container ends on the requested stop (issue #146)", { skip: skipReason, timeout: MODE_TIMEOUT_MS }, () => {
-  for (const mode of ["cooperative", "forced"] as const) {
+  for (const mode of ["cooperative", "forced", "abort"] as const) {
     test(`the ${mode} stop ends the real Sandcastle container and leaves no surviving worker`, async () => {
       const root = freshRoot();
       const key = "Sanmoo/stop#1";
@@ -165,6 +169,13 @@ describe("e2e: the real worker container ends on the requested stop (issue #146)
         assert.equal(result.launchSettled, true, "the stop settled the launch (no abandoned promise)");
         assert.equal(result.outcome, "abrupt-death", "a stopped session ends without an invented outcome");
         assert.deepEqual(result.surviving, [], "the runtime's own probe confirms no worker survives");
+        if (mode === "forced") assert.equal(result.forcedStop, true, "the escalation forced the worker");
+        if (mode === "abort") {
+          assert.equal(result.forcedStop, false, "the cooperative request alone ended the real container");
+        }
+        if (mode === "cooperative" && !result.settledInWindow) {
+          assert.equal(result.forcedStop, true, "a session that outlived the window was forced, never presumed stopped");
+        }
 
         // The factory's probe, from this side of the boundary, agrees.
         assert.deepEqual(await workersOf(root), [], "no container of the work survives after the driver exits");

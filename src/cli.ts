@@ -156,6 +156,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   // all live inside the handler's window, for the continuous run and for
   // `run --once` alike.
   const stop = installShutdownSignals();
+  let report: ShutdownReport | null = null;
   try {
     // Strict argument parsing has already completed; config is next, before
     // workspace writes or the keyring boot check.
@@ -171,23 +172,28 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
     // operational activity — the workspace below included. A second run for the
     // same configuration is refused here and never touches the factory.
     const lock = await acquireRunLock(config.configPath);
-    let report: ShutdownReport | null = null;
     try {
-      report = await executeRun(config, once, runtimeName, stop);
+      // A stop requested during the startup stops HERE (issue #146): no
+      // workspace, no wiring, no reservation — and the lock is still released.
+      if (stop.requested.aborted) {
+        console.log(utcStamp("msf run: stop requested during startup — nothing was launched, exit 0"));
+      } else {
+        report = await executeRun(config, once, runtimeName, stop);
+      }
     } finally {
       await lock.close();
     }
-    // A requested stop that could not confirm every worker is not a safe stop:
-    // the diagnostic is on stderr and the status says so.
-    if (report !== null) {
-      // The stop is over (confirmed, or reported as unconfirmed) and the
-      // exclusivity is released: the process ends NOW. An internal handle of
-      // the runtime must never delay the operator's restart — that would turn
-      // the requested stop back into an indefinite wait.
-      process.exit(report.unconfirmed.length > 0 ? 1 : 0);
-    }
   } finally {
     stop.dispose();
+  }
+
+  if (report !== null) {
+    // A requested stop that could not confirm every worker is not a safe stop:
+    // the diagnostic is on stderr and the status says so. The stop is over
+    // (confirmed, or reported as unconfirmed) and the exclusivity is released:
+    // the process ends NOW — an internal handle of the runtime must never
+    // delay the operator's restart.
+    process.exit(report.unconfirmed.length > 0 ? 1 : 0);
   }
 }
 
