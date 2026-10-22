@@ -22,6 +22,7 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
+import { readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import { issueRefOfTicket } from "../tracker/identity.js";
@@ -262,6 +263,12 @@ export interface ModelProviderViewEntry {
   last: ModelProviderSettlement;
 }
 
+/** A persisted continuity pause as `msf status` reads it (issue 119). */
+export interface ContinuityPauseEntry {
+  key: string;
+  pause: PauseRecord;
+}
+
 /** The repair cycle of a work as `msf status` reads it (issue 112). */
 export interface RepairViewEntry {
   key: string;
@@ -294,6 +301,9 @@ export interface RegistryView {
   /** Works whose last attempt ended by a model provider failure: the retries
    *  spent and the provider's own message (issue 144). */
   modelProvider: ModelProviderViewEntry[];
+  /** Works waiting for the operator because their interrupted attempt cannot
+   *  be continued safely (issue 119): the persisted pause, with its reason. */
+  continuityPauses: ContinuityPauseEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
 }
@@ -312,6 +322,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const repair: RepairViewEntry[] = [];
   const recovery: RecoveryViewEntry[] = [];
   const modelProvider: ModelProviderViewEntry[] = [];
+  const continuityPauses: ContinuityPauseEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
     const record = await readOutcomeRecord(dir);
@@ -358,6 +369,8 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }
     }
+    const pause = readPause(dir);
+    if (pause !== null) continuityPauses.push({ key, pause });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);
@@ -368,8 +381,19 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   recovery.sort(byEntryKey);
   modelProvider.sort(byEntryKey);
 
+  continuityPauses.sort(byEntryKey);
+
   const archived = await workDirs(archive);
-  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, modelProvider, archived };
+  return {
+    attemptsWithoutOwnOutcome,
+    reservedWithoutAttempt,
+    lastOutcome,
+    repair,
+    recovery,
+    modelProvider,
+    continuityPauses,
+    archived,
+  };
 }
 
 /** This status view reads the dirs that carry a legacy "<repo>#<n>" name,

@@ -8,7 +8,7 @@ import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
-import type { ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
+import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
@@ -122,6 +122,17 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
+  // A continuity pause is neither a fall nor Docker's silence (issue 119): the
+  // attempt cannot be reopened safely, the work waits for the operator, and
+  // naming the reason here is what tells it apart from an ordinary reservation.
+  lines.push(
+    ...section(
+      "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator)",
+      view.registry.continuityPauses.map(renderContinuityPause),
+      cap,
+    ),
+  );
+
   lines.push(
     ...section(
       "repair (unpublished attempts, local work, pending reconciliation)",
@@ -163,6 +174,11 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 function renderRunning(worker: RunningWorker): string {
   const attempt = worker.attempt === null ? "" : `, attempt ${worker.attempt}`;
   return `${worker.key} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
+}
+
+/** One persisted continuity pause: the work, its attempt and why it waits. */
+function renderContinuityPause(entry: ContinuityPauseEntry): string {
+  return `${entry.key} (attempt ${entry.pause.attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
 }
 
 /** The duplicate anomaly: the count per work, with no owner chosen. */

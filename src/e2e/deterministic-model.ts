@@ -78,9 +78,6 @@ async function handle(
 
   const messages = payload.messages ?? [];
   const assistantMessages = messages.filter((message) => message["role"] === "assistant").length;
-  const toolResults = messages
-    .filter((message) => message["role"] === "tool")
-    .map((message) => (typeof message["content"] === "string" ? message["content"] : ""));
   const commands = messages.flatMap((message) => {
     const calls = message["tool_calls"];
     if (!Array.isArray(calls)) return [];
@@ -158,7 +155,6 @@ async function handle(
   );
   response.write("data: [DONE]\n\n");
   response.end();
-  void toolResults;
 }
 
 type Reply = { kind: "tool"; command: string } | { kind: "text"; text: string };

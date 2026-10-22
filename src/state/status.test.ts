@@ -278,6 +278,7 @@ describe("status — derivation on demand + local registry scan", () => {
         `  ${REPO}#1`,
         "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt): none",
         "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
+        "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator): none",
         "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
@@ -287,6 +288,31 @@ describe("status — derivation on demand + local registry scan", () => {
         `  ${join(layout.archive, `${REPO}#3-2026-02-01`)}`,
         "reconciliation: none",
       ].join("\n"),
+    );
+  });
+
+  test("a continuity pause is named with its reason — not hidden as an ordinary reservation", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1);
+    writeFileSync(
+      join(dir, "pausa.json"),
+      JSON.stringify({
+        version: 1,
+        work: { repo: REPO, number: 21 },
+        attempt: 1,
+        reason: "session-missing",
+        detail: "the session recorded for attempt 1 is not on disk",
+        at: "2026-02-01T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(view.registry.continuityPauses.map((entry) => entry.pause.reason), ["session-missing"]);
+    assert.match(
+      renderStatus(view),
+      new RegExp(`continuity paused[\\s\\S]*${REPO}#21 \\(attempt 1: session-missing — the session recorded for attempt 1 is not on disk\\)`),
     );
   });
 

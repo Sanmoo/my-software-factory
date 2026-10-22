@@ -115,10 +115,10 @@ export function classifyCommand(command: string): CommandSafety {
   if (trimmed.includes("|")) {
     return { safety: "unknown", reason: "a pipeline hides the right side's effect" };
   }
-  // A redirection writes to a path this classifier does not resolve: it can
-  // land outside the worktree, so the call is not proven local.
+  // A redirection is not resolved here: its target can be any path (and an
+  // fd duplication hides one), so the call is not proven local.
   if (/>/.test(trimmed)) {
-    return { safety: "unknown", reason: "a redirection can write outside the worktree" };
+    return { safety: "unknown", reason: "a redirection is not resolved — its effect is not local by proof" };
   }
 
   const segments = splitSegments(trimmed);
@@ -162,13 +162,11 @@ function classifySegment(segment: string): CommandSafety {
   const words = tokenize(segment);
   if (words.length === 0) return { safety: "safe" };
 
-  // Environment assignments and harmless prefixes before the real command.
+  // Leading environment assignments belong to the command that follows them.
+  // Nothing else is skipped: a wrapper (`sudo`, `env`, `time`, `nohup`) runs
+  // another program and is itself unknown.
   let index = 0;
   while (index < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index]!)) index += 1;
-  while (index < words.length && ["sudo", "time", "command", "builtin", "nohup", "env"].includes(words[index]!)) {
-    index += 1;
-    while (index < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index]!)) index += 1;
-  }
   if (index >= words.length) return { safety: "safe" };
 
   const command = words[index]!;
