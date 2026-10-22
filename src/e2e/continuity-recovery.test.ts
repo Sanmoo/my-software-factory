@@ -273,7 +273,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     const sweep = await runOnce(deps(config()));
 
     assert.equal(sweep.launched.length, 0, "the persisted pause keeps the work out of every launch");
-    assert.equal(sweep.reserved.find((entry) => entry.state === "help-paused")?.attempt, 1);
+    assert.equal(sweep.reserved.find((entry) => entry.state === "continuity-paused")?.attempt, 1);
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
     assert.ok(
       logs.some((line) => line.includes("paused for help") && line.includes("session-missing")),

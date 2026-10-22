@@ -19,6 +19,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
+import { parseJsonLine, type JsonValue } from "./json-line.js";
 
 export const SESSION_LINKS_FILENAME = "sessao-vinculos.jsonl";
 export const EFFECT_JOURNAL_FILENAME = "efeitos.jsonl";
@@ -143,7 +144,7 @@ export function readSessionLinks(workDir: string): SessionLinks {
   let intact = true;
   for (const line of raw.split("\n")) {
     if (line.trim() === "") continue;
-    const parsed = parseJson(line);
+    const parsed = parseJsonLine(line);
     if (!isSessionLink(parsed)) {
       intact = false;
       continue;
@@ -208,7 +209,7 @@ export function readEffectJournal(workDir: string): EffectJournal {
   const completed = [...lines];
   for (const line of completed) {
     if (line.trim() === "") continue;
-    const parsed = parseJson(line);
+    const parsed = parseJsonLine(line);
     if (isJournalLine(parsed)) {
       if (parsed.type === "session-start") journal.sessions.push(parsed);
       else if (parsed.type === "intent") journal.intents.push(parsed);
@@ -223,8 +224,8 @@ export function readEffectJournal(workDir: string): EffectJournal {
 }
 
 function nextSeq(journal: EffectJournal): number {
-  const all = [...journal.sessions.map(() => 0), ...journal.intents.map((entry) => entry.seq), ...journal.results.map((entry) => entry.seq)];
-  return all.reduce((max, seq) => Math.max(max, seq), 0) + 1;
+  const sequences = [...journal.intents, ...journal.results].map((entry) => entry.seq);
+  return sequences.reduce((max, seq) => Math.max(max, seq), 0) + 1;
 }
 
 // ---- the guardrail state handed to the next session ----
@@ -236,7 +237,7 @@ export function writeGuardrailState(workDir: string, state: GuardrailState): voi
 export function readGuardrailState(workDir: string): GuardrailState | null {
   const raw = readIfExists(join(workDir, GUARDRAIL_STATE_FILENAME));
   if (raw === null) return null;
-  const parsed = parseJson(raw);
+  const parsed = parseJsonLine(raw);
   if (parsed === null || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
   if (record["version"] !== 1 || typeof record["sessionId"] !== "string" || typeof record["attempt"] !== "number") {
@@ -268,7 +269,7 @@ export function writePause(workDir: string, pause: PauseRecord): void {
 export function readPause(workDir: string): PauseRecord | null {
   const raw = readIfExists(join(workDir, PAUSE_FILENAME));
   if (raw === null) return null;
-  const parsed = parseJson(raw);
+  const parsed = parseJsonLine(raw);
   if (parsed === null || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
   if (record["version"] !== 1 || typeof record["reason"] !== "string") return null;
@@ -322,17 +323,6 @@ function writeAtomic(path: string, value: unknown): void {
 function readIfExists(path: string): string | null {
   try {
     return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-type JsonScalar = string | number | boolean | null;
-export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
-
-function parseJson(value: string): JsonValue | null {
-  try {
-    return JSON.parse(value) as JsonValue;
   } catch {
     return null;
   }

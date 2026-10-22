@@ -116,8 +116,7 @@ The Pi conversation an attempt runs in, persisted as a file under the work's ses
 The persisted record binding a session id to its work, attempt and launch round. It is written BEFORE the worker starts, so a recovery selects the session of ITS attempt instead of the newest file or a guess.
 
 **Continuation**:
-Reopening the interrupted attempt's own session to keep its confirmed progress. It is neither a new execution nor a new orientation round, and it keeps the attempt number and the branch.
-_Avoid_: Resume, when it could mean starting the next attempt or a new round.
+Reopening the interrupted attempt's own session to keep its confirmed progress. It is neither a new execution nor a new orientation round, and it keeps the attempt number and the branch. The code calls the session choice `resume`, and the claim swap that follows a human answer shares the word — the attempt number and the session are what tell them apart.
 
 **External effect**:
 A mutation of state outside the worktree that a worker's tool call produces: a pushed branch, an opened PR, a comment, a label change.

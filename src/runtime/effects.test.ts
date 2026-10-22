@@ -25,13 +25,10 @@ describe("the external-effect classifier (issue 119)", () => {
       "git diff --stat",
       "git add -A && git commit -m 'work'",
       "git fetch origin",
-      "npm test",
-      "npm run build",
-      "node --test dist",
       "mkdir -p dist && cp a b",
+      "jq -r .name package.json",
       "gh pr view 12",
       "gh api repos/o/r/pulls/12",
-      "echo done > /tmp/x",
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -98,6 +95,20 @@ describe("the external-effect classifier (issue 119)", () => {
       "docker build -t x .",
       "docker run --rm -v /:/host x",
       "docker compose up -d",
+      // Interpreters and command runners execute arbitrary code: a call of
+      // this class is never proven local.
+      "npm test",
+      "npm run build",
+      "node --test dist",
+      "python3 deploy.py",
+      "make release",
+      "find . -name x -exec rm {} ;",
+      "awk 'BEGIN{system(\"git push\")}'",
+      "env python deploy.py",
+      "xargs rm",
+      // A redirection targets a path this classifier does not resolve.
+      "echo done > /tmp/x",
+      "printf x >> out.txt",
       'bash -c "git push"',
       "./script.sh",
     ]) {

@@ -65,6 +65,20 @@ describe("the session reader (issue 119)", () => {
     assert.match(inspection.detail ?? "", /someone-else/);
   });
 
+  test("an identity mismatch wins over a partial tail: the file is not this attempt's to continue", () => {
+    const file = join(dir, "2026-01-01T00-00-00-000Z_other.jsonl");
+    writeFileSync(
+      file,
+      `${JSON.stringify({ type: "session", version: 3, id: "other", cwd: "/x", timestamp: "" })}\n` +
+        `${JSON.stringify({ type: "message", id: "a", parentId: null, timestamp: "", message: { role: "user", content: "hi" } })}\n` +
+        '{"type":"message","id":"cut',
+      "utf8",
+    );
+    const inspection = inspectSessionFile(file, "mine");
+    assert.equal(inspection.status, "identity-mismatch");
+    assert.match(inspection.detail ?? "", /other/);
+  });
+
   test("an absent file is missing, and an empty one is unreadable", () => {
     assert.equal(inspectSessionFile(join(dir, "nope.jsonl"), "session-1").status, "missing");
     const empty = writeSession("2026-01-01_session-1.jsonl", []);

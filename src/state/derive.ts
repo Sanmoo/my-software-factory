@@ -421,7 +421,7 @@ export type ReservedDerivation =
    *  continued safely (issue 119): its session is missing/unreadable, its
    *  identity does not match, or an external effect stayed ambiguous. The
    *  pause is persisted, so no cycle re-attempts the recovery. */
-  | { ref: IssueRef; state: "help-paused"; attempt: number; pause: PauseRecord }
+  | { ref: IssueRef; state: "continuity-paused"; attempt: number; pause: PauseRecord }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -685,7 +685,7 @@ async function deriveUnreconciledAttempt(
   if (ledger.lastAttempt === 0) {
     if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
     const pause = pausedAttempt(dir, 1);
-    if (pause !== null) return { ref, state: "help-paused", attempt: 1, pause };
+    if (pause !== null) return { ref, state: "continuity-paused", attempt: 1, pause };
     return {
       ref,
       state: "interrupted",
@@ -695,7 +695,7 @@ async function deriveUnreconciledAttempt(
   }
 
   const pause = pausedAttempt(dir, ledger.lastAttempt);
-  if (pause !== null) return { ref, state: "help-paused", attempt: ledger.lastAttempt, pause };
+  if (pause !== null) return { ref, state: "continuity-paused", attempt: ledger.lastAttempt, pause };
 
   return {
     ref,
