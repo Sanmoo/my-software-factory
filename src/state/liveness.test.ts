@@ -216,6 +216,34 @@ describe("liveness — the shared interpretation (issue 118)", () => {
     assert.deepEqual(duplicateWorkers(workers([["Sanmoo/a#1", "ctr-a1"]])), []);
   });
 
+  test("a container that exits between the listing and the inspect is dropped, not read as unknown liveness", async () => {
+    const calls: string[][] = [];
+    const run = async (args: string[]): Promise<string> => {
+      calls.push(args);
+      if (args[0] === "ps") return "aaa111\nbbb222\n";
+      if (args[0] === "inspect" && args.length > 2) {
+        throw new Error(`Command failed: docker inspect aaa111 bbb222\nError: No such object: bbb222`);
+      }
+      if (args[1] === "bbb222") throw new Error(`Command failed: docker inspect bbb222\nError: No such object: bbb222`);
+      return JSON.stringify([container("aaa111", "Sanmoo/my-tasks#4", "2026-02-01T11:58:30.000Z")]);
+    };
+    const probe = dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: WORKS, run });
+    const workers = await probe();
+    assert.deepEqual(workers.map((worker) => [worker.key, worker.containerId]), [["Sanmoo/my-tasks#4", "aaa111"]]);
+    assert.equal(calls.filter((args) => args[0] === "inspect").length, 3, "the batch, then each id");
+
+    // Any other failure is still unknown: the probe never invents an empty factory.
+    const broken = dockerWorkerProbe({
+      image: WORKER_IMAGE,
+      worksRoot: WORKS,
+      run: async (args) => {
+        if (args[0] === "ps") return "aaa111\n";
+        throw new Error("Cannot connect to the Docker daemon");
+      },
+    });
+    await assert.rejects(broken, /Cannot connect to the Docker daemon/);
+  });
+
   test("a failing probe, an invalid answer or a timeout is unknown — never an empty factory", async () => {
     const failure = await probeLiveness(() => Promise.reject(new Error("docker: daemon down")));
     assert.deepEqual(failure, { state: "unknown", reason: "docker: daemon down" });

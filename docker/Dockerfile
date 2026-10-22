@@ -82,6 +82,15 @@ ENV HOME=/home/agent
 # and persist across launches — later launches reuse, nothing pre-installed.
 ENV PATH="/home/agent/.local/share/mise/shims:${PATH}"
 
+# The continuity guardrail (issue 119): the compiled, factory-owned extension
+# the runtime loads with --extension. It journals every external effect before
+# the tool runs and blocks a repeat when a recovered session tries one that
+# already happened. Staged from dist/ by `npm run build:image`, so the image
+# carries exactly the code this factory version pins; the launch preflight
+# refuses an image without it. Read-only to the worker user.
+COPY guardrail /opt/msf/
+RUN chmod -R a+rX /opt/msf
+
 USER ${AGENT_UID}:${AGENT_GID}
 WORKDIR /home/agent
 

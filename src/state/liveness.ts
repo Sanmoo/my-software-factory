@@ -133,6 +133,9 @@ export interface DockerProbeOptions {
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** The docker shell. Injectable so a test can reproduce a container that
+   *  exits between the listing and the inspect — the real CLI's own failure. */
+  run?: (args: string[], timeoutMs: number) => Promise<string>;
 }
 
 /**
@@ -141,16 +144,17 @@ export interface DockerProbeOptions {
  * listed); `docker inspect` supplies the start time and the mounts.
  */
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
+  const run = options.run ?? runDocker;
   return async () => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-    const listing = await runDocker(
+    const listing = await run(
       ["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"],
       timeoutMs,
     );
     const ids = parseContainerIds(listing);
     // Nothing running: no inspect to pay for, no workers to correlate.
     if (ids.length === 0) return [];
-    const inspect = await inspectContainers(ids, timeoutMs);
+    const inspect = await inspectContainers(ids, timeoutMs, run);
     return parseWorkerContainers(listing, inspect, options.worksRoot, new Date());
   };
 }
@@ -163,9 +167,13 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
  * unreadable answer still fails: the factory never guesses that a worker is
  * gone.
  */
-async function inspectContainers(ids: readonly string[], timeoutMs: number): Promise<string> {
+async function inspectContainers(
+  ids: readonly string[],
+  timeoutMs: number,
+  run: (args: string[], timeoutMs: number) => Promise<string>,
+): Promise<string> {
   try {
-    return await runDocker(["inspect", ...ids], timeoutMs);
+    return await run(["inspect", ...ids], timeoutMs);
   } catch (error) {
     if (!vanished(error)) throw error;
   }
@@ -173,7 +181,7 @@ async function inspectContainers(ids: readonly string[], timeoutMs: number): Pro
   for (const id of ids) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await runDocker(["inspect", id], timeoutMs));
+      parsed = JSON.parse(await run(["inspect", id], timeoutMs));
     } catch (error) {
       if (vanished(error)) continue;
       throw error;

@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
-    "build:image": "docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) -t $(node -p \"require('./package.json').workerImage\") docker",
+    "build:image": "npm run build && node scripts/stage-guardrail.mjs && docker build --build-arg AGENT_UID=$(id -u) --build-arg AGENT_GID=$(id -g) -t $(node -p \"require('./package.json').workerImage\") docker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gateway": "node scripts/quality-gateway.mjs",
     "test": "npm run build && npm run test:built",

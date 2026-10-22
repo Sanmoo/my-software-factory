@@ -10,6 +10,7 @@ import { wireRunDeps } from "../cli.js";
 import { runOnce } from "../loop.js";
 import { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
+import { seedSession } from "./session-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { readOutcomeRecord } from "../state/outcome.js";
@@ -199,6 +200,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
+    seedSession(work, { repo: REPO, number: 1 }, 1);
 
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const deps = await wiredDeps(tracker, runtime);
@@ -226,6 +228,8 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
     writeFileSync(join(work, "log-2.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 2 })}\n`, "utf8");
+    seedSession(work, { repo: REPO, number: 1 }, 1);
+    seedSession(work, { repo: REPO, number: 1 }, 2);
 
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const deps = await wiredDeps(tracker, runtime);
