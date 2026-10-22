@@ -61,6 +61,13 @@ export interface WorkRequest {
   attempt: number;
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;
+  /**
+   * This session continues the Pi session of the attempt (issue #146): a
+   * recovery or a resume after the operator's requested stop reopens the
+   * native session on the host instead of starting one with reconstructed
+   * context. Absent on a fresh attempt.
+   */
+  resume?: boolean;
 }
 
 export interface SessionResult {
@@ -71,4 +78,16 @@ export interface SessionResult {
 
 export interface WorkerRuntime {
   launch(request: WorkRequest): Promise<SessionResult>;
+  /**
+   * Ask the running session of this work to stop (issue #146). The launch
+   * promise resolves when the session ended — the cooperative request never
+   * abandons it. A work with no running session is a no-op.
+   */
+  requestStop(ref: IssueRef): void;
+  /**
+   * Force the session of this work to stop; resolves ONLY when the worker is
+   * confirmed gone (Docker is the authority for the real runtime). Rejects
+   * with the reason when the end cannot be confirmed.
+   */
+  forceStop(ref: IssueRef): Promise<void>;
 }

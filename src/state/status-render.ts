@@ -194,6 +194,12 @@ function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBud
   if (last.kind === "interruption") {
     return `${key} (${attempt}: last stop was an interruption — no attempt consumed; ${spend})`;
   }
+  if (last.kind === "stop-requested") {
+    return `${key} (${attempt}: last stop was the operator's requested stop — no attempt consumed and no recovery spent; it resumes on the next run)`;
+  }
+  if (last.kind === "stop-unconfirmed") {
+    return `${key} (${attempt}: the requested stop could not be confirmed — ${last.because}; it will not relaunch until the previous worker is known to be gone)`;
+  }
   return `${key} (${attempt}: last stop was a failure (${last.outcome}) — the attempt was consumed)`;
 }
 

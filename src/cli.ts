@@ -8,7 +8,8 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
-import { runForever, runOnce, type LoopDeps } from "./loop.js";
+import { runForever, runOnce, type LoopDeps, type ShutdownReport } from "./loop.js";
+import { installShutdownSignals, type ShutdownSignals } from "./shutdown.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
@@ -131,6 +132,8 @@ function fakeRuntimePlaceholder(): WorkerRuntime {
       Promise.reject(
         new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
       ),
+    requestStop: () => {},
+    forceStop: async () => {},
   };
 }
 
@@ -148,34 +151,69 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const runtimeName = args.runtime ?? "sandcastle";
   const overridePath = args.configPath;
 
-  // Strict argument parsing has already completed; config is next, before
-  // workspace writes or the keyring boot check.
-  const config = loadConfigFrom(process.cwd(), overridePath);
-  if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
-    console.error(
-      utcStamp(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`),
-    );
-    process.exit(1);
-  }
-
-  // One `run` per REAL config path (issue 90), established before ANY
-  // operational activity — the workspace below included. A second run for the
-  // same configuration is refused here and never touches the factory.
-  const lock = await acquireRunLock(config.configPath);
+  // The operator's stop is armed BEFORE any startup step that leaves a
+  // resource active (issue #146): config, run lock, workspace and reservation
+  // all live inside the handler's window, for the continuous run and for
+  // `run --once` alike.
+  const stop = installShutdownSignals();
   try {
-    await executeRun(config, once, runtimeName);
+    // Strict argument parsing has already completed; config is next, before
+    // workspace writes or the keyring boot check.
+    const config = loadConfigFrom(process.cwd(), overridePath);
+    if (runtimeName !== "sandcastle" && runtimeName !== "fake") {
+      console.error(
+        utcStamp(`unknown runtime "${runtimeName}" — use --runtime sandcastle (default) or --runtime fake`),
+      );
+      process.exit(1);
+    }
+
+    // One `run` per REAL config path (issue 90), established before ANY
+    // operational activity — the workspace below included. A second run for the
+    // same configuration is refused here and never touches the factory.
+    const lock = await acquireRunLock(config.configPath);
+    let report: ShutdownReport | null = null;
+    try {
+      report = await executeRun(config, once, runtimeName, stop);
+    } finally {
+      await lock.close();
+    }
+    // A requested stop that could not confirm every worker is not a safe stop:
+    // the diagnostic is on stderr and the status says so.
+    if (report !== null) {
+      // The stop is over (confirmed, or reported as unconfirmed) and the
+      // exclusivity is released: the process ends NOW. An internal handle of
+      // the runtime must never delay the operator's restart — that would turn
+      // the requested stop back into an indefinite wait.
+      process.exit(report.unconfirmed.length > 0 ? 1 : 0);
+    }
   } finally {
-    await lock.close();
+    stop.dispose();
   }
 }
 
-async function executeRun(config: Config, once: boolean, runtimeName: string): Promise<void> {
+async function executeRun(
+  config: Config,
+  once: boolean,
+  runtimeName: string,
+  stop: ShutdownSignals,
+): Promise<ShutdownReport | null> {
   const workspace = ensureWorkspace(config.workspace);
   const deps: LoopDeps = await wireRunDeps(config, workspace, {
     ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),
   });
+  const stopOptions = { signal: stop.requested, escalate: stop.escalated };
   if (once) {
-    const result = await runOnce(deps);
+    const result = await runOnce(deps, stopOptions);
+    if (result.shutdown !== null) {
+      console.log(
+        utcStamp(
+          result.shutdown.unconfirmed.length === 0
+            ? "sweep stopped by the operator: the stop of every worker was confirmed, exit 0"
+            : "sweep stopped by the operator: the stop could not be confirmed, exit 1",
+        ),
+      );
+      return result.shutdown;
+    }
     console.log(
       utcStamp(
         result.launched.length === 0
@@ -183,23 +221,16 @@ async function executeRun(config: Config, once: boolean, runtimeName: string): P
           : `sweep done: ${result.launched.length} worker(s) launched`,
       ),
     );
-    return;
+    return null;
   }
 
   // Ticket 14: ending the factory is a human act — Ctrl-C exits cleanly.
-  // The handler is armed BEFORE the announcement: the boot line is then a
-  // proof of registration — a SIGINT sent right after it can never land in
-  // the default-disposition window (kernel kills the process instead of
-  // running the handler).
-  const controller = new AbortController();
-  const onInterrupt = (): void => controller.abort();
-  process.on("SIGINT", onInterrupt);
+  // Issue #146: the close of admission, the cooperative request and the
+  // confirmation of every worker's end now live in the loop's lifecycle; the
+  // stop line below is still a proof of registration — a SIGINT sent right
+  // after it can never land in the default-disposition window.
   console.log(utcStamp("msf run: sweeping forever on the fixed tick (Ctrl-C to end)"));
-  try {
-    await runForever(deps, { signal: controller.signal });
-  } finally {
-    process.removeListener("SIGINT", onInterrupt);
-  }
+  return runForever(deps, { ...stopOptions });
 }
 
 async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {

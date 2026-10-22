@@ -424,6 +424,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       reconciliation: { unbackedClaims: [], unmarkedReservations: [] },
       launched: [],
       collected: [],
+      shutdown: null,
     });
     assert.equal(runtime.launched.length, 0);
   });

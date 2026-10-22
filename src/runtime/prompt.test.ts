@@ -48,6 +48,17 @@ const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequ
   });
 
 describe("worker prompt — the material the session starts from", () => {
+  test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them (issue #146)", () => {
+    const resumed = buildWorkerPrompt(baseRequest({ resume: true }), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(resumed, /This session CONTINUES attempt 1/);
+    assert.match(resumed, /reopened the SAME native session/);
+    assert.match(resumed, /Before repeating any EXTERNAL effect/);
+    assert.match(resumed, /do NOT repeat it blindly/);
+
+    const fresh = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.doesNotMatch(fresh, /This session CONTINUES/);
+  });
+
   test("carries the issue title and body", () => {
     const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
     assert.match(prompt, /Sanmoo\/my-tasks#42/);

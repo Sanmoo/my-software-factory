@@ -794,5 +794,120 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
         /budget is exhausted: 3 automatic recoveries/,
       );
     });
+
+    test("issue 146 — a written failure on the current attempt prevails over a stop record left on top of it", async () => {
+      seedIssue(adapter, { repo: REPO, number: 35, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(35);
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "clean-without-pr", attempt: 2 }),
+        "utf8",
+      );
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 2,
+          consumed: 0,
+          events: [],
+          lastStop: { kind: "stop-requested", attempt: 2, at: "2026-01-01T00:00:00.000Z" },
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 35);
+      assert.equal(derived.state, "fall", "the confirmed outcome is ruled, never read as a voluntary stop");
+      assert.equal(derived.attempt, 2);
+    });
+
+    test("issue 146 — the operator's requested stop resumes the SAME attempt, even with the budget exhausted", async () => {
+      seedIssue(adapter, { repo: REPO, number: 31, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(31);
+      writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 2,
+          consumed: 3,
+          events: [],
+          lastStop: { kind: "stop-requested", attempt: 2, at: "2026-01-01T00:00:00.000Z" },
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 31);
+      assert.equal(derived.state, "stop-resume", "a requested stop is a lifecycle condition, never a recovery");
+      assert.equal(derived.attempt, 2, "the same attempt continues");
+    });
+
+    test("issue 146 — an unconfirmed stop holds the work with its reason instead of relaunching it", async () => {
+      seedIssue(adapter, { repo: REPO, number: 32, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(32);
+      writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 1,
+          consumed: 0,
+          events: [],
+          lastStop: {
+            kind: "stop-unconfirmed",
+            attempt: 1,
+            at: "2026-01-01T00:00:00.000Z",
+            because: "a worker of this work is still alive",
+          },
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 32);
+      assert.equal(derived.state, "stop-unconfirmed");
+      assert.equal(derived.attempt, 1);
+      assert.match(derived.because, /still alive/);
+    });
+
+    test("issue 146 — a bare reservation with a requested stop resumes it, spending nothing", async () => {
+      seedIssue(adapter, { repo: REPO, number: 33, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(33);
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 1,
+          consumed: 0,
+          events: [],
+          lastStop: { kind: "stop-requested", attempt: 1, at: "2026-01-01T00:00:00.000Z" },
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 33);
+      assert.equal(derived.state, "stop-resume");
+      assert.equal(derived.attempt, 1);
+    });
+
+    test("issue 146 — a confirmed Outcome prevails: a pr-open record is never turned into a stop-resume", async () => {
+      seedIssue(adapter, { repo: REPO, number: 34, labels: [DEFAULT_LABELS.claimed] });
+      adapter.seedPullRequest({ repo: REPO, number: 34, state: "open" });
+      const path = workDirFor(34);
+      writeFileSync(
+        join(path, DESFECHO_FILENAME),
+        JSON.stringify({ class: "pr-open", attempt: 1, pr: { repo: REPO, number: 1, branch: "agent-issue-34" } }),
+        "utf8",
+      );
+      writeFileSync(
+        join(path, "recuperacao.json"),
+        JSON.stringify({
+          attempt: 1,
+          consumed: 0,
+          events: [],
+          lastStop: { kind: "stop-requested", attempt: 1, at: "2026-01-01T00:00:00.000Z" },
+        }),
+        "utf8",
+      );
+
+      const derived = await deriveFrom(path, 34);
+      assert.notEqual(derived.state, "stop-resume", "the confirmed outcome prevails over the stop interpretation");
+      assert.equal(derived.state, "idle");
+    });
   });
 });

@@ -16,6 +16,7 @@ import {
 import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
 import { consumeRecovery, recordFailure } from "../pool/recovery.js";
+import { recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
@@ -490,6 +491,27 @@ describe("status — derivation on demand + local registry scan", () => {
       "the work is an interruption again, and the recovery budget answers it",
     );
     assert.match(text, /#42 \(attempt 1 was interrupted/);
+    assert.match(text, /#42 \(attempt 1 was interrupted/);
+  });
+
+  test("the requested stop and the unconfirmed stop are named in the recovery section (issue #146)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const stopped = seedAttempt(33, 1);
+    await recordStopRequest(stopped, 1);
+    const unconfirmed = seedAttempt(34, 2);
+    await recordUnconfirmedStop(unconfirmed, 2, "a worker of this work is still alive");
+
+    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS));
+
+    assert.match(
+      text,
+      /#33 \(attempt 1: last stop was the operator's requested stop — no attempt consumed and no recovery spent; it resumes on the next run\)/,
+    );
+    assert.match(
+      text,
+      /#34 \(attempt 2: the requested stop could not be confirmed — a worker of this work is still alive; it will not relaunch until the previous worker is known to be gone\)/,
+      "an unconfirmed stop is a diagnosis the operator can act on",
+    );
   });
 
   test("a legacy work dir without a recovery ledger shows no recovery line — nothing is invented", async () => {
