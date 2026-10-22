@@ -47,6 +47,8 @@ export interface PromptOptions {
   /** The blocked label as configured (config.labels.blocked) — the worker
    * adds it verbatim on a self-report. */
   blockedLabel: string;
+  /** The runtime found the attempt's native session and reopened it. */
+  continuesSession?: boolean;
 }
 
 const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
@@ -238,7 +240,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     `- The GitHub CLI \`gh\` is authenticated via GH_TOKEN; its account is the factory's worker account — every push, PR and comment must come from it.`,
     `- Docker works inside this container: \`docker\` talks to the host daemon through a mounted socket, so you can build the worker image (\`npm run build:image\`) and run the repo's real Docker tests. The containers you start are the host's siblings: a bind path you pass resolves on the HOST, not here.`,
     `- You are unrestricted inside this container: use your tools freely. The confinement is the container, not paralysis.`,
-    ...(request.resume === true
+    ...(options.continuesSession === true
       ? [
           ``,
           `## This session CONTINUES attempt ${request.attempt}`,

@@ -556,7 +556,10 @@ export class SandcastleRuntime implements WorkerRuntime {
       // The branch the git host prepared: reuse when clean, preserve when
       // dirty (Sandcastle's own worktree behavior) — never recreated.
       branchStrategy: { type: "branch", branch: request.branch, baseBranch: request.baseBranch },
-      prompt: buildWorkerPrompt(request, { blockedLabel: this.blockedLabel }),
+      prompt: buildWorkerPrompt(request, {
+        blockedLabel: this.blockedLabel,
+        continuesSession: resumeSession !== undefined,
+      }),
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,
       idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
