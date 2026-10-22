@@ -331,14 +331,20 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };
 }
 
-/** Directories under a registry root that look like <repo>#<n> work dirs. */
+/** Work dirs are exactly <root>/<repo>#<n>: the scan never descends into a
+ *  work, where a proof's disposable workspace or a session artifact may carry
+ *  a work-like name of its own. */
 async function workDirs(root: string): Promise<string[]> {
   if (!existsSync(root)) return [];
-  const entries = await readdir(root, { recursive: true, withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory() && /#\d+(-.*)?$/.test(entry.name))
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort();
+  const dirs: string[] = [];
+  for (const repo of await readdir(root, { withFileTypes: true })) {
+    if (!repo.isDirectory()) continue;
+    const repoDir = join(root, repo.name);
+    for (const entry of await readdir(repoDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && /#\d+(-.*)?$/.test(entry.name)) dirs.push(join(repoDir, entry.name));
+    }
+  }
+  return dirs.sort();
 }
 
 /** The work key of a registry dir: its path relative to the registry root

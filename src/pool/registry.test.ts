@@ -219,6 +219,21 @@ describe("registry — the derivation's reserved-works scan and the done archive
     }
   });
 
+  test("scanReservedWorks: a work-like dir nested inside a work is not a work of this registry", async () => {
+    // A proof's disposable workspace can live under a work's dir and carry
+    // its own trabalhos/<repo>#<n>; it is never a reservation of THIS one.
+    mkdirSync(join(layout.works, "Sanmoo", "a#1", "proof", "fabrica", "trabalhos", "Sanmoo", "b#2"), {
+      recursive: true,
+    });
+
+    const reserved = await scanReservedWorks(layout);
+
+    assert.deepEqual(
+      reserved.map((r) => r.ref),
+      [{ repo: "Sanmoo/a", number: 1 }],
+    );
+  });
+
   test("scanReservedWorks: a workspace never created reads empty", async () => {
     assert.deepEqual(await scanReservedWorks(join("/nowhere/nonexistent-msf-ws")), []);
   });
