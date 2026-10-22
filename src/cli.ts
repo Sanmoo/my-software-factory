@@ -173,13 +173,10 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
     // same configuration is refused here and never touches the factory.
     const lock = await acquireRunLock(config.configPath);
     try {
-      // A stop requested during the startup stops HERE (issue #146): no
-      // workspace, no wiring, no reservation — and the lock is still released.
-      if (stop.requested.aborted) {
-        console.log(utcStamp("msf run: stop requested during startup — nothing was launched, exit 0"));
-      } else {
-        report = await executeRun(config, once, runtimeName, stop);
-      }
+      // A stop requested during the startup is honoured where it is observed:
+      // the engine listens from its construction, so an already-aborted signal
+      // closes admission before the first reservation (issue #146).
+      report = await executeRun(config, once, runtimeName, stop);
     } finally {
       await lock.close();
     }

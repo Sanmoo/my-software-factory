@@ -816,7 +816,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       );
 
       const derived = await deriveFrom(path, 35);
-      assert.equal(derived.state, "fall", "the confirmed outcome is ruled, never read as a voluntary stop");
+      assert.equal(derived.state, "fall", "the confirmed outcome is ruled, never read as a requested stop");
       assert.equal(derived.attempt, 2);
     });
 

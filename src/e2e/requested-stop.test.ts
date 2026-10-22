@@ -9,7 +9,7 @@ import { installShutdownSignals } from "../shutdown.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { IssueRef, Known, PrFeedback } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
@@ -66,12 +66,46 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/**
+ * A tracker whose first PR-feedback read waits for the test: the collection of
+ * a finished worker can then be observed INSIDE the stop, the race the issue
+ * asks to cover.
+ */
+class GatedTracker extends FakeTrackerAdapter {
+  readonly collectionEntered = deferred();
+  private target: { number: number; remaining: number } | null = null;
+  private gate: Promise<void> | null = null;
+
+  /** The work's SECOND feedback read (the collection's) blocks until release:
+   *  the launch material already made the first read. */
+  holdCollectionOf(number: number): () => void {
+    this.target = { number, remaining: 2 };
+    let release!: () => void;
+    this.gate = new Promise<void>((resolve) => (release = resolve));
+    return () => {
+      this.target = null;
+      release();
+    };
+  }
+
+  override async readPrFeedback(ref: IssueRef): Promise<Known<PrFeedback>> {
+    if (this.target !== null && this.target.number === ref.number) {
+      this.target.remaining -= 1;
+      if (this.target.remaining === 0) {
+        this.collectionEntered.resolve();
+        await this.gate;
+      }
+    }
+    return super.readPrFeedback(ref);
+  }
+}
+
 describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "msf-e2e-voluntary-"));
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-requested-"));
     layout = ensureWorkspace(join(dir, "ws"));
   });
 
@@ -131,7 +165,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.ready), "the work stays in the pool");
   });
 
-  test("repeated voluntary stops resume the same attempt beyond the recovery budget, spending nothing", async () => {
+  test("repeated requested stops resume the same attempt beyond the recovery budget, spending nothing", async () => {
     const config = makeConfig();
     const tracker = makeTracker(config);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
@@ -168,7 +202,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const feedback = await tracker.readPrFeedback({ repo: REPO, number: 1 });
     assert.ok(feedback.known && feedback.value.pr !== null, "the real outcome was registered");
     const ledger = await ledgerOf();
-    assert.equal(ledger.consumed, 0, "the whole voluntary cycle spent no recovery");
+    assert.equal(ledger.consumed, 0, "the whole requested-stop cycle spent no recovery");
     assert.equal(ledger.lastStop, null, "the stop record was consumed by the resume");
   });
 
@@ -295,7 +329,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal((await ledgerOf()).consumed, 0, "the stop spent nothing");
 
     // The resumed session dies without a record: that is an unexpected
-    // interruption, so the recovery budget applies — the voluntary stop gave
+    // interruption, so the recovery budget applies — the requested stop gave
     // no free pass to the attempt itself.
     await runOnce(deps);
     const ledger = await ledgerOf();
@@ -310,9 +344,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the exhausted budget asks for help");
   });
 
-  test("a worker that completes while its peer is stopped registers its real Outcome", async () => {
+  test("a worker whose collection races the stop registers its real Outcome, not a stop", async () => {
     const config = makeConfig({ concurrency: 2 });
-    const tracker = makeTracker(config);
+    const tracker = new GatedTracker({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [config.labels.ready] });
     seedIssue(tracker, { repo: REPO, number: 2, createdAt: "2026-01-02T00:00:00Z", labels: [config.labels.ready] });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     runtime.hold = async (request) => {
@@ -321,18 +356,20 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     };
     const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
 
+    const release = tracker.holdCollectionOf(1);
     const stop = new AbortController();
     const running = runOnce(deps, { signal: stop.signal, cooperativeMs: 2_000 });
     await waitFor("both workers to launch", () => runtime.launched.length === 2);
-    await waitFor("worker #1 to write its record", () =>
-      existsSync(join(workDir(layout, REPO, 1), "desfecho.json")),
-    );
+    await tracker.collectionEntered.promise; // #1 wrote its record; its collection is in flight
     stop.abort();
+    release();
     const result = await running;
 
     assert.deepEqual(result.shutdown?.unconfirmed, [], "both ends were confirmed");
     const finished = await tracker.readPrFeedback({ repo: REPO, number: 1 });
-    assert.ok(finished.known && finished.value.pr !== null, "the worker that finished registered its real PR");
+    assert.ok(finished.known && finished.value.pr !== null, "the finished worker's real PR was registered");
+    const finishedLedger = await readRecoveryLedger(workDir(layout, REPO, 1));
+    assert.equal(finishedLedger.lastStop, null, "the confirmed Outcome prevails: no stop record left on it");
     const stopped = await tracker.readPrFeedback({ repo: REPO, number: 2 });
     assert.ok(stopped.known && stopped.value.pr === null, "the stopped worker invented no PR");
     assert.equal((await readRecoveryLedger(workDir(layout, REPO, 2))).lastStop?.kind, "stop-requested");

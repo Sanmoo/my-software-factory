@@ -1606,10 +1606,6 @@ export class SweepEngine {
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     //
-    // A launch means this attempt is being carried NOW: a stop record left on
-    // it by a previous shutdown has done its job, and must not excuse a later,
-    // unexpected interruption of the same attempt.
-    await consumeStopRequest(dir, facts.attempt);
     // The resume after the operator's requested stop (issue #146) spends
     // nothing and waits nothing: it continues the SAME attempt.
     if (kind === "recover" && launchable.requestedStop !== true) {
@@ -1655,7 +1651,7 @@ export class SweepEngine {
     }
 
     // The stop may have landed while this admission persisted its own
-    // bookkeeping (the grant, or the consumption of the voluntary stop): what
+    // bookkeeping (the grant, or the consumption of the requested stop): what
     // it wrote is undone and the requested stop is what the work keeps.
     if (this.stopping) {
       await this.settleStoppedAdmission(entry, facts.attempt);
@@ -1663,24 +1659,11 @@ export class SweepEngine {
       return null;
     }
 
-    // Exclusivity across invocations (issue #146): a previous worker that may
-    // still be alive owns the work. The derivation already holds such works
-    // (issue 118 keeps every carried work in flight and suspends the launches
-    // while liveness is unknown), so what remains here is the reading itself:
-    // an unreadable answer is uncertainty, never a free work.
-    const live = await this.liveWorkerKeys();
-    if (live === null) {
-      this.log(
-        `launch of ${key} held: the live workers could not be read — the factory will not start a second worker on it`,
-      );
-      return null;
-    }
-    if (live.has(key)) {
-      this.log(
-        `launch of ${key} held: a worker of this work is still alive — no duplicate worker is started`,
-      );
-      return null;
-    }
+    // A launch means this attempt is being carried NOW: a stop record left on
+    // it by a previous shutdown has done its job (or the record is stale on a
+    // fresh claim of the same number), so it never excuses a later, unexpected
+    // interruption of this attempt.
+    await consumeStopRequest(dir, facts.attempt);
 
     entry.launched = true;
     const result = await runtime.launch({
@@ -1707,13 +1690,6 @@ export class SweepEngine {
     if (ms <= 0 || this.stopping) return;
     const stopped = new Promise<void>((resolve) => this.stopWaiters.push(resolve));
     await Promise.race([(this.deps.wait ?? sleepMs)(ms), stopped]);
-  }
-
-  /** The works a live container carries, or null when liveness is unknown: the
-   *  answer the stop's confirmation and the admission's exclusivity read. */
-  private async liveWorkerKeys(): Promise<ReadonlySet<string> | null> {
-    await this.observeLiveness();
-    return this.liveness.state === "known" ? this.carriedKeys : null;
   }
 
   /** Why a work's end cannot be confirmed, or null when it is: an unreadable
@@ -1886,7 +1862,7 @@ export class SweepEngine {
   /**
    * A requested stop whose confirmation failed on a previous invocation
    * (issue #146): the work is held until a probe proves the previous worker
-   * gone, and only then becomes the voluntary resume it was meant to be. An
+   * gone, and only then becomes the requested-stop resume it was meant to be. An
    * unreadable probe is uncertainty: the work stays held, the reason said out
    * loud, and no worker is launched on top of it.
    */
@@ -1908,7 +1884,7 @@ export class SweepEngine {
       return;
     }
 
-    const alive = await this.liveWorkerKeys();
+    const alive = this.liveness.state === "known" ? this.carriedKeys : null;
     for (const entry of held) {
       const key = workKey(entry.ref);
       const because = this.stopHoldReason(alive, key);

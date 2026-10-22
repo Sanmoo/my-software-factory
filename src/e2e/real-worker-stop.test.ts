@@ -173,8 +173,12 @@ describe("e2e: the real worker container ends on the requested stop (issue #146)
         if (mode === "abort") {
           assert.equal(result.forcedStop, false, "the cooperative request alone ended the real container");
         }
-        if (mode === "cooperative" && !result.settledInWindow) {
-          assert.equal(result.forcedStop, true, "a session that outlived the window was forced, never presumed stopped");
+        if (mode === "cooperative") {
+          assert.equal(
+            result.forcedStop,
+            !result.settledInWindow,
+            "the forced phase runs exactly when the cooperative window ended first",
+          );
         }
 
         // The factory's probe, from this side of the boundary, agrees.

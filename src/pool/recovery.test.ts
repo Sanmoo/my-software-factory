@@ -201,7 +201,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
     assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-requested");
   });
 
-  test("an unconfirmed stop holds the work, and only a confirmed-gone probe turns it into the voluntary stop", async () => {
+  test("an unconfirmed stop holds the work, and only a confirmed-gone probe turns it into the requested stop", async () => {
     await recordUnconfirmedStop(dir, 4, "a worker of this work is still alive", NOW);
     const held = await readRecoveryLedger(dir);
     assert.deepEqual(held.lastStop, {
