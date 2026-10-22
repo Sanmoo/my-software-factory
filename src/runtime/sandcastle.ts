@@ -10,7 +10,8 @@ import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker
 import { DEFAULT_LABELS } from "../config.js";
 import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
 import { workKey } from "../state/derive.js";
-import { dockerWorkerForceStop } from "../state/liveness.js";
+import { deferred, type Deferred } from "./deferred.js";
+import { dockerWorkerForceStop } from "./worker-stop.js";
 import {
   describeForeignRecord,
   ownOutcomeRecord,
@@ -69,18 +70,6 @@ interface RunningSession {
   ref: IssueRef;
   stop: AbortController;
   forced: Deferred;
-}
-
-/** A promise a stop (or the runtime) resolves exactly once. */
-interface Deferred {
-  promise: Promise<void>;
-  resolve: () => void;
-}
-
-function deferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
 }
 
 /** Inside the container: the agent dir is the writable COPY of the snapshot. */
@@ -447,8 +436,8 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /**
-   * Force the worker gone and prove it, through Docker (ADR 0002). Only after
-   * the container is confirmed gone does the launch settle: an unconfirmed end
+   * Force the worker gone and prove it, through Docker. Only after the
+   * container is confirmed gone does the launch settle: an unconfirmed end
    * rejects and the launch stays owned, never declared safe.
    */
   async forceStop(ref: IssueRef): Promise<void> {

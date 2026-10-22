@@ -11,7 +11,13 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DEFAULT_LABELS, loadConfigFrom, type Config, type RecoveryBudget } from "../config.js";
+import {
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  loadConfigFrom,
+  type Config,
+  type RecoveryBudget,
+} from "../config.js";
 import { readRecoveryLedger, recordStopRequest } from "../pool/recovery.js";
 import { waitFor } from "./cli-harness.js";
 
@@ -85,6 +91,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery,
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
       ...overrides,
@@ -193,6 +200,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const next = await runOnce(deps);
     assert.equal(next.launched.length, 1, "the next invocation resumes the reserved work");
     assert.equal(next.launched[0]?.request.attempt, 1, "the SAME attempt, no new one");
+    assert.equal(next.launched[0]?.request.branch, workBranchName(1), "the branch is preserved, not recreated");
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
     assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");
   });
@@ -254,6 +262,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const result = await running;
     assert.deepEqual(result.shutdown?.forced, [], "no worker existed to force");
     assert.deepEqual(result.shutdown?.unconfirmed, [], "and none to confirm");
+    assert.ok(existsSync(join(workDirOf(), "log-1.jsonl")), "the attempt's history survives the stop");
     const ledger = await ledgerOf();
     assert.equal(ledger.consumed, 0, "the cancelled relaunch's grant was returned");
     assert.equal(ledger.lastStop?.kind, "stop-requested", "the work keeps the operator's stop, not the interruption");
@@ -263,6 +272,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const resumed = await runOnce(deps);
     assert.equal(resumed.launched.length, 1, "the interrupted work resumes");
     assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME attempt");
+    assert.equal(resumed.launched[0]?.request.branch, workBranchName(1), "the branch is preserved");
     assert.equal((await ledgerOf()).consumed, 0, "the whole stop-and-resume cycle spent no recovery");
   });
 
@@ -298,6 +308,34 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     );
     const issue = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the exhausted budget asks for help");
+  });
+
+  test("a worker that completes while its peer is stopped registers its real Outcome", async () => {
+    const config = makeConfig({ concurrency: 2 });
+    const tracker = makeTracker(config);
+    seedIssue(tracker, { repo: REPO, number: 2, createdAt: "2026-01-02T00:00:00Z", labels: [config.labels.ready] });
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    runtime.hold = async (request) => {
+      // #1 finishes on its own; #2 parks until the operator's stop.
+      if (request.ref.number === 2) await runtime.whenStopRequested(request.ref);
+    };
+    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+
+    const stop = new AbortController();
+    const running = runOnce(deps, { signal: stop.signal, cooperativeMs: 2_000 });
+    await waitFor("both workers to launch", () => runtime.launched.length === 2);
+    await waitFor("worker #1 to write its record", () =>
+      existsSync(join(workDir(layout, REPO, 1), "desfecho.json")),
+    );
+    stop.abort();
+    const result = await running;
+
+    assert.deepEqual(result.shutdown?.unconfirmed, [], "both ends were confirmed");
+    const finished = await tracker.readPrFeedback({ repo: REPO, number: 1 });
+    assert.ok(finished.known && finished.value.pr !== null, "the worker that finished registered its real PR");
+    const stopped = await tracker.readPrFeedback({ repo: REPO, number: 2 });
+    assert.ok(stopped.known && stopped.value.pr === null, "the stopped worker invented no PR");
+    assert.equal((await readRecoveryLedger(workDir(layout, REPO, 2))).lastStop?.kind, "stop-requested");
   });
 
   test("the cooperative window is shared: a hung worker does not extend the deadline of its peers", async () => {

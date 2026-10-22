@@ -119,7 +119,7 @@ import { appendAttemptEvent } from "./runtime/attempt-logs.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
@@ -244,7 +244,7 @@ interface InFlightLaunch {
   /** The attempt the launch is on, known as soon as the registry answers. */
   attempt: number | null;
   /** The attempt a recovery continues, known before the registry is read. */
-  hint?: number;
+  attemptHint?: number;
   /** The worker session really started (the runtime was called). */
   launched: boolean;
   /** The ledger event of a recovery granted to this admission, so a return
@@ -409,7 +409,7 @@ interface Launchable {
   attempt?: number;
   /** The attempt was ended by the operator's requested stop (issue #146): it
    *  resumes now, spending no recovery. */
-  voluntary?: boolean;
+  requestedStop?: boolean;
 }
 
 /**
@@ -681,7 +681,7 @@ export class SweepEngine {
             createdAt: null,
             pr: null,
             attempt: decision.attempt,
-            voluntary: true,
+            requestedStop: true,
           });
           break;
         }
@@ -1161,7 +1161,7 @@ export class SweepEngine {
       const attempt = entry.attempt ?? (await this.plannedAttempt(entry));
       if (attempt === null) continue;
       entry.attempt = attempt;
-      if (await this.abandonAdmission(entry, attempt)) {
+      if (await this.settleStoppedAdmission(entry, attempt)) {
         this.log(
           `the recovery granted to ${workKey(entry.ref)} is returned: the requested stop cancelled its relaunch`,
         );
@@ -1247,12 +1247,7 @@ export class SweepEngine {
     const unconfirmed: Array<{ key: string; because: string }> = [];
     for (const entry of launched) {
       const key = workKey(entry.ref);
-      const because =
-        alive === null
-          ? "the worker liveness could not be read (Docker unreachable)"
-          : alive.has(key)
-            ? "a worker of this work is still alive"
-            : null;
+      const because = this.stopHoldReason(alive, key);
       if (because === null) continue;
       unconfirmed.push({ key, because });
       if (entry.attempt !== null) await recordUnconfirmedStop(entry.dir, entry.attempt, because);
@@ -1278,7 +1273,7 @@ export class SweepEngine {
    * and neither can return an earlier, legitimate recovery. Returns whether a
    * grant was actually returned.
    */
-  private async abandonAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
+  private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
     if (entry.recoveryIndex !== null && !entry.launched) {
       const index = entry.recoveryIndex;
       entry.recoveryIndex = null;
@@ -1290,10 +1285,13 @@ export class SweepEngine {
     return false;
   }
 
-  /** The attempt the pending launch would use, read from the registry. */
+  /** The attempt the pending launch would use, read from the registry. A work
+   *  with no registry dir left no reservation behind: nothing to reconcile, so
+   *  no stop evidence is recorded for it. */
   private async plannedAttempt(entry: InFlightLaunch): Promise<number | null> {
+    if (!existsSync(entry.dir)) return null;
     try {
-      const facts = await readLaunchFacts(entry.dir, entry.hint);
+      const facts = await readLaunchFacts(entry.dir, entry.attemptHint);
       return facts.attempt;
     } catch {
       return null;
@@ -1374,7 +1372,7 @@ export class SweepEngine {
       // A recovery continues a known attempt even before the registry answers.
       attempt: launchable.kind === "recover" ? (launchable.attempt ?? null) : null,
       ...(launchable.kind === "recover" && launchable.attempt !== undefined
-        ? { hint: launchable.attempt }
+        ? { attemptHint: launchable.attempt }
         : {}),
       launched: false,
       recoveryIndex: null,
@@ -1438,7 +1436,7 @@ export class SweepEngine {
         kind === "model-provider-retry"
           ? `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
               "the same attempt continues (no new attempt, branch preserved)"
-          : launchable.voluntary === true
+          : launchable.requestedStop === true
             ? `resuming ${key}: the operator's requested stop ended attempt ${launchable.attempt} — ` +
                 "the same attempt resumes (no new attempt, no recovery spent, branch preserved)"
             : `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
@@ -1608,12 +1606,13 @@ export class SweepEngine {
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     //
+    // A launch means this attempt is being carried NOW: a stop record left on
+    // it by a previous shutdown has done its job, and must not excuse a later,
+    // unexpected interruption of the same attempt.
+    await consumeStopRequest(dir, facts.attempt);
     // The resume after the operator's requested stop (issue #146) spends
-    // nothing and waits nothing: it continues the SAME attempt, and the stop
-    // evidence is consumed as the session starts.
-    if (kind === "recover" && launchable.voluntary === true) {
-      await consumeStopRequest(dir, facts.attempt);
-    } else if (kind === "recover") {
+    // nothing and waits nothing: it continues the SAME attempt.
+    if (kind === "recover" && launchable.requestedStop !== true) {
       const decision = await consumeRecovery(dir, config.recovery, facts.attempt);
       if (decision.decision === "recover") entry.recoveryIndex = decision.consumed - 1;
       if (decision.decision === "pause-help") {
@@ -1627,7 +1626,7 @@ export class SweepEngine {
       );
       await this.wait(decision.waitMs);
       if (this.stopping) {
-        await this.abandonAdmission(entry, facts.attempt);
+        await this.settleStoppedAdmission(entry, facts.attempt);
         this.log(
           `the recovery of ${key} stopped during the backoff — nothing is launched and the grant is returned ` +
             "with the requested-stop evidence",
@@ -1659,7 +1658,7 @@ export class SweepEngine {
     // bookkeeping (the grant, or the consumption of the voluntary stop): what
     // it wrote is undone and the requested stop is what the work keeps.
     if (this.stopping) {
-      await this.abandonAdmission(entry, facts.attempt);
+      await this.settleStoppedAdmission(entry, facts.attempt);
       this.log(`the launch of ${key} stopped before the worker started — the requested stop stays on record`);
       return null;
     }
@@ -1715,6 +1714,13 @@ export class SweepEngine {
   private async liveWorkerKeys(): Promise<ReadonlySet<string> | null> {
     await this.observeLiveness();
     return this.liveness.state === "known" ? this.carriedKeys : null;
+  }
+
+  /** Why a work's end cannot be confirmed, or null when it is: an unreadable
+   *  probe is uncertainty, never an empty factory. */
+  private stopHoldReason(alive: ReadonlySet<string> | null, key: string): string | null {
+    if (alive === null) return "the worker liveness could not be read (Docker unreachable)";
+    return alive.has(key) ? "a worker of this work is still alive" : null;
   }
 
   /** The exhausted recovery budget: block the work and ask the operator for
@@ -1905,15 +1911,9 @@ export class SweepEngine {
     const alive = await this.liveWorkerKeys();
     for (const entry of held) {
       const key = workKey(entry.ref);
-      if (alive === null) {
-        this.reportStopHold(key, `the worker liveness could not be read (Docker unreachable) — ${entry.because}`);
-        continue;
-      }
-      if (alive.has(key)) {
-        this.reportStopHold(
-          key,
-          `a worker of this work is still alive — the previous stop (${entry.because}) stays unconfirmed`,
-        );
+      const because = this.stopHoldReason(alive, key);
+      if (because !== null) {
+        this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
         continue;
       }
       this.reportedStopHolds.delete(key);
@@ -2413,42 +2413,35 @@ export async function runForever(
   const tickMs = options.tickMs ?? TICK_MS;
   const signal = options.signal;
 
-  // Ctrl-C stops launching the instant it is perceived — even during a
-  // derivation, before the wait for the next event. The launches already
-  // started are asked to stop; the shutdown below confirms their end.
-  const onAbort = (): void => void engine.beginShutdown();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  // The engine listens to the requested stop from its construction, so a stop
+  // landing during a derivation closes admissions without this loop polling
+  // for it, and the pre-aborted case is already in shutdown.
+  if (await sweepOrLog(engine, log) && !engine.isStopping) {
+    for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+  }
 
-  try {
+  for (;;) {
+    const event = await engine.waitForWake(tickMs, signal);
+    if (event === "abort" || signal?.aborted || engine.isStopping) {
+      // No new launch from here on; the run retains ownership until every
+      // started worker ended and the stop is confirmed (or reported as
+      // unconfirmed, never presumed).
+      const report = await engine.beginShutdown();
+      log(
+        report.unconfirmed.length === 0
+          ? "factory ended cleanly (the operator's requested stop was confirmed)"
+          : "factory ended with an UNCONFIRMED stop — the next run holds the affected works",
+      );
+      return report;
+    }
+    if (event === "worker-end") {
+      // The collection happened at the act; nothing to re-derive — the
+      // human changes wait for the tick (staleness bounded by the interval).
+      continue;
+    }
     if (await sweepOrLog(engine, log) && !engine.isStopping) {
       for (const run of engine.fillSlots()) logLaunchFailure(log, run);
     }
-
-    for (;;) {
-      const event = await engine.waitForWake(tickMs, signal);
-      if (event === "abort" || signal?.aborted || engine.isStopping) {
-        // No new launch from here on; the run retains ownership until every
-        // started worker ended and the stop is confirmed (or reported as
-        // unconfirmed, never presumed).
-        const report = await engine.beginShutdown();
-        log(
-          report.unconfirmed.length === 0
-            ? "factory ended cleanly (the operator's requested stop was confirmed)"
-            : "factory ended with an UNCONFIRMED stop — the next run holds the affected works",
-        );
-        return report;
-      }
-      if (event === "worker-end") {
-        // The collection happened at the act; nothing to re-derive — the
-        // human changes wait for the tick (staleness bounded by the interval).
-        continue;
-      }
-      if (await sweepOrLog(engine, log) && !engine.isStopping) {
-        for (const run of engine.fillSlots()) logLaunchFailure(log, run);
-      }
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
   }
 }
 

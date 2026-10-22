@@ -4,9 +4,11 @@ import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { IssueRef } from "../tracker/port.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { workKey } from "../state/derive.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
+import { deferred, type Deferred } from "./deferred.js";
+import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -51,17 +53,6 @@ export interface FakeWorkerRuntimeOptions {
   forceUnconfirmed?: boolean;
 }
 
-interface Deferred {
-  promise: Promise<void>;
-  resolve: () => void;
-}
-
-function deferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
-}
-
 /** The session of one launch while it can still be stopped. */
 interface FakeSession {
   ref: IssueRef;
@@ -72,9 +63,6 @@ interface FakeSession {
   /** The forced stop; the launch reports the stop through it. */
   forced: Deferred;
 }
-
-/** The work key the factory uses: "<repo>#<n>". */
-const keyOf = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
 /** The launch of one work among a run's results, by issue number. Concurrent
  * admissions reach the runtime in no contractual order, so a test asks for the
@@ -104,7 +92,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
-    const key = keyOf(request.ref);
+    const key = workKey(request.ref);
     const session: FakeSession = {
       ref: request.ref,
       wake: deferred(),
@@ -135,7 +123,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   /** Ask the session to end; the launch promise resolves with its aftermath. */
   requestStop(ref: IssueRef): void {
-    const key = keyOf(ref);
+    const key = workKey(ref);
     this.stopRequests.push(key);
     const session = this.sessions.get(key);
     if (session === undefined) return;
@@ -145,7 +133,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   /** Force the session gone; a fake container is instantly removed. */
   async forceStop(ref: IssueRef): Promise<void> {
-    const key = keyOf(ref);
+    const key = workKey(ref);
     this.forcedStops.push(key);
     if (this.options.forceUnconfirmed === true) {
       throw new Error(`fake: the worker of ${key} survived the forced stop`);
@@ -156,7 +144,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     session.wake.resolve();
   }
 
-  /** The sessions alive right now: a stopped launch still counts until it ended. */
+  /** The sessions alive right now: a stopped launch still counts until it
+   *  ended. Not part of the port — it is the double's own view, which a test
+   *  hands to the cycle as its liveness probe. */
   async liveWorkers(): Promise<ReadonlyArray<{ key: string }>> {
     return [...this.sessions.keys()].map((key) => ({ key }));
   }
@@ -164,7 +154,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   /** Resolves once a cooperative stop was requested for this work — the seam a
    *  test's hold awaits to end voluntarily inside the cooperative window. */
   whenStopRequested(ref: IssueRef): Promise<void> {
-    return this.sessions.get(keyOf(ref))?.cooperative.promise ?? Promise.resolve();
+    return this.sessions.get(workKey(ref))?.cooperative.promise ?? Promise.resolve();
   }
 
   /** The attempt begins: the runtime writes the session dir and the
