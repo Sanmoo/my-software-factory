@@ -126,18 +126,34 @@ ends. Comment your feedback on the PR — the next derivation relaunches a
 worker that addresses it on the SAME branch and the SAME PR (as many rounds
 as you want; each round ends with the worker commenting what it addressed).
 
-You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
-boot re-derives every reserved work from disk + tracker alone (a crashed
-round is an interruption: the SAME attempt is recovered after the configured
-backoff; a written failure still releases the work to the pool, its 2nd
-consecutive one blocks it, and an exhausted recovery budget pauses it and asks
-for help; a PR waiting for you stays parked; a merge you already did
-becomes done → archive). A model provider outage during an interruption
-recovery retries on its own `model-provider` budget; exhausted, the work is
-**awaiting model provider** (GLOSSARY) — answer on the issue to resume, or raise
-`model-provider.max-retries`; the awaiting state is never a block. A repair
-round keeps its own ruler, and a repair fall resumes on the same branch and PR
-(see GLOSSARY.md).
+You end the factory with Ctrl-C or SIGTERM — both carry the same guarantee.
+The factory stops admitting workers at once, asks the running ones to stop,
+and gives them 10 seconds to end; a second Ctrl-C (or SIGTERM) skips the rest
+of that window. At the window's end the remaining workers are forced, and the
+factory calls the stop done only after confirming that no worker container
+survives. The 10 seconds bound the *request* phase, not a promise of exiting
+in 10 seconds: the factory exits as soon as every worker is confirmed gone —
+or says it could not confirm and exits nonzero, holding the affected works.
+
+A requested stop is not a failure. The attempt, its branch, its history and
+the artifacts on disk stay; no Cancellation or Fall is recorded and no
+recovery is spent. The next `msf run` loads the current `msf.yaml` and the
+compiled code, resumes the SAME attempts — reopening the attempt's native Pi
+session — and the worker reconciles the real state (branch, PR, comments,
+labels) before repeating any external effect. There is no hot reload:
+compiling and `npm run build:image` stay explicit steps between runs.
+
+Restarting after a crash loses nothing either: the next boot re-derives every
+reserved work from disk + tracker alone (a crashed round is an interruption:
+the SAME attempt is recovered after the configured backoff; a written failure
+still releases the work to the pool, its 2nd consecutive one blocks it, and an
+exhausted recovery budget pauses it and asks for help; a PR waiting for you
+stays parked; a merge you already did becomes done → archive). A model provider
+outage during an interruption recovery retries on its own `model-provider`
+budget; exhausted, the work is **awaiting model provider** (GLOSSARY) — answer
+on the issue to resume, or raise `model-provider.max-retries`; the awaiting
+state is never a block. A repair round keeps its own ruler, and a repair fall
+resumes on the same branch and PR (see GLOSSARY.md).
 
 A surviving worker keeps its work and its slot; when it ends, the factory
 reconciles the result on its own. If Docker stops answering, launches pause and
@@ -220,9 +236,12 @@ address, with no window opened and no focus taken.
   restart needs no cleanup, and `msf status` stays available. Two names for the
   same file (a hard link) count as one configuration. If the protection cannot
   be established, the run refuses to start rather than run unprotected.
-- **Ctrl-C waits for the workers in flight**: it closes new launches at once
-  (no slot replenishment), then lets the started workers finish and records
-  their results; the exclusivity above holds through that window.
+- **Ctrl-C/SIGTERM stop the factory without waiting for a whole Work**: new
+  admissions close at once, the running workers get up to 10 seconds to end,
+  then the rest is forced and confirmed. A worker whose end cannot be
+  confirmed holds its work — with a diagnostic in the log and in `msf status`
+  — until a later run sees it gone; no duplicate worker is launched over it.
+  The exclusivity above holds through the whole stop.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target
@@ -234,9 +253,10 @@ address, with no window opened and no focus taken.
   for tests — the default wiring of `msf run` is all real; nothing on the
   binary's path can reach the fake adapter.
 - Every restart reconciles from disk + tracker: the registry
-  (`trabalhos/<repo>#<n>/`) holds the attempts, logs and outcome records;
-  the tracker holds the labels and the PR. No factory state lives in the
-  process.
+  (`trabalhos/<repo>#<n>/`) holds the attempts, logs, outcome records and the
+  requested-stop evidence; the tracker holds the labels and the PR. No factory
+  state lives in the process, so an updated config or a rebuilt binary takes
+  effect on the next invocation.
 - **`Could not fetch from origin` on a retomada is expected, not a broken
   remote**: the work branch reaches the origin only when the worker
   publishes it (push + PR). A work that fell before publishing (blocked
