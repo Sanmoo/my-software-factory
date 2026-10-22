@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { GitWork } from "../git/port.js";
@@ -29,6 +29,7 @@ import {
   linkForAttempt,
   nextRound,
   readEffectJournal,
+  readGuardrailState,
   readSessionLinks,
   writeGuardrailState,
   type EffectVerdict,
@@ -335,13 +336,21 @@ function normalizeComment(body: string): string {
   return body.replaceAll(AGENT_MARKER, "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * What the next session's guardrail enforces. The verdicts of every earlier
+ * launch are carried forward: an effect the factory once PROVED realized is
+ * realized for good, and a later restart must not lose that fact just because
+ * the call that produced it was also carrying an effect proven absent (a
+ * per-call result cannot express the difference).
+ */
 function guardrailState(
   deps: ContinuityDeps,
   mode: "new" | "resume",
   sessionId: string,
   verdicts: Record<string, EffectVerdict>,
 ): GuardrailState {
-  return { version: 1, attempt: deps.attempt, sessionId, mode, verdicts, at: nowIso(deps) };
+  const previous = readGuardrailState(deps.workDir)?.verdicts ?? {};
+  return { version: 1, attempt: deps.attempt, sessionId, mode, verdicts: { ...previous, ...verdicts }, at: nowIso(deps) };
 }
 
 function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sessionId?: string): PauseRecord {
@@ -356,37 +365,17 @@ function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sess
   };
 }
 
-/** Does the attempt carry any evidence that a session ever existed? Zero
- *  evidence means no session can be lost (the claim never reached a worker). */
+/**
+ * Does THIS attempt carry evidence that it ever reached a worker? Zero
+ * evidence means no session can be lost (the claim never reached a spawn) and
+ * the attempt legitimately starts its first session. Only the attempt's own
+ * artifacts count — its event log, written before the session, and the
+ * guardrail's record of it; another attempt's session proves nothing about
+ * this one.
+ */
 function hasAttemptEvidence(deps: ContinuityDeps): boolean {
   if (existsSync(join(deps.workDir, eventLogName(deps.attempt)))) return true;
-  if (readEffectJournal(deps.workDir).sessions.some((entry) => entry.attempt === deps.attempt)) return true;
-  return hasAnySessionFile(deps.sessionsDir);
-}
-
-function hasAnySessionFile(sessionsDir: string): boolean {
-  if (!existsSync(sessionsDir)) return false;
-  const stack = [sessionsDir];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const path = join(dir, entry);
-      try {
-        const stats = statSync(path);
-        if (stats.isDirectory()) stack.push(path);
-        else if (stats.isFile() && entry.endsWith(".jsonl")) return true;
-      } catch {
-        continue;
-      }
-    }
-  }
-  return false;
+  return readEffectJournal(deps.workDir).sessions.some((entry) => entry.attempt === deps.attempt);
 }
 
 function nowIso(deps: ContinuityDeps): string {

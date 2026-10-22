@@ -284,7 +284,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   "model-provider-failure": "reserved",
   "stop-resume": "reserved",
   "stop-unconfirmed": "reserved",
-  "help-paused": "reserved",
+  "continuity-paused": "reserved",
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
@@ -709,7 +709,7 @@ export class SweepEngine {
           this.announce(decision.ref, "reserved");
           break;
         }
-        case "help-paused": {
+        case "continuity-paused": {
           // Continuity could not safely reopen the attempt's session (issue
           // 119): the pause is persisted and already asked the operator for
           // help, so no cycle retries the recovery or posts the request again.

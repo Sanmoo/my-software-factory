@@ -48,26 +48,23 @@ export type CommandSafety =
    *  is not replayable (the host pauses the recovery). */
   | { safety: "unknown"; reason: string };
 
-/** Commands whose whole effect stays local to the worktree or the process. */
+/**
+ * Commands that only read or write paths they are given, and never run another
+ * program. Deliberately narrow: an interpreter or a command runner (`node`,
+ * `npm`, `python`, `make`, `env`, `xargs`, `find -exec`, `awk`, `sed`) can run
+ * arbitrary code — including an external mutation — so it is NOT safe, and an
+ * interrupted call of that class pauses the recovery. Same for `docker`: the
+ * worker inherits the HOST daemon (ADR 0003) and no reconciliation covers it.
+ */
 const SAFE_COMMANDS: ReadonlySet<string> = new Set([
   "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "echo", "printf",
   "pwd", "true", "false", "test", "[", "stat", "file", "du", "df", "which", "type",
   "sleep", "date", "basename", "dirname", "realpath", "readlink", "mkdir", "cp",
   "mv", "rm", "touch", "chmod", "chown", "ln", "diff", "tree", "column", "tee",
-  "xargs", "seq", "yes", "env", "printenv", "id", "whoami", "uname", "nproc",
-  "rg", "grep", "egrep", "fgrep", "find", "fd", "sed", "awk", "jq", "yq",
-  "node", "npm", "yarn", "pnpm", "bun", "deno", "tsc", "eslint", "prettier",
-  "vitest", "jest", "pytest", "python", "python3", "pip", "pip3", "go", "cargo",
-  "rustc", "make", "cmake", "mise", "git", "patch", "tar",
-  "unzip", "zip", "gzip", "gunzip", "base64", "sha256sum", "md5sum", "openssl",
+  "seq", "yes", "printenv", "id", "whoami", "uname", "nproc",
+  "rg", "grep", "egrep", "fgrep", "fd", "jq", "yq", "git", "patch", "tar",
+  "unzip", "zip", "gzip", "gunzip", "base64", "sha256sum", "md5sum",
 ]);
-
-/**
- * Docker is NOT on the allowlist on purpose: the worker inherits the HOST's
- * daemon (ADR 0003), so `docker run/build compose` can mutate or publish
- * outside the worktree with no reconciliation to consult. An interrupted
- * docker call pauses the recovery instead of being replayed.
- */
 
 /** The safe subcommands of the binaries whose other subcommands reach outside. */
 const SAFE_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -81,19 +78,6 @@ const SAFE_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
     "symbolic-ref", "update-ref", "check-ignore", "check-attr", "hash-object",
     "count-objects", "fsck", "format-patch", "am", "bisect", "grep",
   ]),
-  npm: new Set([
-    "install", "ci", "test", "run", "run-script", "exec", "ls", "list", "view",
-    "outdated", "audit", "fund", "help", "cache", "init", "update", "restart",
-    "start", "stop", "pack", "link", "why", "config", "pkg", "dedupe", "prune",
-  ]),
-  yarn: new Set(["install", "test", "run", "add", "remove", "why", "info", "build", "start"]),
-  pnpm: new Set(["install", "test", "run", "add", "remove", "why", "list", "build", "start"]),
-  bun: new Set(["install", "test", "run", "add", "remove", "build", "start", "x"]),
-  deno: new Set(["test", "run", "check", "fmt", "lint", "task"]),
-  cargo: new Set(["build", "test", "check", "fmt", "clippy", "run", "doc", "bench", "metadata", "tree", "update", "add", "remove", "clean"]),
-  go: new Set(["build", "test", "vet", "fmt", "run", "mod", "list", "env", "generate", "doc", "clean", "work"]),
-  pip: new Set(["install", "list", "show", "freeze", "download"]),
-  pip3: new Set(["install", "list", "show", "freeze", "download"]),
   gh: new Set([
     "pr view", "pr list", "pr diff", "pr checks", "pr status",
     "issue view", "issue list", "issue status",
@@ -104,11 +88,6 @@ const SAFE_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /** Subcommands we must never call safe even under an allowlisted binary. */
 const NEVER_SAFE: Readonly<Record<string, ReadonlySet<string>>> = {
-  npm: new Set(["publish", "unpublish", "deprecate", "owner", "token", "login", "logout", "adduser"]),
-  yarn: new Set(["publish", "login", "logout", "npm"]),
-  pnpm: new Set(["publish", "login", "logout"]),
-  cargo: new Set(["publish", "login", "owner", "yank"]),
-  go: new Set(["install"]),
   gh: new Set(["release create", "release edit", "release delete", "repo create", "repo delete", "repo edit", "gist"]),
 };
 
@@ -136,6 +115,11 @@ export function classifyCommand(command: string): CommandSafety {
   if (trimmed.includes("|")) {
     return { safety: "unknown", reason: "a pipeline hides the right side's effect" };
   }
+  // A redirection writes to a path this classifier does not resolve: it can
+  // land outside the worktree, so the call is not proven local.
+  if (/>/.test(trimmed)) {
+    return { safety: "unknown", reason: "a redirection can write outside the worktree" };
+  }
 
   const segments = splitSegments(trimmed);
   if (segments.length === 0) return { safety: "safe" };
@@ -150,9 +134,9 @@ export function classifyCommand(command: string): CommandSafety {
 }
 
 function splitSegments(command: string): string[] {
-  // Newlines and `;` separate commands; `&&`/`||` are only separators when the
-  // segments around them are independent commands. A redirection (`>`, `>>`)
-  // is local-safe only for the allowlist — the segment classifier sees it.
+  // Newlines and `;` separate commands; `&&`/`||` separate independent
+  // commands. Redirections never reach here: `classifyCommand` refuses them
+  // before splitting, because their target is not resolved.
   const segments: string[] = [];
   let current = "";
   for (let i = 0; i < command.length; i += 1) {

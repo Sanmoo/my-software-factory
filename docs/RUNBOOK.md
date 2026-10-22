@@ -13,7 +13,9 @@ socket riding inside it (ADR 0003). Factory speech is the
 ## Before the first run (once)
 
 ```sh
-# 1. the worker image (npm run build:image) — one build, reused forever
+# 1. the worker image (npm run build:image) — one build, reused forever;
+#    rebuild after upgrading: the boot also refuses an image without the
+#    continuity guardrail (a resumed session could repeat an external effect)
 npm run build:image
 
 # 2. the bot credential in the gh keyring (the boot check reads it;

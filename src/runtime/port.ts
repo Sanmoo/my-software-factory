@@ -67,7 +67,9 @@ export interface WorkRequest {
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
   /** The session this launch opens: new, or the interrupted attempt's own
-   *  (issue 119). Absent only in tests of older contracts. */
+   *  (issue 119). The factory ALWAYS sets it — the recorded association is
+   *  the recovery contract; only a caller driving the runtime directly (no
+   *  factory, no recovery) may omit it and get Pi's own fresh session. */
   session?: SessionSelection;
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;

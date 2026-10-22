@@ -19,7 +19,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 export interface DeterministicModel {
   /** Base URL a sibling container can reach (no trailing slash). */
   baseUrl: string;
-  requests: Array<{ assistantMessages: number; commands: string[] }>;
+  /** One entry per model call: what the transcript carried into it. */
+  requests: Array<{ assistantMessages: number; commands: string[]; resumed: boolean }>;
   close(): Promise<void>;
 }
 
@@ -36,6 +37,10 @@ export interface DeterministicModelOptions {
 }
 
 export const COMPLETION = "<promise>MSF-RESULT</promise>";
+
+/** The sentence the factory's prompt uses when it reopens the attempt's own
+ *  session (src/runtime/prompt.ts). */
+const RESUME_MARKER = "CONTINUES the interrupted attempt";
 
 export async function startDeterministicModel(options: DeterministicModelOptions): Promise<DeterministicModel> {
   const requests: DeterministicModel["requests"] = [];
@@ -89,7 +94,14 @@ async function handle(
       }
     });
   });
-  requests.push({ assistantMessages, commands });
+  // The factory's resume prompt is the observable "this session continues the
+  // interrupted attempt" (src/runtime/prompt.ts): the model records it, so the
+  // test can tell a reopened conversation from a first launch.
+  const promptText = messages
+    .map((message) => message["content"])
+    .map((content) => (typeof content === "string" ? content : JSON.stringify(content ?? "")))
+    .join("\n");
+  requests.push({ assistantMessages, commands, resumed: promptText.includes(RESUME_MARKER) });
 
   const reply = script(assistantMessages, options);
   if (payload.stream === false) {

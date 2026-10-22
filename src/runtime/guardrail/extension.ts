@@ -18,14 +18,8 @@
 
 import { execFileSync } from "node:child_process";
 
+import { classifyCommand, withObservedRef, type EffectAction } from "../effects.js";
 import {
-  classifyCommand,
-  withObservedRef,
-  type CommandSafety,
-  type EffectAction,
-} from "../effects.js";
-import {
-  GUARDRAIL_STATE_FILENAME,
   appendJournalIntent,
   appendJournalResult,
   appendJournalStart,
@@ -242,9 +236,3 @@ function gitValue(cwd: string, args: string[]): string | null {
 export default function guardrailExtension(pi: GuardrailApi): void {
   installGuardrail(pi);
 }
-
-/** The prompt-side contract the guardrail enforces — exported so the worker
- *  prompt and this code cannot drift about what a block means. */
-export const GUARDRAIL_STATE_READ = GUARDRAIL_STATE_FILENAME;
-
-export type { CommandSafety };

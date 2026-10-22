@@ -198,6 +198,56 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(readGuardrailState(workDir)?.verdicts[`push:${BRANCH}@abc123`], "realized");
   });
 
+  test("a realized effect stays realized across rounds even when its call also carried an absent one", async () => {
+    const session = seedSession(workDir, REF, 2);
+    appendJournalStart(workDir, { attempt: 2, sessionId: session.sessionId });
+    seedSessionToolCall(session, {
+      callId: "call-both",
+      command: `git push origin ${BRANCH} && gh pr create --head ${BRANCH}`,
+      answered: false,
+    });
+    appendJournalIntent(workDir, {
+      attempt: 2,
+      sessionId: session.sessionId,
+      callId: "call-both",
+      tool: "bash",
+      command: `git push origin ${BRANCH} && gh pr create --head ${BRANCH}`,
+      safety: "effect",
+      actions: [
+        { kind: "push", key: `push:${BRANCH}@abc123`, detail: `push branch ${BRANCH}`, branch: BRANCH, sha: "abc123" },
+        { kind: "pr", key: `pr:${BRANCH}`, detail: `open PR from ${BRANCH}`, branch: BRANCH },
+      ],
+    });
+    git.remoteHead = "abc123";
+
+    const first = await planContinuity(deps, "resume");
+    assert.equal(first.decision, "launch");
+    const firstState = readGuardrailState(workDir);
+    assert.equal(firstState?.verdicts[`push:${BRANCH}@abc123`], "realized");
+    assert.equal(firstState?.verdicts[`pr:${BRANCH}`], "absent");
+
+    // A second interruption, later: the next launch's verdicts must still
+    // carry the push proven realized (the per-call result cannot say it).
+    const later = seedSession(workDir, REF, 2, { round: 2, sessionId: "99999999-9999-9999-9999-999999999999" });
+    appendJournalStart(workDir, { attempt: 2, sessionId: later.sessionId });
+    seedSessionToolCall(later, { callId: "call-later", command: `gh issue comment 7 --body "done"`, answered: false });
+    appendJournalIntent(workDir, {
+      attempt: 2,
+      sessionId: later.sessionId,
+      callId: "call-later",
+      tool: "bash",
+      command: `gh issue comment 7 --body "done"`,
+      safety: "effect",
+      actions: [{ kind: "comment", key: "comment:issue:7:abc", detail: "comment on issue #7", target: "issue", number: 7, body: "done" }],
+    });
+
+    const second = await planContinuity(deps, "resume");
+    assert.equal(second.decision, "launch", JSON.stringify(second));
+    const secondState = readGuardrailState(workDir);
+    assert.equal(secondState?.verdicts[`push:${BRANCH}@abc123`], "realized", "the realized push is never lost");
+    assert.equal(secondState?.verdicts["comment:issue:7:abc"], "absent");
+  });
+
   test("a reconciled intent keeps its result: a later restart does not re-ask the real state", async () => {
     interruptInsidePush({ sha: "abc123", remote: "abc123" });
     const first = await planContinuity(deps, "resume");

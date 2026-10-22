@@ -12,6 +12,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { parseJsonObject, type JsonValue } from "./json-line.js";
+
 export interface SessionHeader {
   version: number;
   id: string;
@@ -94,6 +96,18 @@ export function inspectSessionFile(path: string, expectedId: string): SessionIns
   if (header === null) {
     return { status: "unreadable", header: null, intactEntries: 0, tailBytes: Buffer.byteLength(raw), detail: "the first line is not a session header" };
   }
+  // Identity comes FIRST: the id in the header is readable even when the rest
+  // of the history is not, and a file that belongs to another session is not
+  // this attempt's to continue — a partial tail must not hide that.
+  if (header.id !== expectedId) {
+    return {
+      status: "identity-mismatch",
+      header,
+      intactEntries: 0,
+      tailBytes: 0,
+      detail: `the session belongs to ${header.id}, not to the recorded ${expectedId}`,
+    };
+  }
 
   let intactEntries = 0;
   for (let index = 1; index < lines.length; index += 1) {
@@ -139,15 +153,6 @@ export function inspectSessionFile(path: string, expectedId: string): SessionIns
       detail: "the file ends with an incomplete entry",
     };
   }
-  if (header.id !== expectedId) {
-    return {
-      status: "identity-mismatch",
-      header,
-      intactEntries,
-      tailBytes: 0,
-      detail: `the session belongs to ${header.id}, not to the recorded ${expectedId}`,
-    };
-  }
   return { status: "intact", header, intactEntries, tailBytes: 0 };
 }
 
@@ -182,9 +187,9 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
     const entry = parseEntry(segments[index]!);
     if (entry === null) continue;
     if (entry.type === "message") {
-      const raw = entry["message"];
-      if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const message = raw as Record<string, JsonValue>;
+      const body = entry["message"];
+      if (body === null || body === undefined || typeof body !== "object" || Array.isArray(body)) continue;
+      const message = body as Record<string, JsonValue>;
       const role = message["role"];
       if (role === "assistant" && Array.isArray(message["content"])) {
         for (const block of message["content"]) {
@@ -212,8 +217,6 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
   return calls;
 }
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
 function parseHeader(line: string | null): SessionHeader | null {
   if (line === null) return null;
   const entry = parseEntry(line);
@@ -231,14 +234,7 @@ function parseHeader(line: string | null): SessionHeader | null {
 }
 
 function parseEntry(line: string): Record<string, JsonValue> | null {
-  if (line.trim() === "") return null;
-  try {
-    const parsed = JSON.parse(line) as JsonValue;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Record<string, JsonValue>;
-  } catch {
-    return null;
-  }
+  return parseJsonObject(line);
 }
 
 function parses(line: string): boolean {

@@ -257,7 +257,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
       // The first launch runs the worker; we kill the container in the window
       // where the push LANDED but the tool result was never recorded.
       const active = runOnce(deps);
-      const container = await waitForPushThenFindWorker(remotePath, branch, workDirPath);
+      const container = await waitForPushThenFindWorker(remotePath, branch, workDirPath, join(workDirPath, "log-1.jsonl"));
       killContainer(container);
       const sweep = await active;
 
@@ -316,13 +316,22 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
       assert.equal(record.attempt, 1);
       assert.equal(second?.outcome, "clean-without-pr");
 
-      // 6. The model really was asked twice, and the second conversation
-      //    started with the earlier assistant turn (the resumed transcript).
-      assert.ok(model.requests.length >= 3, `requests: ${model.requests.length}`);
+      // 6. Progress reused vs a reconstructed baseline: the interrupted step
+      //    was the push, and the resumed conversation opens with it already
+      //    behind it. A reconstructed execution starts at zero assistant
+      //    messages and would issue the push again as a new step; here the
+      //    first resumed call already carries the earlier turn AND the
+      //    interrupted command as history, and the step it adds is the
+      //    (blocked) retry — one new call, never a redo of the confirmed work.
+      const resumedCalls = model.requests.filter((request) => request.resumed);
+      assert.ok(resumedCalls.length > 0, `requests: ${model.requests.length}`);
+      const firstResumed = resumedCalls[0]!;
+      assert.ok(firstResumed.assistantMessages >= 1, "the reopened conversation carries its earlier turn");
       assert.ok(
-        model.requests.some((request) => request.assistantMessages >= 1),
-        "the resumed call carried the previous turn",
+        firstResumed.commands.some((command) => command.includes("git push")),
+        "the interrupted push is part of the reopened history, not redone",
       );
+      assert.equal(firstResumed.commands.length, 1, "the resumed turn carried exactly the interrupted step");
       assert.ok(COMPLETION.length > 0);
 
       cleanupFixture(join(workDirPath, "fixtures"));
@@ -330,10 +339,22 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
   );
 });
 
-/** Poll the bare remote until the worker pushed the branch, then find its container. */
-async function waitForPushThenFindWorker(remotePath: string, branch: string, hostWorkDir: string): Promise<string> {
-  const deadline = Date.now() + 3 * 60 * 1000;
+/**
+ * Poll the bare remote until the worker pushed the branch, then find its
+ * container. The attempt's own event log is watched too: a session that FAILED
+ * before the push (a broken image, a refused flag) is reported with its reason
+ * instead of waiting out the deadline.
+ */
+async function waitForPushThenFindWorker(
+  remotePath: string,
+  branch: string,
+  hostWorkDir: string,
+  eventLog: string,
+): Promise<string> {
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
+    const failure = readSessionFailure(eventLog);
+    if (failure !== null) throw new Error(`the worker session failed before the push: ${failure}`);
     const pushed = execFileSync("git", ["--git-dir", remotePath, "for-each-ref", `refs/heads/${branch}`], { encoding: "utf8" }).trim();
     if (pushed !== "") {
       const container = findWorkerContainer(hostWorkDir);
@@ -342,6 +363,26 @@ async function waitForPushThenFindWorker(remotePath: string, branch: string, hos
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("the worker never pushed the branch (or its container was not observable)");
+}
+
+/** The reason of a `session-failed` event in the attempt's log, if any. */
+function readSessionFailure(eventLog: string): string | null {
+  let raw: string;
+  try {
+    raw = readFileSync(eventLog, "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const entry = JSON.parse(line) as { event?: string; reason?: string };
+      if (entry.event === "session-failed") return entry.reason ?? "no reason recorded";
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /** The live container of THIS work: its /msf-work bind points at our work dir. */
