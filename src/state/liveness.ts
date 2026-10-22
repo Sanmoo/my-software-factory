@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { isAbsolute, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
+import { SESSIONS_SUBDIR } from "../layout.js";
 import { describeError } from "../format.js";
 import { parseWorkKey } from "../pool/registry.js";
 
@@ -16,9 +16,10 @@ const execFile = promisify(execFileCallback);
  * NOT a status read: that write lives in the runtime (runtime/worker-stop.ts).
  *
  * The interpretation of Docker's output is a PURE function over the canned
- * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
- * the only part that touches the machine, and the composition default — tests
- * inject a fake probe, never a flag.
+ * strings (parseWorkerContainers); the command shells (dockerWorkerProbe and
+ * the `runningWorkerContainers` read the runtime's stop shares) are the only
+ * parts that touch the machine, and they only read. The composition default —
+ * tests inject a fake probe, never a flag.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long

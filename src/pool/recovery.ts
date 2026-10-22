@@ -255,7 +255,7 @@ export async function recordUnconfirmedStop(
 
 /**
  * The worker of an unconfirmed stop is confirmed gone: the stop becomes the
- * voluntary one it was meant to be, and the attempt may resume free of charge.
+ * requested-stop one it was meant to be, and the attempt may resume free of charge.
  * A record of another kind (or another attempt) is left untouched.
  */
 export async function confirmStopRequest(
@@ -274,7 +274,7 @@ export async function confirmStopRequest(
 }
 
 /**
- * The voluntary resume is launching: the stop record did its job. Cleared
+ * The requested-stop resume is launching: the record did its job. Cleared
  * BEFORE the worker starts so a later, unexpected interruption of this
  * attempt is charged like any other — the requested stop only excuses itself.
  */
@@ -289,7 +289,7 @@ export async function consumeStopRequest(workDir: string, attempt: number): Prom
 /**
  * Return a recovery whose relaunch the requested stop cancelled (issue #146):
  * the grant was persisted before the backoff, but no worker ever started with
- * it, so spending it would penalize a voluntary restart. Only the grant named
+ * it, so spending it would penalize a requested restart. Only the grant named
  * by its ledger event index is returned — earlier, legitimate consumption and
  * a second return of the same grant are impossible.
  */

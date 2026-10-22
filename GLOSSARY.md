@@ -75,7 +75,7 @@ One logical try by a worker to carry out a work, counted per work. It survives i
 The verdict of how an attempt ended.
 
 **Interruption**:
-An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container, a hard stop. It is not a failure: it consumes no attempt and never enters the fall ruler. A requested stop is persisted as itself and is not an interruption.
+An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container. It is not a failure: it consumes no attempt and never enters the fall ruler. A requested stop also leaves no outcome record, but it is persisted as itself and is not an interruption to charge.
 
 **Recovery**:
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.

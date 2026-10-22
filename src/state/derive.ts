@@ -408,8 +408,8 @@ export type ReservedDerivation =
       modelProvider: ModelProviderDecision;
     }
   /** The attempt ended by the operator's REQUESTED stop (issue #146): the same
-   *  attempt resumes on the next run, spending no recovery — a voluntary
-   *  restart is a lifecycle condition, never a fall or an interruption. */
+   *  attempt resumes on the next run, spending no recovery — a requested stop
+   *  is a lifecycle condition, never a fall or an interruption. */
   | { ref: IssueRef; state: "stop-resume"; attempt: number }
   /** The requested stop could not be confirmed (issue #146): the previous
    *  worker may still be alive, so the work is held with the reason until a
@@ -650,7 +650,7 @@ async function deriveUnreconciledAttempt(
   // A confirmed Outcome prevails over the interpretation of the stop (issue
   // #146): the attempt really ended with a verdict, so a stop record left on
   // top of it (the operator stopped the factory while that verdict was being
-  // applied) never turns the attempt into a voluntary resume.
+  // applied) never turns the attempt into a requested-stop resume.
   const record = await readOutcomeRecord(dir);
   if (selfReportedBlocked(record, ledger.lastAttempt)) {
     // The worker reported blocked but the label never landed (an interrupted
