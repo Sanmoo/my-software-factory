@@ -194,6 +194,13 @@ export const TOOLCHAIN_SETUP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Where the host profiles live by default. */
 export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
 
+/** The guardrail extension the worker image carries (issue 119): the in-container
+ *  code that journals effects before they happen and blocks a repeat on a
+ *  resumed session. Provisioned at image build time (ADR 0001); the preflight
+ *  refuses a stale image rather than letting the session run unguarded. */
+export const GUARDRAIL_CONTAINER_DIR = "/opt/msf/guardrail";
+export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_CONTAINER_DIR}/extension.js`;
+
 /** The proven closed flags of the worker's print command (v1 agentFor):
  *  automatic tool approval, no context files / prompt templates / MCP, a
  *  closed tool list. pi's buildPrintCommand returns a bare command STRING
@@ -207,6 +214,7 @@ export const WORKER_FLAG_ARGS: readonly string[] = [
   "--no-context-files",
   "--no-prompt-templates",
   "--no-mcp",
+  `--extension ${GUARDRAIL_CONTAINER_FILE}`,
   "--tools read,bash,edit,write,subagent,subagents_enable",
   "--exclude-tools 'mcp__*,mcp'",
 ];
@@ -529,25 +537,39 @@ export class SandcastleRuntime implements WorkerRuntime {
     // The proven closed flags (v1 agentFor): automatic tool approval, no
     // context files / prompt templates / MCP, a closed tool list — the one
     // concatenation that applies WORKER_FLAG_ARGS (single-sourced above;
-    // pi's print command is a string, not structured args).
+    // pi's print command is a string, not structured args). A NEW session is
+    // born with the id the factory already recorded (issue 119): the
+    // association exists before the worker starts, so a recovery can never
+    // pick the wrong file.
+    const newSessionId = request.session?.mode === "new" ? request.session.sessionId : null;
     const agentWithFlags = {
       ...agent,
       buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
         const command = agent.buildPrintCommand(options);
+        const sessionId = newSessionId === null ? "" : ` --session-id ${newSessionId}`;
         return {
           ...command,
-          command: `${command.command} ${WORKER_FLAG_ARGS.join(" ")}`,
+          command: `${command.command} ${WORKER_FLAG_ARGS.join(" ")}${sessionId}`,
         };
       },
     };
 
     return {
       agent: agentWithFlags,
+      // A recovery reopens the interrupted attempt's OWN session (issue 119):
+      // Sandcastle hands the id to Pi (`--session <id>`) from the bind-mounted
+      // store, where the session file already lives.
+      ...(request.session?.mode === "resume" ? { resumeSession: request.session.sessionId } : {}),
       sandbox: this.dockerProvider({
         imageName: this.image,
         // GH_TOKEN authenticates gh; DOCKER_HOST names the socket the worker
         // inherits, so the CLI inside reaches the host daemon (ADR 0003).
-        env: { GH_TOKEN: this.token, DOCKER_HOST: `unix://${dockerSocket.hostPath}` },
+        // MSF_WORK_MOUNT tells the guardrail extension where the work dir is.
+        env: {
+          GH_TOKEN: this.token,
+          DOCKER_HOST: `unix://${dockerSocket.hostPath}`,
+          MSF_WORK_MOUNT: WORK_MOUNT,
+        },
         // The socket's own group, as a supplementary gid: the container user
         // is the host user, not root, and the socket is root-owned 0660.
         groups: [dockerSocket.gid],
@@ -733,6 +755,29 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     if (helper.trim() === "") {
       throw new Error(
         `worker image ${deps.image} has no git credential helper for github.com — the worker cannot push. Rebuild it with: npm run build:image`,
+      );
+    }
+
+    // The continuity guardrail must be IN the image (issue 119): the session
+    // journals effects before they happen and blocks a repeat on a resume. An
+    // image built before this feature would run unguarded, so the launch is
+    // refused instead of trusting the worker's prose. One throwaway container,
+    // no network, no artifact.
+    try {
+      await run("docker", [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "test",
+        deps.image,
+        "-f",
+        GUARDRAIL_CONTAINER_FILE,
+      ]);
+    } catch {
+      throw new Error(
+        `worker image ${deps.image} has no continuity guardrail at ${GUARDRAIL_CONTAINER_FILE} — a resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
       );
     }
 

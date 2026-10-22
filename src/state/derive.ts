@@ -14,6 +14,7 @@ import type {
 import { isAgentSpeech } from "../tracker/port.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
+import { readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import {
   readOutcomeRecord,
   blockedCommentBody,
@@ -416,6 +417,11 @@ export type ReservedDerivation =
    *  worker may still be alive, so the work is held with the reason until a
    *  later probe proves it gone. */
   | { ref: IssueRef; state: "stop-unconfirmed"; attempt: number; because: string }
+  /** The work waits for the operator because its interrupted attempt cannot be
+   *  continued safely (issue 119): its session is missing/unreadable, its
+   *  identity does not match, or an external effect stayed ambiguous. The
+   *  pause is persisted, so no cycle re-attempts the recovery. */
+  | { ref: IssueRef; state: "help-paused"; attempt: number; pause: PauseRecord }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -678,6 +684,8 @@ async function deriveUnreconciledAttempt(
 
   if (ledger.lastAttempt === 0) {
     if (inFlight?.has(workKey(ref))) return { ref, state: "idle" };
+    const pause = pausedAttempt(dir, 1);
+    if (pause !== null) return { ref, state: "help-paused", attempt: 1, pause };
     return {
       ref,
       state: "interrupted",
@@ -686,12 +694,22 @@ async function deriveUnreconciledAttempt(
     };
   }
 
+  const pause = pausedAttempt(dir, ledger.lastAttempt);
+  if (pause !== null) return { ref, state: "help-paused", attempt: ledger.lastAttempt, pause };
+
   return {
     ref,
     state: "interrupted",
     attempt: ledger.lastAttempt,
     recovery: await peekRecovery(dir, recovery, ledger.lastAttempt),
   };
+}
+
+/** The persisted continuity pause of THIS attempt, if any (issue 119). A pause
+ *  from an older attempt is history: the current attempt's facts decide. */
+function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
+  const pause = readPause(dir);
+  return pause !== null && pause.attempt === attempt ? pause : null;
 }
 
 /**

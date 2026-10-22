@@ -11,7 +11,7 @@ import {
   type Notification,
   type Notifier,
 } from "./notify/port.js";
-import { workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
+import { SESSIONS_SUBDIR, workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
   githubRepository,
   pullRequestIdentity,
@@ -44,6 +44,7 @@ import {
   ownWrittenOutcome,
   interruptionPausedCommentBody,
   modelProviderAwaitingCommentBody,
+  continuityPausedCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
 } from "./state/outcome.js";
@@ -96,6 +97,8 @@ import {
 } from "./pool/model-provider.js";
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
+import { planContinuity, recheckPausedEffects } from "./runtime/continuity.js";
+import { clearPause, readPause, writePause, type PauseRecord } from "./runtime/continuity-artifacts.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -121,6 +124,7 @@ import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
 import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * The loop is the general workflow and is thin: the only module that knows
@@ -280,6 +284,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   "model-provider-failure": "reserved",
   "stop-resume": "reserved",
   "stop-unconfirmed": "reserved",
+  "help-paused": "reserved",
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
@@ -701,6 +706,18 @@ export class SweepEngine {
         case "stop-unconfirmed": {
           // Nothing is launched: a previous worker may still carry the work.
           // The diagnostic was said by the reconciliation above.
+          this.announce(decision.ref, "reserved");
+          break;
+        }
+        case "help-paused": {
+          // Continuity could not safely reopen the attempt's session (issue
+          // 119): the pause is persisted and already asked the operator for
+          // help, so no cycle retries the recovery or posts the request again.
+          // Other works keep progressing.
+          this.log(
+            `derived ${workKey(decision.ref)}: attempt ${decision.attempt} is paused for help ` +
+              `(${decision.pause.reason}) — no recovery is spent and nothing is relaunched`,
+          );
           this.announce(decision.ref, "reserved");
           break;
         }
@@ -1698,6 +1715,58 @@ export class SweepEngine {
       this.log(`the launch of ${key} stopped before the worker started — the reservation stays for reconciliation`);
       return null;
     }
+
+    // Continuity (issue 119): which Pi session this launch opens, and whether
+    // it may open it at all. A human's answer to a paused work is orientation,
+    // not proof about the world: the facts are read again before acting, and
+    // an effect that is still ambiguous keeps the work paused.
+    const continuityDeps = {
+      workDir: dir,
+      sessionsDir: join(dir, SESSIONS_SUBDIR),
+      ref,
+      attempt: facts.attempt,
+      branch: prepared.branch,
+      git,
+      tracker,
+    };
+    if (kind === "resume") {
+      const pause = readPause(dir);
+      if (pause !== null) {
+        const recheck = await recheckPausedEffects({ ...continuityDeps, attempt: pause.attempt });
+        if (!recheck.resolved && recheck.pause !== null) {
+          this.log(
+            `the human answered ${key}, but the interrupted effect is still unresolved — ` +
+              "the work stays paused; nothing is relaunched",
+          );
+          await this.pauseForContinuity(
+            ref,
+            dir,
+            recheck.pause,
+            "Your answer was read and the facts were checked again: the interrupted effect is still ambiguous. " +
+              "Give the concrete evidence (the pushed head, the comment, the label) or resolve it on the tracker — " +
+              "the factory will not replay the action on a promise.",
+          );
+          return null;
+        }
+        // The fresh read settled it: the answer becomes the updated context
+        // of a NEW round (the material above already carries it).
+        clearPause(dir);
+        this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
+      }
+    }
+    const continuity = await planContinuity(
+      continuityDeps,
+      kind === "recover" ? "resume" : "new",
+    );
+    if (continuity.decision === "pause") {
+      this.log(
+        `continuity of ${key} halted the relaunch (${continuity.pause.reason}) — ` +
+          "the work pauses for help; no recovery is spent and no new attempt starts",
+      );
+      await this.pauseForContinuity(ref, dir, continuity.pause);
+      return null;
+    }
+
     // The recovery is GRANTED and persisted before the wait and the relaunch
     // (issue 123): a death during the backoff or the session continues the
     // count instead of renewing the allowance. An exhausted budget pauses the
@@ -1715,7 +1784,9 @@ export class SweepEngine {
       }
       this.log(
         `recovery ${decision.consumed}/${config.recovery.maxRecoveries} for ${key} — ` +
-          `attempt ${facts.attempt} keeps its number; waiting ${decision.waitMs}ms before the relaunch`,
+          `attempt ${facts.attempt} keeps its number, session ${continuity.sessionId} is reopened ` +
+          `with ${continuity.intactEntries} confirmed entries of its history; ` +
+          `waiting ${decision.waitMs}ms before the relaunch`,
       );
       await this.wait(decision.waitMs);
       if (this.stopping) {
@@ -1770,6 +1841,7 @@ export class SweepEngine {
       repoDir: prepared.repoDir,
       baseBranch,
       attempt: facts.attempt,
+      session: { mode: continuity.mode, sessionId: continuity.sessionId },
       material,
       // A recovery, a model provider retry or the resume after a requested
       // stop continues the attempt, so it reopens the attempt's native Pi
@@ -1821,6 +1893,51 @@ export class SweepEngine {
       return true;
     }
     return lastStop.kind === "stop-requested";
+  }
+
+  /**
+   * A continuity pause (issue 119): the interrupted attempt cannot be reopened
+   * safely, so the work stops and asks for help instead of pretending a fresh
+   * session is a continuation. The record is written FIRST and survives a
+   * restart; the issue comment, the blocked label and the notice happen only
+   * once per pause, never on every cycle.
+   */
+  private async pauseForContinuity(
+    ref: IssueRef,
+    dir: string,
+    pause: PauseRecord,
+    note?: string,
+  ): Promise<void> {
+    const { tracker, config, workspace } = this.deps;
+    const previous = readPause(dir);
+    writePause(dir, pause);
+    this.announce(ref, "reserved");
+    if (note === undefined && previous !== null && previous.attempt === pause.attempt && previous.reason === pause.reason) {
+      // The same pause was already announced: re-assert the blocked label
+      // without repeating the request (a failed retomada swapped it), so the
+      // work stays out of every launch and the human sees one request.
+      await tracker.blockClaim(ref, config.labels);
+      this.log(
+        `continuity of ${workKey(ref)} still paused (${pause.reason}) — no new help request, no recovery spent`,
+      );
+      return;
+    }
+    this.log(
+      `continuity of ${workKey(ref)} paused (${pause.reason}): ${pause.detail} — ` +
+        "the work waits for the operator; files and evidence are preserved",
+    );
+    await this.applyBlockWithComment(
+      ref,
+      await continuityPausedCommentBody({
+        attempt: pause.attempt,
+        reason: pause.reason,
+        detail: pause.detail,
+        workDir: dir,
+        workspace,
+        ...(pause.sessionId === undefined ? {} : { sessionId: pause.sessionId }),
+        ...(note === undefined ? {} : { note }),
+      }),
+    );
   }
 
   /** The exhausted recovery budget: block the work and ask the operator for
@@ -2220,6 +2337,11 @@ export class SweepEngine {
       workDir: dir,
       workspace,
     });
+
+    // A settled attempt makes any continuity pause of its own history (issue
+    // 119): the new record (or block) is the current fact, and a stale pause
+    // must not keep the work out of later rounds. An interruption keeps it.
+    if (ruling.decision !== "interrupt") clearPause(dir);
 
     // A known PR — open, merged or closed — is persisted beside the Work
     // (issue 125): the facts survive a restart, and a later attempt appends

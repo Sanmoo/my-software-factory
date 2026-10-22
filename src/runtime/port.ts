@@ -47,6 +47,13 @@ export interface WorkerMaterial {
   repair?: RepairMaterial;
 }
 
+export interface SessionSelection {
+  /** "new" starts the session; "resume" reopens the id of the interrupted attempt. */
+  mode: "new" | "resume";
+  /** The Pi session id, generated and recorded by the factory BEFORE the launch. */
+  sessionId: string;
+}
+
 export interface WorkRequest {
   ref: IssueRef;
   /** Directory of the work's artifacts: <workspace>/trabalhos/<repo>#<n>/ */
@@ -59,6 +66,9 @@ export interface WorkRequest {
   baseBranch: string;
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
+  /** The session this launch opens: new, or the interrupted attempt's own
+   *  (issue 119). Absent only in tests of older contracts. */
+  session?: SessionSelection;
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;
   /**

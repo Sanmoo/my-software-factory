@@ -10,4 +10,5 @@
 /.msf/
 
 /dist/
+/docker/guardrail/
 msf.yaml

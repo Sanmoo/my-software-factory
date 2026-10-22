@@ -18,6 +18,7 @@ import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
 import type { LiveWorker, LivenessProbe } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
+import { seedSession } from "./session-fixtures.js";
 
 /**
  * e2e of issue 118 at the PUBLIC cycle boundary (`runOnce` / `runForever`):
@@ -156,7 +157,12 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     seedIssue(trackerFor(number), { repo: REPO, number, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     const target = workDir(layout, REPO, number);
     mkdirSync(target, { recursive: true });
-    for (const attempt of attempts) writeFileSync(join(target, `log-${attempt}.jsonl`), "{}\n", "utf8");
+    for (const attempt of attempts) {
+      writeFileSync(join(target, `log-${attempt}.jsonl`), "{}\n", "utf8");
+      // The launch also recorded the session of that attempt (issue 119): an
+      // interrupted attempt whose session exists is recoverable.
+      seedSession(target, { repo: REPO, number }, attempt);
+    }
     if (record !== undefined) {
       writeFileSync(join(target, DESFECHO_FILENAME), JSON.stringify(record), "utf8");
     }
@@ -507,7 +513,11 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.equal(runtime.launched.length, 0);
     assert.deepEqual(tracker.claimedOrder, []);
     assert.ok(!existsSync(join(interrupted, RECOVERY_FILENAME)), "no recovery is spent on unknown liveness");
-    assert.deepEqual(readdirSync(interrupted).sort(), ["log-1.jsonl"], "the attempt's evidence is preserved");
+    assert.deepEqual(
+      readdirSync(interrupted).filter((name) => name === "log-1.jsonl").sort(),
+      ["log-1.jsonl"],
+      "the attempt's evidence is preserved",
+    );
     assert.deepEqual(await labelSet(tracker, 1), [DEFAULT_LABELS.ready], "no issue is blocked by Docker's silence");
     assert.deepEqual(await labelSet(tracker, 50), [DEFAULT_LABELS.claimed]);
     assert.ok(log.some((line) => line.includes("liveness unknown")), "the cause is diagnosed from the first failure");

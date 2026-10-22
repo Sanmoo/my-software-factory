@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
@@ -82,6 +82,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   readonly stopRequests: string[] = [];
   /** The works a forced stop was requested for, in order. */
   readonly forcedStops: string[] = [];
+  /** The sessions this fake continued (issue 119) — the launch carried a
+   *  resume, so the work's own session was reopened instead of a new one. */
+  readonly resumed: WorkRequest[] = [];
   /** Instance-level hold hook — settable by tests after construction. */
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
   private readonly script: ScriptedOutcome[];
@@ -159,12 +162,46 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     return this.sessions.get(workKey(ref))?.cooperative.promise ?? Promise.resolve();
   }
 
-  /** The attempt begins: the runtime writes the session dir and the
-   * attempt's event log the moment the session is up (ticket 13). An attempt
-   * that dies abruptly leaves exactly this — a start line and no end. */
+  /** The attempt begins: the runtime writes the session dir, the attempt's
+   * event log and the Pi session file the moment the session is up (ticket
+   * 13, issue 119). An attempt that dies abruptly leaves exactly this — a
+   * start line and no end. */
   private startSession(request: WorkRequest): void {
     mkdirSync(join(request.workDir, SESSIONS_SUBDIR), { recursive: true });
     this.event(request, "session-start");
+    if (request.session === undefined) return;
+    const file = this.sessionFile(request);
+    mkdirSync(join(file, ".."), { recursive: true });
+    if (request.session.mode === "resume") {
+      this.resumed.push(request);
+      appendFileSync(
+        file,
+        `${JSON.stringify({ type: "message", id: `resume-${request.attempt}`, parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: `continue attempt ${request.attempt}` } })}\n`,
+        "utf8",
+      );
+      return;
+    }
+    const header = {
+      type: "session",
+      version: 3,
+      id: request.session.sessionId,
+      cwd: "/fake/worker",
+      timestamp: new Date().toISOString(),
+    };
+    const first = {
+      type: "message",
+      id: "prompt-1",
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      message: { role: "user", content: request.material.issue.title },
+    };
+    writeFileSync(file, `${JSON.stringify(header)}\n${JSON.stringify(first)}\n`, "utf8");
+  }
+
+  /** Where Pi would persist the session inside the bind-mounted dir. */
+  private sessionFile(request: WorkRequest): string {
+    const id = request.session?.sessionId ?? "no-session";
+    return join(request.workDir, SESSIONS_SUBDIR, "--fake-worker--", `2026-01-01T00-00-00-000Z_${id}.jsonl`);
   }
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {

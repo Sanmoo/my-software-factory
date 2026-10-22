@@ -109,6 +109,34 @@ _Avoid_: Provider budget, when the ticket provider could be read as the subject.
 A work whose model provider budget is exhausted: it holds its claim, is not blocked, and asks the operator for help naming the model provider's last message. `msf status` names it and a human answer resumes it.
 _Avoid_: Awaiting provider, when the ticket provider could be read as the one awaited.
 
+**Session**:
+The Pi conversation an attempt runs in, persisted as a file under the work's sessions dir. It is the progress a continuation reuses.
+
+**Session association**:
+The persisted record binding a session id to its work, attempt and launch round. It is written BEFORE the worker starts, so a recovery selects the session of ITS attempt instead of the newest file or a guess.
+
+**Continuation**:
+Reopening the interrupted attempt's own session to keep its confirmed progress. It is neither a new execution nor a new orientation round, and it keeps the attempt number and the branch.
+_Avoid_: Resume, when it could mean starting the next attempt or a new round.
+
+**External effect**:
+A mutation of state outside the worktree that a worker's tool call produces: a pushed branch, an opened PR, a comment, a label change.
+_Avoid_: Side effect, when the point is that the world was changed.
+
+**Effect intent**:
+The journal entry the in-container guardrail writes BEFORE an effect can run. An intent without its result is exactly the window an interruption leaves open.
+
+**Reconciliation**:
+Reading the real state (the remote branch, the PR, the conversation, the labels) to decide whether an interrupted effect happened: realized (do not repeat), absent (may run once), or unknown (pause and ask).
+_Avoid_: Verification, when no external state is read.
+
+**Continuity pause**:
+The persisted wait for the operator when an interrupted attempt cannot be continued safely — its session is missing, unreadable or of another identity, or an interrupted effect stayed unknown. It spends no attempt and no recovery, survives a restart, asks once, and is not the Docker-unavailability suspension.
+_Avoid_: Block, when no fall was written; Liveness unknown, when the session or the effect is the doubt.
+
+**Guardrail**:
+The factory-owned extension loaded inside the worker container that journals effect intents and blocks an effect the host proved already realized — code at the tool boundary, never prompt obedience.
+
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
 _Avoid_: Issue completion, when referring only to the factory's delivery.

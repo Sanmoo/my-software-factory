@@ -9,6 +9,7 @@ import { exhaustedModelProviderReason } from "../pool/model-provider.js";
 import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
+import type { PauseReason } from "../runtime/continuity-artifacts.js";
 
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
@@ -253,6 +254,18 @@ export interface ModelProviderAwaitingInput {
   workspace: WorkspaceLayout;
 }
 
+/** What the continuity pause of issue 119 says to the operator. */
+export interface ContinuityPausedInput {
+  attempt: number;
+  reason: PauseReason;
+  detail: string;
+  sessionId?: string;
+  /** A note replacing nothing: an answer was read and did not settle the facts. */
+  note?: string;
+  workDir: string;
+  workspace: WorkspaceLayout;
+}
+
 /**
  * The help request of an exhausted model provider budget (issue 144): the
  * attempt ended by a model provider failure, the factory stopped retrying, and the work is
@@ -273,6 +286,59 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
     "",
     renderWorkEvidence(evidence),
   ].join("\n\n");
+}
+
+/**
+ * The block comment of a continuity pause (issue 119): the interrupted attempt
+ * cannot be continued safely — its session is missing, unreadable or of the
+ * wrong identity, or an external effect stayed ambiguous — so the factory
+ * stopped instead of relaunching. The reason and the attempt's evidence are
+ * shown; the session file is never rewritten or deleted to look usable, and
+ * no attempt was consumed.
+ */
+export async function continuityPausedCommentBody(input: ContinuityPausedInput): Promise<string> {
+  const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
+  const header =
+    `attempt ${input.attempt} cannot be continued safely (${describePauseReason(input.reason)}) — ` +
+    "no attempt was consumed and nothing was relaunched.";
+  const session = input.sessionId === undefined ? [] : [`session: ${input.sessionId}`];
+  const ask =
+    input.note ??
+    "Answer on this issue after the marker once the situation is clarified: the factory verifies the facts again " +
+      "before any new mutation — your answer is orientation, not confirmation that an effect did not happen.";
+  return [
+    header,
+    input.detail,
+    ...session,
+    "",
+    ask,
+    "",
+    describeOutcome({ attempt: input.attempt, record: null, workDir: input.workDir, workspace: input.workspace }),
+    "",
+    renderWorkEvidence(evidence),
+  ].join("\n");
+}
+
+/** The pause reasons in the operator's words. */
+function describePauseReason(reason: PauseReason): string {
+  switch (reason) {
+    case "link-missing":
+      return "no session is associated with this attempt";
+    case "session-missing":
+      return "the recorded session is gone";
+    case "session-unreadable":
+      return "the session history is unreadable";
+    case "session-identity":
+      return "the session identity does not match this attempt";
+    case "journal-unreadable":
+      return "the effect journal cannot prove what the interrupted session attempted";
+    case "effect-unsupported":
+      return "an interrupted command has no reliable reconciliation";
+    case "effect-ambiguous":
+      return "an interrupted external effect is ambiguous";
+    case "tool-evidence-missing":
+      return "the session records a mutating call the guardrail never journaled";
+  }
 }
 
 /** What the repair-fall comment needs: the fallen attempt and the reason the
