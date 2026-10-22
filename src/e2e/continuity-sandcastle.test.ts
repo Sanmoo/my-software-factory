@@ -323,6 +323,10 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
       //    first resumed call already carries the earlier turn AND the
       //    interrupted command as history, and the step it adds is the
       //    (blocked) retry — one new call, never a redo of the confirmed work.
+      const baseline = model.requests[0]!;
+      assert.equal(baseline.resumed, false, "the first call was a new execution");
+      assert.equal(baseline.assistantMessages, 0, "a reconstructed execution starts with no history");
+      assert.deepEqual(baseline.commands, [], "and no confirmed step behind it");
       const resumedCalls = model.requests.filter((request) => request.resumed);
       assert.ok(resumedCalls.length > 0, `requests: ${model.requests.length}`);
       const firstResumed = resumedCalls[0]!;

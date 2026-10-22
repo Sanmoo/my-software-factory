@@ -109,6 +109,11 @@ describe("the external-effect classifier (issue 119)", () => {
       // A redirection targets a path this classifier does not resolve.
       "echo done > /tmp/x",
       "printf x >> out.txt",
+      "npm test 2>&1",
+      // A wrapper runs another program; it is never a harmless prefix.
+      "sudo git status",
+      "sudo gh pr merge 12",
+      "time git push origin x",
       'bash -c "git push"',
       "./script.sh",
     ]) {

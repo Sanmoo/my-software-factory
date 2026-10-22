@@ -337,11 +337,13 @@ function normalizeComment(body: string): string {
 }
 
 /**
- * What the next session's guardrail enforces. The verdicts of every earlier
- * launch are carried forward: an effect the factory once PROVED realized is
- * realized for good, and a later restart must not lose that fact just because
- * the call that produced it was also carrying an effect proven absent (a
- * per-call result cannot express the difference).
+ * What the next session's guardrail enforces. The verdicts of the ATTEMPT's
+ * earlier launches are carried forward: an effect the factory once PROVED
+ * realized stays realized, and a later restart of the same attempt must not
+ * lose that fact just because the call that produced it was also carrying an
+ * effect proven absent (a per-call result cannot express the difference). A
+ * new attempt starts from nothing: its work may legitimately redo what the
+ * previous attempt published.
  */
 function guardrailState(
   deps: ContinuityDeps,
@@ -349,8 +351,9 @@ function guardrailState(
   sessionId: string,
   verdicts: Record<string, EffectVerdict>,
 ): GuardrailState {
-  const previous = readGuardrailState(deps.workDir)?.verdicts ?? {};
-  return { version: 1, attempt: deps.attempt, sessionId, mode, verdicts: { ...previous, ...verdicts }, at: nowIso(deps) };
+  const previous = readGuardrailState(deps.workDir);
+  const carried = previous !== null && previous.attempt === deps.attempt ? previous.verdicts : {};
+  return { version: 1, attempt: deps.attempt, sessionId, mode, verdicts: { ...carried, ...verdicts }, at: nowIso(deps) };
 }
 
 function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sessionId?: string): PauseRecord {

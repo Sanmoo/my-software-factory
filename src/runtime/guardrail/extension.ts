@@ -159,7 +159,10 @@ function blockedAction(
   consumedAbsent: Set<string>,
 ): Blocked | null {
   const journal = readEffectJournal(workMount);
-  const failed = new Set(journal.results.filter((result) => !result.ok).map((result) => result.callId));
+  // Scoped to the session: a call id repeats across the attempt's rounds.
+  const failed = new Set(
+    journal.results.filter((result) => !result.ok).map((result) => `${result.sessionId}\u0000${result.callId}`),
+  );
   for (const action of actions) {
     const verdict = state?.verdicts[action.key];
     if (verdict === "realized") return { detail: action.detail, why: "realized before the interruption" };
@@ -173,7 +176,9 @@ function blockedAction(
       return { detail: action.detail, why: "already attempted once in this round" };
     }
     const previous = journal.intents.find(
-      (intent) => intent.actions.some((prior) => prior.key === action.key) && !failed.has(intent.callId),
+      (intent) =>
+        intent.actions.some((prior) => prior.key === action.key) &&
+        !failed.has(`${intent.sessionId}\u0000${intent.callId}`),
     );
     if (previous !== undefined) {
       return { detail: action.detail, why: "already attempted by an earlier round" };

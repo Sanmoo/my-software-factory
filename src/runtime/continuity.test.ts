@@ -246,6 +246,11 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     const secondState = readGuardrailState(workDir);
     assert.equal(secondState?.verdicts[`push:${BRANCH}@abc123`], "realized", "the realized push is never lost");
     assert.equal(secondState?.verdicts["comment:issue:7:abc"], "absent");
+
+    // A NEW attempt starts from nothing: it may legitimately publish again.
+    const nextAttempt = await planContinuity({ ...deps, attempt: 3 }, "new");
+    assert.equal(nextAttempt.decision, "launch");
+    assert.deepEqual(readGuardrailState(workDir)?.verdicts, {}, "the previous attempt's verdicts do not follow");
   });
 
   test("a reconciled intent keeps its result: a later restart does not re-ask the real state", async () => {

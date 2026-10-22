@@ -1,7 +1,7 @@
 /**
  * The continuity artifacts of a work (issue 119): the session <-> attempt
  * association, the external-effect journal the in-container guardrail writes,
- * the verdicts handed back to the next session, and the persisted help pause.
+ * the verdicts handed back to the next session, and the persisted continuity pause.
  *
  * Layout decision (disk names stay PT-BR with the rest of the registry):
  *   <work dir>/sessao-vinculos.jsonl — one line per launch: work + attempt +
@@ -218,9 +218,17 @@ export function readEffectJournal(workDir: string): EffectJournal {
       journal.intact = false;
     }
   }
-  const answered = new Set(journal.results.map((result) => result.callId));
-  journal.pending = journal.intents.filter((intent) => !answered.has(intent.callId));
+  // A call id is unique inside its session, not across the attempt's rounds:
+  // pair on both, or a later round's "call-1" would mark an earlier round's
+  // "call-1" answered and hide a pending effect.
+  const answered = new Set(journal.results.map((result) => callKey(result.sessionId, result.callId)));
+  journal.pending = journal.intents.filter((intent) => !answered.has(callKey(intent.sessionId, intent.callId)));
   return journal;
+}
+
+/** One tool call, as the session that issued it names it. */
+function callKey(sessionId: string, callId: string): string {
+  return `${sessionId}\u0000${callId}`;
 }
 
 function nextSeq(journal: EffectJournal): number {
@@ -260,7 +268,7 @@ export function readGuardrailState(workDir: string): GuardrailState | null {
   };
 }
 
-// ---- the persisted help pause ----
+// ---- the persisted continuity pause ----
 
 export function writePause(workDir: string, pause: PauseRecord): void {
   writeAtomic(join(workDir, PAUSE_FILENAME), pause);
