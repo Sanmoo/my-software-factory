@@ -11,15 +11,15 @@ const execFile = promisify(execFileCallback);
 /**
  * The liveness probe (issue 102, ADR 0002): the workers ARE containers, so
  * asking Docker is the only way `msf status` can tell a live worker from a
- * registry dir whose attempt died. Read-only by construction — the probe only
- * lists the worker image's containers and inspects them. Ending a worker is
- * NOT a status read: that write lives in the runtime (runtime/worker-stop.ts).
+ * registry dir whose attempt died. Every command this module runs only reads.
+ * Ending a worker is NOT status work: that write lives in the runtime
+ * (runtime/worker-stop.ts).
  *
  * The interpretation of Docker's output is a PURE function over the canned
- * strings (parseWorkerContainers). Only two shells touch the machine, and both
- * only read: dockerWorkerProbe and runningWorkerContainers, whose read the
- * runtime's stop shares. The composition default: tests inject a fake probe,
- * never a flag.
+ * strings (parseWorkerContainers). Two command shells touch the machine, both
+ * read-only: dockerWorkerProbe and runningWorkerContainers (the read the
+ * runtime's stop also uses). The composition default comes from tests
+ * injecting a fake probe, never a flag.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long

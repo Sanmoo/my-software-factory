@@ -49,7 +49,10 @@ const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequ
 
 describe("worker prompt — the material the session starts from", () => {
   test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them (issue #146)", () => {
-    const resumed = buildWorkerPrompt(baseRequest({ resume: true }), { blockedLabel: DEFAULT_LABELS.blocked });
+    const resumed = buildWorkerPrompt(baseRequest({ resume: true }), {
+      blockedLabel: DEFAULT_LABELS.blocked,
+      continuesSession: true,
+    });
     assert.match(resumed, /This session CONTINUES attempt 1/);
     assert.match(resumed, /reopened the SAME native session/);
     assert.match(resumed, /Before repeating any EXTERNAL effect/);
@@ -57,6 +60,13 @@ describe("worker prompt — the material the session starts from", () => {
 
     const fresh = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
     assert.doesNotMatch(fresh, /This session CONTINUES/);
+
+    // A claimed attempt that died before writing any session has nothing to
+    // reopen: the runtime says so, and the prompt never claims continuity.
+    const nothingToResume = buildWorkerPrompt(baseRequest({ resume: true }), {
+      blockedLabel: DEFAULT_LABELS.blocked,
+    });
+    assert.doesNotMatch(nothingToResume, /This session CONTINUES/);
   });
 
   test("carries the issue title and body", () => {
