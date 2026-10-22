@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -175,6 +175,26 @@ describe("reservation record — the Work's persisted source and destination", (
     assert.equal(written.dir, legacyDir);
     assert.equal(written.created, true);
     assert.equal((readReservation(legacyDir)).state, "persisted");
+  });
+
+  test("a work-like dir nested inside a work is not a reservation of this registry", async () => {
+    // A proof's disposable workspace can live under a work's dir and carry its
+    // own trabalhos/<repo>#<n> — or a session artifact can be named like a
+    // work. Neither is a reservation of THIS workspace (issue 118's sweep bug).
+    const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
+    const dir = (reserveWork(layout, reservationRecordOf(work))).dir;
+    const legacyDir = join(layout.works, "Sanmoo", "a#1");
+    const nested = join(legacyDir, "proof", "fabrica", "trabalhos", "Sanmoo", "b#2");
+    mkdirSync(nested, { recursive: true });
+    mkdirSync(join(dir, "sessao", "Sanmoo", "c#3"), { recursive: true });
+
+    const entries = await scanReservations(layout);
+
+    assert.deepEqual(
+      entries.map((entry) => entry.dir),
+      [dir, legacyDir].sort((a, b) => a.localeCompare(b)),
+      "only the two real reservations, never a dir nested inside one",
+    );
   });
 
   test("a configuration change routing the same ticket to another repo reserves a SEPARATE Work", async () => {
