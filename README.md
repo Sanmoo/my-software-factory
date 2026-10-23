@@ -53,10 +53,9 @@ node dist/cli.js status      # the trail, read-only
 
 The worker model is required in `msf.yaml`; invocations do not select it.
 `npm run build:image` provisions every declared skill, extension and reviewer
-agent into the image; the worker needs no Pi on the host and no personal
-profile. The operator's exact script — build, model credentials, clean-host
-verification and the real proof — lives in the [RUNBOOK](docs/RUNBOOK.md)
-(ticket 18).
+agent into the image. The operator's exact script — build, model credentials,
+clean-host verification and the real proof — lives in the
+[RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
 ## Design
 
@@ -65,12 +64,11 @@ factory's classification lives in code and reads only structured facts
 (`desfecho.json` schema, labels, PR existence, PR mergeability and required
 check results) — never LLM prose.
 
-Nothing of Pi is needed on the host. The worker's agent environment is
-factory-owned: `agent-resources.json` pins
-Pi, the upstream skill revision, the delegation extension and the reviewer
-agents; the image records what it provisioned in an inventory. Only those
-resources load — target-project and host skills/packages are ignored
-(ADR 0001).
+The worker's agent environment is factory-owned and needs nothing of Pi on the
+host: `agent-resources.json` pins Pi, the upstream skill revision, the
+delegation extension and the reviewer agents; the image records what it
+provisioned in an inventory. Only those resources load — target-project and
+host skills/packages are ignored (ADR 0001).
 
 ## Tests
 

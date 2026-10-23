@@ -102,7 +102,7 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
   mkdirSync(binDir, { recursive: true });
   // The gateway compares compiled tests with their sources: the fixture keeps
   // one source per compiled test so "a smaller suite" is observable.
-  for (const source of ["unit.test.ts", "state/liveness.test.ts", "e2e/sample.test.ts"]) {
+  for (const source of ["unit.test.ts", "state/liveness.test.ts", "e2e/agent-image.test.ts"]) {
     mkdirSync(join(dir, "src", join(source, "..")), { recursive: true });
     writeFileSync(join(dir, "src", source), "// fixture test source\n", "utf8");
   }
@@ -147,11 +147,11 @@ function officialFixture(): { dir: string; dockerLog: string; env: NodeJS.Proces
       '    cp "$FIXTURE_TEST_SOURCE" dist/sample.test.js || exit 8',
       "  fi",
       '  cp "$FIXTURE_TEST_SOURCE" dist/state/liveness.test.js || exit 8',
-      '  if [ "$FIXTURE_DROP_E2E" != "1" ]; then cp "$FIXTURE_TEST_SOURCE" dist/e2e/sample.test.js || exit 8; fi',
+      '  if [ "$FIXTURE_DROP_E2E" != "1" ]; then cp "$FIXTURE_TEST_SOURCE" dist/e2e/agent-image.test.js || exit 8; fi',
       "  exit 0",
       "fi",
       'if [ "$1" = "run" ] && [ "$2" = "test:built" ]; then',
-      "  exec node --test --test-timeout=60000 --test-force-exit dist/sample.test.js dist/state/liveness.test.js dist/e2e/sample.test.js",
+      "  exec node --test --test-timeout=60000 --test-force-exit dist/sample.test.js dist/state/liveness.test.js dist/e2e/agent-image.test.js",
       "fi",
       'echo "unexpected npm $*" >&2',
       "exit 2",
@@ -279,7 +279,10 @@ describe("quality gateway — the command contract", () => {
     const result = runOfficial(dir, { ...env, FIXTURE_DROP_E2E: "1" });
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
-    assert.match(result.stderr, /check failed: "test" .*compiled suite is incomplete \(missing e2e\/\)/);
+    assert.match(
+      result.stderr,
+      /check failed: "test" .*compiled suite is incomplete \(missing e2e\/, e2e\/agent-image\.test\.js\)/,
+    );
     assert.doesNotMatch(result.stdout, /check "test" .*passed/);
   });
 

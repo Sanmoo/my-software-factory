@@ -549,9 +549,6 @@ export class SandcastleRuntime implements WorkerRuntime {
     return [{ hostPath: miseDir, sandboxPath: MISE_CONTAINER_DIR, readonly: false }];
   }
 
-  /** The Docker socket bind (ADR 0003): the host's daemon socket, read-write
-   * (a socket is a channel, not a file tree), at the path the host has it. */
-
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
   private runOptionsFor(
     request: WorkRequest,
@@ -616,6 +613,8 @@ export class SandcastleRuntime implements WorkerRuntime {
           { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
           ...this.toolchainBinds(),
+          // The daemon socket bind (ADR 0003), at the path the host has it:
+          // read-write because a socket is a channel, not a file tree.
           { hostPath: dockerSocket.hostPath, sandboxPath: dockerSocket.hostPath, readonly: false },
         ],
       }),

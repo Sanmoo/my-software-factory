@@ -51,9 +51,10 @@ export const OFFICIAL_PLAN = {
       command: "npm",
       args: ["run", "test:built", "--silent"],
       env: { MSF_REQUIRE_DOCKER: "1" },
-      // A suite without the e2e files or the real Docker integration test is
-      // smaller than the required one: refuse it instead of passing quietly.
-      requiredTestFiles: ["state/liveness.test.js", "e2e/"],
+      // A suite without the e2e files, the provisioned image's real loading
+      // test or the real Docker integration test is smaller than the required
+      // one: refuse it instead of passing quietly.
+      requiredTestFiles: ["state/liveness.test.js", "e2e/", "e2e/agent-image.test.js"],
     },
   ],
 };

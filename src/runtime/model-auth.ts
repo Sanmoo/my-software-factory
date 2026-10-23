@@ -117,8 +117,9 @@ export function authFileProblem(path: string): string | null {
   }
 }
 
-/** The operator-facing directive when neither auth source is present. */
+/** The operator-facing directive when neither auth source is present. It names
+ *  the documented examples, not the allow-list's first entries. */
 export const NO_MODEL_AUTH_MESSAGE =
   "no model credentials for the worker: set a Pi-supported provider API key in the factory's environment " +
-  `(${PI_MODEL_AUTH_ENV_VARS.slice(0, 4).join(", ")}, ...) or set worker-auth-file in msf.yaml. ` +
+  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml. " +
   "Credentials are never read from a personal Pi profile.";

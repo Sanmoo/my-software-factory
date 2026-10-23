@@ -413,7 +413,6 @@ export async function provisionAgentResources(options) {
     repositoryRoot = REPOSITORY_ROOT,
     run = execFileAsync,
     workDir = mkdtempSync(join(tmpdir(), "msf-provision-")),
-    keepWorkDir = false,
   } = options;
 
   let rawDeclaration;
@@ -450,8 +449,8 @@ export async function provisionAgentResources(options) {
       validateReferences(target, target, `skill "${skill.name}"`);
     }
 
-    const agentsRoot = join(staging, "agents");
-    mkdirSync(agentsRoot, { recursive: true });
+    // Reviewer agents are factory-owned files: copied unchanged at their
+    // declared repository paths (the inventory records the same paths).
     for (const agent of declaration.agents) {
       const source = requireFile(join(repositoryRoot, agent.path), `reviewer agent "${agent.name}"`);
       if (frontmatterName(source) !== agent.name) {
@@ -463,6 +462,8 @@ export async function provisionAgentResources(options) {
       chmodSync(target, lstatSync(source).mode & 0o777);
     }
 
+    const licensesRoot = join(staging, "licenses");
+    mkdirSync(licensesRoot, { recursive: true });
     const extensionsRoot = join(staging, "extensions");
     const extensionRecords = [];
     for (const extension of declaration.extensions) {
@@ -475,8 +476,6 @@ export async function provisionAgentResources(options) {
       );
       validateReferences(guidance, installedPackageRoot, `extension "${extension.package}" guidance`);
       const license = requireFile(join(installedPackageRoot, "LICENSE"), `extension "${extension.package}" LICENSE`);
-      const licensesRoot = join(staging, "licenses");
-      mkdirSync(licensesRoot, { recursive: true });
       copyFileSync(license, join(licensesRoot, `${extension.package}-LICENSE`));
       extensionRecords.push({
         package: extension.package,
@@ -494,8 +493,6 @@ export async function provisionAgentResources(options) {
       });
     }
 
-    const licensesRoot = join(staging, "licenses");
-    mkdirSync(licensesRoot, { recursive: true });
     copyFileSync(requireFile(join(repoDir, "LICENSE"), "upstream skills LICENSE"), join(licensesRoot, "skills-LICENSE"));
 
     const skills = expectedSkills(declaration).map((skill) => {
@@ -552,7 +549,7 @@ export async function provisionAgentResources(options) {
     return inventory;
   } finally {
     rmSync(staging, { recursive: true, force: true });
-    if (!keepWorkDir) rmSync(workDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
   }
 }
 

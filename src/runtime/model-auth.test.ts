@@ -71,5 +71,8 @@ describe("model authentication — explicit sources only", () => {
     assert.match(NO_MODEL_AUTH_MESSAGE, /provider API key/);
     assert.match(NO_MODEL_AUTH_MESSAGE, /worker-auth-file/);
     assert.match(NO_MODEL_AUTH_MESSAGE, /never read from a personal Pi profile/);
+    // The directive names the variables the RUNBOOK documents, not whatever
+    // happens to sit first in the allow-list.
+    assert.match(NO_MODEL_AUTH_MESSAGE, /OPENCODE_API_KEY/);
   });
 });
