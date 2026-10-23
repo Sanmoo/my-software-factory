@@ -4,12 +4,13 @@ Accepted for [issue #89](https://github.com/Sanmoo/my-software-factory/issues/89
 on the evidence of [experiment #111](https://github.com/Sanmoo/my-software-factory/issues/111#issuecomment-6265048132);
 the recovery and its resume landed with
 [#118](https://github.com/Sanmoo/my-software-factory/issues/118),
-[#123](https://github.com/Sanmoo/my-software-factory/issues/123) and
-[#146](https://github.com/Sanmoo/my-software-factory/issues/146) — the launch of
-a recovery reopens the attempt's native session
-(`runtime/sandcastle.ts`, `latestPiSessionId`).
-[#119](https://github.com/Sanmoo/my-software-factory/issues/119) builds on the
-same mechanism; it stays open for the rest of what it asks for.
+[#123](https://github.com/Sanmoo/my-software-factory/issues/123),
+[#146](https://github.com/Sanmoo/my-software-factory/issues/146) and
+[#119](https://github.com/Sanmoo/my-software-factory/issues/119) — the launch of
+a recovery reopens the attempt's OWN session, selected from the association the
+launch recorded before the worker started (`runtime/continuity.ts`,
+`runtime/sandcastle.ts`), and the effect guardrail that makes that safe rides in
+the worker image (`runtime/guardrail/extension.ts`).
 
 An infrastructure interruption — factory crash, worker crash, machine restart
 with the disk intact — ends no attempt and consumes none. The operator's own

@@ -1779,10 +1779,11 @@ export class SweepEngine {
         this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
       }
     }
-    const continuity = await planContinuity(
-      continuityDeps,
-      kind === "recover" ? "resume" : "new",
-    );
+    // Every relaunch of the same attempt continues ITS session (ADR 0005):
+    // a recovery, a model provider retry and the resume after the operator's
+    // requested stop. A claim, a feedback or orientation round and a repair
+    // round are new executions.
+    const continuity = await planContinuity(continuityDeps, continuesAttempt ? "resume" : "new");
     if (continuity.decision === "pause") {
       this.log(
         `continuity of ${key} halted the relaunch (${continuity.pause.reason}) — ` +
@@ -1868,10 +1869,6 @@ export class SweepEngine {
       attempt: facts.attempt,
       session: { mode: continuity.mode, sessionId: continuity.sessionId },
       material,
-      // A recovery, a model provider retry or the resume after a requested
-      // stop continues the attempt, so it reopens the attempt's native Pi
-      // session (ADR 0005) instead of reconstructing context from the files.
-      ...(continuesAttempt ? { resume: true } : {}),
     });
     this.launched.push(result);
 

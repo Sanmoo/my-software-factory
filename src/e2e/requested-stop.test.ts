@@ -23,6 +23,7 @@ import {
 import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
 import { workKey } from "../state/derive.js";
 import { waitFor } from "./cli-harness.js";
+import { seedSession } from "./session-fixtures.js";
 
 /**
  * The operator's requested stop and the restart that follows (issue #146), at
@@ -235,9 +236,9 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal(next.launched[0]?.request.attempt, 1, "the SAME attempt, no new one");
     assert.equal(next.launched[0]?.request.branch, workBranchName(1), "the branch is preserved, not recreated");
     assert.equal(
-      next.launched[0]?.request.resume,
-      true,
-      "the resume reopens the attempt's native Pi session (ADR 0005)",
+      next.launched[0]?.request.session?.mode,
+      "new",
+      "the worker never started, so no session exists to reopen: the SAME attempt creates its first one (issue 119)",
     );
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
     assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");
@@ -274,6 +275,9 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
     mkdirSync(workDirOf(), { recursive: true });
     writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    // The attempt's own Pi session was persisted and associated by the launch
+    // that died (issue 119): the relaunch continues it instead of pausing.
+    seedSession(workDirOf(), { repo: REPO, number: 1 }, 1);
 
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const backoffEntered = deferred();
@@ -512,6 +516,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
     mkdirSync(workDirOf(), { recursive: true });
     writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    seedSession(workDirOf(), { repo: REPO, number: 1 }, 1);
     await recordUnconfirmedStop(workDirOf(), 1, "a worker of this work is still alive");
     const logs: string[] = [];
     let alive = true;
@@ -556,6 +561,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
     mkdirSync(workDirOf(), { recursive: true });
     writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    seedSession(workDirOf(), { repo: REPO, number: 1 }, 1);
     const containers = new Set([WORK_KEY]);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const forcedByTheFake = runtime.forceStop.bind(runtime);

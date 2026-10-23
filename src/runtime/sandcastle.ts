@@ -1,6 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -386,9 +385,10 @@ export class SandcastleRuntime implements WorkerRuntime {
       // this — the start line without an end, the record's absence.
       const sessionsDir = join(request.workDir, SESSIONS_SUBDIR);
       mkdirSync(sessionsDir, { recursive: true });
-      // A recovery/resume reopens the attempt's native Pi session (ADR 0005)
-      // instead of starting one from reconstructed context.
-      const resumeSession = request.resume === true ? await latestPiSessionId(sessionsDir) : undefined;
+      // A relaunch reopens the attempt's OWN native Pi session (ADR 0005)
+      // instead of reconstructing context — and the recorded association is
+      // the ONLY selection (issue 119): never the newest file on disk.
+      const resumeSession = request.session?.mode === "resume" ? request.session.sessionId : undefined;
       this.event(request, "session-start", {
         branch: request.branch,
         baseBranch: request.baseBranch,
@@ -557,10 +557,6 @@ export class SandcastleRuntime implements WorkerRuntime {
 
     return {
       agent: agentWithFlags,
-      // A recovery reopens the interrupted attempt's OWN session (issue 119):
-      // Sandcastle hands the id to Pi (`--session <id>`) from the bind-mounted
-      // store, where the session file already lives.
-      ...(request.session?.mode === "resume" ? { resumeSession: request.session.sessionId } : {}),
       sandbox: this.dockerProvider({
         imageName: this.image,
         // GH_TOKEN authenticates gh; DOCKER_HOST names the socket the worker
@@ -594,6 +590,9 @@ export class SandcastleRuntime implements WorkerRuntime {
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,
       idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
+      // A resume reopens the attempt's OWN session (issue 119): Sandcastle
+      // hands the id to Pi (`--session <id>`) from the bind-mounted store,
+      // where the session file already lives.
       ...(resumeSession === undefined ? {} : { resumeSession }),
       signal,
       name: `work-${request.ref.number}-attempt-${request.attempt}`,
@@ -821,51 +820,3 @@ function formatIdle(idleMs: number): string {
   return idleMs < 1000 ? `${Math.round(idleMs)} ms` : `${(idleMs / 1000).toFixed(1)} s`;
 }
 
-/**
- * The newest Pi session of an attempt's session dir (issue #146, ADR 0005):
- * the id Sandcastle's `resumeSession` reopens on the host. The session files
- * live under the work's `sessao/` bind, one dir per sandbox cwd; the id is the
- * `id` of the session's first JSON line (the filename carries it too). No file
- * means no native session to resume — the launch starts a fresh one rather
- * than pretending continuity.
- */
-export async function latestPiSessionId(sessionsDir: string): Promise<string | undefined> {
-  let files: string[];
-  try {
-    const entries = await readdir(sessionsDir, { recursive: true, withFileTypes: true });
-    files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-      .map((entry) => join(entry.parentPath, entry.name));
-  } catch {
-    return undefined;
-  }
-  const sessions = await Promise.all(
-    files.map(async (path) => {
-      try {
-        const stats = await stat(path);
-        return { path, at: stats.mtimeMs };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const newest = sessions
-    .filter((session): session is { path: string; at: number } => session !== null)
-    // The file name starts with the session's timestamp: two files written in
-    // the same millisecond still order — the newest one is the attempt's.
-    .sort((a, b) => b.at - a.at || b.path.localeCompare(a.path))[0];
-  return newest === undefined ? undefined : (await sessionIdOf(newest.path)) ?? undefined;
-}
-
-/** The session id of one JSONL file, from its first line or its filename. */
-async function sessionIdOf(path: string): Promise<string | null> {
-  try {
-    const first = (await readFile(path, "utf8")).split("\n", 1)[0] ?? "";
-    const parsed = JSON.parse(first) as { type?: string; id?: string };
-    if (parsed.type === "session" && typeof parsed.id === "string" && parsed.id !== "") return parsed.id;
-  } catch {
-    // Fall through to the filename's id.
-  }
-  const match = /_([0-9a-fA-F-]{36})\.jsonl$/.exec(path);
-  return match?.[1] ?? null;
-}
