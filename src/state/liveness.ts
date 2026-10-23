@@ -186,8 +186,7 @@ async function inspectContainers(ids: readonly string[], timeoutMs: number): Pro
 
 /** The daemon's answer for an id that no longer exists (`docker inspect`). */
 function vanished(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /no such (object|container)/i.test(message);
+  return /no such (object|container)/i.test(describeError(error));
 }
 
 /** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
