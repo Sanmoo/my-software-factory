@@ -22,7 +22,7 @@ export function fakeDocker(replies: FakeDockerReplies): FakeDocker {
     calls.push([...args]);
     if (replies.failure !== undefined) throw replies.failure;
     if (args[0] === "ps") return replies.listing;
-    if (args[0] === "inspect") return replies.inspect ?? "[]";
+    if (args[0] === "inspect" && replies.inspect !== undefined) return replies.inspect;
     throw new Error(`unexpected docker command: ${args.join(" ")}`);
   };
   return { run, calls };

@@ -20,8 +20,7 @@ import { parseWorkKey } from "../pool/registry.js";
  * The identity is the container's bind of a work dir under the works root,
  * never the configured worker image (issue 160): Docker resolves that image
  * reference to whichever image it points at NOW, so filtering by it silently
- * loses the workers launched before the reference moved. An unfiltered listing
- * that shows no running container is therefore a decided zero, not an unknown.
+ * loses the workers launched before the reference moved.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -140,7 +139,6 @@ export interface DockerProbeOptions {
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /** Test-only injection: the Docker command runner; production spawns docker. */
   run?: DockerRunner;
 }
 
