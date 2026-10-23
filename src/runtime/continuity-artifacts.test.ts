@@ -116,12 +116,12 @@ describe("the continuity artifacts (issue 119)", () => {
   });
 
   test("a link is selected by its exact (work, attempt), never by being the newest", () => {
-    appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, mode: "new", sessionId: "a1", at: "" });
-    appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 1, mode: "new", sessionId: "b1", at: "" });
-    appendSessionLink(dir, { version: 1, work: { repo: REF.repo, number: 8 }, attempt: 2, round: 1, mode: "new", sessionId: "other-work", at: "" });
+    appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, sessionId: "a1", at: "" });
+    appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 1, sessionId: "b1", at: "" });
+    appendSessionLink(dir, { version: 1, work: { repo: REF.repo, number: 8 }, attempt: 2, round: 1, sessionId: "other-work", at: "" });
     // The LAST round of the attempt is the one a recovery continues; the newest
     // line on disk belongs to another work and is never chosen.
-    appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 2, mode: "resume", sessionId: "b2", at: "" });
+    appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 2, sessionId: "b2", at: "" });
     const links = readSessionLinks(dir);
     assert.equal(links.intact, true);
     assert.equal(linkForAttempt(links.links, REF, 2)?.sessionId, "b2");
@@ -131,7 +131,7 @@ describe("the continuity artifacts (issue 119)", () => {
   });
 
   test("an unparseable association line marks the journal not intact", () => {
-    appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, mode: "new", sessionId: "a1", at: "" });
+    appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, sessionId: "a1", at: "" });
     writeFileSync(join(dir, "sessao-vinculos.jsonl"), '{"version":1,"work":\n', { encoding: "utf8", flag: "a" });
     assert.equal(readSessionLinks(dir).intact, false);
   });

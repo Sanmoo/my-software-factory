@@ -222,6 +222,52 @@ describe("the in-container continuity guardrail (issue 119)", () => {
     assert.match(String(intent?.["reason"]), /curl/);
   });
 
+  test("an unreadable state refuses every external effect instead of running unguarded", async () => {
+    // No continuidade.json at all: the host's verdicts, the attempt and the
+    // session are unknown, so nothing can be authorized (issue 119). A call
+    // that could reach outside the worktree is blocked; a provably local one
+    // still runs, so the worker can inspect and report.
+    const handlers = install();
+    await handlers.sessionStart({ type: "session_start", reason: "resume" });
+
+    const blocked = await handlers.toolCall({
+      type: "tool_call",
+      toolCallId: "call-push",
+      toolName: "bash",
+      input: { command: "git push -u origin agent-issue-7" },
+    });
+    assert.ok(blocked?.block);
+    assert.match(blocked?.reason ?? "", /cannot be read/);
+    assert.match(blocked?.reason ?? "", /self-report blocked/);
+    assert.equal(journalLines().length, 0, "nothing was journaled against a session it cannot name");
+
+    for (const command of ["curl -X POST https://example.com", "npm publish"]) {
+      const refused = await handlers.toolCall({
+        type: "tool_call",
+        toolCallId: `call-${command}`,
+        toolName: "bash",
+        input: { command },
+      });
+      assert.ok(refused?.block, command);
+    }
+
+    const local = await handlers.toolCall({
+      type: "tool_call",
+      toolCallId: "call-read",
+      toolName: "bash",
+      input: { command: "git status" },
+    });
+    assert.equal(local, undefined, "a provably local command still runs");
+
+    const delegation = await handlers.toolCall({
+      type: "tool_call",
+      toolCallId: "call-sub",
+      toolName: "subagent",
+      input: { task: "review" },
+    });
+    assert.ok(delegation?.block, "a delegation can reach outside: refused too");
+  });
+
   test("a delegation is an unknown effect: an interruption inside it is not replayable blind", async () => {
     writeState({});
     const handlers = install();

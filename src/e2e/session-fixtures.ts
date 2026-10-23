@@ -31,7 +31,7 @@ export function seedSession(
   workDir: string,
   ref: IssueRef,
   attempt: number,
-  options: { round?: number; sessionId?: string; entries?: number; mode?: "new" | "resume"; shortId?: string } = {},
+  options: { round?: number; sessionId?: string; entries?: number; shortId?: string } = {},
 ): SeededSession {
   const sessionId = options.sessionId ?? `11111111-2222-3333-4444-${String(attempt).padStart(12, "0")}`;
   const round = options.round ?? 1;
@@ -40,7 +40,6 @@ export function seedSession(
     work: { repo: ref.repo, number: ref.number },
     attempt,
     round,
-    mode: options.mode ?? "new",
     sessionId,
     at: "2026-01-01T00:00:00.000Z",
   };

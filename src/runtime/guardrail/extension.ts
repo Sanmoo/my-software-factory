@@ -81,11 +81,11 @@ export interface GuardrailOptions {
 const BLOCKED_PREAMBLE = "msf continuity guardrail:";
 
 export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {}): void {
-  // /msf-work is the mount the runtime names in WORKER_DOCKER_ENV: spelled out
-  // here instead of imported, because this module is staged into the image on
-  // its own (`scripts/stage-guardrail.mjs` follows relative imports only) and
-  // must not drag the runtime's prompt in. The env var is the runtime's own
-  // way to state it; the literal is the fallback when nothing set it.
+  // /msf-work is the mount the runtime declares (WORK_MOUNT in
+  // runtime/prompt.ts) and passes here as MSF_WORK_MOUNT: the literal is
+  // spelled out instead of imported because this module is staged into the
+  // image on its own (`scripts/stage-guardrail.mjs` follows relative imports
+  // only) and must not drag the runtime's prompt in.
   const workMount = options.workMount ?? process.env["MSF_WORK_MOUNT"] ?? "/msf-work";
   const observeRef = options.observeRef ?? observeWorktree;
   // Per-process memory of "allowed exactly once" verdicts and the state read
@@ -101,6 +101,12 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
 
   pi.on("tool_call", (event) => {
     if (state === null) state = readGuardrailState(workMount);
+    // The state is the contract that makes a resumed effect safe: the verdicts
+    // of the host's reconciliation, the attempt and the session this call
+    // belongs to. Absent or unreadable, nothing can be authorized — a resumed
+    // session must never run unguarded (issue 119), so anything that could
+    // reach outside the worktree is refused until the state is readable.
+    if (state === null) return refuseWithoutState(event, workMount);
     if (event.toolName !== "bash") {
       // Delegations are not recoverable state (issue 119, out of scope): an
       // interrupted one is an unknown effect, so a recovery pauses on it.
@@ -149,6 +155,29 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
       ok: !event.isError,
     });
   });
+}
+
+/**
+ * No readable state: the call cannot be journaled, checked against the host's
+ * verdicts, or proven free of an already-realized effect. A provably local
+ * command still runs (reading and local git change nothing outside the
+ * worktree); anything else is refused, which the worker reports as blocked —
+ * a pause the operator sees, never a silent repetition.
+ */
+function refuseWithoutState(event: ToolCallLike, workMount: string): GuardrailBlock | undefined {
+  const delegation = event.toolName === "subagent" || event.toolName === "subagents_enable";
+  if (event.toolName !== "bash" && !delegation) return undefined;
+  if (event.toolName === "bash") {
+    const command = typeof event.input["command"] === "string" ? event.input["command"] : "";
+    if (classifyCommand(command).safety === "safe") return undefined;
+  }
+  return {
+    block: true,
+    reason:
+      `${BLOCKED_PREAMBLE} the continuity state at ${workMount} cannot be read (the host's ` +
+      "reconciliation and this attempt's session are unknown), so no external effect can be " +
+      "authorized. Do not retry it: self-report blocked, naming what you were about to do.",
+  };
 }
 
 type Blocked = { detail: string; why: string };
