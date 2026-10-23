@@ -2,6 +2,7 @@ import type { Labels, RecoveryBudget } from "../config.js";
 import type {
   IssueComment,
   IssueRef,
+  Known,
   OpenIssue,
   PrFeedback,
   PrRepairFacts,
@@ -281,27 +282,41 @@ export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
   });
 }
 
-/** The premise of a repair round from the facts read NOW (issue 149): a
- *  confirmed trigger persists; only a mergeable PR with a known required set
- *  is obsolete; `null` facts are an unreadable PR — unknown, never an invented
- *  clean bill. The vocabulary lives in pool/repair.ts. */
-export function repairPremise(facts: PrRepairFacts | null): RepairPremise {
-  if (facts === null) return "unknown";
-  if (repairTrigger(facts) !== null) return "persists";
-  if (facts.mergeState !== "mergeable") return "unknown";
-  if (facts.requiredChecks === null) return "unknown";
-  return "obsolete";
+/** The premise of a repair round, with the trigger it presents while it
+ *  stands: one reading from the facts read NOW (issue 149), so the launch
+ *  neither derives the trigger twice nor decides twice. */
+export interface RepairPremiseReading {
+  premise: RepairPremise;
+  trigger: RepairTrigger | null;
+}
+
+/** The premise of a repair round read from the PR's current facts (issue 149):
+ *  a confirmed trigger persists; only a mergeable PR with a known required set
+ *  is obsolete; an unreadable read is unknown, never an invented clean bill.
+ *  The vocabulary lives in pool/repair.ts. */
+export function repairPremise(facts: Known<PrRepairFacts>): RepairPremise {
+  return readRepairPremise(facts).premise;
+}
+
+export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseReading {
+  if (!facts.known) return { premise: "unknown", trigger: null };
+  const trigger = repairTrigger(facts.value);
+  if (trigger !== null) return { premise: "persists", trigger };
+  if (facts.value.mergeState !== "mergeable") return { premise: "unknown", trigger: null };
+  if (facts.value.requiredChecks === null) return { premise: "unknown", trigger: null };
+  return { premise: "obsolete", trigger: null };
 }
 
 /** Confirmed recovery (story 22): no conflicts and every required check
- *  approved. The required set must be KNOWN — the empty set a repository
- *  without CI declares is a confirmation (issue 149); null (unknown) is never
- *  one. */
+ *  approved — narrower than an obsolete premise, which also holds for pending,
+ *  neutral or skipped checks. The required set must be KNOWN: the empty set a
+ *  repository without CI declares is a confirmation (issue 149); null
+ *  (unknown) is never one. */
 function repairRecovered(facts: PrRepairFacts): boolean {
-  if (repairPremise(facts) !== "obsolete") return false;
-  // "obsolete" already proved the set is known; bound once for the narrowing.
+  if (facts.mergeState !== "mergeable") return false;
   const checks = facts.requiredChecks;
-  return checks !== null && checks.every((check) => check.conclusion === "success");
+  if (checks === null) return false;
+  return checks.every((check) => check.conclusion === "success");
 }
 
 /**

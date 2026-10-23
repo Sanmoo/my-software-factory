@@ -34,6 +34,7 @@ function facts(overrides: Partial<Parameters<typeof classifyOutcome>[0]> = {}) {
   return {
     record: null,
     prOpen: false,
+    prMerged: false,
     blockedLabelOnIssue: false,
     consecutiveFall: false,
     attempt: 1,
@@ -156,6 +157,32 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
         }),
       );
       assert.equal(ruling.decision, "interrupt", "the other attempt's failure is history, never this one's");
+    });
+  });
+
+  describe("issue 149 — a merged PR is delivery, never a fall", () => {
+    test("a merged PR outranks a fall record and the consecutive count: done, not a block", async () => {
+      const ruling = await classifyOutcome(
+        facts({
+          record: { class: "clean-without-pr", attempt: 3 },
+          prMerged: true,
+          consecutiveFall: true,
+          attempt: 3,
+        }),
+      );
+      assert.equal(ruling.decision, "done");
+      assert.equal(ruling.because, "pr-merged");
+    });
+
+    test("the closed issue is still the primary done fact", async () => {
+      const ruling = await classifyOutcome(facts({ issueClosed: true, prMerged: true }));
+      assert.equal(ruling.decision, "done");
+      assert.equal(ruling.because, "issue-closed");
+    });
+
+    test("a work with no merged PR keeps the existing priorities", async () => {
+      const ruling = await classifyOutcome(facts({ prOpen: true }));
+      assert.equal(ruling.decision, "reserve");
     });
   });
 

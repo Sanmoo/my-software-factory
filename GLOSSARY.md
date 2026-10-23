@@ -170,7 +170,7 @@ _Avoid_: Repair fall, when the round was returned because there was nothing left
 A repair attempt whose publication cannot be verified yet (the remote, the local work or the round's premise could not be read): no new worker and no budget returned until a later sweep gets an answer.
 
 **Concurrent change**:
-A remote head the repair attempt did not produce (a collaborator's push): the factory never publishes over it, preserves the local work, keeps the round charged and asks the human to reconcile both sides.
+A remote head the repair attempt did not produce (a collaborator's push) while the round's premise still exists: the factory never publishes over it, preserves the local work, keeps the round charged and asks the human to reconcile both sides; with the premise gone the round returns instead, and with it unreadable the attempt waits unresolved.
 
 **Help notice**:
 A notification that work needs the operator on its issue, such as a help request, block or rejection; it points at the issue.

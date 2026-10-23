@@ -19,6 +19,7 @@ import {
   type Config,
 } from "../config.js";
 import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../pool/repair.js";
+import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
@@ -1137,6 +1138,43 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const cycle = await readRepairCycle(workDir(layout, REPO, 125));
     assert.equal(cycle.usedRounds, 1, "the round is charged once");
     assert.equal(cycle.attempt?.observedHeadSha, recalculated, "the evidence on disk is the current one");
+  });
+
+  test("a PR merged while the round runs is done at collection — never a repair block", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 126);
+    // A previous attempt wrote a failure: a second clean end without a PR
+    // would be the 2nd consecutive fall — the help request of the incident.
+    writeFileSync(
+      join(workDir(layout, REPO, 126), DESFECHO_FILENAME),
+      `${JSON.stringify({ class: "clean-without-pr", attempt: 2 })}\n`,
+      "utf8",
+    );
+    writeFileSync(join(workDir(layout, REPO, 126), "log-2.jsonl"), "{}\n", "utf8");
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    // The human merges the PR while the repair round is in flight.
+    runtime.hold = () => {
+      tracker.closePr({ repo: REPO, prNumber: pr }, { merged: true });
+    };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "the repair round ran");
+    assert.equal(sweep.collected[0]?.ruling?.decision, "done", "a merged PR is delivery, not a fall");
+    assert.equal(sweep.collected[0]?.ruling?.because, "pr-merged");
+
+    const issue = await tracker.readIssue({ repo: REPO, number: 126 });
+    assert.ok(issue.known && issue.value.state === "closed", "the factory closed the issue (done)");
+    assert.ok(!issue.value.labels.includes(DEFAULT_LABELS.blocked), "no help request for delivered work");
+    const comments = await tracker.readComments({ repo: REPO, number: 126 });
+    assert.ok(comments.known);
+    assert.ok(
+      !comments.value.some((comment) => comment.body.includes("consecutive falls")),
+      "no fall block is posted",
+    );
+    assert.match(comments.value.at(-1)!.body, /merged without closing/i, "the short fallback comment closes it");
+    assert.ok(!existsSync(workDir(layout, REPO, 126)), "the artifacts were archived");
   });
 
   test("the forward path is untouched: a published round from the start behaves as before", async () => {
