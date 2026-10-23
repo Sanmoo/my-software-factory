@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { parseJsonObject, type JsonValue } from "./json-line.js";
 
-export interface SessionHeader {
+interface SessionHeader {
   version: number;
   id: string;
   cwd: string;
