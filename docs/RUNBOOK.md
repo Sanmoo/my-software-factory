@@ -155,7 +155,9 @@ reconciles the result on its own. Its identity is the work mount, not the
 configured image: a worker launched before the image tag moved stays
 recognised. If Docker stops answering, launches pause and resume without
 intervention; one notice appears after `liveness.unavailable-warn-ms` (60 s by
-default), and every worker and reservation is preserved meanwhile.
+default), and every worker and reservation is preserved meanwhile. A listing
+that carries no usable mount sources is unknown too while a work's attempt has
+no outcome of its own: the factory never presumes that worker stopped.
 
 A sweep that cannot read the tracker says `sweep failed: … — retrying on the
 next tick` and the factory keeps sweeping: it acts on nothing, spends no

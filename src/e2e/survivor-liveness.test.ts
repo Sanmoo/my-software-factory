@@ -16,6 +16,7 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
+import { fakeDocker } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
@@ -531,22 +532,17 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     const config = makeConfig(2);
     const work = join(layout.works, `${REPO}#61`);
     const containerId = "d".repeat(64);
-    const probe = dockerWorkerProbe({
-      worksRoot: layout.works,
-      run: async (args) => {
-        if (args[0] === "ps") return `${containerId} ${work},/var/run/docker.sock`;
-        if (args[0] === "inspect") {
-          return JSON.stringify([
-            {
-              Id: containerId,
-              State: { Running: true, StartedAt: new Date().toISOString() },
-              Mounts: [{ Source: work, Destination: "/msf-work" }],
-            },
-          ]);
-        }
-        throw new Error(`unexpected docker command: ${args.join(" ")}`);
-      },
+    const shell = fakeDocker({
+      listing: `${containerId} ${work},/var/run/docker.sock`,
+      inspect: JSON.stringify([
+        {
+          Id: containerId,
+          State: { Running: true, StartedAt: new Date().toISOString() },
+          Mounts: [{ Source: work, Destination: "/msf-work" }],
+        },
+      ]),
     });
+    const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
     const { tracker, deps, runtime, log } = makeFactory({ config, probe });
     bindTracker(tracker);
     const target = seedReserved(61, [1]);
@@ -562,6 +558,35 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.ok(
       log.some((line) => line.includes("recognizing surviving worker") && line.includes(`${REPO}#61`)),
       "the operation names the worker the moved image reference had hidden",
+    );
+  });
+
+  test("an unreadable container listing holds the sweep — no launch, no recovery, no block (issue 160)", async () => {
+    const config = makeConfig(2);
+    const probe = dockerWorkerProbe({
+      worksRoot: layout.works,
+      hasUnsettledAttempts: async () => true,
+      // A running container whose mount sources Docker did not render: the
+      // listing cannot prove that a reserved attempt's worker is gone.
+      run: fakeDocker({ listing: "e".repeat(64) }).run,
+    });
+    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
+    bindTracker(tracker);
+    const interrupted = seedReserved(60, [1]);
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const sweep = await runOnce(deps);
+
+    assert.equal(sweep.launched.length, 0, "an undecidable listing suspends the launch of other works");
+    assert.equal(runtime.launched.length, 0);
+    assert.deepEqual(tracker.claimedOrder, []);
+    assert.ok(!existsSync(join(interrupted, RECOVERY_FILENAME)), "no recovery is spent over a possibly-live worker");
+    assert.deepEqual(readdirSync(interrupted).sort(), ["log-1.jsonl"], "the attempt's evidence is preserved");
+    assert.deepEqual(await labelSet(tracker, 60), [DEFAULT_LABELS.claimed], "no block is invented");
+    assert.deepEqual(await labelSet(tracker, 1), [DEFAULT_LABELS.ready]);
+    assert.ok(
+      log.some((line) => line.includes("no usable mount sources") && line.includes("liveness unknown")),
+      "the operator sees why the factory is holding",
     );
   });
 

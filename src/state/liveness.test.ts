@@ -6,13 +6,14 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
+import { fakeDocker } from "./fake-docker.js";
 import {
-  containersBindingWorksRoot,
   dockerWorkerProbe,
   duplicateWorkers,
   occupiedSlots,
   parseWorkerContainers,
   probeLiveness,
+  screenWorkerContainers,
 } from "./liveness.js";
 
 /**
@@ -266,26 +267,6 @@ describe("liveness — the shared interpretation (issue 118)", () => {
   });
 });
 
-/**
- * The Docker shell with an injected runner (issue 160): the canned replies
- * stand in for the daemon, and every command is recorded so a test can prove
- * which question the shell asked — and which it never asks.
- */
-function dockerShell(replies: { listing: string; inspect?: string; failure?: Error }): {
-  run: (args: readonly string[], timeoutMs: number) => Promise<string>;
-  calls: string[][];
-} {
-  const calls: string[][] = [];
-  const run = async (args: readonly string[]): Promise<string> => {
-    calls.push([...args]);
-    if (replies.failure !== undefined) throw replies.failure;
-    if (args[0] === "ps") return replies.listing;
-    if (args[0] === "inspect") return replies.inspect ?? "[]";
-    throw new Error(`unexpected docker command: ${args.join(" ")}`);
-  };
-  return { run, calls };
-}
-
 describe("liveness — the worker identity survives the image reference moving (issue 160)", () => {
   const OLD_WORKER = "a".repeat(64);
   const SECOND = "b".repeat(64);
@@ -297,7 +278,7 @@ describe("liveness — the worker identity survives the image reference moving (
       `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7,/var/run/docker.sock`,
       `${SECOND} /var/run/docker.sock`,
     ].join("\n");
-    const shell = dockerShell({
+    const shell = fakeDocker({
       listing,
       inspect: JSON.stringify([container(OLD_WORKER, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z")]),
     });
@@ -320,7 +301,7 @@ describe("liveness — the worker identity survives the image reference moving (
       `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7`,
       `${SECOND} ${WORKS}/Sanmoo/my-tasks#7`,
     ].join("\n");
-    const shell = dockerShell({
+    const shell = fakeDocker({
       listing,
       inspect: JSON.stringify([
         container(OLD_WORKER, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z"),
@@ -335,16 +316,60 @@ describe("liveness — the worker identity survives the image reference moving (
   });
 
   test("no running container of this workspace is zero workers — a moved reference hides nothing", async () => {
-    // The listing is every running container, so its emptiness is a reliable
-    // zero: the configured image reference plays no part in it.
-    const probe = dockerWorkerProbe({ worksRoot: WORKS, run: dockerShell({ listing: "" }).run });
+    // The listing is every running container and is not image-filtered, so its
+    // emptiness is a reliable zero; with no such container an interrupted
+    // attempt is still recovered.
+    const probe = dockerWorkerProbe({ worksRoot: WORKS, run: fakeDocker({ listing: "" }).run });
     assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
+
+    const withReservedAttempt = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: fakeDocker({ listing: "" }).run,
+      hasUnsettledAttempts: async () => true,
+    });
+    assert.deepEqual(
+      await probeLiveness(withReservedAttempt),
+      { state: "known", workers: [] },
+      "an empty host hides no worker: the reservation alone never manufactures unknown",
+    );
+  });
+
+  test("a listing without usable mount sources is unknown while a reserved attempt may own a worker", async () => {
+    const probe = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: fakeDocker({ listing: SECOND }).run,
+      hasUnsettledAttempts: async () => true,
+    });
+
+    const observation = await probeLiveness(probe);
+
+    assert.equal(observation.state, "unknown");
+    assert.match(
+      observation.state === "unknown" ? observation.reason : "",
+      /no usable mount sources.*attempts with no outcome.*liveness unknown/,
+    );
+
+    const idle = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: fakeDocker({ listing: SECOND }).run,
+      hasUnsettledAttempts: async () => false,
+    });
+    assert.deepEqual(await probeLiveness(idle), { state: "known", workers: [] });
+  });
+
+  test("a truncated mount column is not trusted to conclude absence", async () => {
+    const probe = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: fakeDocker({ listing: `${SECOND} /home/sanmoo/…,/var/run/docke…` }).run,
+      hasUnsettledAttempts: async () => true,
+    });
+    assert.equal((await probeLiveness(probe)).state, "unknown");
   });
 
   test("Docker failing is unknown, never an empty factory", async () => {
     const probe = dockerWorkerProbe({
       worksRoot: WORKS,
-      run: dockerShell({ listing: "", failure: new Error("docker: daemon down") }).run,
+      run: fakeDocker({ listing: "", failure: new Error("docker: daemon down") }).run,
     });
 
     const observation = await probeLiveness(probe);
@@ -355,10 +380,19 @@ describe("liveness — the worker identity survives the image reference moving (
 
   test("the screening reads mount sources under THIS works root — a look-alike prefix is not a worker", () => {
     const listing = [
-      `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7`,
+      `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7,/var/run/docker.sock`,
       `${SECOND} ${WORKS}-old/Sanmoo/my-tasks#8`,
     ].join("\n");
-    assert.deepEqual(containersBindingWorksRoot(listing, WORKS), [OLD_WORKER]);
+    assert.deepEqual(screenWorkerContainers(listing, WORKS), {
+      candidates: [OLD_WORKER],
+      rows: 2,
+      mountsObservable: true,
+    });
+    assert.equal(
+      screenWorkerContainers(`${OLD_WORKER} /home/sanmoo/…`, WORKS).mountsObservable,
+      false,
+      "a truncated mount column is not observable",
+    );
   });
 });
 

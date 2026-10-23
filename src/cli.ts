@@ -13,7 +13,7 @@ import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
-import { dockerWorkerProbe, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
