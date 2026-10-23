@@ -305,7 +305,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
 
     // The claim is the event that moves the work out of the pool and reserves it.
     await Promise.all(engine.fillSlots());
-    assert.ok(logs.some((line) => line.includes(`claiming ${`${REPO}#1`}`)));
+    assert.ok(logs.some((line) => line.includes(`claiming ${REPO}#1`)));
 
     await engine.deriveAndAct();
     assert.equal(summaries(logs).length, 1, "the claim already registered the change");

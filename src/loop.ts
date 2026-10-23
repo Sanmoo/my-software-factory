@@ -2884,7 +2884,7 @@ async function launchMaterial(
   launchable: Launchable,
   repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {
-  const { work, dir, issueReplies } = launchable;
+  const { work, issueReplies } = launchable;
   const issue = await tickets.readTicket(work.ticket);
   const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, launchable.pr));
   const diff = await git.diffWorkFor(work);
