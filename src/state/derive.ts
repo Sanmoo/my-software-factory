@@ -14,7 +14,7 @@ import type {
 import { isAgentSpeech } from "../tracker/port.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
-import { readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import {
   readOutcomeRecord,
   blockedCommentBody,
@@ -706,10 +706,12 @@ async function deriveUnreconciledAttempt(
 }
 
 /** The persisted continuity pause of THIS attempt, if any (issue 119). A pause
- *  from an older attempt is history: the current attempt's facts decide. */
+ *  from an older attempt is history: the current attempt's facts decide — but a
+ *  record whose own attempt is unreadable waits for whichever attempt is
+ *  current, because guessing one is how a pause disappears. */
 function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
   const pause = readPause(dir);
-  return pause !== null && pause.attempt === attempt ? pause : null;
+  return pause !== null && pauseWaits(pause, attempt) ? pause : null;
 }
 
 /**

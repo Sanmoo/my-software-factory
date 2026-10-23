@@ -49,12 +49,16 @@ export type CommandSafety =
   | { safety: "unknown"; reason: string };
 
 /**
- * Commands that only read or write paths they are given, and never run another
- * program. Deliberately narrow: an interpreter or a command runner (`node`,
- * `npm`, `python`, `make`, `env`, `xargs`, `find -exec`, `awk`, `sed`) can run
- * arbitrary code — including an external mutation — so it is NOT safe, and an
- * interrupted call of that class pauses the recovery. Same for `docker`: the
- * worker inherits the HOST daemon (ADR 0003) and no reconciliation covers it.
+ * Commands that never run another program. Deliberately narrow: an interpreter
+ * or a command runner (`node`, `npm`, `python`, `make`, `env`, `xargs`,
+ * `find -exec`, `awk`, `sed`) can run arbitrary code — including an external
+ * mutation — so it is NOT safe, and an interrupted call of that class pauses
+ * the recovery. Same for `docker`: the worker inherits the HOST daemon
+ * (ADR 0003) and no reconciliation covers it.
+ *
+ * Membership alone does not make a call safe: many of these write to the paths
+ * they are given, so {@link classifySegment} also refuses any operand that
+ * names a path outside the worktree.
  */
 const SAFE_COMMANDS: ReadonlySet<string> = new Set([
   "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "echo", "printf",
@@ -66,20 +70,11 @@ const SAFE_COMMANDS: ReadonlySet<string> = new Set([
   "unzip", "zip", "gzip", "gunzip", "base64", "sha256sum", "md5sum",
 ]);
 
-/**
- * The binaries of {@link SAFE_COMMANDS} that WRITE the paths they are given.
- * They are safe only while every operand stays inside the worktree: an
- * absolute path (or a `..` that climbs out) reaches the host, where no
- * reconciliation covers the effect — so such a call is unknown, not safe.
- */
-const PATH_WRITERS: ReadonlySet<string> = new Set([
-  "mkdir", "cp", "mv", "rm", "touch", "chmod", "chown", "ln", "tee",
-  "tar", "unzip", "zip", "gzip", "gunzip", "patch",
-]);
-
-/** The git subcommands that cannot reach outside the worktree. `push` is
+/** The git subcommands whose own effect stays in the clone. `push` is
  *  classified separately ({@link classifyGitPush}); everything absent from
- *  this set is unknown. */
+ *  this set is unknown. The subcommand name alone is not enough: `git init
+ *  /tmp/x` or `git config --global` still write outside, so the operand scan
+ *  in {@link classifySegment} and the `config` guard below apply as well. */
 const SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "add", "commit", "status", "diff", "log", "show", "branch", "checkout",
   "switch", "restore", "reset", "stash", "rebase", "merge", "cherry-pick",
@@ -93,7 +88,8 @@ const SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 
 /** The `gh` invocations that only read. Every `gh` write is either one of the
  *  four recognised effects (classified before this set is consulted) or
- *  unknown — this set never grants safety to a mutation. */
+ *  unknown — this set never grants safety to a mutation, and it is the ONE
+ *  place a read-only invocation is listed. */
 const SAFE_GH_INVOCATIONS: ReadonlySet<string> = new Set([
   "pr view", "pr list", "pr diff", "pr checks", "pr status",
   "issue view", "issue list", "issue status",
@@ -181,6 +177,24 @@ function classifySegment(segment: string): CommandSafety {
 
   const command = words[index]!;
   const args = words.slice(index + 1);
+  const safety = classifyBinary(command, args);
+  if (safety.safety !== "safe") return safety;
+
+  // A safe binary is still not safe when an operand names a path outside the
+  // worktree: the allowlist says WHICH program runs, never WHERE it writes.
+  // `git init /tmp/x`, `tar -C/tmp -xf a` and `sort -o /tmp/x f` all pass the
+  // program check and all reach the host, where nothing reconciles them.
+  const escaping = args.find(namesOutsideWorktree);
+  if (escaping !== undefined) {
+    return {
+      safety: "unknown",
+      reason: `${command} ${escaping} names something outside the worktree, where no reconciliation covers the effect`,
+    };
+  }
+  return safety;
+}
+
+function classifyBinary(command: string, args: string[]): CommandSafety {
   const binary = command.split("/").pop() ?? command;
 
   if (NETWORK_OR_UNKNOWN.has(binary)) {
@@ -194,18 +208,7 @@ function classifySegment(segment: string): CommandSafety {
   if (binary === "git") return classifyGit(args);
   if (binary === "gh") return classifyGh(args);
 
-  if (isSafeBinary(binary)) {
-    if (PATH_WRITERS.has(binary)) {
-      const escaping = args.find((arg) => escapesWorktree(arg));
-      if (escaping !== undefined) {
-        return {
-          safety: "unknown",
-          reason: `${binary} ${escaping} writes outside the worktree, where no reconciliation covers the effect`,
-        };
-      }
-    }
-    return { safety: "safe" };
-  }
+  if (isSafeBinary(binary)) return { safety: "safe" };
   return { safety: "unknown", reason: `${binary} is not a proven-local command` };
 }
 
@@ -214,6 +217,10 @@ function classifyGit(args: string[]): CommandSafety {
   if (subcommand === "push") return classifyGitPush(args.slice(1));
   if (subcommand === "send-email" || subcommand === "request-pull") {
     return { safety: "unknown", reason: `git ${subcommand} publishes outside the worktree` };
+  }
+  // `git config` writes a file too: outside the clone with --global/--system.
+  if (subcommand === "config" && args.some((arg) => arg === "--global" || arg === "--system")) {
+    return { safety: "unknown", reason: "git config --global/--system writes outside the worktree" };
   }
   if (SAFE_GIT_SUBCOMMANDS.has(subcommand)) return { safety: "safe" };
   return { safety: "unknown", reason: `git ${subcommand || "(none)"} is not a proven-local subcommand` };
@@ -340,21 +347,24 @@ function classifyGh(args: string[]): CommandSafety {
     // `gh api` without a mutating method is a read. The method may be spelled
     // `-X POST`, `--method POST`, `--method=POST` or, as pflag allows, `-XPOST`
     // — reading only the separated forms classified `-XPOST .../merge` as a
-    // read, which is the one thing this classifier must never do.
+    // read, which is the one thing this classifier must never do. The fields
+    // that make a POST are spelled `-f`, `-fbody=x`, `--field=x` too: any of
+    // them can carry the body, and only the bare-flag forms were read before.
     const method = methodFlag(args);
-    const mutatingFields = args.some((arg) => ["-f", "-F", "--field", "--raw-field", "--input"].includes(arg));
-    if (method === undefined || method.toUpperCase() === "GET") {
-      if (!mutatingFields) return { safety: "safe" };
+    if ((method === undefined || method.toUpperCase() === "GET") && !hasMutatingField(args)) {
+      return { safety: "safe" };
     }
     return { safety: "unknown", reason: "gh api with a mutating method has no supported reconciliation" };
   }
 
   if (group !== undefined && SAFE_GH_INVOCATIONS.has(`${group} ${sub ?? ""}`)) return { safety: "safe" };
-  if (group === "auth" || group === "search") return { safety: "safe" };
-  if (group === "run" || group === "workflow" || group === "release" || group === "repo") {
-    if (sub === "view" || sub === "list") return { safety: "safe" };
-  }
   return { safety: "unknown", reason: `gh ${words.slice(0, 2).join(" ")} is not a proven read` };
+}
+
+/** `-f`, `-fbody=x`, `-F`, `--field`, `--field=x`, `--raw-field`, `--input`:
+ *  every spelling that supplies a body to `gh api`. */
+function hasMutatingField(args: string[]): boolean {
+  return args.some((arg) => /^-[fF]/.test(arg) || /^--(field|raw-field|input)(=|$)/.test(arg));
 }
 
 /**
@@ -403,13 +413,20 @@ function isSafeBinary(binary: string): boolean {
   return SAFE_COMMANDS.has(binary) || SAFE_COMMANDS.has(binary.replace(/[0-9]+$/, ""));
 }
 
-/** Does this operand name a path outside the worktree? Absolute paths and `~`
- *  do by construction; a `..` segment climbs out. `--flag=value` is read by
- *  its value, so `--directory=/tmp` cannot slip through as a bare flag. */
-function escapesWorktree(operand: string): boolean {
-  const value = operand.includes("=") ? operand.slice(operand.indexOf("=") + 1) : operand;
-  if (value.startsWith("/") || value.startsWith("~")) return true;
-  return value.split("/").includes("..");
+/** Does this operand name something outside the worktree — a path the
+ *  classifier cannot resolve, so it is not safe by omission?
+ *
+ *  The rules are deliberately crude: an expansion or home reference resolves at
+ *  run time; an absolute path IS outside; a `..` segment climbs out; and a flag
+ *  carrying a path (`-C/tmp`, `-o/tmp`) hides where the path begins. A plain
+ *  relative path (`src/x.ts`, `refs/heads/x`, `origin`) is the worktree. */
+function namesOutsideWorktree(token: string): boolean {
+  if (/[$`~]/.test(token)) return true;
+  const value = token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
+  if (value === "") return false;
+  if (value.startsWith("/")) return true;
+  if (value.split("/").includes("..")) return true;
+  return value.startsWith("-") && value.includes("/");
 }
 
 function tokenize(segment: string): string[] {

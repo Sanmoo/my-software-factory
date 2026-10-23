@@ -16,11 +16,11 @@
  */
 
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
 import type { IssueRef } from "../tracker/port.js";
-import { parseJsonLine } from "./json-line.js";
+import { parseJsonLine, parseJsonObject } from "./json-line.js";
 
 export const SESSION_LINKS_FILENAME = "sessao-vinculos.jsonl";
 export const EFFECT_JOURNAL_FILENAME = "efeitos.jsonl";
@@ -103,20 +103,10 @@ export interface GuardrailState {
   at: string;
 }
 
-/** Why a work waits for the operator instead of being recovered (issue 119). */
-export type PauseReason =
-  | "link-missing"
-  | "session-missing"
-  | "session-unreadable"
-  | "session-identity"
-  | "journal-unreadable"
-  | "effect-unsupported"
-  | "effect-ambiguous"
-  | "tool-evidence-missing";
-
-/** Every pause reason this version knows. A record naming another one belongs
- *  to a version this factory cannot interpret. */
-const PAUSE_REASONS: ReadonlySet<PauseReason> = new Set<PauseReason>([
+/** Why a work waits for the operator instead of being recovered (issue 119).
+ *  The list is the source of both the type and the runtime validation, so a
+ *  reason cannot exist in one and be missing from the other. */
+const PAUSE_REASONS = [
   "link-missing",
   "session-missing",
   "session-unreadable",
@@ -125,7 +115,17 @@ const PAUSE_REASONS: ReadonlySet<PauseReason> = new Set<PauseReason>([
   "effect-unsupported",
   "effect-ambiguous",
   "tool-evidence-missing",
-]);
+  /** The record ITSELF cannot be read. Never written by a launch, only
+   *  reported by {@link readPause}: the file says "wait" and the factory cannot
+   *  read why, so it keeps waiting and asks instead of falling back to a
+   *  recovery. Written back as a real pause (which closes the doubt) once the
+   *  operator has been told. */
+  "record-unreadable",
+] as const;
+
+export type PauseReason = (typeof PAUSE_REASONS)[number];
+
+const KNOWN_PAUSE_REASONS: ReadonlySet<string> = new Set(PAUSE_REASONS);
 
 export interface PauseRecord {
   version: 1;
@@ -268,19 +268,23 @@ export function writeGuardrailState(workDir: string, state: GuardrailState): voi
 export function readGuardrailState(workDir: string): GuardrailState | null {
   const raw = readIfExists(join(workDir, GUARDRAIL_STATE_FILENAME));
   if (raw === null) return null;
-  const parsed = parseJsonLine(raw);
-  if (parsed === null || typeof parsed !== "object") return null;
-  const record = parsed as Record<string, unknown>;
+  const record = parseJsonObject(raw);
+  if (record === null) return null;
   if (record["version"] !== 1 || typeof record["sessionId"] !== "string" || typeof record["attempt"] !== "number") {
     return null;
   }
   const verdicts: Record<string, EffectVerdict> = {};
   const rawVerdicts = record["verdicts"];
-  if (rawVerdicts !== null && typeof rawVerdicts === "object") {
-    for (const [key, value] of Object.entries(rawVerdicts as Record<string, unknown>)) {
+  if (rawVerdicts !== null && typeof rawVerdicts === "object" && !Array.isArray(rawVerdicts)) {
+    for (const [key, value] of Object.entries(rawVerdicts)) {
       if (value === "realized" || value === "absent") verdicts[key] = value;
     }
   }
+  // `at` and `mode` are diagnostic here, never a safety input: the guardrail
+  // acts on `attempt`, `sessionId` and `verdicts` alone. Repairing a missing
+  // `at` is therefore honest, while DISCARDING the state would silently drop
+  // the verdicts and leave the session unguarded — the one fallback that is
+  // never allowed. A state missing any safety-bearing field is refused above.
   return {
     version: 1,
     attempt: record["attempt"],
@@ -294,32 +298,74 @@ export function readGuardrailState(workDir: string): GuardrailState | null {
 // ---- the persisted continuity pause ----
 
 export function writePause(workDir: string, pause: PauseRecord): void {
+  // The evidence outlives the record: a corrupt pause is moved aside, never
+  // overwritten, so the operator can still inspect what the factory read.
+  if (readValidPause(workDir) === null && existsSync(join(workDir, PAUSE_FILENAME))) {
+    renameSync(join(workDir, PAUSE_FILENAME), freePath(join(workDir, `${PAUSE_FILENAME}.unreadable`)));
+  }
   writeAtomic(join(workDir, PAUSE_FILENAME), pause);
 }
 
+/** The first `<path>`, `<path>.2`, `<path>.3`… the filesystem does not hold:
+ *  every corrupt record is kept, none is overwritten. */
+function freePath(path: string): string {
+  let candidate = path;
+  for (let index = 2; existsSync(candidate); index += 1) candidate = `${path}.${index}`;
+  return candidate;
+}
+
+/**
+ * The persisted pause. A file that exists but cannot be read as a pause is
+ * NOT "no pause": returning absent would let the work fall back to a recovery
+ * (which the record's author asked it not to do), spend the budget and post a
+ * second help request. It is reported as the doubt it is — reason
+ * `record-unreadable` — and matches whichever attempt is current, because the
+ * record that would have said which one is exactly what is missing.
+ */
 export function readPause(workDir: string): PauseRecord | null {
+  const valid = readValidPause(workDir);
+  if (valid !== null) return valid;
+  if (!existsSync(join(workDir, PAUSE_FILENAME))) return null;
+  return {
+    version: 1,
+    work: { repo: "", number: 0 },
+    attempt: 0,
+    reason: "record-unreadable",
+    detail: `the pause record at ${PAUSE_FILENAME} could not be read; its original is preserved beside it`,
+    at: "",
+  };
+}
+
+/** Does a pause wait for the current attempt? A record whose own attempt is
+ *  unreadable matches any attempt: the doubt is not resolved by guessing one. */
+export function pauseWaits(pause: PauseRecord, attempt: number): boolean {
+  return pause.reason === "record-unreadable" || pause.attempt === attempt;
+}
+
+function readValidPause(workDir: string): PauseRecord | null {
   const raw = readIfExists(join(workDir, PAUSE_FILENAME));
   if (raw === null) return null;
-  const parsed = parseJsonLine(raw);
-  if (parsed === null || typeof parsed !== "object") return null;
-  const record = parsed as Record<string, unknown>;
-  // A record that does not say which attempt paused, or names a reason this
-  // factory does not know, is not a pause it can act on: read as absent rather
-  // than repaired into a pause with invented facts (a fabricated attempt 0
-  // would silently match no attempt and hide the doubt).
+  const record = parseJsonObject(raw);
+  if (record === null) return null;
+  // A record naming a reason this factory does not know belongs to a version
+  // it cannot interpret: `record-unreadable` says so instead of discarding the
+  // fact that a pause was asked for.
   if (record["version"] !== 1) return null;
-  if (typeof record["attempt"] !== "number" || record["attempt"] < 1) return null;
-  if (!PAUSE_REASONS.has(record["reason"] as PauseReason)) return null;
-  const reason = record["reason"] as PauseReason;
+  if (typeof record["attempt"] !== "number") return null;
+  const reason = record["reason"];
+  if (typeof reason !== "string" || !KNOWN_PAUSE_REASONS.has(reason)) return null;
+  // `record-unreadable` is the one reason whose attempt is honestly unknown
+  // (0). Every other pause must name the attempt it waits for.
+  if (reason !== "record-unreadable" && record["attempt"] < 1) return null;
   const work = record["work"];
-  if (work === null || typeof work !== "object") return null;
+  if (work === null || typeof work !== "object" || Array.isArray(work)) return null;
   const workRecord = work as Record<string, unknown>;
   if (typeof workRecord["repo"] !== "string" || typeof workRecord["number"] !== "number") return null;
   return {
     version: 1,
     work: { repo: workRecord["repo"], number: workRecord["number"] },
     attempt: record["attempt"],
-    reason,
+    reason: reason as PauseReason,
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
     at: typeof record["at"] === "string" ? record["at"] : "",
     ...(typeof record["sessionId"] === "string" ? { sessionId: record["sessionId"] } : {}),
@@ -330,13 +376,15 @@ export function readPause(workDir: string): PauseRecord | null {
 export function clearPause(workDir: string): void {
   const path = join(workDir, PAUSE_FILENAME);
   if (existsSync(path)) renameSync(path, `${path}.resolved`);
+  const unreadable = join(workDir, `${PAUSE_FILENAME}.unreadable`);
+  if (existsSync(unreadable)) renameSync(unreadable, `${unreadable}.resolved`);
 }
 
 // ---- fs primitives ----
 
 /** Append one JSON line and fsync it: the caller can act right after. */
 function appendDurable(path: string, value: unknown): void {
-  mkdirSync(join(path, ".."), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(path, "a");
   try {
     writeSync(fd, `${JSON.stringify(value)}\n`);
@@ -347,7 +395,7 @@ function appendDurable(path: string, value: unknown): void {
 }
 
 function writeAtomic(path: string, value: unknown): void {
-  mkdirSync(join(path, ".."), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   const temp = `${path}.tmp`;
   const fd = openSync(temp, "w");
   try {

@@ -10,11 +10,12 @@ import {
   appendJournalResult,
   appendJournalStart,
   appendSessionLink,
-  callKey,
   clearPause,
+  pauseWaits,
   readEffectJournal,
   readPause,
   readSessionLinks,
+  writePause,
 } from "./continuity-artifacts.js";
 
 /**
@@ -37,7 +38,7 @@ describe("the continuity artifacts (issue 119)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function writePause(record: unknown): void {
+  function writePauseFile(record: unknown): void {
     writeFileSync(join(dir, PAUSE_FILENAME), JSON.stringify(record), "utf8");
   }
 
@@ -53,7 +54,7 @@ describe("the continuity artifacts (issue 119)", () => {
   }
 
   test("a complete pause is read back with its facts", () => {
-    writePause({ ...validPause(), sessionId: "s-1", announced: true });
+    writePauseFile({ ...validPause(), sessionId: "s-1", announced: true });
     const pause = readPause(dir);
     assert.equal(pause?.attempt, 2);
     assert.equal(pause?.reason, "session-missing");
@@ -61,21 +62,52 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(pause?.announced, true);
   });
 
-  test("a pause naming a reason this version does not know is absent, not guessed", () => {
-    writePause({ ...validPause(), reason: "something-from-a-newer-factory" });
-    assert.equal(readPause(dir), null, "an unknown reason is not narrowed into a known one");
+  test("a pause naming a reason this version does not know still waits — as an unreadable record", () => {
+    writePauseFile({ ...validPause(), reason: "something-from-a-newer-factory" });
+    const pause = readPause(dir);
+    assert.equal(pause?.reason, "record-unreadable", "the doubt is reported, never narrowed into a known reason");
+    assert.match(pause?.detail ?? "", /could not be read/);
   });
 
-  test("a pause without its attempt is absent: a fabricated attempt matches no work", () => {
-    const { attempt: _dropped, ...withoutAttempt } = validPause();
-    writePause(withoutAttempt);
-    assert.equal(readPause(dir), null);
-    writePause({ ...validPause(), attempt: 0 });
-    assert.equal(readPause(dir), null);
+  test("a pause that cannot be read waits for whichever attempt is current", () => {
+    for (const broken of [{ ...validPause(), attempt: undefined }, { ...validPause(), attempt: 0 }, { ...validPause(), version: 2 }]) {
+      writePauseFile(broken);
+      const pause = readPause(dir);
+      assert.ok(pause, JSON.stringify(broken));
+      assert.equal(pause.reason, "record-unreadable");
+      assert.equal(pause.attempt, 0, "no attempt is invented for the record");
+      // The record itself is the doubt: it waits on every attempt instead of
+      // letting the work fall back to a recovery the record forbade.
+      assert.equal(pauseWaits(pause, 1), true);
+      assert.equal(pauseWaits(pause, 7), true);
+    }
+    // A readable pause waits only on its own attempt.
+    writePauseFile(validPause());
+    const readable = readPause(dir)!;
+    assert.equal(pauseWaits(readable, 2), true);
+    assert.equal(pauseWaits(readable, 3), false, "an older attempt's pause is history");
+  });
+
+  test("rewriting an unreadable pause moves the original aside instead of overwriting it", () => {
+    writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
+    writePause(dir, {
+      version: 1,
+      work: REF,
+      attempt: 2,
+      reason: "session-missing",
+      detail: "the recorded session is gone",
+      at: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(readPause(dir)?.reason, "session-missing");
+    assert.equal(
+      readFileSync(join(dir, `${PAUSE_FILENAME}.unreadable`), "utf8"),
+      "{not json",
+      "the corrupt evidence is preserved for the operator",
+    );
   });
 
   test("clearing keeps the resolved pause as evidence beside the work", () => {
-    writePause(validPause());
+    writePauseFile(validPause());
     clearPause(dir);
     assert.equal(readPause(dir), null);
     assert.match(readFileSync(join(dir, `${PAUSE_FILENAME}.resolved`), "utf8"), /session-missing/);
@@ -138,7 +170,6 @@ describe("the continuity artifacts (issue 119)", () => {
       ["round-1"],
       "pairing is scoped to the session that issued the call",
     );
-    assert.notEqual(callKey("round-1", "call-1"), callKey("round-2", "call-1"));
   });
 
   test("a journal whose last write was interrupted is not intact", () => {

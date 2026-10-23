@@ -338,6 +338,8 @@ function describePauseReason(reason: PauseReason): string {
       return "an interrupted external effect is ambiguous";
     case "tool-evidence-missing":
       return "the session records a mutating call the guardrail never journaled";
+    case "record-unreadable":
+      return "the persisted pause cannot be read, so the factory keeps waiting instead of recovering";
   }
 }
 

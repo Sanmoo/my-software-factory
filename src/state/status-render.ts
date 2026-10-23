@@ -176,9 +176,13 @@ function renderRunning(worker: RunningWorker): string {
   return `${worker.key} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
 }
 
-/** One persisted continuity pause: the work, its attempt and why it waits. */
+/** One persisted continuity pause: the work, its attempt and why it waits.
+ *  A record too unreadable to name its attempt says so instead of printing a
+ *  fabricated `attempt 0`.
+ */
 function renderContinuityPause(entry: ContinuityPauseEntry): string {
-  return `${entry.key} (attempt ${entry.pause.attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
+  const attempt = entry.pause.attempt >= 1 ? `attempt ${entry.pause.attempt}` : "attempt unknown";
+  return `${entry.key} (${attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
 }
 
 /** The duplicate anomaly: the count per work, with no owner chosen. */
