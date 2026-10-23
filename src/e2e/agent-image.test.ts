@@ -101,7 +101,7 @@ function line(output: string, prefix: string): string {
 }
 
 describe("the provisioned worker image — what Pi actually loads", { skip: skipReason }, () => {
-  test("only the declared skills, guidance and reviewer tools load — no host profile, no project discovery", { timeout: 120_000 }, () => {
+  test("only the declared skills, guidance and delegation tools load — no host profile, no project discovery", { timeout: 120_000 }, () => {
     const output = docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", WORKER_IMAGE, "-c", behaviourScript()]);
 
     const loadedLine = line(output, "LOADED=");
