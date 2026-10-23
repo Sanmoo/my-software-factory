@@ -34,6 +34,9 @@ import { waitFor } from "./cli-harness.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
+/** "<repo>#<number>" — the same key the factory and the probe use. */
+const workKeyOf = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
+
 class FakeGitWork implements GitWork {
   constructor(private readonly beforePrepare?: () => Promise<void>) {}
 
@@ -541,6 +544,85 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       stop.abort();
       await running.catch(() => {});
     }
+  });
+
+  test("a requested stop ends the surviving worker of a previous run and records the stop on its attempt", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    // The previous factory process died leaving its worker running (issue 118):
+    // the container is alive, the work is still claimed and its attempt left
+    // its history on disk.
+    await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
+    mkdirSync(workDirOf(), { recursive: true });
+    writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    const containers = new Set([workKey]);
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const forcedByTheFake = runtime.forceStop.bind(runtime);
+    runtime.forceStop = async (ref) => {
+      // The real forced stop removes the container; the probe proves it.
+      containers.delete(workKeyOf(ref));
+      await forcedByTheFake(ref);
+    };
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => [...containers].map((key) => ({ key, containerId: `container-${key}`, ageMs: 1_000 })),
+      log: () => {},
+    };
+
+    const stop = new AbortController();
+    stop.abort();
+    const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
+
+    assert.deepEqual(result.shutdown?.forced, [workKey], "the surviving worker is ended, not left behind");
+    assert.deepEqual(result.shutdown?.unconfirmed, [], "and its end is confirmed");
+    const ledger = await ledgerOf();
+    assert.equal(ledger.lastStop?.kind, "stop-requested", "the stop is recorded on the survivor's attempt");
+    assert.equal(ledger.lastStop?.attempt, 1);
+
+    // The next invocation resumes that attempt for free and finishes it.
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "the work resumes");
+    assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME attempt");
+    assert.ok(existsSync(join(workDirOf(), "log-1.jsonl")), "the attempt's history survives the stop");
+    assert.equal((await ledgerOf()).consumed, 0, "the requested stop spent no recovery");
+    assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");
+  });
+
+  test("a surviving worker the factory cannot end keeps the stop unconfirmed and the work held", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
+    mkdirSync(workDirOf(), { recursive: true });
+    writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"], forceUnconfirmed: true });
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => [{ key: workKey, containerId: "container-1", ageMs: 1_000 }],
+      log: () => {},
+    };
+
+    const stop = new AbortController();
+    stop.abort();
+    const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
+
+    assert.deepEqual(result.shutdown?.unconfirmed, [
+      { key: workKey, because: "a worker of this work is still alive" },
+    ], "the factory does not call a stop safe over a worker it could not end");
+    const ledger = await ledgerOf();
+    assert.equal(ledger.lastStop?.kind, "stop-unconfirmed");
+    assert.equal(ledger.lastStop?.attempt, 1, "the hold lands on the attempt never relaunched over");
+
+    const held = await runOnce(deps);
+    assert.equal(held.launched.length, 0, "nothing is relaunched while the worker may be alive");
+    assert.equal((await ledgerOf()).consumed, 0, "the hold spends no recovery");
   });
 
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {

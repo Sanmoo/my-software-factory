@@ -9,8 +9,10 @@ export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A duration in the operator's words: 45s, 3m, 1h5m. */
+/** A duration in the operator's words: 250ms, 45s, 3m, 1h5m. A sub-second
+ *  duration keeps its milliseconds — "0s" would be a lie. */
 export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return `${Math.round(ms / 1000)}s`;
   if (minutes < 60) return `${minutes}m`;

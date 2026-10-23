@@ -1150,8 +1150,17 @@ export class SweepEngine {
     const entries = [...this.inFlight.values()];
     this.log(
       `stop requested: no new worker is admitted; asking ${entries.length} in-flight launch(es) to stop ` +
-        `(cooperative window ${formatWindow(this.cooperativeMs)})`,
+        `(cooperative window ${formatDuration(this.cooperativeMs)})`,
     );
+    // The workers a previous factory process left (issue 118) are the
+    // operator's workers too: this process has no session to ask, so they get
+    // the same window to end on their own and are forced with the rest.
+    if (this.survivors.size > 0) {
+      this.log(
+        `the stop also covers ${this.survivors.size} surviving worker(s) of a previous run (${byKey(this.survivors.keys()).join(", ")}) — ` +
+          "they are not this process's sessions, so they are never asked, only waited for and then forced",
+      );
+    }
 
     // The evidence of the requested stop is persisted BEFORE any worker is
     // asked to end: a factory that dies inside the shutdown still lets the
@@ -1170,34 +1179,75 @@ export class SweepEngine {
 
     for (const entry of entries) this.deps.runtime.requestStop(entry.ref);
 
+    // Whatever still carries a work is forced now. The evidence of the stop
+    // lands on a survivor's attempt BEFORE it is ended, exactly as for the
+    // launches below: the next invocation resumes it instead of charging it.
+    const settledInWindow = await this.awaitCooperativeWindow();
+    const doomed = await this.stopCandidates(entries, settledInWindow);
+    const own = new Set(entries.map((entry) => workKey(entry.ref)));
+    for (const key of doomed) if (!own.has(key)) await this.recordStopOf(key);
+
     const forced: string[] = [];
-    if (!(await this.awaitCooperativeWindow())) {
-      const remaining = [...this.inFlight.values()].filter((entry) => entry.launched);
-      if (remaining.length > 0) {
-        this.log(
-          `the cooperative phase ended: forcing the stop of ${remaining.length} worker(s) now — ` +
-            "the end of each one is still confirmed before the factory calls the stop safe",
-        );
-      }
-      await Promise.all(
-        remaining.map(async (entry) => {
-          const key = workKey(entry.ref);
-          try {
-            await this.deps.runtime.forceStop(entry.ref);
-            forced.push(key);
-            this.log(`forced stop of ${key}: its worker is gone`);
-          } catch (error) {
-            this.log(
-              `forcing ${key} failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-          return undefined;
-        }),
+    if (doomed.length > 0) {
+      this.log(
+        `the cooperative phase is over: forcing the stop of ${doomed.length} worker(s) now — ` +
+          "the end of each one is still confirmed before the factory calls the stop safe",
       );
     }
+    await Promise.all(
+      doomed.map(async (key) => {
+        const ref = parseWorkKey(key);
+        if (ref === null) return undefined;
+        try {
+          await this.deps.runtime.forceStop(ref);
+          forced.push(key);
+          this.log(`forced stop of ${key}: its worker is gone`);
+        } catch (error) {
+          this.log(`forcing ${key} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return undefined;
+      }),
+    );
 
     const unconfirmed = await this.confirmStop(entries);
     return { forced, unconfirmed };
+  }
+
+  /**
+   * The works the stop has to end (issue #146): the launches whose end the
+   * cooperative window did not see, plus every worker a live container still
+   * carries — the survivors of a previous process included (issue 118). An
+   * unreadable probe still ends the launches; it cannot name the survivors.
+   */
+  private async stopCandidates(
+    entries: readonly InFlightLaunch[],
+    settledInWindow: boolean,
+  ): Promise<string[]> {
+    const keys = new Set<string>();
+    if (!settledInWindow) {
+      for (const entry of entries) if (entry.launched) keys.add(workKey(entry.ref));
+    }
+    await this.observeLiveness();
+    if (this.liveness.state === "known") {
+      for (const worker of this.liveness.workers) keys.add(worker.key);
+    }
+    return byKey(keys);
+  }
+
+  /** Persist the operator's stop on a work the shutdown ends: the next
+   *  invocation resumes that attempt rather than charging it a recovery. A work
+   *  with no attempt on disk has nothing to resume. */
+  private async recordStopOf(key: string): Promise<void> {
+    const attempt = await this.lastAttemptOf(key);
+    if (attempt === null) return;
+    await recordStopRequest(workDirOfKey(this.deps.workspace, key), attempt);
+  }
+
+  /** The last attempt on disk of a work, or null when the registry has none. */
+  private async lastAttemptOf(key: string): Promise<number | null> {
+    const parsed = parseWorkKey(key);
+    if (parsed === null) return null;
+    return readLastAttempt(workDir(this.deps.workspace, parsed.repo, parsed.number));
   }
 
   /** True when every in-flight launch settled inside the cooperative window. */
@@ -1224,43 +1274,53 @@ export class SweepEngine {
   }
 
   /**
-   * The confirmation the factory never skips (issue #146): every worker that
-   * started must be gone. The liveness probe answers (Docker is the authority
-   * for the real runtime); an unreadable answer is uncertainty, never an empty
-   * factory. An unconfirmed work is persisted so the next invocation holds it.
+   * The confirmation the factory never skips (issue #146): no worker of this
+   * workspace may survive — neither the launches this process started nor the
+   * ones it found alive (issue 118). The liveness probe answers, freshly,
+   * because the workers just ended or were forced; an unreadable answer is
+   * uncertainty, never an empty factory. An unconfirmed work is persisted so
+   * the next invocation holds it.
    */
   private async confirmStop(
     entries: readonly InFlightLaunch[],
   ): Promise<Array<{ key: string; because: string }>> {
-    const launched = entries.filter((entry) => entry.launched);
-    if (launched.length === 0) {
-      this.log("stop confirmed: no worker had started, nothing survives");
-      return [];
+    await this.observeLiveness();
+    const observation = this.liveness;
+
+    // Every work this stop is answerable for: the launches it carried (their
+    // attempt already known) and whatever else a live container names.
+    const answerable = new Map<string, number | null>();
+    for (const entry of entries) {
+      if (entry.launched) answerable.set(workKey(entry.ref), entry.attempt);
+    }
+    if (observation.state === "known") {
+      for (const worker of observation.workers) {
+        if (!answerable.has(worker.key)) answerable.set(worker.key, null);
+      }
     }
 
-    // The confirmation reads the SAME liveness seam the cycle decides on
-    // (issue 118): a fresh answer, because the workers just ended (or were
-    // forced) and the derivation's observation is stale by construction.
-    await this.observeLiveness();
-    const alive = this.liveness.state === "known" ? this.carriedKeys : null;
-
     const unconfirmed: Array<{ key: string; because: string }> = [];
-    for (const entry of launched) {
-      const key = workKey(entry.ref);
-      const because = this.stopHoldReason(alive, key);
+    for (const [key, knownAttempt] of answerable) {
+      const because = this.stopHoldReason(observation, key);
       if (because === null) continue;
       unconfirmed.push({ key, because });
-      if (entry.attempt !== null) await recordUnconfirmedStop(entry.dir, entry.attempt, because);
+      const attempt = knownAttempt ?? (await this.lastAttemptOf(key));
+      if (attempt !== null) {
+        await recordUnconfirmedStop(workDirOfKey(this.deps.workspace, key), attempt, because);
+      }
       this.log(
         `cannot confirm the stop of ${key}: ${because} — the work will not relaunch until a worker is known to be gone`,
       );
     }
-    if (unconfirmed.length === 0) {
-      this.log(`stop confirmed: every worker ended and none survives (${launched.length} checked)`);
-    } else {
+
+    if (unconfirmed.length > 0) {
       this.log(
         `stop NOT confirmed for ${unconfirmed.length} work(s) — the next run holds them until the worker is known gone`,
       );
+    } else if (answerable.size === 0) {
+      this.log("stop confirmed: no worker had started and none survives");
+    } else {
+      this.log(`stop confirmed: every worker ended and none survives (${answerable.size} checked)`);
     }
     return unconfirmed;
   }
@@ -1694,9 +1754,11 @@ export class SweepEngine {
 
   /** Why a work's end cannot be confirmed, or null when it is: an unreadable
    *  probe is uncertainty, never an empty factory. */
-  private stopHoldReason(alive: ReadonlySet<string> | null, key: string): string | null {
-    if (alive === null) return "the worker liveness could not be read (Docker unreachable)";
-    return alive.has(key) ? "a worker of this work is still alive" : null;
+  private stopHoldReason(observation: LivenessObservation, key: string): string | null {
+    if (observation.state === "unknown") return "the worker liveness could not be read (Docker unreachable)";
+    return observation.workers.some((worker) => worker.key === key)
+      ? "a worker of this work is still alive"
+      : null;
   }
 
   /**
@@ -1901,10 +1963,9 @@ export class SweepEngine {
       return;
     }
 
-    const alive = this.liveness.state === "known" ? this.carriedKeys : null;
     for (const entry of held) {
       const key = workKey(entry.ref);
-      const because = this.stopHoldReason(alive, key);
+      const because = this.stopHoldReason(this.liveness, key);
       if (because !== null) {
         this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
         continue;
@@ -2343,11 +2404,6 @@ export class SweepEngine {
     );
     return run;
   }
-}
-
-/** The cooperative window in the operator's units — 10 s, never "10000 ms". */
-function formatWindow(ms: number): string {
-  return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";

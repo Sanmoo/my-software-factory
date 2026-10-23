@@ -1,12 +1,9 @@
-import { execFile as execFileCallback } from "node:child_process";
 import { isAbsolute, relative, sep } from "node:path";
-import { promisify } from "node:util";
 
+import { runDocker } from "../docker-cli.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { describeError } from "../format.js";
 import { parseWorkKey } from "../pool/registry.js";
-
-const execFile = promisify(execFileCallback);
 
 /**
  * The liveness probe (issue 102, ADR 0002): the workers ARE containers, so
@@ -16,10 +13,9 @@ const execFile = promisify(execFileCallback);
  * (runtime/worker-stop.ts).
  *
  * The interpretation of Docker's output is a PURE function over the canned
- * strings (parseWorkerContainers). Two command shells touch the machine, both
- * read-only: dockerWorkerProbe and runningWorkerContainers (the read the
- * runtime's stop also uses). The composition default comes from tests
- * injecting a fake probe, never a flag.
+ * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
+ * the only part that touches the machine, and the composition default comes
+ * from tests injecting a fake probe, never a flag.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -147,7 +143,7 @@ export interface DockerProbeOptions {
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   return async () => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-    const listing = await docker(
+    const listing = await runDocker(
       ["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"],
       timeoutMs,
     );
@@ -169,7 +165,7 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
  */
 async function inspectContainers(ids: readonly string[], timeoutMs: number): Promise<string> {
   try {
-    return await docker(["inspect", ...ids], timeoutMs);
+    return await runDocker(["inspect", ...ids], timeoutMs);
   } catch (error) {
     if (!vanished(error)) throw error;
   }
@@ -177,7 +173,7 @@ async function inspectContainers(ids: readonly string[], timeoutMs: number): Pro
   for (const id of ids) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await docker(["inspect", id], timeoutMs));
+      parsed = JSON.parse(await runDocker(["inspect", id], timeoutMs));
     } catch (error) {
       if (vanished(error)) continue;
       throw error;
@@ -197,15 +193,6 @@ function vanished(error: unknown): boolean {
 /** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
 function parseContainerIds(listing: string): string[] {
   return listing.split(/\s+/).filter((id) => id !== "");
-}
-
-async function docker(args: string[], timeoutMs: number): Promise<string> {
-  const { stdout } = await execFile("docker", args, {
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: timeoutMs,
-  });
-  return stdout;
 }
 
 /**
@@ -330,4 +317,3 @@ function correlateWork(mounts: Array<{ Source?: string }>, worksRoot: string): W
   if (foreign) return { kind: "foreign" };
   return { kind: "not-a-worker" };
 }
-

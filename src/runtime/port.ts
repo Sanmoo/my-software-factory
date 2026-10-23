@@ -81,7 +81,10 @@ export interface WorkerRuntime {
   /**
    * Ask the running session of this work to stop (issue #146). The launch
    * promise resolves when the session ended — the cooperative request never
-   * abandons it. A work with no running session is a no-op.
+   * abandons it. A request for a work with no session yet is remembered: a
+   * launch of that work that starts afterwards ends before it leaves any
+   * footprint, so no worker slips through the window between the factory's
+   * decision and the session's registration.
    */
   requestStop(ref: IssueRef): void;
   /**
