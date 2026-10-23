@@ -1,15 +1,14 @@
-import { issueRefOf, githubRepository, githubTicket, type WorkIdentity } from "../tracker/identity.js";
+import { issueRefOf, githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import { reservationRecordOf, reserveWork, readReservation } from "../pool/reservation.js";
 import { activePullRequest, readPrAssociations } from "../pool/pr-association.js";
 import { workKeyOf } from "../pool/work-key.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -25,6 +24,7 @@ import {
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { scanRegistry } from "../pool/registry.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 14: the derivation of the tick now covers the states
@@ -487,6 +487,32 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       archived.some((name) => name.includes(`${workKeyOf(work)}-`)),
       "the Work is archived under its own registry key",
     );
+  });
+
+  test("a reservation from a source the composition does not serve is held — no adapter substitution, no sweep abort", async () => {
+    const config = makeConfig(1);
+    const { deps, tracker } = makeFactory(config, ["pr-open"]);
+    const jiraWork: WorkIdentity = {
+      ticket: jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      destination: githubRepository(REPO),
+    };
+    const reserved = reserveWork(layout, reservationRecordOf(jiraWork, { title: "Jira request" }));
+    // A dir whose non-GitHub key has no record at all: its identity is unknown.
+    const bareKey = workKeyOf({
+      ticket: jiraTicket({ site: "beta.atlassian.net", stableId: "10002", key: "ABC-2" }),
+      destination: githubRepository(REPO),
+    });
+    mkdirSync(join(layout.works, bareKey), { recursive: true });
+
+    const logs: string[] = [];
+    const sweep = await runOnce({ ...deps, log: (message) => logs.push(message) });
+
+    assert.equal(sweep.launched.length, 0, "nothing is launched for an unserved source");
+    assert.equal(tracker.claimedOrder.length, 0, "no claim is written to another tracker");
+    assert.ok(logs.some((line) => line.includes("the composed ticket adapter does not serve")));
+    assert.ok(logs.some((line) => line.includes("no trustworthy identity")));
+    assert.ok(existsSync(reserved.dir), "the readable reservation is preserved where it is");
+    assert.ok(existsSync(join(layout.works, bareKey)), "the unknown reservation is preserved where it is");
   });
 
   test("ticket facts and PR facts travel through their own expanded ports", async () => {

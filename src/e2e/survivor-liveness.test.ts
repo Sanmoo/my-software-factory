@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -22,6 +21,7 @@ import { fakeDocker, inspectedContainer } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * e2e of issue 118 at the PUBLIC cycle boundary (`runOnce` / `runForever`):

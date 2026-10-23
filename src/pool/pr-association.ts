@@ -73,11 +73,10 @@ export function readPrAssociations(dir: string): PrAssociationsFacts {
 }
 
 /**
- * The PR the Work currently has, as read from its registry dir: null covers
- * both "no association recorded" and "the record cannot be trusted". The
- * caller keeps the distinction by reading {@link readPrAssociations} itself
- * when it must report the unknown; a PR lookup may fall back to the code
- * host's own linkage, which is never an invented absence.
+ * The PR the Work's registry dir records, or null when there is none OR the
+ * record cannot be trusted. It exists for a read that may fall back to the
+ * code host's own linkage; a caller that must REPORT the unknown reads
+ * {@link readPrAssociations} itself instead of collapsing the two.
  */
 export function activePullRequestOf(dir: string): PullRequestIdentity | null {
   const facts = readPrAssociations(dir);

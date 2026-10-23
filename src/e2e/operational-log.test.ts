@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { spawnSync } from "node:child_process";
@@ -7,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runForever, SweepEngine, type LoopDeps } from "../loop.js";
-import { workKey } from "../state/derive.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
@@ -20,6 +18,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * Observed through the loop's log callback and the built CLI; `status` and the
@@ -306,7 +305,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
 
     // The claim is the event that moves the work out of the pool and reserves it.
     await Promise.all(engine.fillSlots());
-    assert.ok(logs.some((line) => line.includes(`claiming ${workKey({ repo: REPO, number: 1 })}`)));
+    assert.ok(logs.some((line) => line.includes(`claiming ${`${REPO}#1`}`)));
 
     await engine.deriveAndAct();
     assert.equal(summaries(logs).length, 1, "the claim already registered the change");

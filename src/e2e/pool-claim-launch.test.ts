@@ -1,5 +1,4 @@
 import { issueRefOf } from "../tracker/identity.js";
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -18,6 +17,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 12: pool, claim and launch up to the outcome with PR.

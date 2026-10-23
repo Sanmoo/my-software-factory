@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -22,6 +21,7 @@ import {
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";

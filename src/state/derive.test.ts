@@ -71,6 +71,18 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     );
   });
 
+  test("equal createdAt keep GitHub's historical repo-then-number order (#2 before #10)", async () => {
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 10, labels: [DEFAULT_LABELS.ready], createdAt: "2026-01-01T00:00:00Z" });
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 2, labels: [DEFAULT_LABELS.ready], createdAt: "2026-01-01T00:00:00Z" });
+
+    const pool = await derivePool(adapter, ["Sanmoo/a"], DEFAULT_LABELS);
+
+    assert.deepEqual(
+      pool.map((entry) => issueRefOf(entry.work.ticket).number),
+      [2, 10],
+    );
+  });
+
   test("an issue without the ready label is not in the pool", async () => {
     seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: ["other"] });
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);

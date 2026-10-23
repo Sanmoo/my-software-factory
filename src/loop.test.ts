@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "./git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -12,6 +11,7 @@ import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "./git/port.js";
 import type { IssueRef } from "./tracker/port.js";
+import { expandedGitWorkOf } from "./e2e/legacy-git.js";
 
 /**
  * The loop uses the git host as its launch seam (ticket 15): every launch

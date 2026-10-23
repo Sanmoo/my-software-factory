@@ -1,14 +1,13 @@
-import type { ExpandedGitWork, GitWork } from "./port.js";
+import type { ExpandedGitWork, GitWork } from "../git/port.js";
 import { issueRefOf } from "../tracker/identity.js";
 
 /**
- * TRANSITIONAL bridge (issue 126): the expanded {@link ExpandedGitWork} over
- * a git host that still speaks the legacy `IssueRef` shape. The migrated
- * orchestration calls the expanded methods; existing test doubles (and any
- * consumer not migrated yet) keep implementing the legacy ones. Every call
- * forwards dynamically, so an overridden legacy method stays the seam the
- * test controls. A non-GitHub Work has no legacy ref and is refused here —
- * the production git host implements the expanded port natively.
+ * TEST SUPPORT (issue 126): the expanded {@link ExpandedGitWork} over a test
+ * double that still speaks the legacy `IssueRef` shape. The migrated
+ * orchestration calls the expanded methods; the existing e2e fakes keep their
+ * legacy seams. Every call forwards dynamically, so a fake's overridden legacy
+ * method stays the seam the test controls. The production git host implements
+ * the expanded port natively and never uses this bridge.
  */
 export function expandedGitWorkOf(legacy: GitWork): ExpandedGitWork {
   return {

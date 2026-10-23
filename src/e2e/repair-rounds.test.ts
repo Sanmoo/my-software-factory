@@ -1,5 +1,4 @@
 import { issueRefOf } from "../tracker/identity.js";
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -20,6 +19,7 @@ import {
   type Config,
 } from "../config.js";
 import { readRepairCycle } from "../pool/repair.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of issue 107: an open PR with confirmed conflicts or a required

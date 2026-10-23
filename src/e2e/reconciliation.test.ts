@@ -1,5 +1,4 @@
 import { issueRefOf } from "../tracker/identity.js";
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -19,6 +18,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of issue 100 at the sweep seam, with real disk: the tracker's
