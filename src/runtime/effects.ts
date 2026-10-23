@@ -168,20 +168,34 @@ function scanShell(text: string): ShellScan {
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index]!;
     const next = text[index + 1];
+    // Inside single quotes NOTHING is special, not even a backslash.
     if (quote === "'") {
       if (char === "'") quote = null;
       continue;
     }
+    // Outside single quotes a backslash escapes the next character (inside
+    // `""` too), so it never closes a quote.
     if (char === "\\") {
       index += 1;
       continue;
     }
+    // Inside `""` only `$` and a backtick expand: `|`, `>` and `(` are text
+    // there, so a comment body like "a | b" stays one literal argument.
+    if (quote === '"') {
+      if (char === '"') quote = null;
+      else if (char === "`") scan.substitution = true;
+      else if (char === "$") {
+        if (next === "(") scan.substitution = true;
+        else scan.expansion = true;
+      }
+      continue;
+    }
     if (char === "'") {
-      quote = quote === '"' ? quote : "'";
+      quote = "'";
       continue;
     }
     if (char === '"') {
-      quote = quote === '"' ? null : '"';
+      quote = '"';
       continue;
     }
     if (char === "`") {
