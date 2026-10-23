@@ -38,9 +38,9 @@ export interface DeterministicModelOptions {
 
 export const COMPLETION = "<promise>MSF-RESULT</promise>";
 
-/** The sentence the factory's prompt uses when it reopens the attempt's own
- *  session (src/runtime/prompt.ts). */
-const RESUME_MARKER = "CONTINUES the interrupted attempt";
+/** The heading the factory's prompt uses when it reopens the attempt's own
+ *  session (src/runtime/prompt.ts): `## This session CONTINUES attempt <n>`. */
+const RESUME_MARKER = "This session CONTINUES attempt";
 
 export async function startDeterministicModel(options: DeterministicModelOptions): Promise<DeterministicModel> {
   const requests: DeterministicModel["requests"] = [];

@@ -23,7 +23,6 @@ import {
   GUARDRAIL_CONTAINER_FILE,
   defaultPreflight,
   dockerSocketFromHost,
-  latestPiSessionId,
   unixSocketPath,
   workerShapedDockerRun,
 } from "./sandcastle.js";
@@ -1057,33 +1056,69 @@ describe("sandcastle runtime — the requested stop and the native session resum
     });
   }
 
-  test("a resume reopens the latest Pi session of the attempt; a new attempt starts fresh", async () => {
+  test("a resume reopens the session the attempt's OWN association records; a new execution is born with its id", async () => {
+    // Two sessions of the attempt's history and one of another work sit in the
+    // same dir: the newest file is NOT the selection rule (issue 119).
     const sessionsDir = join(workDir, "sessao", "--sandbox-cwd--");
     mkdirSync(sessionsDir, { recursive: true });
-    const older = join(sessionsDir, "2026-01-01T00-00-00-000Z_11111111-1111-1111-1111-111111111111.jsonl");
-    const newer = join(sessionsDir, "2026-01-02T00-00-00-000Z_22222222-2222-2222-2222-222222222222.jsonl");
-    const session = (id: string) => `${JSON.stringify({ type: "session", id })}\n`;
-    writeFileSync(older, session("11111111-1111-1111-1111-111111111111"), "utf8");
-    writeFileSync(newer, session("22222222-2222-2222-2222-222222222222"), "utf8");
+    const recorded = "22222222-2222-2222-2222-222222222222";
+    const session = (id: string, dir = sessionsDir, name = `2026-01-01T00-00-00-000Z_${id}.jsonl`): void => {
+      writeFileSync(join(dir, name), `${JSON.stringify({ type: "session", id })}\n`, "utf8");
+    };
+    session("11111111-1111-1111-1111-111111111111", sessionsDir, "2026-01-01T00-00-00-000Z_11111111-1111-1111-1111-111111111111.jsonl");
+    session(recorded, sessionsDir, "2025-12-01T00-00-00-000Z_22222222-2222-2222-2222-222222222222.jsonl");
+    // A NEWER session of another work: never this attempt's to reopen.
+    const other = join(workDir, "sessao", "--other-work--");
+    mkdirSync(other, { recursive: true });
+    session("33333333-3333-3333-3333-333333333333", other, "2026-02-01T00-00-00-000Z_33333333-3333-3333-3333-333333333333.jsonl");
 
-    assert.equal(await latestPiSessionId(join(workDir, "sessao")), "22222222-2222-2222-2222-222222222222");
-
-    await makeRuntime().launch({ ...request, resume: true });
+    await makeRuntime().launch({ ...request, session: { mode: "resume", sessionId: recorded } });
     assert.equal(
       captured()?.resumeSession,
-      "22222222-2222-2222-2222-222222222222",
-      "the resumed attempt reopens its native session (ADR 0005)",
+      recorded,
+      "the resumed attempt reopens the session its association names, not the newest file (ADR 0005)",
+    );
+    assert.equal(
+      (captured()?.prompt as string).includes("This session CONTINUES attempt 1"),
+      true,
+      "the prompt matches the continuation the runtime really does",
     );
 
+    // A NEW session is not a resume: it is born with the id the factory
+    // recorded before the launch, so a later recovery picks exactly it.
     runOptions = undefined;
-    await makeRuntime().launch(request);
-    assert.equal(captured()?.resumeSession, undefined, "a fresh attempt never resumes another session");
+    const fresh = "44444444-4444-4444-4444-444444444444";
+    await makeRuntime().launch({ ...request, session: { mode: "new", sessionId: fresh } });
+    assert.equal(captured()?.resumeSession, undefined, "a new execution never resumes another session");
+    const agent = captured()?.agent as unknown as {
+      buildPrintCommand(options: { prompt: string }): { command: string };
+    };
+    assert.ok(
+      agent.buildPrintCommand({ prompt: "p" }).command.includes(`--session-id ${fresh}`),
+      "the new session carries the id the factory already associated",
+    );
+    assert.equal(
+      (captured()?.prompt as string).includes("This session CONTINUES"),
+      false,
+      "a new execution is never told it continues",
+    );
   });
 
-  test("an attempt with no session file to resume starts a fresh one instead of inventing continuity", async () => {
-    await makeRuntime().launch({ ...request, resume: true });
+  test("a caller with no session selection gets Pi's own fresh session — nothing is invented from the disk", async () => {
+    // The port's contract: only a direct caller (no factory, no recovery) may
+    // omit the selection. The runtime then starts fresh: it never guesses a
+    // session by mtime, and the prompt never claims continuity.
+    const sessionsDir = join(workDir, "sessao", "--sandbox-cwd--");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, "2026-01-01T00-00-00-000Z_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl"),
+      `${JSON.stringify({ type: "session", id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })}\n`,
+      "utf8",
+    );
+
+    await makeRuntime().launch(request);
     assert.equal(captured()?.resumeSession, undefined);
-    assert.equal(await latestPiSessionId(join(workDir, "sessao")), undefined);
+    assert.equal((captured()?.prompt as string).includes("This session CONTINUES"), false);
   });
 
   test("a requested stop aborts the in-flight run and the launch promise settles with its aftermath", async () => {

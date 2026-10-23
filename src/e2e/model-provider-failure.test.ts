@@ -23,6 +23,7 @@ import {
 } from "../config.js";
 import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
+import { seedSession } from "./session-fixtures.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
@@ -163,9 +164,9 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       "every retry continues the SAME attempt",
     );
     assert.deepEqual(
-      result.launched.map((launch) => launch.request.resume === true),
-      [false, true, true],
-      "the claim starts a fresh session; each retry reopens the attempt's native one (ADR 0005)",
+      result.launched.map((launch) => launch.request.session?.mode),
+      ["new", "resume", "resume"],
+      "the claim starts a fresh session; each retry reopens the attempt's own one (ADR 0005)",
     );
     assert.equal(result.collected.at(-1)?.ruling.decision, "reserve", "the third session opened the PR");
 
@@ -347,6 +348,9 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
         },
       }),
     });
+    // The attempt's own Pi session exists and is associated (issue 119): a
+    // relaunch of the same attempt continues it instead of pausing for help.
+    seedSession(wd, { repo: REPO, number: 1 }, 1);
     // A retry was already granted before the factory died (the persisted
     // counter of an earlier failure of the same attempt).
     await settleModelProviderFailure(
