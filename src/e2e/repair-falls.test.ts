@@ -858,6 +858,153 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked));
   });
 
+  // ---- issue 149: the impediment the round addressed may vanish mid-round ----
+
+  test("a round that ends without publishing after the human resolved the conflict returns the round — no block, no help", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 120);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    const round = await runOnce(deps);
+    assert.equal(round.launched.length, 1, "the confirmed conflict opens a repair round");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 120))).usedRounds, 1, "the round is charged");
+    const commentsBefore = await tracker.readComments({ repo: REPO, number: 120 });
+    assert.ok(commentsBefore.known);
+
+    // While the round ran, the operator resolved the conflict and pushed the
+    // resolution: the PR is mergeable on a head the attempt never produced.
+    const resolved = "effc1b3c";
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: resolved,
+      mergeState: "mergeable",
+      requiredChecks: [],
+    });
+    git.remoteHead = resolved;
+    git.localWork = { headSha: OBSERVED, commits: 0, uncommitted: false, operationInProgress: null };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "the obsolete premise opens no worker");
+    assert.ok(
+      sweep.reserved.some((decision) => decision.ref.number === 120 && decision.state === "repair-recovered"),
+      "the mergeable PR is a confirmed recovery",
+    );
+    assert.ok(
+      logs.some((line) => line.includes("premise is obsolete") && line.includes("the round returns")),
+      "the log names the obsolete premise and the returned round",
+    );
+    assert.ok(
+      !logs.some((line) => line.includes("a human is asked")),
+      "no help is asked for work that no longer needs it",
+    );
+
+    const issue = await tracker.readIssue({ repo: REPO, number: 120 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "the work is not blocked");
+    const comments = await tracker.readComments({ repo: REPO, number: 120 });
+    assert.ok(comments.known);
+    assert.equal(comments.value.length, commentsBefore.value.length, "nothing is posted on the issue");
+
+    const cycle = await readRepairCycle(workDir(layout, REPO, 120));
+    assert.equal(cycle.usedRounds, 0, "the round is returned");
+    assert.equal(cycle.consecutiveFalls, 0, "a vanished premise is not a fall");
+  });
+
+  test("a lease refused for a PR whose conflict was resolved returns the round instead of asking for help", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 121);
+    // The fallen attempt is settled on disk: its round returned, one fall
+    // counted, the remote still where it was observed.
+    const cycle: RepairCycle = {
+      usedRounds: 0,
+      lastEvidence: signatureOf(121, OBSERVED),
+      consecutiveFalls: 1,
+      attempt: {
+        evidence: signatureOf(121, OBSERVED),
+        attempt: 2,
+        observedHeadSha: OBSERVED,
+        remoteHeadSha: OBSERVED,
+        publication: "not-published",
+        localWork: { headSha: "local121", commits: 1, uncommitted: false, operationInProgress: null },
+      },
+    };
+    seedFallenLegacyRound(121, cycle, 2);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+    git.localWork = { headSha: "local121", commits: 1, uncommitted: false, operationInProgress: null };
+
+    // Between the derivation and the launch the operator pushes the resolution:
+    // the remote moves and the PR becomes mergeable on the new head.
+    const resolved = "7c9d0fe";
+    const prepare = git.prepareWork.bind(git);
+    git.prepareWork = async (ref: IssueRef) => {
+      tracker.setPrRepairFacts({
+        repo: REPO,
+        prNumber: pr,
+        headSha: resolved,
+        mergeState: "mergeable",
+        requiredChecks: [],
+      });
+      git.remoteHead = resolved;
+      return prepare(ref);
+    };
+
+    const refused = await runOnce(deps);
+    assert.equal(refused.launched.length, 0, "the round is not opened on a vanished impediment");
+    assert.equal(runtime.launched.length, 1, "only attempt 1 ever ran — no repair session started");
+    assert.ok(
+      logs.some((line) => line.includes("not opened") && line.includes("premise is obsolete")),
+      "the log names the obsolete premise instead of a concurrent change",
+    );
+    const settled = await readRepairCycle(workDir(layout, REPO, 121));
+    assert.equal(
+      settled.attempt?.publication,
+      "not-published",
+      "the settled attempt is not re-marked as a concurrent change",
+    );
+    const issue = await tracker.readIssue({ repo: REPO, number: 121 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no help request");
+
+    // The next sweep reads the mergeable PR and closes the repair cycle.
+    const next = await runOnce(deps);
+    assert.equal(next.launched.length, 0);
+    assert.ok(
+      next.reserved.some((decision) => decision.ref.number === 121 && decision.state === "repair-recovered"),
+      "the mergeable PR is a confirmed recovery",
+    );
+    const after = await readRepairCycle(workDir(layout, REPO, 121));
+    assert.equal(after.usedRounds, 0);
+    assert.equal(after.consecutiveFalls, 0, "the vanished premise clears the fall streak");
+  });
+
+  test("a PR merged before the round ended is done immediately — never a repair block", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 122);
+    seedFallenLegacyRound(122);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+    git.localWork = { headSha: "local122", commits: 1, uncommitted: false, operationInProgress: null };
+
+    // The human merged the PR while the round was in flight.
+    tracker.closePr({ repo: REPO, prNumber: pr }, { merged: true });
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 0, "a merged PR opens no worker");
+    assert.ok(
+      sweep.reserved.some((decision) => decision.ref.number === 122 && decision.state === "done-fallback"),
+      "the merged PR is delivery: done, not a repair state",
+    );
+    const issue = await tracker.readIssue({ repo: REPO, number: 122 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no help request for delivered work");
+    const comments = await tracker.readComments({ repo: REPO, number: 122 });
+    assert.ok(comments.known);
+    assert.ok(
+      !comments.value.some((comment) => comment.body.includes("automatic repair stopped")),
+      "no repair diagnosis is posted",
+    );
+  });
+
   test("the forward path is untouched: a published round from the start behaves as before", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 109);

@@ -23,6 +23,7 @@ import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
   deriveReserved,
+  repairPremise,
   repairSignature,
   workKey,
   renderUnbackedClaim,
@@ -66,6 +67,7 @@ import {
   type RemoteObservation,
   type RepairAttempt,
   type RepairCycle,
+  type RepairPremise,
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
@@ -1101,6 +1103,27 @@ export class SweepEngine {
     let baseBranch = prepared.baseBranch;
     if (repair !== undefined) {
       baseBranch = repair.trigger.facts.baseBranch;
+      // The facts are re-read before the round spends work (issue 149): the
+      // impediment that opened it may have been resolved meanwhile — by a
+      // human pushing the resolution, by a base advance. Only a confirmed
+      // premise buys a session; an obsolete one returns the round unspent,
+      // and an unconfirmed one waits for the next derivation instead of
+      // paying for stale evidence.
+      const premise = await this.readRepairPremise(ref);
+      if (premise === "obsolete") {
+        this.log(
+          `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
+            `(the premise is obsolete) — no round is spent`,
+        );
+        return null;
+      }
+      if (premise === "unknown") {
+        this.log(
+          `repair round for ${key} not opened: the PR's facts could not be re-read — ` +
+            "nothing is spent and the next sweep re-derives",
+        );
+        return null;
+      }
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
         this.log(
@@ -1289,7 +1312,12 @@ export class SweepEngine {
       }
 
       const remote = await this.observeRemote(work.ref);
-      const decision = reconcileRepairAttempt({ cycle, remote, localWork });
+      // The premise is part of the verdict (issue 149): a remote the attempt
+      // did not produce is a concurrent change ONLY while the impediment the
+      // round addressed still exists — a human's own resolution is never
+      // taken for a reason to ask for help.
+      const premise = await this.readRepairPremise(work.ref);
+      const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
       this.logReconciliation(key, decision);
@@ -1339,6 +1367,13 @@ export class SweepEngine {
             `local work preserved: ${renderLocalWork(attempt.localWork)}`,
         );
         return;
+      case "premise-obsolete":
+        this.log(
+          `repair attempt ${attempt.attempt} of ${key}: the impediment it was launched for no longer exists ` +
+            `(the premise is obsolete) — the round returns (${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS}) ` +
+            `with no fall counted; local work preserved: ${renderLocalWork(attempt.localWork)}`,
+        );
+        return;
       case "concurrent-change":
         this.log(
           `repair attempt ${attempt.attempt} of ${key}: the remote branch ` +
@@ -1376,6 +1411,13 @@ export class SweepEngine {
     } catch {
       return null;
     }
+  }
+
+  /** The repair premise, re-read from the PR's facts; a failed read is
+   *  "unknown", never an invented clean bill (issue 149). */
+  private async readRepairPremise(ref: IssueRef): Promise<RepairPremise> {
+    const facts = await this.deps.tracker.readPrRepairFacts(ref);
+    return repairPremise(facts.known ? facts.value : null);
   }
 
   /** The remote head now, or the honest uncertainty (an unreadable remote is

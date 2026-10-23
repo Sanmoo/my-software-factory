@@ -601,6 +601,40 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     assert.equal((await runOnce(deps)).launched.length, 1, "a new cycle after recovery");
   });
 
+  test("a mergeable PR with no required checks declared is a confirmed recovery (issue 149)", async () => {
+    const config = makeConfig();
+    const { tracker, runtime, git, deps } = makeFactory(config);
+    const pr = await seedOpenPr(tracker, runtime, deps, 20);
+
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "head-n",
+      mergeState: "conflicting",
+      requiredChecks: [],
+    });
+    git.remoteHead = "head-n";
+    assert.equal((await runOnce(deps)).launched.length, 1, "round 1");
+
+    // The conflict is gone and the repository declares no required check at
+    // all: the empty set is a known set, so the recovery is confirmed.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: "head-n-fixed",
+      mergeState: "mergeable",
+      requiredChecks: [],
+    });
+    git.remoteHead = "head-n-fixed";
+    const recovered = await runOnce(deps);
+    assert.equal(recovered.launched.length, 0, "recovery launches nothing");
+    assert.ok(
+      recovered.reserved.some((decision) => decision.ref.number === 20 && decision.state === "repair-recovered"),
+      "no required checks declared is a confirmed recovery, never unknown",
+    );
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 20))).usedRounds, 0, "the round is returned");
+  });
+
   test("a human answer on the blocked issue resets the repair budget", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);

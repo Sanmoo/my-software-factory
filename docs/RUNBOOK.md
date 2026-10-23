@@ -132,7 +132,8 @@ round is an interruption: the SAME attempt is recovered after the configured
 backoff; a written failure still releases the work to the pool, its 2nd
 consecutive one blocks it, and an exhausted budget pauses it and asks for help;
 a PR waiting for you stays parked; a merge you already did becomes done →
-archive). A repair fall resumes on the same branch and PR (see GLOSSARY.md).
+archive). A repair fall resumes on the same branch and PR (see GLOSSARY.md); a round
+whose impediment vanished returns unspent, with no block and no help request.
 
 A surviving worker keeps its work and its slot; when it ends, the factory
 reconciles the result on its own. If Docker stops answering, launches pause and
