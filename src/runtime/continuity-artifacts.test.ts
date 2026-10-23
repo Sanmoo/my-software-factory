@@ -90,7 +90,7 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(pauseWaits(readable, 3), false, "an older attempt's pause is history");
   });
 
-  test("rewriting an unreadable pause moves the original aside instead of overwriting it", () => {
+  test("rewriting an unreadable pause copies the original aside instead of overwriting it", () => {
     writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
     writePause(dir, {
       version: 1,

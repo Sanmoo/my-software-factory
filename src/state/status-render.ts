@@ -9,6 +9,7 @@ import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
+import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
@@ -181,7 +182,8 @@ function renderRunning(worker: RunningWorker): string {
  *  fabricated `attempt 0`.
  */
 function renderContinuityPause(entry: ContinuityPauseEntry): string {
-  const attempt = entry.pause.attempt >= 1 ? `attempt ${entry.pause.attempt}` : "attempt unknown";
+  const known = knownAttempt(entry.pause.attempt);
+  const attempt = known === null ? "attempt unknown" : `attempt ${known}`;
   return `${entry.key} (${attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
 }
 

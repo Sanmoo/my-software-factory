@@ -339,15 +339,25 @@ export function readPause(workDir: string): PauseRecord | null {
     work: { repo: "", number: 0 },
     attempt: 0,
     reason: "record-unreadable",
-    detail: `the pause record at ${PAUSE_FILENAME} could not be read; its original is preserved beside it`,
+    detail:
+      `the pause record at ${PAUSE_FILENAME} could not be read when the factory looked; ` +
+      `its original is preserved beside it as ${PAUSE_FILENAME}.unreadable`,
     at: "",
   };
 }
 
 /** Does a pause wait for the current attempt? A record whose own attempt is
- *  unreadable matches any attempt: the doubt is not resolved by guessing one. */
+ *  unreadable (0) matches any attempt: the doubt is not resolved by guessing
+ *  one. Once the factory has rewritten it with the attempt it knows, the
+ *  ordinary rule applies — a pause of an older attempt is history. */
 export function pauseWaits(pause: PauseRecord, attempt: number): boolean {
-  return pause.reason === "record-unreadable" || pause.attempt === attempt;
+  return pause.attempt < 1 || pause.attempt === attempt;
+}
+
+/** The attempt an operator should be told about, or null when the record never
+ *  named one — the callers then say so instead of printing `attempt 0`. */
+export function knownAttempt(attempt: number): number | null {
+  return attempt >= 1 ? attempt : null;
 }
 
 function readValidPause(workDir: string): PauseRecord | null {
