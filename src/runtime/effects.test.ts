@@ -37,6 +37,15 @@ describe("the external-effect classifier (issue 119)", () => {
       "sort -o out f",
       "tar -xzf a.tar -C dist",
       "git show refs/heads/agent-issue-7",
+      // Git's own revision syntax is not a home reference: `~` is the home dir
+      // only as a PREFIX. Refusing `HEAD~1` paused legitimate recoveries.
+      "git diff HEAD~1",
+      "git show HEAD~2:src/x.ts",
+      "git reset --hard HEAD~1",
+      "git log HEAD~3..HEAD",
+      "git tag v1~2",
+      // Inside single quotes the shell expands nothing, so this is literal text.
+      "git commit -m 'fix $PATH note'",
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -124,6 +133,8 @@ describe("the external-effect classifier (issue 119)", () => {
       "git clone x /tmp/dest",
       "git apply --directory=/tmp",
       "git config --global user.name x",
+      // A short flag can carry a `..` with no slash at all (`-C..`).
+      "tar -C.. -xf a.tar",
       // A local writer is safe only inside the worktree: an absolute path
       // reaches the host, where nothing reconciles the effect.
       "cp a /tmp/b",
@@ -177,9 +188,15 @@ describe("the external-effect classifier (issue 119)", () => {
     }
   });
 
-  test("command substitution and pipelines hide any effect", () => {
+  test("command, process substitution and pipelines hide any effect", () => {
     assert.equal(classifyCommand("echo $(git push)").safety, "unknown");
     assert.equal(classifyCommand("git push 2>&1 | tee log").safety, "unknown");
+    // `<(…)`/`>(…)` run a command too, and its text is not this call's.
+    assert.equal(classifyCommand("diff <(git push origin x) f").safety, "unknown");
+    assert.equal(classifyCommand("diff >(x) f").safety, "unknown");
+    // An expansion OUTSIDE single quotes names a value the classifier cannot
+    // see, even when the program itself is on the safe list.
+    assert.equal(classifyCommand('git commit -m "cost $5 "').safety, "unknown");
   });
 
   test("one unknown segment makes the whole compound command unknown", () => {

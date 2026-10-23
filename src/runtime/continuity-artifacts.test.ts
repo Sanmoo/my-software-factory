@@ -11,6 +11,8 @@ import {
   appendJournalStart,
   appendSessionLink,
   clearPause,
+  linkForAttempt,
+  nextRound,
   pauseWaits,
   readEffectJournal,
   readPause,
@@ -117,12 +119,15 @@ describe("the continuity artifacts (issue 119)", () => {
     appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, mode: "new", sessionId: "a1", at: "" });
     appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 1, mode: "new", sessionId: "b1", at: "" });
     appendSessionLink(dir, { version: 1, work: { repo: REF.repo, number: 8 }, attempt: 2, round: 1, mode: "new", sessionId: "other-work", at: "" });
+    // The LAST round of the attempt is the one a recovery continues; the newest
+    // line on disk belongs to another work and is never chosen.
+    appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 2, mode: "resume", sessionId: "b2", at: "" });
     const links = readSessionLinks(dir);
     assert.equal(links.intact, true);
-    assert.deepEqual(
-      links.links.map((link) => link.sessionId),
-      ["a1", "b1", "other-work"],
-    );
+    assert.equal(linkForAttempt(links.links, REF, 2)?.sessionId, "b2");
+    assert.equal(linkForAttempt(links.links, REF, 1)?.sessionId, "a1");
+    assert.equal(linkForAttempt(links.links, REF, 3), null, "no association, no guess");
+    assert.equal(nextRound(links.links, REF, 2), 3, "the next launch of attempt 2 is round 3");
   });
 
   test("an unparseable association line marks the journal not intact", () => {

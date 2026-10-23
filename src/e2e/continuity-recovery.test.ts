@@ -270,6 +270,10 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     const comments = await agentComments(7);
     assert.equal(comments.length, 1, "the operator is asked once");
     assert.match(comments[0] ?? "", /keeps waiting instead of recovering/);
+    // The record could not name its attempt; the factory knows it by now and
+    // says so, instead of printing a fabricated "attempt 0".
+    assert.match(comments[0] ?? "", /attempt 1 cannot be continued safely/);
+    assert.doesNotMatch(comments[0] ?? "", /attempt 0/);
     assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true);
 
     // The record was rewritten as a real, announced pause: a restart asks nothing.

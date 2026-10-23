@@ -15,7 +15,7 @@
  * attempted. A corrupt journal is said so — never repaired into silence.
  */
 
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
@@ -126,6 +126,12 @@ const PAUSE_REASONS = [
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 const KNOWN_PAUSE_REASONS: ReadonlySet<string> = new Set(PAUSE_REASONS);
+
+/** The one narrowing used by every reader: a reason this version does not know
+ *  is not a reason (and the caller decides what doubt to report instead). */
+function isPauseReason(value: unknown): value is PauseReason {
+  return typeof value === "string" && KNOWN_PAUSE_REASONS.has(value);
+}
 
 export interface PauseRecord {
   version: 1;
@@ -298,10 +304,12 @@ export function readGuardrailState(workDir: string): GuardrailState | null {
 // ---- the persisted continuity pause ----
 
 export function writePause(workDir: string, pause: PauseRecord): void {
-  // The evidence outlives the record: a corrupt pause is moved aside, never
-  // overwritten, so the operator can still inspect what the factory read.
+  // The evidence outlives the record: a corrupt pause is COPIED aside, never
+  // moved and never overwritten. Copying (not renaming) matters: a death
+  // between two syscalls would otherwise leave no `pausa.json` at all, and the
+  // work would fall back to a recovery the record forbade.
   if (readValidPause(workDir) === null && existsSync(join(workDir, PAUSE_FILENAME))) {
-    renameSync(join(workDir, PAUSE_FILENAME), freePath(join(workDir, `${PAUSE_FILENAME}.unreadable`)));
+    copyFileSync(join(workDir, PAUSE_FILENAME), freePath(join(workDir, `${PAUSE_FILENAME}.unreadable`)));
   }
   writeAtomic(join(workDir, PAUSE_FILENAME), pause);
 }
@@ -352,8 +360,8 @@ function readValidPause(workDir: string): PauseRecord | null {
   // fact that a pause was asked for.
   if (record["version"] !== 1) return null;
   if (typeof record["attempt"] !== "number") return null;
+  if (!isPauseReason(record["reason"])) return null;
   const reason = record["reason"];
-  if (typeof reason !== "string" || !KNOWN_PAUSE_REASONS.has(reason)) return null;
   // `record-unreadable` is the one reason whose attempt is honestly unknown
   // (0). Every other pause must name the attempt it waits for.
   if (reason !== "record-unreadable" && record["attempt"] < 1) return null;
@@ -365,7 +373,7 @@ function readValidPause(workDir: string): PauseRecord | null {
     version: 1,
     work: { repo: workRecord["repo"], number: workRecord["number"] },
     attempt: record["attempt"],
-    reason: reason as PauseReason,
+    reason,
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
     at: typeof record["at"] === "string" ? record["at"] : "",
     ...(typeof record["sessionId"] === "string" ? { sessionId: record["sessionId"] } : {}),
