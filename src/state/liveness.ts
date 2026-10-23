@@ -16,11 +16,6 @@ import { parseWorkKey } from "../pool/registry.js";
  * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
  * the only part that touches the machine. Tests inject a fake probe, and the
  * shell itself takes a runner — never a CLI flag.
- *
- * The identity is the container's bind of a work dir under the works root,
- * never the configured worker image (issue 160): Docker resolves that image
- * reference to whichever image it points at NOW, so filtering by it silently
- * loses the workers launched before the reference moved.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -145,8 +140,9 @@ export interface DockerProbeOptions {
 /**
  * The real probe: the shell the pure parser sits in. `docker ps` supplies every
  * running container's bind sources, so a worker is found by its work mount
- * whatever image it was launched from; `docker inspect` supplies the start time
- * and the authoritative mounts.
+ * whatever image it was launched from — never by the configured worker image,
+ * whose reference Docker resolves to whichever image it points at NOW; `docker
+ * inspect` supplies the start time and the authoritative mounts.
  *
  * A container whose mounts the listing did not render is inspected too: the
  * listing never concludes an absence it never saw, so no attempt is presumed
@@ -189,7 +185,7 @@ export interface ScreenedListing {
  * the column alone — `docker inspect` decides every candidate's identity; the
  * column only spares the inspect of the containers it already places elsewhere.
  * It is searched whole — not split on its comma separator — so a source
- * containing a comma stays visible.
+ * containing a comma stays visible. Docker marks a truncated column with `…`.
  */
 export function screenWorkerContainers(psListing: string, worksRoot: string): ScreenedListing {
   const underRoot = worksRoot.endsWith(sep) ? worksRoot : `${worksRoot}${sep}`;

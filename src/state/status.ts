@@ -91,7 +91,7 @@ export interface StatusView {
  * The status derivation. The probe is the seam tests replace: production gets
  * the real read-only Docker probe over this workspace, and only a test passes
  * another one — never a CLI flag. The Docker shell's runner is the probe's own
- * seam (liveness.test.ts), not a second status seam.
+ * seam, not a second status seam.
  */
 export async function deriveStatus(
   tracker: TrackerPort,
