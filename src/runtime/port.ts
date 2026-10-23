@@ -62,10 +62,11 @@ export interface WorkRequest {
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;
   /**
-   * This session continues the Pi session of the attempt (issue #146): a
-   * recovery or a resume after the operator's requested stop reopens the
-   * native session on the host instead of starting one with reconstructed
-   * context. Absent on a fresh attempt.
+   * This session continues the SAME attempt (ADR 0005): every relaunch of an
+   * attempt — a recovery, a model provider retry, the resume after the
+   * operator's requested stop — reopens the attempt's native Pi session on the
+   * host instead of starting one with reconstructed context. Absent on a fresh
+   * attempt.
    */
   resume?: boolean;
 }
