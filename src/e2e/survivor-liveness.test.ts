@@ -117,12 +117,11 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
       ...overrides,
     };

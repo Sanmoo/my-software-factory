@@ -109,12 +109,11 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       concurrency: 2,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
     };
   }
@@ -1248,12 +1247,11 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
       concurrency: 1,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(root, "msf.yaml"),
     };
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });

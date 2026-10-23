@@ -367,6 +367,22 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /purely explanatory answer\) skips it/);
   });
 
+  test("the skills are the image-provisioned ones: explicit paths, no personal profile or project discovery (stories 4, 5)", () => {
+    assert.match(initial, /The factory image carries exactly the declared skills/);
+    assert.match(initial, /no personal Pi profile/);
+    assert.match(initial, /no discovery from the host or the target project/);
+    assert.match(initial, /\/home\/agent\/\.pi\/agent\/skills\/implement\/SKILL\.md/);
+    assert.match(initial, /\/home\/agent\/\.pi\/agent\/skills\/code-review\/SKILL\.md/);
+    assert.match(initial, /\/home\/agent\/\.pi\/agent\/skills\/tdd\/SKILL\.md/);
+    assert.doesNotMatch(initial, /~\/\.pi\/agent\/skills/);
+  });
+
+  test("the delegation extension's operating guidance is named before the first subagent call (stories 4, 5)", () => {
+    assert.match(initial, /delegation guidance at `\/home\/agent\/\.pi\/agent\/extensions\/node_modules\/pi-subagents\/skills\/pi-subagents\/SKILL\.md`/);
+    assert.match(initial, /registered reviewer agents are `code-reviewer` and `spec-reviewer`/);
+    assert.match(initial, /Delegation is\s+operator-authorized for this procedure/);
+  });
+
   test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded (stories 4, 5)", () => {
     assert.match(initial, /READ its SKILL\.md and EXECUTE its instructions/);
     assert.match(initial, /no tool named "Skill"/);
@@ -401,7 +417,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
   });
 
   test("a missing axis is a mandatory-capability failure: blocked, not silent self-review (story 16)", () => {
-    assert.match(initial, /if an axis CANNOT run — a skill file missing from the profile, the subagent tool failing —/);
+    assert.match(initial, /if an axis CANNOT run — a declared skill missing from the image, the subagent tool failing —/);
     assert.match(initial, /mandatory capability being absent: self-report blocked \(obligation 3\)/);
     assert.match(initial, /NEVER[\s\S]*silently replace the subagents with your own review/);
   });

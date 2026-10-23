@@ -257,7 +257,7 @@ function parseContainerIds(listing: string): string[] {
  * dir it binds — the runtime mounts <works>/<repo>#<n> at /msf-work and its
  * sessao/ dir at the agent's sessions path, so ANY mount resolving under the
  * works root names the work. Mounts outside the works root (the toolchain
- * volume, the profile snapshot) are not the work's identity.
+ * volume, an auth-file mount) are not the work's identity.
  *
  * The `ps` listing, not the inspect payload, says what is running now: the
  * inspect is intersected with it, so an inspect run that outlived its listing

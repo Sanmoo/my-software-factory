@@ -6,6 +6,10 @@ import { readFileSync } from "node:fs";
  * gateway and the TypeScript build both import this module.
  */
 function readWorkerImage() {
+  // An isolated checkout may keep its own tag apart from the shared default
+  // (the inventory, not the tag, is what proves the contents).
+  const override = process.env.MSF_WORKER_IMAGE?.trim() ?? "";
+  if (override !== "") return override;
   try {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     if (typeof pkg.workerImage !== "string") throw new Error("`workerImage` is missing or not a string");

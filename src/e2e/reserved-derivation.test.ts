@@ -101,12 +101,11 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
     };
   }

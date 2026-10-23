@@ -1,22 +1,29 @@
-# The factory's worker image (ticket 17). Adapted from the v1 runner image
-# (src/runtime/docker-image/Dockerfile, backup-old-factory history): Debian
-# trixie base, the agent user matching the host UID/GID so bind-mounted
-# artifacts keep the operator's ownership, and the same ENTRYPOINT Sandcastle's
-# own Pi template uses — the container stays alive and Sandcastle enters with
-# `docker exec`. Build with the host UID/GID:
+# The factory's worker image (ticket 17, issue #159). Adapted from the v1
+# runner image: Debian trixie base, the agent user matching the host UID/GID so
+# bind-mounted artifacts keep the operator's ownership, and the same ENTRYPOINT
+# Sandcastle's own Pi template uses — the container stays alive and Sandcastle
+# enters with `docker exec`. Build with the host UID/GID:
 #   npm run build:image
+#
+# The agent environment is provisioned HERE, from the factory's committed
+# declaration (agent-resources.json): Pi at its exact version, the selected
+# upstream skills at an immutable revision, the delegation extension at its
+# exact version with operating guidance, and the reviewer agents. The worker
+# starts with that set already present — no personal Pi profile, no startup
+# install, no discovery from the host or the target project.
 FROM node:22-trixie-slim
 
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 ARG PI_VERSION=1.3.0
 
-# git pushes the work branch; gh opens the PR, reads the issue and comments,
-# authenticated by GH_TOKEN (the worker account's token). ripgrep and fd are
-# the tools Pi probes for and downloads when they are missing: in the image, a
-# steady start downloads nothing (fd-find is Debian's package name and installs
-# `fdfind`; Pi probes for `fd`). jq is another probe. curl is only needed here,
-# for the GitHub CLI key, and is purged after.
+# git pushes the work branch and fetches the pinned skill revision during the
+# build; gh opens the PR, reads the issue and comments, authenticated by
+# GH_TOKEN (the worker account's token). ripgrep and fd are the tools Pi probes
+# for and downloads when they are missing: in the image, a steady start
+# downloads nothing (fd-find is Debian's package name and installs `fdfind`;
+# Pi probes for `fd`). jq is another probe. curl is only needed here, for the
+# GitHub CLI key, and is purged after.
 #
 # The docker CLI is the CLIENT only: the runtime binds the host's daemon socket
 # into the worker container (ADR 0003), so a worker builds the worker image and
@@ -40,7 +47,7 @@ RUN apt-get update \
  && apt-get purge -y curl gnupg && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # The agent user matches the host UID/GID. Every mount point the runtime binds
-# is created here, user-owned, so the binds and the profile copy land writable.
+# is created here, user-owned, so the binds land writable.
 RUN set -eux; \
   if getent passwd node >/dev/null; then userdel --remove node || true; fi; \
   if getent group node >/dev/null; then groupdel node || true; fi; \
@@ -53,8 +60,7 @@ RUN set -eux; \
   install -d -o agent -g agent \
     /home/agent/.pi/agent \
     /home/agent/.config \
-    /home/agent/.local/share/mise \
-    /home/agent/.pi/agent/npm; \
+    /home/agent/.local/share/mise; \
   printf 'export PATH="/home/agent/.local/share/mise/shims:$PATH"\n' >> /home/agent/.profile; \
   chown -R "${AGENT_UID}:${AGENT_GID}" /home/agent
 
@@ -71,8 +77,25 @@ RUN set -eux; \
 RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n[credential "https://gist.github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' > /home/agent/.gitconfig \
  && chown "${AGENT_UID}:${AGENT_GID}" /home/agent/.gitconfig
 
+# Pi at the exact declared version. The provisioning step below verifies the
+# installed version against the declaration and refuses a mismatch.
 RUN npm install --global --no-fund --no-audit "@earendil-works/pi-coding-agent@${PI_VERSION}" \
  && pi --version
+
+# The factory-owned agent resources. The script stages everything, validates
+# every declared skill/reference/version/digest, and swaps the destination in
+# only after all checks pass — an invalid or unavailable source fails the
+# build. The inventory records what THIS image actually contains, so the
+# runtime can compare it with the declaration of the MSF checkout.
+COPY scripts/agent-resources.mjs /opt/msf/scripts/agent-resources.mjs
+COPY docker/provision-agent.mjs /opt/msf/docker/provision-agent.mjs
+COPY agent-resources.json /opt/msf/agent-resources.json
+COPY agents /opt/msf/agents
+RUN node /opt/msf/docker/provision-agent.mjs \
+      --declaration /opt/msf/agent-resources.json \
+      --dest /home/agent/.pi/agent \
+      --inventory /opt/msf/agent-inventory.json \
+ && chown -R "${AGENT_UID}:${AGENT_GID}" /home/agent/.pi/agent
 
 ENV HOME=/home/agent
 

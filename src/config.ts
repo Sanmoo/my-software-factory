@@ -31,16 +31,6 @@ export const DEFAULT_LABELS: Labels = {
 };
 
 /**
- * The profile snapshot's allowed roots (ticket 18 wiring): EMPTY by default —
- * no root is pre-declared (no operator-personal path belongs in the product).
- * A profile with symlinks then fails the snapshot fail-closed, naming the
- * link and the config key that declares it: `profile-allowed-roots` names
- * the roots THIS operator's profile legitimately reaches (dotfiles,
- * .agents, omarchy… — whatever the machine actually has).
- */
-export const DEFAULT_PROFILE_ALLOWED_ROOTS: readonly string[] = [];
-
-/**
  * The recovery budget (issue 123): an interruption (an attempt that ended
  * with no outcome record) is not a failure, so it never consumes an attempt —
  * it spends this finite, persisted allowance instead. Values fixed by the
@@ -117,12 +107,11 @@ export interface Config {
   workspace: string;
   /** The 3-label vocabulary, configurable per project. */
   labels: Labels;
-  /** Roots the profile may reach through links (tilde-expanded); the
-   * profile's own real path is always allowed (ticket 17). */
-  profileAllowedRoots: string[];
-  /** Stale (dangling) profile links are skipped and logged instead of
-   * blocking the launch. Off by default — fail closed (ticket 17). */
-  profileSkipDanglingLinks: boolean;
+  /** An explicitly supplied Pi authentication file (auth.json). Its contents
+   * are never baked into the image and never read from a personal profile;
+   * model credentials may instead come from Pi's supported provider env vars
+   * (issue #159). */
+  workerAuthFile: string | null;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
   /** The model provider's failure budget: its own retries and backoff (issue 144). */
@@ -173,8 +162,7 @@ export function loadConfig(filePath: string): Config {
   const concurrency = optionalConcurrency(doc);
   const workspace = optionalWorkspace(doc);
   const labels = optionalLabels(doc);
-  const profileAllowedRoots = optionalProfileAllowedRoots(doc);
-  const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
+  const workerAuthFile = optionalWorkerAuthFile(doc);
   const recovery = optionalRecovery(doc);
   const modelProvider = optionalModelProvider(doc);
   const liveness = optionalLiveness(doc);
@@ -187,8 +175,7 @@ export function loadConfig(filePath: string): Config {
     concurrency,
     workspace,
     labels,
-    profileAllowedRoots,
-    profileSkipDanglingLinks,
+    workerAuthFile,
     recovery,
     modelProvider,
     liveness,
@@ -258,17 +245,15 @@ function optionalLabels(doc: Record<string, unknown>): Labels {
   };
 }
 
-function optionalProfileAllowedRoots(doc: Record<string, unknown>): string[] {
-  const value = doc["profile-allowed-roots"];
-  if (value === undefined) return DEFAULT_PROFILE_ALLOWED_ROOTS.map(expandTilde);
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new ConfigError(`config field "profile-allowed-roots" must be a list of path strings when given`);
+/** `worker-auth-file` is optional: absent means model credentials come from
+ *  Pi's supported provider environment variables. */
+function optionalWorkerAuthFile(doc: Record<string, unknown>): string | null {
+  const value = doc["worker-auth-file"];
+  if (value === undefined) return null;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ConfigError(`config field "worker-auth-file" must be a non-empty path when given`);
   }
-  return (value as string[]).map((item) => expandTilde(item.trim()));
-}
-
-function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean {
-  return optionalBoolean(doc, "profile-skip-dangling-links", false);
+  return expandTilde(value.trim());
 }
 
 function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {

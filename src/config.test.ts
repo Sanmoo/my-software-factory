@@ -148,49 +148,40 @@ describe("config", () => {
     assert.throws(() => loadConfig(path), /repos/);
   });
 
-  // ---- the profile-snapshot keys (ticket 18 wiring) ----
+  // ---- model authentication (issue #159) ----
 
-  test("profile-allowed-roots defaults to EMPTY — no operator-personal path in the product", () => {
+  test("worker-auth-file is optional: absent means provider environment variables", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
 
     const config = loadConfig(path);
 
-    // The default carries no root: a profile with symlinks then fails the
-    // snapshot fail-closed (ProfileSnapshotError naming the link and the
-    // "profile-allowed-roots" key) until THIS operator declares the roots
-    // the own machine's profile legitimately reaches.
-    assert.deepEqual(config.profileAllowedRoots, []);
-    assert.equal(config.profileSkipDanglingLinks, false, "fail closed by default");
+    assert.equal(config.workerAuthFile, null);
   });
 
-  test("profile-allowed-roots and profile-skip-dangling-links parse when given", () => {
+  test("worker-auth-file expands a leading tilde and accepts an absolute path", () => {
     const path = writeYaml(
       dir,
       [
         "worker-gh-account: bot",
         "worker-model: opencode-go/glm-5.3-flash",
         "repos: [Sanmoo/a]",
-        "profile-allowed-roots:",
-        "  - ~/meus-dotfiles",
-        "  - /abs/raiz",
-        "profile-skip-dangling-links: true",
+        "worker-auth-file: ~/.secrets/msf-auth.json",
       ].join("\n"),
     );
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.profileAllowedRoots, [join(homedir(), "meus-dotfiles"), "/abs/raiz"]);
-    assert.equal(config.profileSkipDanglingLinks, true);
+    assert.equal(config.workerAuthFile, join(homedir(), ".secrets/msf-auth.json"));
   });
 
-  test("profile-allowed-roots must be a list of strings when given", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-allowed-roots: 3\n");
-    assert.throws(() => loadConfig(path), /profile-allowed-roots/);
-  });
-
-  test("profile-skip-dangling-links must be a boolean when given", () => {
-    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nprofile-skip-dangling-links: yes-please\n");
-    assert.throws(() => loadConfig(path), /profile-skip-dangling-links/);
+  test("worker-auth-file must be a non-empty path when given", () => {
+    for (const bad of ["3", '""', "[]"]) {
+      const path = writeYaml(
+        dir,
+        `worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\nworker-auth-file: ${bad}\n`,
+      );
+      assert.throws(() => loadConfig(path), /worker-auth-file/, `rejected: ${bad}`);
+    }
   });
 
   // ---- the interruption-recovery budget (issue 123) ----

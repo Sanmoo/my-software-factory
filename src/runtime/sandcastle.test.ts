@@ -10,32 +10,39 @@ import type { DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
+import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
 import {
   SandcastleRuntime,
   SESSIONS_CONTAINER_DIR,
   AGENT_DIR_ENV,
+  AUTH_MOUNT,
+  AUTH_MOUNT_DIR,
   MISE_CONTAINER_DIR,
-  NPM_CONTAINER_DIR,
   SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
-  WORKER_FLAG_ARGS,
   GUARDRAIL_CONTAINER_FILE,
+  agentExtensionEntry,
+  agentGuidancePath,
+  agentSkillPath,
   defaultPreflight,
   dockerSocketFromHost,
+  latestPiSessionId,
+  stageAuthFile,
   unixSocketPath,
+  workerFlagArgs,
   workerShapedDockerRun,
 } from "./sandcastle.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
+import { loadAgentResources } from "./inventory.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
  * The Sandcastle runtime (ticket 17): the real launch behind the WorkerRuntime
  * port, tested with the container call MOCKED AT THE PROCESS BOUNDARY — the
- * `run()` seam plus the `docker()` provider seam. The mechanics (snapshot,
- * mounts, prompt, flags, env, network absence) are asserted on the options the
- * runtime hands over; the artifact contract (sessao/, log-<n>.jsonl,
+ * `run()` seam plus the `docker()` provider seam. The mechanics (mounts,
+ * prompt, flags, env, network absence) are asserted on the options the runtime
+ * hands over; the artifact contract (sessao/, log-<n>.jsonl,
  * desfecho.json) runs on real temp disk with the real runtime module driving
  * the fake container call. The real container proof is the gated e2e
  * (src/e2e/sandcastle-real.test.ts).
@@ -48,13 +55,60 @@ const MODEL = "opencode-go/glm-5.3-flash";
 const SOCKET = { hostPath: "/var/run/docker.sock", gid: 969 };
 const dockerSocket = () => SOCKET;
 
+const RESOURCES = loadAgentResources();
+
+/** The inventory a correctly provisioned image records for RESOURCES. */
+function inventoryJson(): string {
+  const { declaration } = RESOURCES;
+  return JSON.stringify({
+    schema: "msf-agent-inventory/v1",
+    declaration: { file: "agent-resources.json", sha256: RESOURCES.sha256 },
+    pi: declaration.pi,
+    skills: [
+      ...declaration.skills.selected.map((skill) => ({
+        name: skill.name,
+        origin: "git",
+        upstreamPath: skill.path,
+        revision: declaration.skills.revision,
+        path: `skills/${skill.name}`,
+        digest: "sha256:x",
+      })),
+      ...declaration.extensions.map((extension) => ({
+        name: extension.guidance.name,
+        origin: "npm",
+        upstreamPath: extension.guidance.path,
+        revision: extension.version,
+        path: `extensions/node_modules/${extension.package}/${extension.guidance.path}`,
+        digest: "sha256:x",
+      })),
+    ],
+    extensions: declaration.extensions.map((extension) => ({
+      package: extension.package,
+      version: extension.version,
+      license: extension.license,
+      path: `extensions/node_modules/${extension.package}`,
+      entry: extension.entry,
+      digest: "sha256:x",
+      dependencies: {},
+      guidance: { name: extension.guidance.name, path: "", digest: "sha256:x" },
+    })),
+    agents: declaration.agents.map((agent) => ({
+      name: agent.name,
+      source: `factory:${agent.path}`,
+      path: `agents/${agent.path.split("/").pop()}`,
+      digest: "sha256:x",
+    })),
+  });
+}
+
+const READY_PROBE = async () => ({ status: 0, stdout: '{"status":"ready","provider":"openai","authType":"api_key"}', stderr: "" });
+
 describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   let root: string;
-  let profileDir: string;
+  let authFile: string;
   let runOptions: RunOptions | undefined;
   let dockerOptions: DockerOptions | undefined;
   let piOptionsCaptured: PiOptions | undefined;
-  let snapshotSeen: { path: string; auth: string | null; hasSessions: boolean; hasSkills: boolean } | undefined;
   let runtime: SandcastleRuntime;
   let request: WorkRequest;
   let workspace: string;
@@ -62,10 +116,8 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "msf-sandcastle-"));
     workspace = join(root, "fabrica");
-    profileDir = join(root, "perfil");
-    mkdirSync(profileDir, { recursive: true });
-    writeFileSync(join(profileDir, "auth.json"), '{"tokens":{"x":1}}', "utf8");
-    writeFileSync(join(profileDir, "settings.json"), "{}", "utf8");
+    authFile = join(root, "auth.json");
+    writeFileSync(authFile, '{"openai":{"type":"api_key","key":"test-sentinel"}}', "utf8");
 
     request = {
       work: githubWork("Sanmoo/my-tasks", 42),
@@ -83,9 +135,10 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     runtime = new SandcastleRuntime({
       model: MODEL,
       token: "gh-token-for-the-container",
-      profileDir,
       workspace,
       dockerSocket,
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "test-sentinel" },
       blockedLabel: DEFAULT_LABELS.blocked,
       preflight: async () => {}, // the mechanics tests never touch docker
       runSandcastle: async (options) => {
@@ -94,21 +147,6 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
       },
       dockerProvider: (options) => {
         dockerOptions = options;
-        // The snapshot is only readable DURING the launch — the temp copy
-        // dies with it. Read what the container would see, right here.
-        const snapshotPath = options.mounts?.[0]?.hostPath;
-        if (snapshotPath !== undefined) {
-          snapshotSeen = {
-            path: snapshotPath,
-            auth: existsSync(join(snapshotPath, "auth.json"))
-              ? readFileSync(join(snapshotPath, "auth.json"), "utf8")
-              : null,
-            hasSessions: existsSync(join(snapshotPath, "sessions")),
-            hasSkills:
-              existsSync(join(snapshotPath, "skills", "implement", "SKILL.md")) &&
-              existsSync(join(snapshotPath, "skills", "code-review", "SKILL.md")),
-          };
-        }
         return dummySandbox();
       },
       piProvider: (model, options) => {
@@ -122,25 +160,22 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("the sandbox mounts: profile snapshot read-only, work dir read-write, sessions read-write, the two toolchain binds read-write, the daemon socket", () => {
-    return runtime.launch(request).then(() => {
-      const mounts = dockerOptions?.mounts ?? [];
-      assert.deepEqual(
-        mounts.map((mount: { sandboxPath: string; readonly?: boolean }) => [mount.sandboxPath, mount.readonly ?? false]),
-        [
-          [PROFILE_MOUNT, true],
-          [WORK_MOUNT, false],
-          [SESSIONS_CONTAINER_DIR, false],
-          [MISE_CONTAINER_DIR, false],
-          [NPM_CONTAINER_DIR, false],
-          [SOCKET.hostPath, false],
-        ],
-      );
-      assert.equal(mounts[1]?.hostPath, request.workDir);
-      assert.equal(mounts[2]?.hostPath, join(request.workDir, "sessao"));
-      assert.equal(mounts[5]?.hostPath, SOCKET.hostPath, "the socket rides its own host path — DOCKER_HOST names it");
-      assert.match(snapshotSeen?.path ?? "", /perfil/, "the profile mount is the snapshot, not the profile");
-    });
+  test("the sandbox mounts: work dir read-write, sessions read-write, the toolchain bind read-write, the daemon socket — nothing hides image resources", async () => {
+    await runtime.launch(request);
+
+    const mounts = dockerOptions?.mounts ?? [];
+    assert.deepEqual(
+      mounts.map((mount: { sandboxPath: string; readonly?: boolean }) => [mount.sandboxPath, mount.readonly ?? false]),
+      [
+        [WORK_MOUNT, false],
+        [SESSIONS_CONTAINER_DIR, false],
+        [MISE_CONTAINER_DIR, false],
+        [SOCKET.hostPath, false],
+      ],
+    );
+    assert.equal(mounts[0]?.hostPath, request.workDir);
+    assert.equal(mounts[1]?.hostPath, join(request.workDir, "sessao"));
+    assert.equal(mounts[3]?.hostPath, SOCKET.hostPath, "the socket rides its own host path — DOCKER_HOST names it");
   });
 
   test("the container inherits Docker: the socket's group as a supplementary gid and DOCKER_HOST naming the bind (ADR 0003)", async () => {
@@ -150,56 +185,31 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(dockerOptions?.env?.["DOCKER_HOST"], `unix://${SOCKET.hostPath}`);
   });
 
-  test("the toolchain binds are workspace-derived: the mise data dir and the agent npm tree on the host", async () => {
+  test("the toolchain bind is workspace-derived: the mise data dir on the host, nothing inside the agent dir", async () => {
     await runtime.launch(request);
 
     const mounts = dockerOptions?.mounts ?? [];
-    assert.equal(mounts[3]?.hostPath, join(workspace, TOOLCHAIN_SUBPATHS.mise));
-    assert.equal(mounts[4]?.hostPath, join(workspace, TOOLCHAIN_SUBPATHS.agentNpm));
-    assert.equal(mounts[3]?.sandboxPath, "/home/agent/.local/share/mise");
-    assert.equal(mounts[4]?.sandboxPath, "/home/agent/.pi/agent/npm");
+    assert.equal(mounts[2]?.hostPath, join(workspace, TOOLCHAIN_SUBPATHS.mise));
+    assert.equal(mounts[2]?.sandboxPath, "/home/agent/.local/share/mise");
+    assert.ok(
+      mounts.every(
+        (mount) =>
+          !mount.sandboxPath.startsWith("/home/agent/.pi/agent/skills") &&
+          !mount.sandboxPath.startsWith("/home/agent/.pi/agent/extensions"),
+      ),
+      "no bind can shadow the provisioned skills or extensions inside the agent dir",
+    );
   });
 
-  test("the toolchain host dirs are created idempotently at launch — pre-existing state is never clobbered", async () => {
+  test("the toolchain host dir is created idempotently at launch — pre-existing state is never clobbered", async () => {
     const miseDir = join(workspace, TOOLCHAIN_SUBPATHS.mise);
-    const npmDir = join(workspace, TOOLCHAIN_SUBPATHS.agentNpm);
     mkdirSync(miseDir, { recursive: true });
-    mkdirSync(npmDir, { recursive: true });
     writeFileSync(join(miseDir, "go"), "x", "utf8");
-    writeFileSync(join(npmDir, "some-package"), "x", "utf8");
 
     await runtime.launch(request);
     await runtime.launch(request); // a second launch reuses, never resets
 
     assert.ok(existsSync(join(miseDir, "go")), "the mise volume survives across launches");
-    assert.ok(existsSync(join(npmDir, "some-package")), "the npm volume survives across launches");
-  });
-
-  test("the profile mount holds the snapshot: real files in, sessions out, never the operator's own profile", async () => {
-    mkdirSync(join(profileDir, "sessions"), { recursive: true });
-    writeFileSync(join(profileDir, "sessions", "s.jsonl"), "{}\n", "utf8");
-
-    await runtime.launch(request);
-
-    assert.ok(snapshotSeen, "the profile was snapshotted");
-    assert.notEqual(snapshotSeen!.path, profileDir, "the container mounts a copy, never the real profile");
-    assert.equal(snapshotSeen!.auth, '{"tokens":{"x":1}}');
-    assert.equal(snapshotSeen!.hasSessions, false, "session storage never rides the snapshot");
-    assert.ok(!existsSync(snapshotSeen!.path), "the temp snapshot dies with the launch");
-  });
-
-  test("the worker's profile carries the operator's skills: /implement and /code-review reach the container (ticket 85)", async () => {
-    // The profile's skills are the SOURCE of the procedure (ticket 85): the
-    // container mounts a snapshot, so the skills must survive it — real
-    // files in, same paths out. The operator's global skills stay untouched.
-    mkdirSync(join(profileDir, "skills", "implement"), { recursive: true });
-    writeFileSync(join(profileDir, "skills", "implement", "SKILL.md"), "---\nname: implement\n---\nImplement.", "utf8");
-    mkdirSync(join(profileDir, "skills", "code-review"), { recursive: true });
-    writeFileSync(join(profileDir, "skills", "code-review", "SKILL.md"), "---\nname: code-review\n---\nReview.", "utf8");
-
-    await runtime.launch(request);
-
-    assert.equal(snapshotSeen?.hasSkills, true, "both SKILL.md files ride the snapshot into the container");
   });
 
   test("the worker's capability set: the pi-subagent tools ride the print command (ticket 85)", async () => {
@@ -216,7 +226,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.ok(command.includes("subagents_enable"), "the subagents tool is available to the worker");
   });
 
-  test("the agent is the Pi headless template in print mode with the proven closed flags (WORKER_FLAG_ARGS)", async () => {
+  test("the agent is the Pi headless template in print mode with the closed flags — every declared resource named", async () => {
     await runtime.launch(request);
 
     const agent = runOptions?.agent as unknown as {
@@ -227,18 +237,35 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     const command = agent.buildPrintCommand({ prompt: "p" }).command;
     assert.match(command, /^pi -p --mode json --model/);
     assert.ok(command.includes(MODEL), "the configured model rides the print command");
-    // the flags are single-sourced in WORKER_FLAG_ARGS — the test asserts
-    // the constant is what the print command actually carries, entry by entry
-    for (const flag of WORKER_FLAG_ARGS) {
+    for (const flag of workerFlagArgs(RESOURCES)) {
       assert.ok(command.includes(flag), `the print command carries ${flag}`);
     }
   });
 
-  test("the agent env points PI_CODING_AGENT_DIR at the writable copy — never a mount of the real profile", async () => {
+  test("discovery is off: no skills/extensions from the host or target project, no project trust", async () => {
+    await runtime.launch(request);
+
+    const command = (
+      runOptions?.agent as unknown as { buildPrintCommand(options: { prompt: string }): { command: string } }
+    ).buildPrintCommand({ prompt: "p" }).command;
+    for (const flag of ["--no-skills", "--no-extensions", "--no-approve", "--no-context-files", "--no-prompt-templates"]) {
+      assert.ok(command.includes(flag), `${flag} closes discovery`);
+    }
+    for (const skill of RESOURCES.declaration.skills.selected) {
+      assert.ok(command.includes(`--skill '${agentSkillPath(skill.name)}'`), `${skill.name} is loaded explicitly`);
+    }
+    for (const extension of RESOURCES.declaration.extensions) {
+      assert.ok(command.includes(`--skill '${agentGuidancePath(extension)}'`), `${extension.package} guidance is loaded`);
+      assert.ok(command.includes(`-e '${agentExtensionEntry(extension)}'`), `${extension.package} is loaded explicitly`);
+    }
+  });
+
+  test("the agent env points PI_CODING_AGENT_DIR at the image agent dir and forwards only the supplied auth env", async () => {
     await runtime.launch(request);
 
     const agent = runOptions?.agent as unknown as { env: Record<string, string> };
     assert.equal(agent.env[AGENT_DIR_ENV], "/home/agent/.pi/agent");
+    assert.equal(agent.env["OPENAI_API_KEY"], "test-sentinel");
   });
 
   test("GH_TOKEN rides the container env; no network option — Docker's default bridge", async () => {
@@ -269,22 +296,57 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(runOptions?.maxIterations, 1, "v0.1: one session, one full agent run");
   });
 
-  test("a sandbox-ready hook copies the read-only snapshot into the writable agent dir", async () => {
+  test("an explicitly supplied auth file is mounted read-only and copied into the agent dir at start — never baked in", async () => {
+    let authContent: string | undefined;
+    const withAuth = new SandcastleRuntime({
+      model: MODEL,
+      token: "gh-token-for-the-container",
+      workspace,
+      dockerSocket,
+      agentResources: RESOURCES,
+      authFile,
+      authEnv: {},
+      blockedLabel: DEFAULT_LABELS.blocked,
+      preflight: async () => {},
+      runSandcastle: async (options) => {
+        runOptions = options;
+        return emptyResult(request.branch);
+      },
+      dockerProvider: (options) => {
+        dockerOptions = options;
+        const mount = (options.mounts ?? []).find((candidate) => candidate.sandboxPath === AUTH_MOUNT_DIR);
+        if (mount !== undefined) authContent = readFileSync(join(mount.hostPath, "auth.json"), "utf8");
+        return dummySandbox();
+      },
+    });
+
+    await withAuth.launch(request);
+
+    const authMount = (dockerOptions?.mounts ?? []).find((mount) => mount.sandboxPath === AUTH_MOUNT_DIR);
+    assert.ok(authMount, "the auth dir is mounted read-only");
+    assert.equal(authMount?.readonly, true);
+    assert.match(authMount?.hostPath ?? "", /msf-auth-/);
+    assert.equal(authContent, readFileSync(authFile, "utf8"));
+    const hook = runOptions?.hooks?.sandbox?.onSandboxReady?.[0];
+    assert.ok(hook, "the auth copy runs first");
+    assert.ok(hook?.command.includes(AUTH_MOUNT));
+    assert.match(hook?.command ?? "", /\$HOME\/\.pi\/agent/);
+    assert.ok(!existsSync(authMount!.hostPath), "the staged auth dir dies with the launch");
+  });
+
+  test("without an auth file no auth mount is created — provider env vars are the other explicit source", async () => {
     await runtime.launch(request);
 
-    const hook = runOptions?.hooks?.sandbox?.onSandboxReady?.[0];
-    assert.ok(hook, "one setup hook");
-    assert.match(hook.command, new RegExp(`${PROFILE_MOUNT}`));
-    assert.match(hook.command, /\$HOME\/\.pi\/agent/);
-    assert.match(hook.command, /auth\.json/);
+    const mounts = dockerOptions?.mounts ?? [];
+    assert.ok(mounts.every((mount) => mount.sandboxPath !== AUTH_MOUNT_DIR));
   });
 
   test("the toolchain converges BEFORE the prompt: mise install lands the declared tools in the persistent volume", async () => {
     await runtime.launch(request);
 
     const hooks = runOptions?.hooks?.sandbox?.onSandboxReady ?? [];
-    assert.equal(hooks.length, 2, "profile copy, then the toolchain convergence");
-    const mise = hooks[1];
+    assert.equal(hooks.length, 1, "no auth file: only the toolchain convergence");
+    const mise = hooks[0];
     assert.ok(mise, "the convergence hook exists");
     assert.match(mise.command, /^mise install -y$/);
     assert.ok((mise.timeoutMs ?? 0) >= 10 * 60 * 1000, "a first install of many tools is slow — the launch waits");
@@ -302,7 +364,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(agent.captureSessions, false, "no implicit capture — the bind does the persistence");
     assert.deepEqual(piOptionsCaptured, {
       captureSessions: false,
-      env: { [AGENT_DIR_ENV]: "/home/agent/.pi/agent" },
+      env: { [AGENT_DIR_ENV]: "/home/agent/.pi/agent", OPENAI_API_KEY: "test-sentinel" },
       sessionStorage: { hostSessionsDir: join(request.workDir, "sessao") },
     });
   });
@@ -310,13 +372,10 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
 
 describe("sandcastle runtime — the artifact contract on real disk (ticket 13's)", () => {
   let root: string;
-  let profileDir: string;
   let request: WorkRequest;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "msf-sandcastle-disk-"));
-    profileDir = join(root, "perfil");
-    mkdirSync(profileDir, { recursive: true });
     request = {
       work: githubWork("Sanmoo/my-tasks", 42),
       workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
@@ -343,7 +402,8 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     return new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       dockerSocket,
       preflight: async () => {}, // offline: the contract tests never touch docker
@@ -372,7 +432,8 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const dying = new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       dockerSocket,
       preflight: async () => {}, // offline: the contract tests never touch docker
@@ -475,7 +536,8 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const emitting = new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       dockerSocket,
       preflight: async () => {},
@@ -515,7 +577,8 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       dockerSocket,
       preflight: async () => {
@@ -535,7 +598,8 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       dockerSocket: () => {
         throw new Error("the Docker daemon socket /var/run/docker.sock is missing");
@@ -551,14 +615,19 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
   });
 
-  test("the default preflight checks docker, the image, the token, the git credential helper and Docker inside the worker", async () => {
+  test("the default preflight checks Docker, the image inventory, the token, the git helper, Docker inside and the model auth", async () => {
     const checks: string[][] = [];
     const recorded = defaultPreflight({
       token: "present",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
       run: async (command, args) => {
         checks.push([command, ...args]);
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
         return { stdout: "29.7.2", stderr: "" };
       },
     });
@@ -566,6 +635,17 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.deepEqual(checks, [
       ["docker", "info", "--format", "{{.ServerVersion}}"],
       ["docker", "image", "inspect", WORKER_IMAGE],
+      [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "cat",
+        WORKER_IMAGE,
+        "/opt/msf/agent-inventory.json",
+      ],
       [
         "docker",
         "run",
@@ -650,7 +730,11 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = defaultPreflight({
       token: "",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
       run: async () => ({ stdout: "29.7.2", stderr: "" }),
     });
     await assert.rejects(failing, /token/);
@@ -663,9 +747,15 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = defaultPreflight({
       token: "present",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
-      run: async (_command, args) =>
-        args[0] === "run" ? { stdout: "", stderr: "" } : { stdout: "ok", stderr: "" },
+      authProbe: READY_PROBE,
+      run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        return args[0] === "run" ? { stdout: "", stderr: "" } : { stdout: "ok", stderr: "" };
+      },
     });
     await assert.rejects(failing, /no git credential helper for github\.com/);
     await assert.rejects(failing, /npm run build:image/);
@@ -675,8 +765,13 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = defaultPreflight({
       token: "present",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
       run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
         // The git helper probe answers; the docker CLI probe does not.
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         if (args.includes("--version")) throw new Error("exec: docker: not found");
@@ -692,8 +787,13 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const failing = defaultPreflight({
       token: "present",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
       run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         if (args.includes("buildx")) throw new Error('docker: "buildx" is not a docker command');
         return { stdout: "ok", stderr: "" };
@@ -703,12 +803,83 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     await assert.rejects(failing, /is not a docker command/);
   });
 
+  test("the default preflight refuses to launch without any explicit model credential", async () => {
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: {},
+      dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
+      run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        return { stdout: "ok", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /no model credentials for the worker/);
+    await assert.rejects(failing, /never read from a personal Pi profile/);
+  });
+
+  test("an unreadable worker-auth-file fails before any probe and never echoes its content", async () => {
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: {},
+      authFile: "/does/not/exist/auth.json",
+      dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
+      run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        return { stdout: "ok", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /worker-auth-file is unreadable: \/does\/not\/exist\/auth\.json/);
+  });
+
+  test("an unresolved credential is a clear not_ready diagnosis, never a secret value", async () => {
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "sentinel-value" },
+      dockerSocket: SOCKET,
+      authProbe: async () => ({
+        status: 1,
+        stdout: '{"status":"not_ready","provider":"openai","reason":"credentials_not_configured"}',
+        stderr: "",
+      }),
+      run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        return { stdout: "ok", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /model credentials for openai\/gpt-4o are not ready/);
+      assert.match(error.message, /credentials_not_configured/);
+      assert.ok(!error.message.includes("sentinel-value"));
+      return true;
+    });
+  });
+
   test("the default preflight refuses a socket the container user cannot reach — an actionable gid", async () => {
     const failing = defaultPreflight({
       token: "present",
       image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
       dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
       run: async (_command, args) => {
+        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
         // Everything passes until the daemon probe INSIDE the container.
         if (args[0] === "run" && args.includes("info")) throw new Error("permission denied while trying to connect");
         return { stdout: "ok", stderr: "" };
@@ -813,7 +984,14 @@ describe("sandcastle runtime — the real Docker shell", () => {
       // The launch's own preconditions, end to end: docker alive, image
       // present, credential helper, docker CLI, and the daemon reachable
       // through the socket as the socket's group.
-      await defaultPreflight({ token: "probe", image: WORKER_IMAGE, dockerSocket: socket })();
+      await defaultPreflight({
+        token: "probe",
+        image: WORKER_IMAGE,
+        model: "openai/gpt-4o",
+        agentResources: RESOURCES,
+        authEnv: { OPENAI_API_KEY: "msf-probe-not-a-real-key" },
+        dockerSocket: socket,
+      })();
 
       // Docker inside the worker: the same bind, the same group, the image's
       // own user. `docker build` is the npm run build:image path (buildx), and
@@ -862,7 +1040,6 @@ function dummySandbox(): SandboxProvider {
 
 describe("sandcastle runtime — the idle limit measured on verifiable activity (issue 112)", () => {
   let root: string;
-  let profileDir: string;
   let request: WorkRequest;
 
   /** A short REAL limit: the suite never waits the production ten minutes. */
@@ -870,8 +1047,6 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "msf-sandcastle-idle-"));
-    profileDir = join(root, "perfil");
-    mkdirSync(profileDir, { recursive: true });
     request = {
       work: githubWork("Sanmoo/my-tasks", 42),
       workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
@@ -891,7 +1066,8 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
     return new SandcastleRuntime({
       model: MODEL,
       token: "t",
-      profileDir,
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: root,
       // The daemon socket the launch binds (ADR 0003) — pinned like every
       // other runtime test here: the idle-limit mechanics never read the

@@ -100,12 +100,11 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       concurrency: 1,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...modelProvider },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
     };
   }

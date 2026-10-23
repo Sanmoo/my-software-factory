@@ -2,7 +2,8 @@
 
 The factory is wired end to end with only real components: the real GitHub
 adapter (`gh` keyring token at boot), the real Sandcastle runtime (Pi
-headless in a container, profile snapshot), the real git host. This is the
+headless in a container, agent resources provisioned by the image), the real
+git host. This is the
 exact script of the live proof: a real issue → worker → PR opened by the
 configured account → human feedback → merge. In v0.1 that account is the
 operator's: GitHub hides `bot-do-samuca`, and the accepted risk is the
@@ -18,14 +19,20 @@ socket riding inside it (ADR 0003). Factory speech is the
 #    session could repeat an external effect)
 npm run build:image
 
-# 2. the bot credential in the gh keyring (the boot check reads it;
+# 2. model credentials, separate from the image and from any personal profile:
+#    export OPENCODE_API_KEY=...        # or another supported provider key
+#    # or worker-auth-file: /path/to/auth.json in msf.yaml
+#    The launcher refuses a missing/invalid credential with the provider's
+#    status; it never prints the value and never reads ~/.pi/agent.
+
+# 3. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container;
 #    the image ships the `gh auth git-credential` helper that `git push`
 #    uses to read that token — the boot refuses an image without it, so a
 #    stale image fails with `npm run build:image` instead of a blocked round)
 gh auth token --user Sanmoo   # must print a token; v0.1 uses the operator account
 
-# 3. the config — a working directory with msf.yaml, e.g.:
+# 4. the config — a working directory with msf.yaml, e.g.:
 cat > msf.yaml <<'EOF'
 worker-gh-account: Sanmoo
 worker-model: opencode-go/glm-5.3-flash
@@ -33,33 +40,46 @@ repos:
   - Sanmoo/my-tasks        # the target repo(s) — this account must have write
 concurrency: 2
 workspace: ~/.local/share/msf
-# profile-snapshot wiring (ticket 18): the default is EMPTY — no root is
-# pre-declared (no operator-personal path lives in the product). A profile
-# WITH symlinks fails the snapshot fail-closed (ProfileSnapshotError naming
-# the link) until you declare the roots YOUR profile legitimately reaches:
-profile-allowed-roots:
-  - ~/meus-dotfiles         # every root a profile link really points into
-  - ~/.agents
-# profile-skip-dangling-links: true   # set if a stale profile link blocks a launch
+# worker-auth-file: ~/.secrets/msf-auth.json   # optional; else a provider env key
 EOF
 ```
 
-If a launch fails naming a profile link (`ProfileSnapshotError`), declare the
-link's real target as a `profile-allowed-roots` entry, or set
-`profile-skip-dangling-links: true` for stale links — the same fail-closed
-snapshot behavior of the ticket-17 proof, configurable. A profile without
-symlinks needs no `profile-allowed-roots` at all.
+## The worker's agent environment (issue #159, ADR 0001)
+
+`agent-resources.json` is the single declaration: Pi's exact version, the
+upstream skills repository with an immutable commit, the selected skills, the
+delegation extension at an exact version with its operating guidance, and the
+factory's reviewer agents. `npm run build:image` fetches and verifies all of
+it, records the result in `/opt/msf/agent-inventory.json`, and only then moves
+the image tag — a failed build leaves the previous valid image in place.
+
+- **Update a resource**: change `agent-resources.json` in a reviewed commit,
+  then `npm run build:image`. Never edit files inside a running image.
+- **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`
+  shows what the image actually contains. A launch whose image differs from
+  the checkout's declaration fails at boot with the differences and the
+  rebuild command; the worker is never started on the wrong set.
+- **Concurrent checkouts**: set `MSF_WORKER_IMAGE=msf-v2-worker:<name>` for
+  both `build:image` and `gateway` so two checkouts on one Docker host do not
+  overwrite each other's tag; the inventory comparison is unchanged.
+- **Clean host check**: with no `~/.pi/agent` and no Pi on the host, run
+  `npm run build:image`, `npm run gateway`, then `node dist/cli.js run --once`.
+  The image test in the gateway proves, inside the real container, that only
+  the declared skills/guidance load, undeclared project resources are ignored,
+  the cache starts empty, and authentication comes from the explicit source.
 
 ## Toolchains — the convergence layer (ticket 18)
 
 The worker image ships the `mise` binary (its apt repo, mise.jdx.dev/deb) and
 the agent's PATH starts with `/home/agent/.local/share/mise/shims`. The
-runtime binds two workspace dirs read-write into every container:
+runtime binds the workspace dir read-write into every container:
 
 ```sh
-<workspace>/toolchains/mise      → /home/agent/.local/share/mise    (RW)
-<workspace>/toolchains/agent/npm → /home/agent/.pi/agent/npm        (RW)
+<workspace>/toolchains/mise → /home/agent/.local/share/mise (RW)
 ```
+
+The writable volume is deliberately outside the image-provisioned agent
+resources: no cache or mount can hide or replace them.
 
 The container is recreated per work; these volumes survive. Convergence
 happens INSIDE the volume across launches — the runtime and the worker
@@ -80,7 +100,7 @@ inherit.
 
 The orchestrator converges BEFORE the prompt: a second sandbox-ready hook
 runs `mise install -y` (30 min ceiling) against the active configs — the
-snapshot's global config and the repo's `mise.toml`, when the repo declares
+toolchain volume's global config and the repo's `mise.toml`, when it declares
 one. The session NEVER hunts a declared tool: it is there or the launch
 fails fast. The worker still may run `mise install` for tools a work adds
 declarations for mid-flight — that is the exception, not the design.
