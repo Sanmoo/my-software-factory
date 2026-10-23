@@ -8,7 +8,7 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
-import { workKey } from "../state/derive.js";
+import { issueRefKey } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
 import {
@@ -338,7 +338,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
-    const key = workKey(request.ref);
+    const key = issueRefKey(request.ref);
     // The session is registered BEFORE the preconditions (issue #146): a stop
     // arriving during them reaches this launch instead of being lost in the
     // window between the factory's check and the worker's start.
@@ -360,7 +360,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     // Stopped while the preconditions ran: no footprint, no worker. The
     // requested stop is not a session this runtime has to report, and the
     // request is consumed here — it was remembered for exactly this launch.
-    const key = workKey(request.ref);
+    const key = issueRefKey(request.ref);
     if (stopSignal.aborted || this.stopRequested.delete(key)) {
       return { request, outcome: "abrupt-death" };
     }
@@ -442,7 +442,7 @@ export class SandcastleRuntime implements WorkerRuntime {
    * worker that survives it.
    */
   requestStop(ref: IssueRef): void {
-    const key = workKey(ref);
+    const key = issueRefKey(ref);
     this.stopRequested.add(key);
     this.sessions.get(key)?.stop.abort();
   }
@@ -453,7 +453,7 @@ export class SandcastleRuntime implements WorkerRuntime {
    * rejects and the launch stays owned, never declared safe.
    */
   async forceStop(ref: IssueRef): Promise<void> {
-    const key = workKey(ref);
+    const key = issueRefKey(ref);
     this.stopRequested.add(key);
     const session = this.sessions.get(key);
     session?.stop.abort();

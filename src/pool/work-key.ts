@@ -8,6 +8,7 @@ import {
   type TicketProvider,
   type WorkIdentity,
 } from "../tracker/identity.js";
+import type { IssueRef } from "../tracker/port.js";
 
 /**
  * The on-disk key of a Work — the registry's identity anchor, i.e. the name of
@@ -121,6 +122,16 @@ export function anchorOfKey(key: string): WorkAnchor | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The registry key a legacy {@link IssueRef} names: the same "<repo>#<n>" the
+ * Work of that GitHub ticket and destination repo has (issue 126). The
+ * worker-facing runtime seams still speak `IssueRef` until #127, so their
+ * session keys come from here — one authority, never a second spelling.
+ */
+export function issueRefKey(ref: IssueRef): string {
+  return `${ref.repo}#${ref.number}`;
 }
 
 /** URI-encoding: injective, and no component ever yields "@", "/" or "#". */

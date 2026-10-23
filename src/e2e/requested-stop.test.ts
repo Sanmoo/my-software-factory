@@ -21,7 +21,8 @@ import {
   type RecoveryBudget,
 } from "../config.js";
 import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
-import { workKey } from "../state/derive.js";
+import { issueRefKey } from "../pool/work-key.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 import { waitFor } from "./cli-harness.js";
 import { seedSession } from "./session-fixtures.js";
 
@@ -151,7 +152,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const config = makeConfig();
     const tracker = makeTracker(config);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     const stop = new AbortController();
     stop.abort();
@@ -172,7 +173,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     runtime.hold = async (request) => {
       await runtime.whenStopRequested(request.ref);
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     // The configured budget is 1; the operator's stops repeat four times.
     for (let cycle = 0; cycle < 4; cycle += 1) {
@@ -216,7 +217,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       entered.resolve();
       await release.promise;
     });
-    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} };
 
     const stop = new AbortController();
     const running = runOnce(deps, { signal: stop.signal, cooperativeMs: 2_000 });
@@ -251,7 +252,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     runtime.hold = async () => {
       await new Promise<void>(() => {}); // never ends on its own
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     const stop = new AbortController();
     const started = Date.now();
@@ -283,9 +284,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const backoffEntered = deferred();
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: () => {},
       wait: async () => {
@@ -325,7 +327,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     runtime.hold = async (request) => {
       await runtime.whenStopRequested(request.ref);
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     // The operator's stop ends attempt 1; the next invocation resumes it free.
     const stop = new AbortController();
@@ -362,7 +364,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       // #1 finishes on its own; #2 parks until the operator's stop.
       if (request.ref.number === 2) await runtime.whenStopRequested(request.ref);
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     const release = tracker.holdCollectionOf(1);
     const stop = new AbortController();
@@ -392,7 +394,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       // #1 ends as soon as it is asked; #2 never ends on its own.
       if (request.ref.number === 2) await new Promise<void>(() => {});
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     const stop = new AbortController();
     const running = runOnce(deps, { signal: stop.signal, cooperativeMs: 200 });
@@ -421,7 +423,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     runtime.hold = async () => {
       await new Promise<void>(() => {});
     };
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     const requested = new AbortController();
     const escalated = new AbortController();
@@ -456,9 +458,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     };
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime: stuck,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       // Docker is the authority on a surviving worker (ADR 0002): the fake
       // hands its own live sessions to the cycle as the probe, so a forced
@@ -522,9 +525,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     let alive = true;
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => (alive ? [{ key: WORK_KEY, containerId: "container-1", ageMs: 1_000 }] : []),
       log: (line) => logs.push(line),
@@ -567,14 +571,15 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
       // The real forced stop removes the container; the probe proves it.
-      containers.delete(workKey(ref));
+      containers.delete(issueRefKey(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => [...containers].map((key) => ({ key, containerId: `container-${key}`, ageMs: 1_000 })),
       log: () => {},
@@ -608,9 +613,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"], forceUnconfirmed: true });
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => [{ key: WORK_KEY, containerId: "container-1", ageMs: 1_000 }],
       log: () => {},
@@ -643,9 +649,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const logs: string[] = [];
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => {
         if (!dockerAnswers) throw new Error("Cannot connect to the Docker daemon");
@@ -690,14 +697,15 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
-      containers.delete(workKey(ref));
+      containers.delete(issueRefKey(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => [...containers].map((key) => ({ key, containerId: `container-${key}`, ageMs: 1_000 })),
       log: () => {},
@@ -722,9 +730,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       probe: async () => {
         throw new Error("Cannot connect to the Docker daemon");
@@ -749,7 +758,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const config = makeConfig();
     const tracker = makeTracker(config);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
     // The claim landed, the attempt wrote its real outcome and the PR is open;
     // the requested stop was persisted on top of it (the race of a stop that
@@ -805,9 +814,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const firstRuntime = new FakeWorkerRuntime({ tracker: firstTracker, outcomes: ["pr-open"] });
     await runOnce({
       config: firstConfig,
-      tracker: firstTracker,
+      tickets: firstTracker,
+      pullRequests: firstTracker,
       runtime: firstRuntime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: () => {},
     });
@@ -828,9 +838,10 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const secondRuntime = new FakeWorkerRuntime({ tracker: secondTracker, outcomes: ["pr-open"] });
     await runOnce({
       config: secondConfig,
-      tracker: secondTracker,
+      tickets: secondTracker,
+      pullRequests: secondTracker,
       runtime: secondRuntime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: () => {},
     });
@@ -849,7 +860,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       runtime.hold = async (request) => {
         await runtime.whenStopRequested(request.ref);
       };
-      const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+      const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
       const installed = installStopSignals();
       const stopOptions: StopOptions = {
         signal: installed.requested,

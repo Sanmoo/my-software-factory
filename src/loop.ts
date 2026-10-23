@@ -1346,7 +1346,7 @@ export class SweepEngine {
     }
     await Promise.all(
       doomed.map(async (key) => {
-        const ref = parseWorkKey(key);
+        const ref = workerRefOfKey(key);
         if (ref === null) return undefined;
         try {
           await this.deps.runtime.forceStop(ref);
@@ -1428,8 +1428,6 @@ export class SweepEngine {
    * recorded for it and its resume is free.
    */
   private async lastAttemptOf(key: string): Promise<number | null> {
-    const parsed = parseWorkKey(key);
-    if (parsed === null) return null;
     const dir = workDirOfKey(this.deps.workspace, key);
     if (!existsSync(dir)) return null;
     return (await readLastAttempt(dir)) ?? 1;
@@ -2754,6 +2752,13 @@ type WakeEvent = "worker-end" | "tick" | "abort";
 function workOfKeyForNotice(key: string): WorkIdentity | null {
   const anchor = anchorOfKey(key);
   return anchor === null ? null : legacyWorkOf(anchor);
+}
+
+/** The address the worker-facing runtime seams still speak (issue 126 leaves
+ *  them for #127). A key that shape cannot express names no worker to end. */
+function workerRefOfKey(key: string): IssueRef | null {
+  const work = workOfKeyForNotice(key);
+  return work === null ? null : issueRefOfTicket(work.ticket);
 }
 
 const logClaim = (log: (message: string) => void, key: string): void =>

@@ -19,6 +19,7 @@ import {
   type Config,
 } from "../config.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 import {
   installGhShim,
   installUnreachableDocker,
@@ -91,13 +92,14 @@ function childWiring(runtimeOptions: string, configPathExpression: string): stri
     `import { FakeTrackerAdapter, seedIssue } from ${moduleUrl("../tracker/fake-adapter.js")};`,
     `import { FakeWorkerRuntime } from ${moduleUrl("../runtime/fake-runtime.js")};`,
     `import { workBranchName } from ${moduleUrl("../git/port.js")};`,
+    `import { expandedGitWorkOf } from ${moduleUrl("./legacy-git.js")};`,
     `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET } from ${moduleUrl("../config.js")};`,
     `import { ensureWorkspace } from ${moduleUrl("../layout.js")};`,
     "const workspace = ensureWorkspace(workspaceRoot);",
     "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET }, notifications: false, configPath: " + configPathExpression + " };",
     "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
     "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
-    "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) };",
+    "const git = expandedGitWorkOf({ prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) });",
     `const runtime = new FakeWorkerRuntime({ ${runtimeOptions} });`,
   ];
 }
@@ -155,7 +157,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
       if (request.ref.number === 1) await runtime.whenStopRequested(request.ref);
     };
 
-    const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
     const stop = new AbortController();
     const running = runForever(deps, { tickMs: 10, signal: stop.signal, cooperativeMs: 2_000 });
 
@@ -203,7 +205,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
       await release.promise;
     });
 
-    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} };
     const stop = new AbortController();
     const running = runForever(deps, { tickMs: 10, signal: stop.signal, cooperativeMs: 2_000 });
 
@@ -265,7 +267,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         "};",
         "const stop = installStopSignals();",
         "const lock = await acquireRunLock(configPath);",
-        "const report = await runForever({ config, tracker, runtime, git, workspace, log: () => {} }, { tickMs: 10, signal: stop.requested, escalate: stop.escalated, cooperativeMs: 30_000 });",
+        "const report = await runForever({ config, tickets: tracker, pullRequests: tracker, runtime, git, workspace, log: () => {} }, { tickMs: 10, signal: stop.requested, escalate: stop.escalated, cooperativeMs: 30_000 });",
         "const feedback = await tracker.readPrFeedback({ repo: 'Sanmoo/my-tasks', number: 1 });",
         "writeFileSync(resultFile, JSON.stringify({ launched: runtime.launched.map((r) => r.ref.number), prOpen: feedback.known && feedback.value.pr !== null, forced: report?.forced ?? [], unconfirmed: report?.unconfirmed ?? [] }));",
         "await lock.close();",
@@ -448,7 +450,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         ...childWiring("tracker, outcomes: ['pr-open']", "join(workspaceRoot, 'msf.yaml')"),
         "if (mode === 'stop') runtime.hold = async (request) => { writeFileSync(launchedFile, String(request.ref.number)); await runtime.whenStopRequested(request.ref); };",
         "const stop = installStopSignals();",
-        "const result = await runOnce({ config, tracker, runtime, git, workspace, log: () => {} }, { signal: stop.requested, escalate: stop.escalated, cooperativeMs: 10_000 });",
+        "const result = await runOnce({ config, tickets: tracker, pullRequests: tracker, runtime, git, workspace, log: () => {} }, { signal: stop.requested, escalate: stop.escalated, cooperativeMs: 10_000 });",
         "const pr = await tracker.readPrFeedback({ repo: 'Sanmoo/my-tasks', number: 1 });",
         "const ledger = await readRecoveryLedger(join(workspace.works, 'Sanmoo', 'my-tasks#1'));",
         "writeFileSync(resultFile, JSON.stringify({ launched: runtime.launched.map((request) => ({ attempt: request.attempt, branch: request.branch })), unconfirmed: result.stop ? result.stop.unconfirmed : null, prOpen: pr.known && pr.value.pr !== null, lastStop: ledger.lastStop }));",
