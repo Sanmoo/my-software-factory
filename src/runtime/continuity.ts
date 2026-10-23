@@ -211,6 +211,12 @@ function firstSessionOrPause(
 /**
  * The attempt's FIRST session: the association is recorded before the worker
  * starts, so the very next recovery can only pick THIS session.
+ *
+ * The guardrail state is written here too, and it is not optional: the
+ * in-container guardrail refuses every call it cannot prove local while that
+ * state is missing (it cannot tell a resumption from a first run). Every
+ * launch path must come through here or `planContinuity`'s resume branch, both
+ * of which write it before the runtime is asked to launch.
  */
 function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, EffectVerdict>): ContinuityPlan {
   const links = readSessionLinks(deps.workDir);

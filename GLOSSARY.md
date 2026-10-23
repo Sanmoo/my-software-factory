@@ -135,7 +135,7 @@ The issue is marked blocked while it waits, but the cause is the session or an u
 _Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt.
 
 **Guardrail**:
-The factory-owned extension loaded inside the worker container that journals effect intents before they run and blocks a repeat at the tool boundary — an effect the host proved already realized, an effect proven absent already run once in the round, or one a previous round already attempted. It is code at the boundary, never prompt obedience.
+The factory-owned extension loaded inside the worker container that journals effect intents before they run and blocks a repeat at the tool boundary — an effect the host proved already realized, an effect proven absent already run once in the round, one a previous round already attempted, or any effect while it cannot read its own state. It is code at the boundary, never prompt obedience.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.

@@ -73,7 +73,8 @@ export interface WorkRequest {
    *  here as `resume` with the id of ITS attempt; never a session chosen by
    *  mtime or by being the only file found. Only a caller driving the runtime
    *  directly (no factory, no recovery) may omit it and get Pi's own fresh
-   *  session — such a session has no association and pauses a later recovery. */
+   *  session — such a session has no association, pauses a later recovery, and
+   *  carries no guardrail state, so the guardrail refuses its external effects. */
   session?: SessionSelection;
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;

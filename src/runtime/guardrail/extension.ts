@@ -104,8 +104,8 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // The state is the contract that makes a resumed effect safe: the verdicts
     // of the host's reconciliation, the attempt and the session this call
     // belongs to. Absent or unreadable, nothing can be authorized — a resumed
-    // session must never run unguarded (issue 119), so anything that could
-    // reach outside the worktree is refused until the state is readable.
+    // session must never run unguarded (issue 119) — so every call the
+    // classifier does not prove local is refused until the state is readable.
     if (state === null) return refuseWithoutState(event, workMount);
     if (event.toolName !== "bash") {
       // Delegations are not recoverable state (issue 119, out of scope): an
@@ -191,7 +191,7 @@ type Blocked = { detail: string; why: string };
  */
 function blockedAction(
   workMount: string,
-  state: GuardrailState | null,
+  state: GuardrailState,
   actions: readonly EffectAction[],
   consumedAbsent: Set<string>,
 ): Blocked | null {
@@ -201,7 +201,7 @@ function blockedAction(
     journal.results.filter((result) => !result.ok).map((result) => callKey(result.sessionId, result.callId)),
   );
   for (const action of actions) {
-    const verdict = state?.verdicts[action.key];
+    const verdict = state.verdicts[action.key];
     if (verdict === "realized") return { detail: action.detail, why: "realized before the interruption" };
     if (verdict === "absent") {
       // The host proved the effect did NOT happen: exactly one execution is
@@ -226,14 +226,13 @@ function blockedAction(
 
 function journalIntent(
   workMount: string,
-  state: GuardrailState | null,
+  state: GuardrailState,
   event: ToolCallLike,
   safety: "effect" | "unknown",
   actions: EffectAction[],
   command: string,
   reason?: string,
 ): void {
-  if (state === null) return;
   appendJournalIntent(workMount, {
     attempt: state.attempt,
     sessionId: state.sessionId,
@@ -248,7 +247,7 @@ function journalIntent(
 
 function journalUnknown(
   workMount: string,
-  state: GuardrailState | null,
+  state: GuardrailState,
   event: ToolCallLike,
   reason: string,
   command = "",

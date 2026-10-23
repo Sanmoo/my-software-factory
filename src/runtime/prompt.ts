@@ -249,7 +249,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           ``,
           `Before repeating any EXTERNAL effect — a push, a PR, a comment, a label (a mutation outside the worktree; a commit stays inside it) — read the real state first (\`git status\`, \`git log\`, \`gh pr view\`, \`gh issue view\`). If the effect already landed, do not repeat it. If the evidence is ambiguous (the effect may or may not have landed), do NOT repeat it blindly: self-report blocked with what you checked and what is uncertain, so a human reconciles the two sides.`,
           ``,
-          `The factory's guardrail journals every external effect before it runs and BLOCKS one the host proved already happened. A block is a fact, not something to work around by another route: continue with the remaining work, or write the outcome record and stop.`,
+          `The factory's guardrail journals every external effect before it runs and BLOCKS one the host proved already happened — or one it cannot judge at all. A block is a fact, not something to work around by another route: continue with the remaining work, or write the outcome record and stop.`,
         ]
       : []),
     ``,
