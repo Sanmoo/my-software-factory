@@ -17,7 +17,6 @@ import {
   deriveReserved,
   fallbackDoneComment,
   readRepairPremise,
-  repairPremise,
   repairSignature,
   workKey,
   renderUnbackedClaim,
@@ -457,9 +456,7 @@ export class SweepEngine {
             `derived ${workKey(decision.ref)}: PR merged without closing the issue — ` +
               "the factory closes it (fallback of the linkage), then archives",
           );
-          await tracker.markDone(decision.ref);
-          await tracker.comment(decision.ref, decision.comment);
-          await this.finishWork(decision.ref);
+          await this.completeMergedWork(decision.ref, decision.comment);
           this.announce(decision.ref, null);
           break;
         }
@@ -1302,7 +1299,7 @@ export class SweepEngine {
       // round addressed still exists — a human's own resolution is never
       // taken for a reason to ask for help. The read happens once per
       // settlement: a settled or attempt-less cycle never reaches this line.
-      const premise = repairPremise(await this.deps.tracker.readPrRepairFacts(work.ref));
+      const premise = readRepairPremise(await this.deps.tracker.readPrRepairFacts(work.ref)).premise;
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
@@ -1510,12 +1507,11 @@ export class SweepEngine {
           `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
             "(fallback of the linkage), then archives",
         );
-        await tracker.markDone(ref);
-        await tracker.comment(ref, fallbackDoneComment());
+        await this.completeMergedWork(ref, fallbackDoneComment());
       } else {
         this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
+        await this.finishWork(ref);
       }
-      await this.finishWork(ref);
       resulting = null;
     } else if (ruling.decision === "reserve") {
       this.log(`${origin} ${key}: PR open — stays reserved, waiting for the human`);
@@ -1623,6 +1619,17 @@ export class SweepEngine {
   private async finishWork(ref: IssueRef): Promise<void> {
     await archiveDoneWork(this.deps.workspace, ref);
     await this.deps.git.cleanupDoneWork(ref);
+  }
+
+  /** The delivery a merge without closure implies: close the issue with the
+   *  short fallback comment, then archive and clean — done must always be
+   *  reflected on the tracker (ticket 04 Q11). Shared by the derivation's
+   *  done-fallback and by a merge that landed mid-round (issue 149). */
+  private async completeMergedWork(ref: IssueRef, comment: string): Promise<void> {
+    const { tracker } = this.deps;
+    await tracker.markDone(ref);
+    await tracker.comment(ref, comment);
+    await this.finishWork(ref);
   }
 
   /** Best-effort delivery of one occurrence notice; a failure only logs. A

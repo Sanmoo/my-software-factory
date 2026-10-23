@@ -277,7 +277,8 @@ export type RepairReconciliation =
   /** The impediment the round was launched for no longer exists (issue 149):
    *  the round returns, and no fall is counted — there is nothing left to
    *  fix, so the remote is still never overwritten. */
-  | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }  | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
+  | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }
+  | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
 
 /**
  * Decide the publication of the cycle's attempt from structured facts alone
@@ -333,7 +334,7 @@ export function reconcileRepairAttempt(input: {
    *  "nothing of it reached the remote". Counting a fall is the caller's
    *  business — an attempt that fell counts one, an obsolete premise does not
    *  (issue 149). */
-  const refunded = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
+  const settledUnpublished = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
     settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
 
   // The remote carries exactly the commit this attempt produced: published,
@@ -347,7 +348,7 @@ export function reconcileRepairAttempt(input: {
   // remote (whoever moved it) is still never overwritten. Only a confirmed
   // absence reaches here; an unknown one keeps the verdicts below.
   if (input.premise === "obsolete") {
-    return { kind: "premise-obsolete", ...refunded(input.cycle) };
+    return { kind: "premise-obsolete", ...settledUnpublished(input.cycle) };
   }
 
   // The remote is still where it was, or holds no such branch: nothing of this
@@ -355,7 +356,7 @@ export function reconcileRepairAttempt(input: {
   if (remoteHeadSha === null || remoteHeadSha === attempt.observedHeadSha) {
     return {
       kind: "not-published",
-      ...refunded({ ...input.cycle, consecutiveFalls: input.cycle.consecutiveFalls + 1 }),
+      ...settledUnpublished({ ...input.cycle, consecutiveFalls: input.cycle.consecutiveFalls + 1 }),
     };
   }
 

@@ -246,7 +246,7 @@ function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
 }
 
 /** The trigger of an open PR, or null when nothing is confirmed. */
-export function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
+function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
   const reasons: RepairReason[] = [];
   if (facts.mergeState === "conflicting") reasons.push("conflicts");
   const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
@@ -276,12 +276,9 @@ export interface RepairPremiseReading {
 
 /** The premise of a repair round read from the PR's current facts (issue 149):
  *  a confirmed trigger persists; only a mergeable PR with a known required set
- *  is obsolete; an unreadable read is unknown, never an invented clean bill.
- *  The vocabulary lives in pool/repair.ts. */
-export function repairPremise(facts: Known<PrRepairFacts>): RepairPremise {
-  return readRepairPremise(facts).premise;
-}
-
+ *  is obsolete (an unknown mergeability, or an undetermined required set,
+ *  proves nothing); an unreadable read is unknown, never an invented clean
+ *  bill. The vocabulary lives in pool/repair.ts. */
 export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseReading {
   if (!facts.known) return { premise: "unknown", trigger: null };
   const trigger = repairTrigger(facts.value);
