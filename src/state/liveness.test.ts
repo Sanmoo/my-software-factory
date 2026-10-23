@@ -65,7 +65,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     ]);
   });
 
-  test("a worker-image container carrying no work dir is an auxiliary container, not a worker", () => {
+  test("a container carrying no work dir is an auxiliary container, not a worker", () => {
     const ps = "ccc333\n";
     const auxiliary = [
       {
@@ -352,9 +352,7 @@ describe("liveness — the worker identity survives the image reference moving (
   test("a container the listing did not describe and the inspect places elsewhere is a decided absence", async () => {
     const shell = fakeDocker({
       listing: SECOND,
-      inspect: JSON.stringify([
-        { Id: SECOND, State: { Running: true, StartedAt: "2026-02-01T11:47:00Z" }, Mounts: [] },
-      ]),
+      inspect: JSON.stringify([inspectedContainer(SECOND, [])]),
     });
 
     assert.deepEqual(
@@ -445,7 +443,7 @@ function missingDockerReason(): string | undefined {
 
 describe("liveness — the real Docker shell", () => {
   test(
-    "a real worker-image container carrying a work dir is read back as that work",
+    "a real container carrying a work dir is read back as that work",
     { skip: dockerSkipReasonForFocusedRun, timeout: 60_000 },
     async () => {
       const worksRoot = mkdtempSync(join(tmpdir(), "msf-liveness-"));
