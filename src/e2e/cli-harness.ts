@@ -221,7 +221,10 @@ export function installUnreachableDocker(binDir: string): void {
     shim,
     [
       "#!/bin/sh",
-      "cat >/dev/null 2>&1 || true",
+      // No stdin read: unlike `gh`, the factory never feeds `docker` a body,
+      // and draining a pipe that stays open would hang the call instead of
+      // failing it (the probe would time out five seconds later).
+      "exec 0</dev/null",
       'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2',
       "exit 1",
       "",
