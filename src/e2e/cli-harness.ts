@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { AMBIENT_TOKEN_ENV_VARS } from "../tracker/github-adapter.js";
 
@@ -37,6 +37,28 @@ export interface GhShim {
   env(markers?: { ready?: string; hold?: string; fail?: boolean }): NodeJS.ProcessEnv;
 }
 
+/**
+ * One canned answer of the shim's REST channel, keyed by the `gh api` path.
+ * A path with no answer FAILS the child loudly: the suite declares exactly the
+ * reads it expects, and an undeclared read (a mutation, a dropped query) is a
+ * test bug, never something to swallow.
+ */
+export interface RestAnswer {
+  /** The JSON body the answer prints (exit 0). */
+  body?: unknown;
+  /** Delay before answering — controlled latency for the timing properties. */
+  delayMs?: number;
+  /** Answer 404 "Not Found": the adapter reads it as unknown, never absent. */
+  notFound?: true;
+  /** Answer a non-404 failure, stderr carrying this text (exit 1). */
+  failure?: string;
+}
+
+export interface GhShimOptions {
+  /** Canned REST answers by `gh api` path; absent = the CLI may not call REST. */
+  rest?: Record<string, RestAnswer>;
+}
+
 /** The env vars that would point `gh` at a credential source outside the
  * suite's temp dir: the ambient tokens the boot check strips (one shared list,
  * github-adapter.ts) plus gh's config-dir override. */
@@ -66,7 +88,7 @@ export function isolatedEnv(baseDir: string, extra: NodeJS.ProcessEnv = {}): Nod
   };
 }
 
-export function installGhShim(baseDir: string): GhShim {
+export function installGhShim(baseDir: string, options: GhShimOptions = {}): GhShim {
   const binDir = join(baseDir, "bin");
   mkdirSync(binDir, { recursive: true });
   const shim = join(binDir, "gh");
@@ -91,6 +113,9 @@ export function installGhShim(baseDir: string): GhShim {
       '  printf "%s\\n" "ghp_msf_test_shim"',
       "  exit 0",
       "fi",
+      'if [ "$1" = "api" ] && [ -n "$MSF_GH_REST" ]; then',
+      '  exec node "$MSF_GH_REST" "$@"',
+      "fi",
       'echo "msf gh-shim: unexpected call: gh $*" >&2',
       "exit 1",
       "",
@@ -98,6 +123,7 @@ export function installGhShim(baseDir: string): GhShim {
     "utf8",
   );
   chmodSync(shim, 0o755);
+  const rest = options.rest === undefined ? undefined : installRestChannel(baseDir, options.rest);
   return {
     binDir,
     env(markers = {}) {
@@ -106,9 +132,77 @@ export function installGhShim(baseDir: string): GhShim {
         ...(markers.ready === undefined ? {} : { MSF_SHIM_READY: markers.ready }),
         ...(markers.hold === undefined ? {} : { MSF_SHIM_HOLD: markers.hold }),
         ...(markers.fail === true ? { MSF_SHIM_FAIL: "1" } : {}),
+        ...(rest === undefined
+          ? {}
+          : {
+              MSF_GH_REST: rest.responder,
+              MSF_GH_REST_ANSWERS: rest.answers,
+              MSF_GH_REST_LOG: rest.log,
+            }),
       });
     },
   };
+}
+
+/** The REST channel the shim delegates to: canned answers by path + the log of
+ *  what the child actually read. Once per install, the answers are rewritten. */
+function installRestChannel(
+  baseDir: string,
+  answers: Record<string, RestAnswer>,
+): { responder: string; answers: string; log: string } {
+  const channelDir = join(baseDir, "gh-rest");
+  mkdirSync(channelDir, { recursive: true });
+  const answersPath = join(channelDir, "answers.json");
+  const log = join(channelDir, "calls.log");
+  const responder = join(channelDir, "respond.cjs");
+  writeFileSync(answersPath, JSON.stringify(answers), "utf8");
+  writeFileSync(log, "", "utf8");
+  writeFileSync(
+    responder,
+    [
+      '"use strict";',
+      "// The canned REST channel of the gh shim (cli-harness.ts): answers the",
+      "// child's `gh api` calls from answers.json, logs the path it read, and",
+      "// fails loudly on a path the suite did not declare.",
+      'const fs = require("node:fs");',
+      "const argv = process.argv.slice(2);",
+      'let path = "";',
+      "for (let i = 1; i < argv.length; i += 1) {",
+      '  if (argv[i] === "-X" || argv[i] === "--input") { i += 1; continue; }',
+      '  if (argv[i].startsWith("-")) continue;',
+      "  path = argv[i];",
+      "}",
+      "fs.appendFileSync(process.env.MSF_GH_REST_LOG, path + \"\\n\");",
+      "const answers = JSON.parse(fs.readFileSync(process.env.MSF_GH_REST_ANSWERS, \"utf8\"));",
+      "const answer = answers[path];",
+      "if (answer === undefined) {",
+      '  process.stderr.write("msf gh-shim: no canned REST answer for " + path + "\\n");',
+      "  process.exit(1);",
+      "}",
+      "if (answer.delayMs) {",
+      "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, answer.delayMs);",
+      "}",
+      "if (answer.notFound) {",
+      '  process.stderr.write("HTTP 404: Not Found\\n");',
+      "  process.exit(1);",
+      "}",
+      "if (answer.failure) {",
+      "  process.stderr.write(answer.failure + \"\\n\");",
+      "  process.exit(1);",
+      "}",
+      "process.stdout.write(JSON.stringify(answer.body));",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return { responder, answers: answersPath, log };
+}
+
+/** The paths the child read through the shim's REST channel, in request order. */
+export function readRestCalls(baseDir: string): string[] {
+  const log = join(baseDir, "gh-rest", "calls.log");
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8").split("\n").filter((line) => line !== "");
 }
 
 /** Run the built CLI to completion in `cwd` (synchronous, bounded). The

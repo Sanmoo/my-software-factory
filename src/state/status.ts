@@ -19,6 +19,7 @@ import {
   duplicateWorkers,
   probeLiveness,
   type DuplicateWorkers,
+  type LivenessObservation,
   type LivenessProbe,
   type LiveWorker,
 } from "./liveness.js";
@@ -97,6 +98,11 @@ export async function deriveStatus(
   layout: WorkspaceLayout,
   probe: LivenessProbe = dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: layout.works }),
 ): Promise<StatusView> {
+  // Docker answers independently of the tracker (issue 147): the probe is
+  // asked now and interpreted after the derivation, so its answer costs the
+  // slower of the two instead of the sum. It stays the same single read the
+  // operational cycle makes — starting it earlier never adds a query.
+  const observation = probeLiveness(probe);
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
   const reservations = new Set<string>([
@@ -115,7 +121,7 @@ export async function deriveStatus(
     unbackedClaims: state.unbackedClaims,
     unmarkedReservations: state.unmarkedReservations,
     registry,
-    liveness: await classifyLiveness(registry, layout, probe),
+    liveness: await classifyLiveness(registry, layout, await observation),
     recoveryBudget: config.recovery,
   };
 }
@@ -130,9 +136,8 @@ export async function deriveStatus(
 async function classifyLiveness(
   registry: RegistryView,
   layout: WorkspaceLayout,
-  probe: LivenessProbe,
+  observation: LivenessObservation,
 ): Promise<Liveness> {
-  const observation = await probeLiveness(probe);
   if (observation.state === "unknown") return { state: "unknown" };
 
   const running = await Promise.all(
