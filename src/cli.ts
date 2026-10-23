@@ -190,7 +190,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
     // (confirmed, or reported as unconfirmed) and the exclusivity is released:
     // the process ends NOW — an internal handle of the runtime must never
     // delay the operator's restart.
-    process.exit(report.unconfirmed.length > 0 ? 1 : 0);
+    process.exit(report.unconfirmed.length > 0 || report.unknown !== null ? 1 : 0);
   }
 }
 
@@ -210,7 +210,7 @@ async function executeRun(
     if (result.shutdown !== null) {
       console.log(
         utcStamp(
-          result.shutdown.unconfirmed.length === 0
+          result.shutdown.unconfirmed.length === 0 && result.shutdown.unknown === null
             ? "sweep stopped by the operator: the stop of every worker was confirmed, exit 0"
             : "sweep stopped by the operator: the stop could not be confirmed, exit 1",
         ),

@@ -235,6 +235,10 @@ export interface StopOptions {
 export interface ShutdownReport {
   forced: string[];
   unconfirmed: Array<{ key: string; because: string }>;
+  /** Why the factory cannot say that no worker survives, even with no work to
+   *  name (the liveness probe is silent): a stop is never called safe on a
+   *  guess, so the operator gets the diagnostic and the nonzero exit. */
+  unknown: string | null;
 }
 
 /** What the engine tracks of one launch while it may still be carrying a worker. */
@@ -1207,7 +1211,16 @@ export class SweepEngine {
     );
 
     const unconfirmed = await this.confirmStop(entries);
-    return { forced, unconfirmed };
+    // A silent Docker leaves the whole workspace unconfirmed — even when this
+    // run had no work to name. The factory never calls a stop safe on a guess.
+    const unknown = this.liveness.state === "unknown" ? this.liveness.reason : null;
+    if (unknown !== null) {
+      this.log(
+        `stop NOT confirmed: the worker liveness could not be read (${unknown}) — the factory cannot say ` +
+          "that no worker survives; the next run answers the same question again",
+      );
+    }
+    return { forced, unconfirmed, unknown };
   }
 
   /**
@@ -1326,9 +1339,9 @@ export class SweepEngine {
       this.log(
         `stop NOT confirmed for ${unconfirmed.length} work(s) — the next run holds them until the worker is known gone`,
       );
-    } else if (answerable.size === 0) {
+    } else if (observation.state === "known" && answerable.size === 0) {
       this.log("stop confirmed: no worker had started and none survives");
-    } else {
+    } else if (observation.state === "known") {
       this.log(`stop confirmed: every worker ended and none survives (${answerable.size} checked)`);
     }
     return unconfirmed;
@@ -2503,9 +2516,9 @@ export async function runForever(
       // unconfirmed, never presumed).
       const report = await engine.beginShutdown();
       log(
-        report.unconfirmed.length === 0
+        report.unconfirmed.length === 0 && report.unknown === null
           ? "factory ended cleanly (the operator's requested stop was confirmed)"
-          : "factory ended with an UNCONFIRMED stop — the next run holds the affected works",
+          : "factory ended with an UNCONFIRMED stop — the next run checks the affected works again",
       );
       return report;
     }
