@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { AMBIENT_TOKEN_ENV_VARS } from "../tracker/github-adapter.js";
 
@@ -11,9 +11,11 @@ function cliPath(): string {
 /**
  * Hermetic `gh` for the tests that spawn the CLI: the binary under test spawns
  * `gh` for its boot check and its REST calls. A shim on PATH answers the boot
- * check (`gh auth token --user …`) with a fixed token and fails LOUD on any
- * REST call — the suites that use it run with `repos: []`, so an API call is a
- * test bug, not something to swallow.
+ * check (`gh auth token --user …`) with a fixed token. REST is two modes: with
+ * `rest` answers declared, the shim serves them from a canned channel and logs
+ * every path the child read; without it, any API call FAILS LOUD (the suites
+ * that pass no `rest` run with `repos: []`, so a REST call is a test bug, not
+ * something to swallow). Either way an undeclared path is a loud failure.
  *
  * `env` is {@link isolatedEnv}: the child's HOME and XDG dirs point into the
  * suite, so the factory's per-user state stays with the suite, and the ambient
@@ -21,13 +23,15 @@ function cliPath(): string {
  * operator's credential store. That keeps the tests off GitHub, credentials,
  * the network and the operator's dirs (issue #90, Testing Decisions).
  *
- * Markers let a test observe and hold the owner:
+ * Markers let a test observe, hold and break the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
  *     it (the run already holds the lock at that point).
  *   MSF_SHIM_HOLD  — while this file exists the shim blocks, so the owner
  *     process stays alive (and keeps its exclusivity) under test control.
  *   MSF_SHIM_FAIL  — the boot check fails, exercising a startup error AFTER
  *     the lock was acquired.
+ *   MSF_GH_REST, MSF_GH_REST_ANSWERS, MSF_GH_REST_LOG — the canned REST
+ *     channel's responder, its answer map and the log of paths read.
  */
 export interface GhShim {
   /** Directory holding the `gh` shim; prepend it to the child's PATH. */
@@ -35,6 +39,9 @@ export interface GhShim {
   /** The child environment: the shim on PATH, {@link isolatedEnv} and any
    * markers given. */
   env(markers?: { ready?: string; hold?: string; fail?: boolean }): NodeJS.ProcessEnv;
+  /** The paths the child read through the REST channel, in request order
+   *  (empty when no `rest` answers were declared). */
+  restCalls(): string[];
 }
 
 /**
@@ -46,8 +53,6 @@ export interface GhShim {
 export interface RestAnswer {
   /** The JSON body the answer prints (exit 0). */
   body?: unknown;
-  /** Delay before answering — controlled latency for the timing properties. */
-  delayMs?: number;
   /** Answer 404 "Not Found": the adapter reads it as unknown, never absent. */
   notFound?: true;
   /** Answer a non-404 failure, stderr carrying this text (exit 1). */
@@ -132,24 +137,30 @@ export function installGhShim(baseDir: string, options: GhShimOptions = {}): GhS
         ...(markers.ready === undefined ? {} : { MSF_SHIM_READY: markers.ready }),
         ...(markers.hold === undefined ? {} : { MSF_SHIM_HOLD: markers.hold }),
         ...(markers.fail === true ? { MSF_SHIM_FAIL: "1" } : {}),
-        ...(rest === undefined
-          ? {}
-          : {
-              MSF_GH_REST: rest.responder,
-              MSF_GH_REST_ANSWERS: rest.answers,
-              MSF_GH_REST_LOG: rest.log,
-            }),
+        ...(rest === undefined ? {} : rest.env),
       });
+    },
+    restCalls() {
+      return rest === undefined ? [] : rest.calls();
     },
   };
 }
 
+/** The paths a REST-channel log records, in request order. */
+function readLog(log: string): string[] {
+  return readFileSync(log, "utf8").split("\n").filter((line) => line !== "");
+}
+
 /** The REST channel the shim delegates to: canned answers by path, and the log
- *  that records what the child actually read. Each call rewrites both. */
-function installRestChannel(
-  baseDir: string,
-  answers: Record<string, RestAnswer>,
-): { responder: string; answers: string; log: string } {
+ *  that records what the child actually read. Each install rewrites both. */
+interface RestChannel {
+  /** The shim's environment: the responder, its answer map, its call log. */
+  env: Record<string, string>;
+  /** The paths the child read, in request order. */
+  calls(): string[];
+}
+
+function installRestChannel(baseDir: string, answers: Record<string, RestAnswer>): RestChannel {
   const channelDir = join(baseDir, "gh-rest");
   mkdirSync(channelDir, { recursive: true });
   const answersPath = join(channelDir, "answers.json");
@@ -179,9 +190,6 @@ function installRestChannel(
       '  process.stderr.write("msf gh-shim: no canned REST answer for " + path + "\\n");',
       "  process.exit(1);",
       "}",
-      "if (answer.delayMs) {",
-      "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, answer.delayMs);",
-      "}",
       "if (answer.notFound) {",
       '  process.stderr.write("HTTP 404: Not Found\\n");',
       "  process.exit(1);",
@@ -195,14 +203,10 @@ function installRestChannel(
     ].join("\n"),
     "utf8",
   );
-  return { responder, answers: answersPath, log };
-}
-
-/** The paths the child read through the shim's REST channel, in request order. */
-export function readRestCalls(baseDir: string): string[] {
-  const log = join(baseDir, "gh-rest", "calls.log");
-  if (!existsSync(log)) return [];
-  return readFileSync(log, "utf8").split("\n").filter((line) => line !== "");
+  return {
+    env: { MSF_GH_REST: responder, MSF_GH_REST_ANSWERS: answersPath, MSF_GH_REST_LOG: log },
+    calls: () => readLog(log),
+  };
 }
 
 /** Run the built CLI to completion in `cwd` (synchronous, bounded). The

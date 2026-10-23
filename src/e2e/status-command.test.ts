@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runCli, installGhShim, readRestCalls, type RestAnswer } from "./cli-harness.js";
+import { runCli, installGhShim, type GhShim, type RestAnswer } from "./cli-harness.js";
 import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 
 /**
@@ -150,10 +150,21 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
     chmodSync(shim, 0o755);
   }
 
-  function runStatus(args: string[]): { stdout: string; stderr: string; status: number | null } {
-    const shim = installGhShim(dir, { rest: restAnswers() });
+  /** The spawned CLI's environment: the canned REST channel, Docker down. */
+  function statusShim(answers: Record<string, RestAnswer> = restAnswers()): GhShim {
+    const shim = installGhShim(dir, { rest: answers });
     dockerDown(shim.binDir);
-    return runCli(dir, ["status", ...args], shim.env());
+    return shim;
+  }
+
+  function runStatus(args: string[]): {
+    stdout: string;
+    stderr: string;
+    status: number | null;
+    restCalls: string[];
+  } {
+    const shim = statusShim();
+    return { ...runCli(dir, ["status", ...args], shim.env()), restCalls: shim.restCalls() };
   }
 
   function expectedReport(cap: number): string {
@@ -213,9 +224,9 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
   });
 
   test("the derivation still reads every candidate's blockers — and only those", () => {
-    runStatus([]);
+    const { restCalls } = runStatus([]);
     assert.deepEqual(
-      readRestCalls(dir).sort(),
+      restCalls.sort(),
       [
         `repos/${REPO}/issues?state=open&per_page=500`,
         `repos/${REPO}/pulls?state=open&per_page=100`,
@@ -231,10 +242,8 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
   test("a failing tracker read is an explicit failure, never an incomplete report", () => {
     const answers = restAnswers();
     answers[`repos/${REPO}/issues?state=open&per_page=500`] = { failure: "HTTP 500: server error" };
-    const shim = installGhShim(dir, { rest: answers });
-    dockerDown(shim.binDir);
 
-    const result = runCli(dir, ["status"], shim.env());
+    const result = runCli(dir, ["status"], statusShim(answers).env());
 
     assert.notEqual(result.status, 0, "a tracker failure fails the command");
     assert.equal(result.stdout, "", "no partial status is presented as complete");
