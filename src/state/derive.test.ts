@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
+import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
   deriveReserved,
   deriveTrackerState,
@@ -21,6 +22,25 @@ const derivePool = async (
   repos: string[],
   labels = DEFAULT_LABELS,
 ) => (await deriveTrackerState(port, repos, labels)).pool;
+
+/** A tracker whose blocker read costs real time — the REST round-trip the
+ *  status derivation awaited one candidate at a time (issue 147). `unreadable`
+ *  answers unknown for a work, so the test also pins that unknown is never an
+ *  unblocked result. */
+class SlowBlockerTracker extends FakeTrackerAdapter {
+  constructor(
+    private readonly delayMs: number,
+    private readonly unreadable: ReadonlySet<number> = new Set(),
+  ) {
+    super({ workerAccount: "bot" });
+  }
+
+  override async readBlockers(ref: IssueRef): Promise<Known<Blocker[]>> {
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    if (this.unreadable.has(ref.number)) return notKnown;
+    return super.readBlockers(ref);
+  }
+}
 
 describe("derive — the pool of eligible works, stateless re-read", () => {
   let adapter: FakeTrackerAdapter;
@@ -109,8 +129,40 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     );
   });
 
-  test("the pool spans all target repos of the config", async () => {
-    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
+  test("many candidates cost a few blocker round-trips, not their sum — with the same results", async () => {
+    const candidates = 12;
+    const DELAY_MS = 250;
+    // Issue 1 keeps an open blocker, issue 7's blockers are unreadable, and the
+    // other ten are eligible: the reads must run concurrently while every
+    // verdict stays what it was.
+    const tracker = new SlowBlockerTracker(DELAY_MS, new Set([7]));
+    for (let number = 1; number <= candidates; number += 1) {
+      seedIssue(tracker, {
+        repo: "Sanmoo/a",
+        number,
+        labels: [DEFAULT_LABELS.ready],
+        createdAt: `2026-01-${String(number).padStart(2, "0")}T00:00:00Z`,
+      });
+    }
+    seedIssue(tracker, { repo: "Sanmoo/a", number: 90 }); // the open blocker
+    tracker.addBlocker({ repo: "Sanmoo/a", number: 1 }, { repo: "Sanmoo/a", number: 90 });
+
+    const started = Date.now();
+    const state = await deriveTrackerState(tracker, ["Sanmoo/a"], DEFAULT_LABELS);
+    const elapsedMs = Date.now() - started;
+
+    assert.deepEqual(
+      state.pool.map((entry) => entry.ref.number),
+      [2, 3, 4, 5, 6, 8, 9, 10, 11, 12],
+      "a blocked or unreadable work is still out, and the rest keep their order",
+    );
+    // One at a time the reads alone cost 12 * 250 ms = 3 s; bounded they are a
+    // couple of waves. The bound is loose on purpose: it names serialization,
+    // never the machine's speed.
+    assert.ok(elapsedMs < 1_500, `the blocker reads serialized: ${elapsedMs}ms for ${candidates} candidates`);
+  });
+
+  test("the pool spans all target repos of the config", async () => {    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
     seedIssue(adapter, { repo: "Sanmoo/b", number: 9, labels: [DEFAULT_LABELS.ready] });
     seedIssue(adapter, { repo: "Sanmoo/other", number: 5, labels: [DEFAULT_LABELS.ready] });
 
