@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
-import { fakeDocker } from "./fake-docker.js";
+import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import {
   dockerWorkerProbe,
   duplicateWorkers,
@@ -26,17 +26,13 @@ import {
 const WORKS = "/ws/trabalhos";
 const NOW = new Date("2026-02-01T12:00:00.000Z");
 
-/** One container as `docker inspect` renders it, with the mounts a worker carries. */
+/** A worker's container: its work dir, its session dir and the toolchain volume. */
 function container(id: string, workKey: string, startedAt: string): Record<string, unknown> {
-  return {
-    Id: id,
-    State: { Running: true, StartedAt: startedAt },
-    Mounts: [
-      { Type: "bind", Source: "/ws/toolchains/mise", Destination: "/home/agent/.local/share/mise" },
-      { Type: "bind", Source: `${WORKS}/${workKey}`, Destination: "/msf-work" },
-      { Type: "bind", Source: `${WORKS}/${workKey}/sessao`, Destination: "/home/agent/.pi/agent/sessions" },
-    ],
-  };
+  return inspectedContainer(
+    id,
+    ["/ws/toolchains/mise", `${WORKS}/${workKey}`, `${WORKS}/${workKey}/sessao`],
+    startedAt,
+  );
 }
 
 describe("liveness — the pure parser over the canned docker outputs", () => {

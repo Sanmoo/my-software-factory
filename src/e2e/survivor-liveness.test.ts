@@ -16,7 +16,7 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
-import { fakeDocker } from "../state/fake-docker.js";
+import { fakeDocker, inspectedContainer } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
@@ -69,16 +69,6 @@ class FakeGitWork implements GitWork {
 /** One live worker the fake Docker reports: the container's own identity. */
 function worker(number: number, containerId: string, ageMs = 5 * 60_000): LiveWorker {
   return { key: `${REPO}#${number}`, containerId, ageMs };
-}
-
-/** One container as `docker inspect` renders it, bound to the work the way the
- *  runtime binds it. */
-function inspected(id: string, work: string): Record<string, unknown> {
-  return {
-    Id: id,
-    State: { Running: true, StartedAt: new Date().toISOString() },
-    Mounts: [{ Source: work, Destination: "/msf-work" }],
-  };
 }
 
 /** A promise a test resolves by hand — the worker parked in flight, no sleep. */
@@ -207,10 +197,14 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
   /** The cycle over a work Docker reports a worker for: the assertions every
    *  survivor test shares — no substitute, no claim, no recovery, evidence and
    *  label untouched. Returns the operator log. */
-  async function survivorSweep(probe: LivenessProbe, number: number): Promise<string[]> {
+  async function survivorSweep(
+    probe: LivenessProbe,
+    number: number,
+    attempts: number[] = [1],
+  ): Promise<string[]> {
     const { tracker, deps, runtime, log } = makeFactory({ config: makeConfig(2), probe });
     bindTracker(tracker);
-    const target = seedReserved(number, [1]);
+    const target = seedReserved(number, attempts);
 
     const sweep = await runOnce(deps);
 
@@ -218,25 +212,18 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.equal(runtime.launched.length, 0);
     assert.deepEqual(tracker.claimedOrder, [], "no claim is written for a work already reserved");
     assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
-    assert.deepEqual(readdirSync(target).sort(), ["log-1.jsonl"], "its attempt's evidence is untouched");
+    assert.deepEqual(
+      readdirSync(target).sort(),
+      attempts.map((attempt) => `log-${attempt}.jsonl`),
+      "its attempt's evidence is untouched",
+    );
     assert.deepEqual(await labelSet(tracker, number), [DEFAULT_LABELS.claimed], "its work stays reserved");
     return log;
   }
 
   test("a survivor seen after a restart keeps the work reserved: no substitute, no new attempt, no recovery spent", async () => {
-    const config = makeConfig(2);
-    const { tracker, deps, runtime, log } = makeFactory({ config, probe: probeOf(worker(7, "ctr000000007")) });
-    bindTracker(tracker);
-    const target = seedReserved(7, [1, 2]);
-    const before = readdirSync(target).sort();
+    const log = await survivorSweep(probeOf(worker(7, "ctr000000007")), 7, [1, 2]);
 
-    const sweep = await runOnce(deps);
-
-    assert.equal(sweep.launched.length, 0, "no substitute was launched over the survivor");
-    assert.equal(runtime.launched.length, 0);
-    assert.deepEqual(tracker.claimedOrder, [], "no claim was written for a work already reserved");
-    assert.deepEqual(readdirSync(target).sort(), before, "attempt evidence untouched — no attempt 3 was created");
-    assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognition is observation: no recovery consumed");
     assert.ok(
       log.some((line) => line.includes("recognizing surviving worker") && line.includes("attempt 2")),
       "the survivor is recognised with the attempt its artifacts number",
@@ -562,7 +549,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     const containerId = "d".repeat(64);
     const shell = fakeDocker({
       listing: `${containerId} ${work},/var/run/docker.sock`,
-      inspect: JSON.stringify([inspected(containerId, work)]),
+      inspect: JSON.stringify([inspectedContainer(containerId, [work])]),
     });
 
     const log = await survivorSweep(
@@ -583,7 +570,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     // authoritative mounts — carries the work mount that makes it ours.
     const shell = fakeDocker({
       listing: containerId,
-      inspect: JSON.stringify([inspected(containerId, work)]),
+      inspect: JSON.stringify([inspectedContainer(containerId, [work])]),
     });
 
     const log = await survivorSweep(

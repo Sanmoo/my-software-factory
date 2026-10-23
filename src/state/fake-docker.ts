@@ -16,6 +16,22 @@ export interface FakeDocker {
   calls: string[][];
 }
 
+/**
+ * One container as `docker inspect` renders it: its id, its start and the bind
+ * sources it carries — the work the runtime binds at /msf-work among them.
+ */
+export function inspectedContainer(
+  id: string,
+  mounts: readonly string[],
+  startedAt = "2026-02-01T11:47:00.000Z",
+): Record<string, unknown> {
+  return {
+    Id: id,
+    State: { Running: true, StartedAt: startedAt },
+    Mounts: mounts.map((Source) => ({ Type: "bind", Source })),
+  };
+}
+
 export function fakeDocker(replies: FakeDockerReplies): FakeDocker {
   const calls: string[][] = [];
   const run: DockerRunner = async (args) => {
