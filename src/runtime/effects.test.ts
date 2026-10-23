@@ -46,6 +46,11 @@ describe("the external-effect classifier (issue 119)", () => {
       "git tag v1~2",
       // Inside single quotes the shell expands nothing, so this is literal text.
       "git commit -m 'fix $PATH note'",
+      // A separator inside quotes is text, not syntax: splitting it invented a
+      // second segment the shell never runs (and a false pause on recovery).
+      'git commit -m "fix: a && b"',
+      "git commit -m 'x; y'",
+      'git commit -m "a & b"',
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -129,6 +134,9 @@ describe("the external-effect classifier (issue 119)", () => {
       "tar -C/tmp -xf a.tar",
       "patch -d/tmp -i p.diff",
       "tee $HOME/x",
+      // An apostrophe inside DOUBLE quotes is literal, so the `$` after it still
+      // expands — the one place a quote-blind reader marked the call safe.
+      `sort -o "don't $FU" f`,
       "git init /tmp/new",
       "git clone x /tmp/dest",
       "git apply --directory=/tmp",
@@ -201,6 +209,31 @@ describe("the external-effect classifier (issue 119)", () => {
 
   test("one unknown segment makes the whole compound command unknown", () => {
     assert.equal(classifyCommand("git commit -m x && curl https://example.com").safety, "unknown");
+  });
+
+  test("a background `&` is a separator: both halves are classified", () => {
+    // The right half runs too, so its comment must be journaled and reconciled
+    // like any other effect — not lost inside one 'safe' segment.
+    const [comment] = effectActions("ls & gh pr comment 5 --body hi");
+    assert.equal(comment?.kind, "comment");
+    assert.equal(comment?.target, "pr");
+    assert.equal(comment?.number, 5);
+    // And an unclassifiable right half is refused, never marked safe.
+    assert.equal(classifyCommand("git status & curl https://example.com").safety, "unknown");
+  });
+
+  test("an allowlisted subcommand that runs a program is unknown", () => {
+    // `--exec`, `bisect run`, `foreach` and tar's `--to-command` all execute
+    // code this classifier never sees: the same class as `sudo`.
+    for (const command of [
+      "git rebase --exec=make origin/main",
+      "git bisect run make",
+      "git submodule foreach make",
+      "tar --to-command=curl -xf a.tar",
+      "tar --use-compress-program=curl -xf a.tar",
+    ]) {
+      assert.equal(classifyCommand(command).safety, "unknown", command);
+    }
   });
 
   test("the observed ref completes the identity of push and PR effects", () => {

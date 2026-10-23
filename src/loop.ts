@@ -98,7 +98,7 @@ import {
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
 import { planContinuity, recheckPausedEffects } from "./runtime/continuity.js";
-import { clearPause, readPause, writePause, type PauseRecord } from "./runtime/continuity-artifacts.js";
+import { clearPause, knownAttempt, readPause, writePause, type PauseRecord } from "./runtime/continuity-artifacts.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -1753,7 +1753,10 @@ export class SweepEngine {
     if (kind === "resume") {
       const pause = readPause(dir);
       if (pause !== null) {
-        const recheck = await recheckPausedEffects({ ...continuityDeps, attempt: pause.attempt >= 1 ? pause.attempt : facts.attempt });
+        const recheck = await recheckPausedEffects({
+          ...continuityDeps,
+          attempt: knownAttempt(pause.attempt) ?? facts.attempt,
+        });
         if (!recheck.resolved && recheck.pause !== null) {
           this.log(
             `the human answered ${key}, but the interrupted effect is still unresolved — ` +

@@ -213,16 +213,44 @@ function splitSegments(command: string): string[] {
   // Newlines, `;` and a lone `&` (background) separate commands; `&&`/`||`
   // separate independent ones. A pipe never reaches here: `classifyCommand`
   // refuses it, because the right side's effect is not decidable.
+  //
+  // Quoting is read exactly as scanShell reads it: `git commit -m "fix: a &&
+  // b"` is ONE command, and splitting it would invent a second segment the
+  // shell never runs. Quotes are kept in the segment so tokenize can strip
+  // them later.
   const segments: string[] = [];
   let current = "";
+  let quote: '"' | "'" | null = null;
   for (let i = 0; i < command.length; i += 1) {
     const char = command[i]!;
+    const next = command[i + 1];
+    // Inside quotes NOTHING is a separator; the closing quote is the only
+    // character with a meaning of its own (and `\` still escapes inside `""`).
+    if (quote !== null) {
+      current += char;
+      if (char === quote) quote = null;
+      else if (quote === '"' && char === "\\") {
+        current += next ?? "";
+        i += 1;
+      }
+      continue;
+    }
+    if (char === "\\") {
+      current += char + (next ?? "");
+      i += 1;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+      continue;
+    }
     if (char === ";" || char === "\n") {
       segments.push(current);
       current = "";
       continue;
     }
-    if ((char === "&" && command[i + 1] === "&") || (char === "|" && command[i + 1] === "|")) {
+    if ((char === "&" && next === "&") || (char === "|" && next === "|")) {
       segments.push(current);
       current = "";
       i += 1;
