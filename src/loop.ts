@@ -1088,21 +1088,17 @@ export class SweepEngine {
       if (launchable.pr !== null && launchable.pr.state === "closed") {
         await tracker.reopenPr(ref);
       }
-    } else if (kind === "recover") {
+    } else if (kind === "recover" || kind === "model-provider-retry") {
       this.log(
-        `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
-          "the same attempt continues (no new attempt, branch preserved)",
+        kind === "recover"
+          ? `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
+              "the same attempt continues (no new attempt, branch preserved)"
+          : `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
+              "the same attempt continues (no new attempt, branch preserved)",
       );
-      // The claim swap itself may have been interrupted (issue 98): re-asserting
-      // the idempotent claim heals it without releasing the work to the pool.
-      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
-    } else if (kind === "model-provider-retry") {
-      this.log(
-        `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
-          "the same attempt continues (no new attempt, branch preserved)",
-      );
-      // The same idempotent re-assert as a recovery: a claim swap interrupted
-      // during the outage is healed without releasing the work.
+      // The claim swap itself may have been interrupted (issue 98) — or the
+      // outage of issue 144 killed it: re-asserting the idempotent claim heals
+      // it without releasing the work to the pool.
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "feedback") {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);

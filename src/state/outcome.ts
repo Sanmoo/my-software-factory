@@ -243,8 +243,8 @@ export async function interruptionPausedCommentBody(input: InterruptionPausedInp
   return [header, describeOutcome(input), "", renderWorkEvidence(evidence)].join("\n\n");
 }
 
-/** What the provider awaiting needs: the failure, the budget spent and the
- *  attempt's evidence. */
+/** What the awaiting model provider needs: the failure, the budget spent and
+ *  the attempt's evidence. */
 export interface ModelProviderAwaitingInput {
   attempt: number;
   failure: ModelProviderFailure;
@@ -256,7 +256,7 @@ export interface ModelProviderAwaitingInput {
 /**
  * The help request of an exhausted model provider budget (issue 144): the
  * attempt ended by a model provider failure, the factory stopped retrying, and the work is
- * NOT blocked — it waits for the operator. It names the provider's own message
+ * NOT blocked — it waits for the operator. It names the model provider's own message
  * and the configured allowance, and says how to go on (raise the budget, or
  * answer on the issue to resume with a new attempt).
  */

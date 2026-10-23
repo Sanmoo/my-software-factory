@@ -29,7 +29,7 @@ export interface ModelProviderRetryEvent {
   /** The attempt the retry continues — the same number, never a new one. */
   attempt: number;
   /** When the factory settled the failure — not the failure's own time. */
-  settledAt: string;
+  at: string;
   /** The model provider's message at settlement. */
   message: string;
 }
@@ -45,7 +45,7 @@ export type ModelProviderSettlement = {
   /** The failure's identity (the stream's timestamp, or its line) — never the settlement time. */
   failureIdentity: string;
   message: string;
-  settledAt: string;
+  at: string;
 } & (
   | { granted: true; waitMs: number }
   /** Awaiting: `helpRequested` keeps the help request retryable — a death
@@ -120,7 +120,7 @@ function isEvent(value: unknown): value is ModelProviderRetryEvent {
     nonNegativeInteger(event["index"]) !== null &&
     typeof event["waitMs"] === "number" &&
     positiveInteger(event["attempt"]) !== null &&
-    typeof event["settledAt"] === "string" &&
+    typeof event["at"] === "string" &&
     typeof event["message"] === "string"
   );
 }
@@ -132,7 +132,7 @@ function isSettlement(value: unknown): value is ModelProviderSettlement {
     positiveInteger(settlement["attempt"]) === null ||
     typeof settlement["failureIdentity"] !== "string" ||
     typeof settlement["message"] !== "string" ||
-    typeof settlement["settledAt"] !== "string"
+    typeof settlement["at"] !== "string"
   ) {
     return false;
   }
@@ -202,7 +202,7 @@ export async function settleModelProviderFailure(
   if (decision.decision === "awaiting-model-provider") {
     await writeLedger(workDir, {
       ...ledger,
-      last: { attempt, failureIdentity: failure.identity, message: failure.message, granted: false, waitMs: null, helpRequested: false, settledAt: at },
+      last: { attempt, failureIdentity: failure.identity, message: failure.message, granted: false, waitMs: null, helpRequested: false, at },
     });
     return { ...decision, recorded: true };
   }
@@ -211,7 +211,7 @@ export async function settleModelProviderFailure(
     index: ledger.consumed,
     waitMs: decision.waitMs,
     attempt,
-    settledAt: at,
+    at,
     message: failure.message,
   };
   await writeLedger(workDir, {
@@ -224,7 +224,7 @@ export async function settleModelProviderFailure(
       message: failure.message,
       granted: true,
       waitMs: decision.waitMs,
-      settledAt: at,
+      at,
     },
   });
   return { ...decision, recorded: true };
@@ -242,8 +242,7 @@ export async function markModelProviderHelpRequested(
 ): Promise<void> {
   const ledger = await readModelProviderLedger(workDir);
   const last = ledger.last;
-  if (last === null || last.attempt !== attempt || last.failureIdentity !== failure.identity || last.granted) return;
-  if (last.helpRequested) return;
+  if (!settlesFailure(last, attempt, failure) || last.granted || last.helpRequested) return;
   await writeLedger(workDir, { ...ledger, last: { ...last, helpRequested: true } });
 }
 
@@ -285,13 +284,7 @@ export function isModelProviderHelpPending(
   failure: ModelProviderFailure,
 ): boolean {
   const last = ledger.last;
-  return (
-    last !== null &&
-    last.attempt === attempt &&
-    last.failureIdentity === failure.identity &&
-    !last.granted &&
-    !last.helpRequested
-  );
+  return settlesFailure(last, attempt, failure) && !last.granted && !last.helpRequested;
 }
 
 /** Whether the last settlement is this exact failure of this attempt. */
@@ -300,5 +293,16 @@ export function isModelProviderFailureSettled(
   attempt: number,
   failure: ModelProviderFailure,
 ): boolean {
-  return ledger.last !== null && ledger.last.attempt === attempt && ledger.last.failureIdentity === failure.identity;
+  return settlesFailure(ledger.last, attempt, failure);
+}
+
+/** The one test for "the last settlement is this failure of this attempt":
+ *  the failure's own identity and the attempt are what make a settlement this
+ *  one, never the time it was settled at. */
+function settlesFailure(
+  last: ModelProviderSettlement | null,
+  attempt: number,
+  failure: ModelProviderFailure,
+): last is ModelProviderSettlement {
+  return last !== null && last.attempt === attempt && last.failureIdentity === failure.identity;
 }

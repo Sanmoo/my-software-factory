@@ -26,20 +26,20 @@ import { RECOVERY_FILENAME } from "../pool/recovery.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
- * MODEL PROVIDER FAILURE from an interruption of the agent. A provider error in the
- * attempt's own stream retries on its own budget and backoff; an interruption
- * without it keeps issue 123's recovery untouched; an exhausted provider budget
- * waits for the operator ("awaiting model provider") as a help request — never a
- * block and never an infinite retry.
+ * MODEL PROVIDER FAILURE from an interruption of the agent. A model provider
+ * error in the attempt's own stream retries on its own budget and backoff; an
+ * interruption without it keeps issue 123's recovery untouched; an exhausted
+ * model provider budget waits for the operator ("awaiting model provider") as a
+ * help request — never a block and never an infinite retry.
  *
- * The seams are the ticket's: the scriptable fake runtime (a provider error
- * written into the attempt's stream log, exactly as the real runtime records
- * pi's stdout) and a real work dir under a temp workspace.
+ * The seams are the ticket's: the scriptable fake runtime (a model provider
+ * error written into the attempt's stream log, exactly as the real runtime
+ * records pi's stdout) and a real work dir under a temp workspace.
  */
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
-const PROVIDER_MESSAGE =
+const MODEL_PROVIDER_MESSAGE =
   '429: {"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}';
 
 /** The runtime deadline seam only records the waits: the tests never sleep. */
@@ -146,17 +146,17 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     return JSON.parse(readFileSync(join(workDirPath, MODEL_PROVIDER_FILENAME), "utf8"));
   }
 
-  test("(a) a provider error in the stream advances the provider budget and retries on its own backoff", async () => {
+  test("(a) a model provider error in the stream advances the model provider budget and retries on its own backoff", async () => {
     const config = makeConfig({ maxRetries: 2, waitsMs: [10, 20] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     const { deps, waits } = makeFactory(config, tracker, ["abrupt-death", "abrupt-death", "pr-open"], {
-      modelProviderErrors: () => PROVIDER_MESSAGE,
+      modelProviderErrors: () => MODEL_PROVIDER_MESSAGE,
     });
     const result = await runOnce(deps);
 
-    assert.deepEqual(waits.observed, [10, 20], "the provider's own backoff — never the recovery schedule");
+    assert.deepEqual(waits.observed, [10, 20], "the model provider's own backoff — never the recovery schedule");
     assert.deepEqual(
       result.launched.map((launch) => launch.request.attempt),
       [1, 1, 1],
@@ -166,7 +166,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
 
     const wd = workDir(layout, REPO, 1);
     const ledger = modelProviderLedger(wd);
-    assert.equal(ledger["consumed"], 2, "two provider retries were consumed and persisted");
+    assert.equal(ledger["consumed"], 2, "two model provider retries were consumed and persisted");
     assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
 
     const log = readFileSync(join(wd, eventLogName(1)), "utf8")
@@ -175,17 +175,17 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     const failures = log.filter((line) => line["event"] === "model-provider-failure");
     const retries = log.filter((line) => line["event"] === "model-provider-retry");
-    assert.equal(failures.length, 2, "each provider failure has its own event in the attempt's log");
+    assert.equal(failures.length, 2, "each model provider failure has its own event in the attempt's log");
     assert.equal(retries.length, 2, "each retry has its own event in the attempt's log");
-    assert.ok(failures.every((line) => line["message"] === PROVIDER_MESSAGE), "the log names the provider's message");
+    assert.ok(failures.every((line) => line["message"] === MODEL_PROVIDER_MESSAGE), "the log names the model provider's message");
     assert.deepEqual(retries.map((line) => line["waitMs"]), [10, 20], "the log names the granted backoff");
 
     const labels = await labelsOf(tracker, 1);
     assert.ok(labels.includes(DEFAULT_LABELS.claimed), "the claim is held through the retries");
-    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "a provider failure never blocks");
+    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "a model provider failure never blocks");
   });
 
-  test("(b) an interruption WITHOUT a provider error keeps issue 123's recovery unchanged", async () => {
+  test("(b) an interruption WITHOUT a model provider error keeps issue 123's recovery unchanged", async () => {
     const config = makeConfig({ maxRetries: 2, waitsMs: [10, 20] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -203,21 +203,21 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       1,
       "the interruption consumed its recovery",
     );
-    assert.ok(!existsSync(join(wd, MODEL_PROVIDER_FILENAME)), "no provider ledger is invented for a plain interruption");
+    assert.ok(!existsSync(join(wd, MODEL_PROVIDER_FILENAME)), "no model provider ledger is invented for a plain interruption");
     assert.doesNotMatch(
       readFileSync(join(wd, eventLogName(1)), "utf8"),
       /provider-failure|provider-retry/,
-      "no provider event is written for an interruption of the agent",
+      "no model provider event is written for an interruption of the agent",
     );
   });
 
-  test("(c) an exhausted provider budget waits for the operator: a help request, never a block and never a retry loop", async () => {
+  test("(c) an exhausted model provider budget waits for the operator: a help request, never a block and never a retry loop", async () => {
     const config = makeConfig({ maxRetries: 1, waitsMs: [10] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     const { deps, waits } = makeFactory(config, tracker, ["abrupt-death"], {
-      modelProviderErrors: () => PROVIDER_MESSAGE,
+      modelProviderErrors: () => MODEL_PROVIDER_MESSAGE,
     });
     const result = await runOnce(deps);
 
@@ -247,7 +247,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
 
     // A restart keeps awaiting: no new worker, no second comment.
-    const restarted = makeFactory(config, tracker, ["pr-open"], { modelProviderErrors: () => PROVIDER_MESSAGE });
+    const restarted = makeFactory(config, tracker, ["pr-open"], { modelProviderErrors: () => MODEL_PROVIDER_MESSAGE });
     const second = await runOnce(restarted.deps);
     assert.equal(second.launched.length, 0, "no infinite retry: the exhausted budget launches nothing");
     const after = await tracker.readComments({ repo: REPO, number: 1 });
@@ -255,7 +255,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.equal(after.value.length, 1, "the help request is never repeated");
   });
 
-  test("(c3) a death between the ledger and the help request never loses the request — the next sweep asks", async () => {
+  test("a death between the ledger and the help request never loses the request — the next sweep asks", async () => {
     const config = makeConfig({ maxRetries: 1, waitsMs: [10] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -273,7 +273,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
           provider: "fake",
           model: "fake/model",
           stopReason: "error",
-          errorMessage: PROVIDER_MESSAGE,
+          errorMessage: MODEL_PROVIDER_MESSAGE,
           timestamp: 1_700_000_000_555,
         },
       }),
@@ -284,7 +284,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       message: "503: unavailable",
       identity: "2026-01-01T00:00:00.000Z",
     });
-    await settleModelProviderFailure(wd, config.modelProvider, 1, { message: PROVIDER_MESSAGE, identity: at });
+    await settleModelProviderFailure(wd, config.modelProvider, 1, { message: MODEL_PROVIDER_MESSAGE, identity: at });
     assert.equal((modelProviderLedger(wd)["last"] as Record<string, unknown>)["helpRequested"], false);
 
     const { deps } = makeFactory(config, tracker, ["pr-open"]);
@@ -297,16 +297,16 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.equal((modelProviderLedger(wd)["last"] as Record<string, unknown>)["helpRequested"], true);
   });
 
-  test("(c2) the operator answers the help request: the work resumes with a NEW attempt", async () => {
+  test("the operator answers the help request: the work resumes with a NEW attempt", async () => {
     const config = makeConfig({ maxRetries: 1, waitsMs: [10] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const first = makeFactory(config, tracker, ["abrupt-death"], { modelProviderErrors: () => PROVIDER_MESSAGE });
+    const first = makeFactory(config, tracker, ["abrupt-death"], { modelProviderErrors: () => MODEL_PROVIDER_MESSAGE });
     await runOnce(first.deps);
 
     // The human answers on the issue, after the agent marker.
-    tracker.addComment({ repo: REPO, number: 1 }, "operator", "go on, the provider is back");
+    tracker.addComment({ repo: REPO, number: 1 }, "operator", "go on, the model provider is back");
 
     const resumed = makeFactory(config, tracker, ["pr-open"]);
     const result = await runOnce(resumed.deps);
@@ -337,7 +337,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
           provider: "fake",
           model: "fake/model",
           stopReason: "error",
-          errorMessage: PROVIDER_MESSAGE,
+          errorMessage: MODEL_PROVIDER_MESSAGE,
           timestamp: 1_700_000_000_123,
         },
       }),
@@ -361,13 +361,13 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
   });
 
-  test("a work whose record exists is never read as a provider failure — the record decides", async () => {
+  test("a work whose record exists is never read as a model provider failure — the record decides", async () => {
     const config = makeConfig({ maxRetries: 2, waitsMs: [10, 20] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     const { deps, waits } = makeFactory(config, tracker, ["pr-open"], {
-      modelProviderErrors: () => PROVIDER_MESSAGE,
+      modelProviderErrors: () => MODEL_PROVIDER_MESSAGE,
     });
     const result = await runOnce(deps);
 
@@ -380,7 +380,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const first = makeFactory(config, tracker, ["abrupt-death"], { modelProviderErrors: () => PROVIDER_MESSAGE });
+    const first = makeFactory(config, tracker, ["abrupt-death"], { modelProviderErrors: () => MODEL_PROVIDER_MESSAGE });
     await runOnce(first.deps);
 
     const { deriveStatus } = await import("../state/status.js");
@@ -400,7 +400,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.match(
       text,
       /orphaned \(attempt interrupted — no outcome record of its own, no worker alive\): none/,
-      "an awaiting-provider work is not repeated as an interrupted attempt",
+      "an awaiting-model-provider work is not repeated as an interrupted attempt",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
     assert.ok(!text.includes("blocked"), "awaiting model provider is never rendered as a block");

@@ -9,8 +9,8 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
-  DEFAULT_RECOVERY_BUDGET,
   DEFAULT_MODEL_PROVIDER_BUDGET,
+  DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
@@ -437,7 +437,7 @@ describe("status — derivation on demand + local registry scan", () => {
       text,
       /#40 \(attempt 1: 1\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 429: upstream unavailable — retrying after the model provider backoff\)/,
     );
-    assert.doesNotMatch(text, /blocked/, "a provider failure is never rendered as a block");
+    assert.doesNotMatch(text, /blocked/, "a model provider failure is never rendered as a block");
   });
 
   test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {

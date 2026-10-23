@@ -27,7 +27,7 @@ const BUDGET = { maxRetries: 3, waitsMs: [15_000, 30_000, 60_000] } as const;
 const NOW = () => new Date("2026-01-01T00:00:00Z");
 const FAILURE: ModelProviderFailure = { message: "429: upstream unavailable", identity: "2026-01-01T00:00:00.000Z" };
 
-describe("the provider-failure budget — its own retries, its own backoff", () => {
+describe("the model provider budget — its own retries, its own backoff", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -38,7 +38,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("three retries at 15/30/60 s, then awaiting provider — never a fourth", async () => {
+  test("three retries at 15/30/60 s, then awaiting model provider — never a fourth", async () => {
     const waits: number[] = [];
     for (let index = 0; index < 3; index += 1) {
       const failure = { ...FAILURE, identity: `2026-01-01T00:00:0${index}.000Z` };
@@ -98,12 +98,12 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
     assert.equal((await readModelProviderLedger(dir)).consumed, 4);
   });
 
-  test("awaiting provider is the settled, ungranted failure — never an interruption or a failure stop", async () => {
+  test("awaiting model provider is the settled, ungranted failure — never an interruption or a failure stop", async () => {
     const ledger: ModelProviderLedger = {
       attempt: 1,
       consumed: 2,
       events: [],
-      last: { attempt: 1, failureIdentity: FAILURE.identity, message: FAILURE.message, granted: false, waitMs: null, helpRequested: false, settledAt: NOW().toISOString() },
+      last: { attempt: 1, failureIdentity: FAILURE.identity, message: FAILURE.message, granted: false, waitMs: null, helpRequested: false, at: NOW().toISOString() },
     };
     assert.equal(awaitingModelProvider(ledger, 1, { maxRetries: 2, waitsMs: [1] }), true);
     assert.equal(awaitingModelProvider(ledger, 2, { maxRetries: 2, waitsMs: [1] }), false, "another attempt is not awaiting");
@@ -128,7 +128,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
     assert.equal(onDisk.attempt, 1);
     assert.equal(onDisk.consumed, 1);
     assert.deepEqual(onDisk.events, [
-      { index: 0, waitMs: 15_000, attempt: 1, settledAt: NOW().toISOString(), message: FAILURE.message },
+      { index: 0, waitMs: 15_000, attempt: 1, at: NOW().toISOString(), message: FAILURE.message },
     ]);
     assert.equal(onDisk.last.granted, true);
   });
