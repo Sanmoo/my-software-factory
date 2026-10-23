@@ -173,13 +173,13 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
           key,
           dir,
           anchor,
-          work: legacyWork(anchor),
+          work: legacyWorkOf(anchor),
           reservation: { state: "unreadable", reason: mismatch },
         });
       }
       continue;
     }
-    entries.push({ key, dir, anchor, work: legacyWork(anchor), reservation });
+    entries.push({ key, dir, anchor, work: legacyWorkOf(anchor), reservation });
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
@@ -227,11 +227,15 @@ export async function workDirCandidates(
 }
 
 /** A GitHub dir is the issue of its destination repo itself: the legacy key is
- *  an authoritative identity. Any other provider's key carries no readable
+ *  an authoritative identity — the one rule both the scan and any other
+ *  anchor-to-Work read share. Any other provider's key carries no readable
  *  ticket key, so no Work is invented without the persisted record. */
-function legacyWork(anchor: WorkAnchor): WorkIdentity | null {
+export function legacyWorkOf(anchor: WorkAnchor): WorkIdentity | null {
   return anchor.provider === "github" ? workOfAnchor(anchor, `#${anchor.stableId}`) : null;
 }
+
+/** A reservation whose Work the disk names: the scan above, narrowed. */
+export type IdentifiedReservation = ReservationEntry & { work: WorkIdentity };
 
 const RESERVATION_FILE: PersistedFile<ReservationRecord> = {
   filename: RESERVATION_FILENAME,

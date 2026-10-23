@@ -17,7 +17,7 @@ import {
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { branchOfWork, repoCloneDir, workerWorktreePath } from "../git/port.js";
-import { readAttemptLedger, readLaunchFacts, scanReservedWorks } from "../pool/registry.js";
+import { readAttemptLedger, readLaunchFacts } from "../pool/registry.js";
 import { reservationRecordOf, reserveWork, scanReservations } from "../pool/reservation.js";
 import { activePullRequest, readPrAssociations, recordPrAssociation } from "../pool/pr-association.js";
 import { readOutcomeRecord } from "../state/outcome.js";
@@ -307,9 +307,7 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     assert.deepEqual(entries[0]!.work, legacy);
     assert.equal((await readOutcomeRecord(legacyDir))?.pr?.number, 41);
 
-    // The transitional registry bridge still names it for the unmigrated
-    // consumers, and the legacy git seam still prepares the same branch.
-    assert.deepEqual(await scanReservedWorks(layout), [{ ref: { repo: REPO, number: 7 }, dir: legacyDir }]);
+    // The legacy git seam still prepares the same branch.
     const git = gitWork();
     const prepared = await git.prepareWork({ repo: REPO, number: 7 });
     assert.equal(prepared.branch, "agent-issue-7");

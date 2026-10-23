@@ -16,14 +16,18 @@ import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import {
   githubSelections,
-  githubSource,
   issueRefOf,
   issueRefOfTicket,
   ticketUrl,
-  type TicketSource,
   type WorkIdentity,
 } from "./tracker/identity.js";
-import { reservationRecordOf, reserveWork, scanReservations, type ReservationEntry } from "./pool/reservation.js";
+import {
+  legacyWorkOf,
+  reservationRecordOf,
+  reserveWork,
+  scanReservations,
+  type IdentifiedReservation,
+} from "./pool/reservation.js";
 import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
@@ -88,8 +92,7 @@ import {
   refundRecovery,
   type RecoveryDecision,
 } from "./pool/recovery.js";
-import { workKeyOf } from "./pool/work-key.js";
-import { anchorOfKey, workKeyOf, workOfAnchor } from "./pool/work-key.js";
+import { anchorOfKey, workKeyOf } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
@@ -158,9 +161,6 @@ export interface LoopDeps {
   tickets: TicketTracker;
   /** PR/code-host facts: linkage, feedback, checks, the branch. */
   pullRequests: PullRequestTracker;
-  /** The ticket sources the composed adapter serves. Omitted = GitHub Issues,
-   *  the only production composition until the Jira slices land. */
-  ticketSources?: readonly TicketSource[];
   runtime: WorkerRuntime;
   /** The git host side: one clone per target repo, work branch per work (ticket 15). */
   git: ExpandedGitWork;
@@ -575,10 +575,10 @@ export class SweepEngine {
     // WHO is reserved is what the reservation on disk says — a work's origin is
     // never reconstructed from the current selection configuration (issue 126).
     const reservations = await scanReservations(workspace);
-    const reservationByKey = new Map<string, ReservationEntry & { work: WorkIdentity }>();
-    for (const entry of reservations) {
-      if (entry.work !== null) reservationByKey.set(entry.key, entry as ReservationEntry & { work: WorkIdentity });
-    }
+    const identified = reservations.filter(
+      (entry): entry is IdentifiedReservation => entry.work !== null,
+    );
+    const reservationByKey = new Map(identified.map((entry) => [entry.key, entry]));
     const settled = await this.observeSurvivors(reservationByKey);
     this.observeCapacity();
     const suspended = this.liveness.state === "unknown";
@@ -594,8 +594,13 @@ export class SweepEngine {
     // live worker keeps its work reserved, and a settled exit is not decided
     // twice in the same sweep.
     const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
+    // The selection is ONE authority (issue 126): the sources the composed
+    // adapter serves are the sources of the same list the pool is read with.
+    // With GitHub Issues as the only production composition until the Jira
+    // slices land, this is the code host the configured repos live on.
+    const selections = githubSelections(config.repos);
     const served = new Set(
-      (this.deps.ticketSources ?? [githubSource()]).map((source) => `${source.provider}:${source.site}`),
+      selections.map((selection) => `${selection.source.provider}:${selection.source.site}`),
     );
     const allReserved: ReservedWorkInput[] = [];
     for (const entry of reservations) {
@@ -871,7 +876,7 @@ export class SweepEngine {
     const reservationKeys = new Set(reservations.map((entry) => entry.key));
     const state = await deriveTrackerState(
       this.deps.tickets,
-      githubSelections(config.repos),
+      selections,
       config.labels,
       reservationKeys,
       inFlight,
@@ -1010,7 +1015,7 @@ export class SweepEngine {
    * observation.
    */
   private async observeSurvivors(
-    reservations: ReadonlyMap<string, ReservationEntry & { work: WorkIdentity }>,
+    reservations: ReadonlyMap<string, IdentifiedReservation>,
   ): Promise<Set<string>> {
     const settled = new Set<string>();
     if (this.liveness.state !== "known") return settled;
@@ -1087,7 +1092,7 @@ export class SweepEngine {
    * chosen or ended — the evidence stays for the human.
    */
   private async announceDuplicates(
-    reservations: ReadonlyMap<string, ReservationEntry & { work: WorkIdentity }>,
+    reservations: ReadonlyMap<string, IdentifiedReservation>,
   ): Promise<void> {
     if (this.liveness.state !== "known") return;
     const { fresh, next } = freshDuplicates(
@@ -1714,7 +1719,7 @@ export class SweepEngine {
       // decision: a returned round is never also "reactivated".
       const reading = readRepairPremise(
         await pullRequests.readPullRequestRepairFacts(
-          workPullRequest(work, dir, launchable.pr),
+          workPullRequest(work, launchable.pr),
         ),
       );
       if (reading.premise !== "persisting") {
@@ -2241,7 +2246,7 @@ export class SweepEngine {
       // settlement: a settled or attempt-less cycle never reaches this line.
       const premise = readRepairPremise(
         await this.deps.pullRequests.readPullRequestRepairFacts(
-          workPullRequest(work.work, work.dir),
+          workPullRequest(work.work),
         ),
       ).premise;
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
@@ -2472,7 +2477,7 @@ export class SweepEngine {
     const key = workKeyOf(work);
 
     const feedback = await pullRequests.readPullRequestFeedback(
-      workPullRequest(work, dir, launchable.pr),
+      workPullRequest(work, launchable.pr),
     );
     const pr = feedback.known ? feedback.value.pr : null;
     const prConfirmed = pr !== null && pr.state === "open";
@@ -2747,8 +2752,7 @@ type WakeEvent = "worker-end" | "tick" | "abort";
  *  invented from the stable id. */
 function workOfKeyForNotice(key: string): WorkIdentity | null {
   const anchor = anchorOfKey(key);
-  if (anchor === null || anchor.provider !== "github") return null;
-  return workOfAnchor(anchor, `#${anchor.stableId}`);
+  return anchor === null ? null : legacyWorkOf(anchor);
 }
 
 const logClaim = (log: (message: string) => void, key: string): void =>
@@ -2881,7 +2885,7 @@ async function launchMaterial(
 ): Promise<WorkerMaterial> {
   const { work, dir } = launchable;
   const issue = await tickets.readTicket(work.ticket);
-  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, dir, launchable.pr));
+  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, launchable.pr));
   const diff = await git.diffWorkFor(work);
 
   const pr =
