@@ -704,8 +704,8 @@ interface InterruptedAttempt {
 }
 
 /** The retomada: a human answer after the marker resumes the work on its
- *  existing branch and PR — shared by the blocked channel and the model
- *  model provider awaiting (issue 144), so their shape cannot drift apart. */
+ *  existing branch and PR — shared by the blocked channel and the awaiting
+ *  model provider (issue 144), so their shape cannot drift apart. */
 async function resumableState(
   port: TrackerPort,
   ref: IssueRef,

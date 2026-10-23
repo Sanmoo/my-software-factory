@@ -276,6 +276,17 @@ function ledgerForAttempt(ledger: ModelProviderLedger, attempt: number): ModelPr
   return { ...ledger, attempt, consumed: 0 };
 }
 
+/** Whether this failure of this attempt was already settled WITH a retry: the
+ *  settlement that must not be granted a second one, whatever the count says. */
+export function isModelProviderRetryGranted(
+  ledger: ModelProviderLedger,
+  attempt: number,
+  failure: ModelProviderFailure,
+): boolean {
+  const last = ledger.last;
+  return settlesFailure(last, attempt, failure) && last.granted;
+}
+
 /** Whether this settled failure still owes its help request: awaiting, and
  *  the comment was not posted yet (a death between the ledger and the comment). */
 export function isModelProviderHelpPending(

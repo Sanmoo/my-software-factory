@@ -36,7 +36,7 @@ repos:
 #   waits-ms: [1000, 4000, 16000] # the backoff before each recovery relaunch
 # model-provider:                 # the worker model provider's own budget (issue 144)
 #   max-retries: 4                # retries per attempt after model provider failures
-#   waits-ms: [15000, 30000, 60000, 120000] # the backoff before each retry
+#   waits-ms: [15000, 30000, 60000, 120000]  # the backoff before each retry
 # liveness:                       # Docker silence suspends launches (issue 118)
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
