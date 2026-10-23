@@ -268,8 +268,8 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
   return [
     header,
     `last model provider error: ${input.failure.message}`,
-    "The factory stops retrying this attempt until an operator acts: raise provider.max-retries in msf.yaml, " +
-      "or answer on this issue to resume with a new attempt.",
+    "The factory stops retrying this attempt until an operator acts: raise model-provider.max-retries in msf.yaml, " +
+      "or answer on this issue to resume.",
     "",
     renderWorkEvidence(evidence),
   ].join("\n\n");

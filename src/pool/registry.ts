@@ -16,10 +16,15 @@ import {
 } from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
-import { readModelProviderLedger, type ModelProviderLedger } from "./model-provider.js";
+import {
+  readModelProviderLedger,
+  type ModelProviderLedger,
+  type ModelProviderSettlement,
+} from "./model-provider.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import { issueRefOfTicket } from "../tracker/identity.js";
+import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import type { IssueRef } from "../tracker/port.js";
 import { scanReservations, workDirCandidates } from "./reservation.js";
 
@@ -246,12 +251,14 @@ export interface RecoveryViewEntry {
   ledger: RecoveryLedger;
 }
 
-/** A work's provider-failure ledger as `msf status` reads it (issue 144). */
+/** A work's model provider failure ledger as `msf status` reads it (issue 144). */
 export interface ModelProviderViewEntry {
   key: string;
   /** The attempt the registry numbers right now — the awaiting is scoped to it. */
   attempt: number;
   ledger: ModelProviderLedger;
+  /** The settled failure of that attempt, as the current session's ending. */
+  last: ModelProviderSettlement;
 }
 
 /** The repair cycle of a work as `msf status` reads it (issue 112). */
@@ -283,8 +290,8 @@ export interface RegistryView {
   /** Works that went through an interruption: the budget spent and what ended
    *  the last attempt (issue 123) — absent for works never interrupted. */
   recovery: RecoveryViewEntry[];
-  /** Works whose last attempt ended by a provider failure: the retries spent
-   *  and the provider's own message (issue 144). */
+  /** Works whose last attempt ended by a model provider failure: the retries
+   *  spent and the provider's own message (issue 144). */
   modelProvider: ModelProviderViewEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
@@ -337,17 +344,18 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const ledger = await readRecoveryLedger(dir);
     if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
 
-    // A work that never met a provider failure has no ledger and is not shown
-    // here either (issue 144). Only the CURRENT attempt's unresolved provider
-    // failure is the work's condition: a later outcome (or a new attempt)
-    // settles it, and the attempt's log stays as the history.
+    // A work that never met a model provider failure has no ledger and is not
+    // shown here either (issue 144). Only the CURRENT attempt's unresolved
+    // model provider failure, still the current session's ending, is the
+    // work's condition: a later outcome, a new attempt, or a later plain
+    // interruption settles it (the attempt's log stays as the history).
     const providerLedger = await readModelProviderLedger(dir);
-    if (
-      providerLedger.last !== null &&
-      providerLedger.last.attempt === lastAttempt &&
-      ownOutcomeRecord(record, lastAttempt) === null
-    ) {
-      modelProvider.push({ key, attempt: lastAttempt, ledger: providerLedger });
+    const last = providerLedger.last;
+    if (last !== null && last.attempt === lastAttempt && ownOutcomeRecord(record, lastAttempt) === null) {
+      const ending = await readTurnModelProviderError(dir, lastAttempt);
+      if (ending !== null && ending.at === last.failureAt) {
+        modelProvider.push({ key, attempt: lastAttempt, ledger: providerLedger, last });
+      }
     }
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);

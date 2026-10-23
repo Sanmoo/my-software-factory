@@ -75,6 +75,7 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import {
   isModelProviderFailureSettled,
+  markModelProviderHelpRequested,
   modelProviderDecision,
   readModelProviderLedger,
   settleModelProviderFailure,
@@ -544,7 +545,7 @@ export class SweepEngine {
           // budget is exhausted — never the recovery budget, never a block.
           if (decision.modelProvider.decision === "await-provider") {
             const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-            await this.modelProviderFailureAction(decision.ref, dir, decision.attempt, decision.failure);
+            await this.applyModelProviderFailure(decision.ref, dir, decision.attempt, decision.failure);
           } else {
             parked.push({
               ref: decision.ref,
@@ -1288,7 +1289,7 @@ export class SweepEngine {
         );
         return null;
       }
-      const decision = await this.modelProviderFailureAction(ref, dir, facts.attempt, failure);
+      const decision = await this.applyModelProviderFailure(ref, dir, facts.attempt, failure);
       if (decision.decision === "await-provider") return null;
       await this.wait(decision.waitMs);
       if (this.stopping) {
@@ -1348,9 +1349,10 @@ export class SweepEngine {
    * attempt's own log records the failure and each granted retry, the ledger
    * persists the count, and an exhausted budget comments the help request on
    * the issue — keeping the claim, never the blocked label. Idempotent: the
-   * same failure settled twice records once and comments once.
+   * same failure settled twice records once; the help request is retryable, so
+   * a death between the ledger and the comment never loses it.
    */
-  private async modelProviderFailureAction(
+  private async applyModelProviderFailure(
     ref: IssueRef,
     dir: string,
     attempt: number,
@@ -1383,7 +1385,18 @@ export class SweepEngine {
 
     const settlement = await settleModelProviderFailure(dir, config.modelProvider, attempt, failure);
     if (settlement.decision === "await-provider") {
-      if (settlement.recorded) {
+      // The help request is retryable, not tied to the settlement that raised
+      // it: a death between the ledger and the comment leaves it unrequested,
+      // and the next sweep asks again.
+      const ledger = await readModelProviderLedger(dir);
+      const last = ledger.last;
+      const helpPending =
+        last !== null &&
+        last.attempt === attempt &&
+        last.failureAt === failure.at &&
+        !last.granted &&
+        !last.helpRequested;
+      if (helpPending) {
         // Keep the work reserved before asking: re-asserting the (already held)
         // claim is idempotent and is what the operator's answer resumes.
         await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
@@ -1396,6 +1409,7 @@ export class SweepEngine {
         });
         await tracker.comment(ref, comment);
         await this.deliverNotice(helpNotice(ref));
+        await markModelProviderHelpRequested(dir, attempt, failure);
         this.log(
           `awaiting model provider for ${workKey(ref)}: attempt ${attempt} ended by a model provider failure ` +
             `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
@@ -1711,31 +1725,23 @@ export class SweepEngine {
         // interruption or a provider failure (issue 144): the latter gets its
         // own budget and backoff, never the recovery budget.
         const failure = await readTurnModelProviderError(dir, attempt);
-        if (failure !== null) {
-          next = {
-            ref,
-            kind: "provider-retry",
-            createdAt: null,
-            pr,
-            ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
-            attempt,
-          };
-        } else {
+        if (failure === null) {
           this.log(
             `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
               "number and the recovery budget answers it",
           );
-          next = {
-            ref,
-            kind: "recover",
-            createdAt: null,
-            pr,
-            // A recovery continues the SAME launch: the material of an
-            // interrupted retomada keeps the human's answer.
-            ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
-            attempt,
-          };
         }
+        next = {
+          ref,
+          // A provider failure retries on its own budget; an interruption of
+          // the agent keeps issue 123's recovery. Either way the SAME attempt
+          // continues, with the material of the interrupted launch preserved.
+          kind: failure === null ? "recover" : "provider-retry",
+          createdAt: null,
+          pr,
+          ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
+          attempt,
+        };
       }
     } else if (ruling.decision === "release") {
       await this.settleFailure(dir, attempt, record);

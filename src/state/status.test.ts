@@ -17,6 +17,7 @@ import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
 import { consumeRecovery, recordFailure } from "../pool/recovery.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
+import { appendAttemptEvent } from "../runtime/attempt-logs.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
@@ -396,12 +397,33 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("the provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
+  /** The attempt's current session ended by a model provider error at `at`. */
+  function seedModelProviderEnding(target: string, attempt: number, at = 1_700_000_000_000): string {
+    appendAttemptEvent(target, attempt, {
+      event: "agent-raw",
+      iteration: 1,
+      line: JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          provider: "fake",
+          model: "fake/model",
+          stopReason: "error",
+          errorMessage: "429: upstream unavailable",
+          timestamp: at,
+        },
+      }),
+    });
+    return new Date(at).toISOString();
+  }
+
+  test("the model provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(40, 1);
+    const at = seedModelProviderEnding(dir, 1);
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "429: upstream unavailable",
-      at: "2026-01-01T00:00:00.000Z",
+      at,
     });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
@@ -418,9 +440,10 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /blocked/, "a provider failure is never rendered as a block");
   });
 
-  test("awaiting provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
+  test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(41, 1);
+    const at = seedModelProviderEnding(dir, 1, 1_700_000_000_900);
     for (let index = 0; index < DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries; index += 1) {
       await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
         message: "503: unavailable",
@@ -429,7 +452,7 @@ describe("status — derivation on demand + local registry scan", () => {
     }
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "503: unavailable",
-      at: "2026-01-01T00:00:09.000Z",
+      at,
     });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
@@ -440,6 +463,33 @@ describe("status — derivation on demand + local registry scan", () => {
       /#41 \(attempt 1: 4\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 503: unavailable — awaiting model provider — a help request, not a block\)/,
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
+  });
+
+  test("a later plain interruption is not read as 'retrying after the model provider' (issue 144)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(42, 1);
+    const at = seedModelProviderEnding(dir, 1);
+    await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
+      message: "429: upstream unavailable",
+      at,
+    });
+    // The retry session started and was killed before writing any message.
+    appendAttemptEvent(dir, 1, { event: "session-start" });
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const text = renderStatus(view);
+
+    assert.match(
+      text,
+      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): none/,
+      "the earlier failure is history: the current session is a plain interruption",
+    );
+    assert.match(
+      text,
+      /orphaned \(attempt interrupted — no outcome record of its own, no worker alive\): 1/,
+      "the work is an interruption again, and the recovery budget answers it",
+    );
+    assert.match(text, /#42 \(attempt 1 was interrupted/);
   });
 
   test("a legacy work dir without a recovery ledger shows no recovery line — nothing is invented", async () => {

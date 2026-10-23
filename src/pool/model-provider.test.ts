@@ -76,7 +76,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
     assert.equal((await readModelProviderLedger(dir)).consumed, 2);
   });
 
-  test("the allowance is per attempt: a new attempt starts with a full provider budget", async () => {
+  test("the allowance is per attempt: a new attempt starts with a full model provider budget", async () => {
     await settleModelProviderFailure(dir, BUDGET, 1, FAILURE, NOW);
     const next = await settleModelProviderFailure(dir, BUDGET, 2, { ...FAILURE, at: "2026-01-02T00:00:00.000Z" }, NOW);
 
@@ -103,7 +103,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
       attempt: 1,
       consumed: 2,
       events: [],
-      last: { attempt: 1, failureAt: FAILURE.at, message: FAILURE.message, granted: false, waitMs: null, settledAt: NOW().toISOString() },
+      last: { attempt: 1, failureAt: FAILURE.at, message: FAILURE.message, granted: false, waitMs: null, helpRequested: false, settledAt: NOW().toISOString() },
     };
     assert.equal(awaitingModelProvider(ledger, 1, { maxRetries: 2, waitsMs: [1] }), true);
     assert.equal(awaitingModelProvider(ledger, 2, { maxRetries: 2, waitsMs: [1] }), false, "another attempt is not awaiting");

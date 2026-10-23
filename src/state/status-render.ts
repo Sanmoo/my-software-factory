@@ -203,9 +203,8 @@ function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBud
  * Awaiting is a help request — the work is not blocked.
  */
 function renderModelProvider(entry: ModelProviderViewEntry, budget: ModelProviderBudget): string {
-  const last = entry.ledger.last;
+  const { last } = entry;
   const spend = `${entry.ledger.consumed}/${budget.maxRetries} retries (waits ${renderWaits(budget.waitsMs)})`;
-  if (last === null) return `${entry.key} (attempt ${entry.attempt}: ${spend}; no failure settled yet)`;
   const state = awaitingModelProvider(entry.ledger, entry.attempt, budget)
     ? "awaiting model provider — a help request, not a block"
     : "retrying after the model provider backoff";

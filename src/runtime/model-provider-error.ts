@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { eventLogName } from "./attempt-logs.js";
@@ -23,9 +23,9 @@ export interface ModelProviderFailure {
   message: string;
   /**
    * Identity of the failing turn: the assistant message's own timestamp, or
-   * the log's mtime when the stream carries none. Two reads of the same
-   * settled failure produce the same value, so the persisted settlement is
-   * never double-counted after a restart.
+   * its line in the append-only log when the stream carries none. Both are
+   * stable when the factory appends its own events after the turn, so the
+   * persisted settlement is never double-counted after a restart.
    */
   at: string;
 }
@@ -43,13 +43,14 @@ export async function readTurnModelProviderError(
     return null;
   }
 
-  const last = lastAssistantMessage(raw);
-  if (last === null) return null;
+  const ending = lastAssistantMessage(raw);
+  if (ending === null) return null;
+  const { message: last } = ending;
   if (last.stopReason !== "error") return null;
   const message = typeof last.errorMessage === "string" ? last.errorMessage.trim() : "";
   if (message === "") return null;
 
-  return { message, at: await failureIdentity(path, last.timestamp) };
+  return { message, at: failureIdentity(last, ending.lineIndex) };
 }
 
 /** The fields of an assistant message this reader depends on. */
@@ -57,6 +58,13 @@ interface AssistantMessage {
   stopReason: unknown;
   errorMessage: unknown;
   timestamp: unknown;
+}
+
+/** The turn's ending and the log line it was read from. */
+interface EndingMessage {
+  message: AssistantMessage;
+  /** Index in the whole append-only log — stable when lines are appended. */
+  lineIndex: number;
 }
 
 /**
@@ -68,20 +76,20 @@ interface AssistantMessage {
  * must not be read as this session's ending (a retry killed before writing
  * anything is an interruption, not the old outage again).
  */
-function lastAssistantMessage(raw: string): AssistantMessage | null {
+function lastAssistantMessage(raw: string): EndingMessage | null {
   const lines = raw.split("\n");
-  let last: AssistantMessage | null = null;
-  for (const line of lines.slice(currentSessionStart(lines))) {
-    const event = parseJson(line);
+  let last: EndingMessage | null = null;
+  for (let index = currentSessionStart(lines); index < lines.length; index += 1) {
+    const event = parseJson(lines[index] ?? "");
     if (event === null || event["event"] !== "agent-raw") continue;
     const inner = parseJson(typeof event["line"] === "string" ? event["line"] : "");
     if (inner === null) continue;
     const message = inner["message"];
-    if (isAssistant(message)) last = message;
+    if (isAssistant(message)) last = { message, lineIndex: index };
     const messages = inner["messages"];
     if (Array.isArray(messages)) {
       const tail = messages.at(-1);
-      if (isAssistant(tail)) last = tail;
+      if (isAssistant(tail)) last = { message: tail, lineIndex: index };
     }
   }
   return last;
@@ -117,14 +125,9 @@ function parseJson(text: string): Record<string, unknown> | null {
   }
 }
 
-/** The failure's identity: its own timestamp, or the log's mtime as fallback. */
-async function failureIdentity(path: string, timestamp: unknown): Promise<string> {
-  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
-    return new Date(timestamp).toISOString();
-  }
-  try {
-    return (await stat(path)).mtime.toISOString();
-  } catch {
-    return new Date(0).toISOString();
-  }
+/** The failure's identity: its own timestamp, or its line in the log. */
+function failureIdentity(message: AssistantMessage, lineIndex: number): string {
+  return typeof message.timestamp === "number" && Number.isFinite(message.timestamp)
+    ? new Date(message.timestamp).toISOString()
+    : `line:${lineIndex}`;
 }

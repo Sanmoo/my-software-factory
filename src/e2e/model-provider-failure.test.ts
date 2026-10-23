@@ -29,7 +29,7 @@ import { RECOVERY_FILENAME } from "../pool/recovery.js";
  * MODEL PROVIDER FAILURE from an interruption of the agent. A provider error in the
  * attempt's own stream retries on its own budget and backoff; an interruption
  * without it keeps issue 123's recovery untouched; an exhausted provider budget
- * waits for the operator ("awaiting provider") as a help request — never a
+ * waits for the operator ("awaiting model provider") as a help request — never a
  * block and never an infinite retry.
  *
  * The seams are the ticket's: the scriptable fake runtime (a provider error
@@ -230,7 +230,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
 
     const labels = await labelsOf(tracker, 1);
     assert.ok(labels.includes(DEFAULT_LABELS.claimed), "the claim stays held");
-    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "awaiting provider is NOT a block");
+    assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "awaiting model provider is NOT a block");
 
     const comments = await tracker.readComments({ repo: REPO, number: 1 });
     assert.ok(comments.known);
@@ -253,6 +253,48 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     const after = await tracker.readComments({ repo: REPO, number: 1 });
     assert.ok(after.known);
     assert.equal(after.value.length, 1, "the help request is never repeated");
+  });
+
+  test("(c3) a death between the ledger and the help request never loses the request — the next sweep asks", async () => {
+    const config = makeConfig({ maxRetries: 1, waitsMs: [10] });
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+
+    const wd = workDir(layout, REPO, 1);
+    mkdirSync(wd, { recursive: true });
+    const at = new Date(1_700_000_000_555).toISOString();
+    appendAttemptEvent(wd, 1, {
+      event: "agent-raw",
+      iteration: 1,
+      line: JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          provider: "fake",
+          model: "fake/model",
+          stopReason: "error",
+          errorMessage: PROVIDER_MESSAGE,
+          timestamp: 1_700_000_000_555,
+        },
+      }),
+    });
+    // A retry was spent, then the awaiting settlement was written — and the
+    // factory died before the comment (helpRequested: false).
+    await settleModelProviderFailure(wd, config.modelProvider, 1, {
+      message: "503: unavailable",
+      at: "2026-01-01T00:00:00.000Z",
+    });
+    await settleModelProviderFailure(wd, config.modelProvider, 1, { message: PROVIDER_MESSAGE, at });
+    assert.equal((providerLedger(wd)["last"] as Record<string, unknown>)["helpRequested"], false);
+
+    const { deps } = makeFactory(config, tracker, ["pr-open"]);
+    const result = await runOnce(deps);
+
+    assert.equal(result.launched.length, 0, "the work still awaits the model provider");
+    const comments = await tracker.readComments({ repo: REPO, number: 1 });
+    assert.ok(comments.known);
+    assert.equal(comments.value.length, 1, "the help request that the death prevented is posted now");
+    assert.equal((providerLedger(wd)["last"] as Record<string, unknown>)["helpRequested"], true);
   });
 
   test("(c2) the operator answers the help request: the work resumes with a NEW attempt", async () => {
@@ -333,7 +375,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.equal(result.collected[0]?.ruling.decision, "reserve");
   });
 
-  test("the awaiting provider state is visible to msf status, with the provider's message", async () => {
+  test("the awaiting model provider state is visible to msf status, with the provider's message", async () => {
     const config = makeConfig({ maxRetries: 1, waitsMs: [10] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -361,6 +403,6 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       "an awaiting-provider work is not repeated as an interrupted attempt",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
-    assert.ok(!text.includes("blocked"), "awaiting provider is never rendered as a block");
+    assert.ok(!text.includes("blocked"), "awaiting model provider is never rendered as a block");
   });
 });
