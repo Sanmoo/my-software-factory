@@ -40,17 +40,18 @@ export interface ModelProviderRetryEvent {
  * re-reading the same settled failure after a restart is recognised instead of
  * counted twice.
  */
-export interface ModelProviderSettlement {
+export type ModelProviderSettlement = {
   attempt: number;
-  /** The failure's identity (the stream's timestamp) — never the settlement time. */
+  /** The failure's identity (the stream's timestamp, or its line) — never the settlement time. */
   failureAt: string;
   message: string;
-  /** A retry was consumed for this failure. */
-  granted: boolean;
-  /** The granted wait; null while awaiting the model provider. */
-  waitMs: number | null;
   settledAt: string;
-}
+} & (
+  | { granted: true; waitMs: number }
+  /** Awaiting: `helpRequested` keeps the help request retryable — a death
+   *  after the ledger but before the comment never loses the request. */
+  | { granted: false; waitMs: null; helpRequested: boolean }
+);
 
 export interface ModelProviderLedger {
   /** The attempt the count belongs to; a different attempt starts from zero. */
@@ -127,14 +128,19 @@ function isEvent(value: unknown): value is ModelProviderRetryEvent {
 function isSettlement(value: unknown): value is ModelProviderSettlement {
   if (value === null || typeof value !== "object") return false;
   const settlement = value as Record<string, unknown>;
-  return (
-    positiveInteger(settlement["attempt"]) !== null &&
-    typeof settlement["failureAt"] === "string" &&
-    typeof settlement["message"] === "string" &&
-    typeof settlement["granted"] === "boolean" &&
-    (settlement["waitMs"] === null || typeof settlement["waitMs"] === "number") &&
-    typeof settlement["settledAt"] === "string"
-  );
+  if (
+    positiveInteger(settlement["attempt"]) === null ||
+    typeof settlement["failureAt"] !== "string" ||
+    typeof settlement["message"] !== "string" ||
+    typeof settlement["settledAt"] !== "string"
+  ) {
+    return false;
+  }
+  if (settlement["granted"] === true) return typeof settlement["waitMs"] === "number";
+  if (settlement["granted"] === false) {
+    return settlement["waitMs"] === null && typeof settlement["helpRequested"] === "boolean";
+  }
+  return false;
 }
 
 async function writeLedger(workDir: string, ledger: ModelProviderLedger): Promise<void> {
@@ -157,7 +163,7 @@ export function modelProviderDecision(
 ): ModelProviderDecision {
   const scoped = ledgerForAttempt(ledger, attempt);
   if (isModelProviderFailureSettled(scoped, attempt, failure) && scoped.last?.granted === true) {
-    return { decision: "retry", waitMs: scoped.last.waitMs ?? 0, consumed: scoped.consumed };
+    return { decision: "retry", waitMs: scoped.last.waitMs, consumed: scoped.consumed };
   }
   if (scoped.consumed >= budget.maxRetries) {
     return { decision: "await-provider", consumed: scoped.consumed, reason: exhaustedModelProviderReason(budget) };
@@ -196,7 +202,7 @@ export async function settleModelProviderFailure(
   if (decision.decision === "await-provider") {
     await writeLedger(workDir, {
       ...ledger,
-      last: { attempt, failureAt: failure.at, message: failure.message, granted: false, waitMs: null, settledAt: at },
+      last: { attempt, failureAt: failure.at, message: failure.message, granted: false, waitMs: null, helpRequested: false, settledAt: at },
     });
     return { ...decision, recorded: true };
   }
@@ -222,6 +228,23 @@ export async function settleModelProviderFailure(
     },
   });
   return { ...decision, recorded: true };
+}
+
+/**
+ * Record that the awaiting help request was posted, so a restart neither
+ * repeats it nor loses it: a death after the ledger but before the comment
+ * leaves `helpRequested: false`, and the next sweep asks again.
+ */
+export async function markModelProviderHelpRequested(
+  workDir: string,
+  attempt: number,
+  failure: ModelProviderFailure,
+): Promise<void> {
+  const ledger = await readModelProviderLedger(workDir);
+  const last = ledger.last;
+  if (last === null || last.attempt !== attempt || last.failureAt !== failure.at || last.granted) return;
+  if (last.helpRequested) return;
+  await writeLedger(workDir, { ...ledger, last: { ...last, helpRequested: true } });
 }
 
 /**

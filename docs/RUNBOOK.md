@@ -130,8 +130,8 @@ You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
 round is an interruption: the SAME attempt is recovered after the configured
 backoff; a written failure still releases the work to the pool, its 2nd
-consecutive one blocks it, and an exhausted interruption budget pauses it and
-asks for help; a PR waiting for you stays parked; a merge you already did
+consecutive one blocks it, and an exhausted recovery budget pauses it and asks
+for help; a PR waiting for you stays parked; a merge you already did
 becomes done → archive). A model provider outage retries on its own
 `model-provider` budget; exhausted, the work is **awaiting model provider**
 (GLOSSARY) — answer on the issue to resume, or raise

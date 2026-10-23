@@ -91,14 +91,18 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
     assert.equal(await readTurnModelProviderError(dir, 2), null);
   });
 
-  test("without a timestamp the failure's identity is the log's mtime — stable across restarts", async () => {
-    mkdirSync(dir, { recursive: true });
+  test("without a timestamp the failure's identity is its log line — stable when the factory appends after it", async () => {
     raw({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "429: unavailable" } });
 
     const first = await readTurnModelProviderError(dir, 1);
+    // The factory's own settlement events are appended AFTER the failure.
+    appendAttemptEvent(dir, 1, { event: "provider-failure", message: "429: unavailable" });
+    appendAttemptEvent(dir, 1, { event: "provider-retry", retry: 1 });
     const second = await readTurnModelProviderError(dir, 1);
+
     assert.ok(first);
-    assert.equal(first.at, second?.at, "two reads of the same settled failure agree");
+    assert.equal(first.at, second?.at, "the appended lines never move the failure's identity");
+    assert.match(first.at, /^line:\d+$/);
   });
 
   test("only the CURRENT session counts: an earlier error is not this session's ending", async () => {

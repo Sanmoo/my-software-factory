@@ -683,8 +683,8 @@ async function deriveModelProviderFailure(
   const providerLedger = await readModelProviderLedger(work.dir);
   const decision = modelProviderDecision(providerLedger, provider, work.attempt, failure);
   if (decision.decision === "await-provider") {
-    // The provider budget is exhausted: the work waits for the operator — a
-    // help request, never a block. A human answer after the marker resumes it,
+    // The model provider budget is exhausted: the work waits for the operator
+    // — a help request, never a block. A human answer after the marker resumes it,
     // the same channel a blocked work listens to.
     const comments = await port.readComments(work.ref);
     const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];

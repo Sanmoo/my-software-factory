@@ -67,8 +67,8 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
  * instead of spending the interruption budget of issue 123. The waits are
  * deliberately longer than the recovery backoff: they must cross a short
  * upstream outage, and every retry also carries the session's own internal
- * retries. Exhausting it parks the work "awaiting provider" and asks the
- * operator for help — never a block.
+ * retries. Exhausting it parks the work "awaiting model provider" and asks
+ * the operator for help — never a block.
  */
 export interface ModelProviderBudget {
   /** Retries allowed for one attempt after provider failures. */
@@ -272,50 +272,40 @@ function optionalProfileSkipDanglingLinks(doc: Record<string, unknown>): boolean
 }
 
 function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
-  const value = doc["recovery"];
-  if (value === undefined)
-    return { maxRecoveries: DEFAULT_RECOVERY_BUDGET.maxRecoveries, waitsMs: [...DEFAULT_RECOVERY_BUDGET.waitsMs] };
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new ConfigError(`config field "recovery" must be a mapping when given`);
-  }
-  const given = value as Record<string, unknown>;
-
-  const max = given["max"];
-  if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
-    throw new ConfigError(`config field "recovery.max" must be a non-negative integer when given`);
-  }
-  const maxRecoveries = (max as number | undefined) ?? DEFAULT_RECOVERY_BUDGET.maxRecoveries;
-
-  const waits = given["waits-ms"];
-  if (
-    waits !== undefined &&
-    (!Array.isArray(waits) ||
-      waits.length === 0 ||
-      waits.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0))
-  ) {
-    throw new ConfigError(
-      `config field "recovery.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
-    );
-  }
-  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_RECOVERY_BUDGET.waitsMs];
-
-  return { maxRecoveries, waitsMs };
+  const budget = optionalBudget(doc, "recovery", "max");
+  return {
+    maxRecoveries: budget?.max ?? DEFAULT_RECOVERY_BUDGET.maxRecoveries,
+    waitsMs: budget?.waitsMs ?? [...DEFAULT_RECOVERY_BUDGET.waitsMs],
+  };
 }
 
 function optionalModelProvider(doc: Record<string, unknown>): ModelProviderBudget {
-  const value = doc["model-provider"];
-  if (value === undefined)
-    return { maxRetries: DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries, waitsMs: [...DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs] };
+  const budget = optionalBudget(doc, "model-provider", "max-retries");
+  return {
+    maxRetries: budget?.max ?? DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries,
+    waitsMs: budget?.waitsMs ?? [...DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs],
+  };
+}
+
+/** The fields both finite budgets share, validated once: a non-negative
+ *  maximum and a non-empty list of waits. Null when the mapping is absent —
+ *  the caller applies its documented default. */
+function optionalBudget(
+  doc: Record<string, unknown>,
+  key: string,
+  maxKey: string,
+): { max: number | undefined; waitsMs: number[] | undefined } | null {
+  const value = doc[key];
+  if (value === undefined) return null;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new ConfigError(`config field "model-provider" must be a mapping when given`);
+    throw new ConfigError(`config field "${key}" must be a mapping when given`);
   }
   const given = value as Record<string, unknown>;
 
-  const max = given["max-retries"];
+  const max = given[maxKey];
   if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
-    throw new ConfigError(`config field "model-provider.max-retries" must be a non-negative integer when given`);
+    throw new ConfigError(`config field "${key}.${maxKey}" must be a non-negative integer when given`);
   }
-  const maxRetries = (max as number | undefined) ?? DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries;
 
   const waits = given["waits-ms"];
   if (
@@ -325,12 +315,11 @@ function optionalModelProvider(doc: Record<string, unknown>): ModelProviderBudge
       waits.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0))
   ) {
     throw new ConfigError(
-      `config field "model-provider.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
+      `config field "${key}.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
     );
   }
-  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs];
 
-  return { maxRetries, waitsMs };
+  return { max: max as number | undefined, waitsMs: waits as number[] | undefined };
 }
 
 function optionalNotifications(doc: Record<string, unknown>): boolean {
