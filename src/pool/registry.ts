@@ -383,7 +383,6 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   repair.sort(byEntryKey);
   recovery.sort(byEntryKey);
   modelProvider.sort(byEntryKey);
-
   continuityPauses.sort(byEntryKey);
 
   const archived = await workDirs(archive);
