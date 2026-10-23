@@ -22,8 +22,9 @@ npm run build:image
 # 2. model credentials, separate from the image and from any personal profile:
 #    export OPENCODE_API_KEY=...        # or another supported provider key
 #    # or worker-auth-file: /path/to/auth.json in msf.yaml
-#    The launcher refuses a missing/invalid credential with the provider's
-#    status; it never prints the value and never reads ~/.pi/agent.
+#    The launcher refuses a missing or malformed credential with the provider's
+#    status; a wrong key surfaces at the model call. It never prints the value
+#    and never reads ~/.pi/agent.
 
 # 3. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container;
@@ -61,12 +62,28 @@ the image tag — a failed build leaves the previous valid image in place.
   rebuild command; the worker is never started on the wrong set.
 - **Concurrent checkouts**: set `MSF_WORKER_IMAGE=msf-v2-worker:<name>` for
   both `build:image` and `gateway` so two checkouts on one Docker host do not
-  overwrite each other's tag; the inventory comparison is unchanged.
+  overwrite each other's tag; the image inventory, not the tag, proves the
+  contents.
 - **Clean host check**: with no `~/.pi/agent` and no Pi on the host, run
   `npm run build:image`, `npm run gateway`, then `node dist/cli.js run --once`.
   The image test in the gateway proves, inside the real container, that only
   the declared skills/guidance load, undeclared project resources are ignored,
   the cache starts empty, and authentication comes from the explicit source.
+
+## Real proof (operator credentials, not automatic)
+
+```sh
+MSF_REAL_PROOF_MODEL=provider/model-id npm run proof:real
+# or MSF_REAL_PROOF_AUTH_FILE=/path/to/auth.json
+```
+
+This starts the built image with no personal profile and an empty cache,
+loads the declared skills, implements a local spec, and requires two distinct
+reviewer subagents plus the outcome record. It consumes model credits and is
+never part of `npm test`/`gateway`. The GitHub-delivery half of ADR 0001
+(an actual PR in an authorized disposable repo) remains an operator-gated run:
+no credentials or disposable repo are assumed here, so it is recorded as
+outstanding rather than claimed.
 
 ## Toolchains — the convergence layer (ticket 18)
 

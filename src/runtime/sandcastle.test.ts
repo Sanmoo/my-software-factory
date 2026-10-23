@@ -33,7 +33,7 @@ import {
   workerShapedDockerRun,
 } from "./sandcastle.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
-import { loadAgentResources } from "./inventory.js";
+import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
@@ -627,7 +627,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       authProbe: READY_PROBE,
       run: async (command, args) => {
         checks.push([command, ...args]);
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         return { stdout: "29.7.2", stderr: "" };
       },
     });
@@ -644,7 +644,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "--entrypoint",
         "cat",
         WORKER_IMAGE,
-        "/opt/msf/agent-inventory.json",
+        IMAGE_INVENTORY_PATH,
       ],
       [
         "docker",
@@ -753,7 +753,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         return args[0] === "run" ? { stdout: "", stderr: "" } : { stdout: "ok", stderr: "" };
       },
     });
@@ -771,7 +771,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         // The git helper probe answers; the docker CLI probe does not.
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         if (args.includes("--version")) throw new Error("exec: docker: not found");
@@ -793,7 +793,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         if (args.includes("buildx")) throw new Error('docker: "buildx" is not a docker command');
         return { stdout: "ok", stderr: "" };
@@ -813,7 +813,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         return { stdout: "ok", stderr: "" };
       },
@@ -833,7 +833,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         return { stdout: "ok", stderr: "" };
       },
@@ -855,7 +855,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         stderr: "",
       }),
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
         return { stdout: "ok", stderr: "" };
       },
@@ -879,7 +879,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {
-        if (args.includes("/opt/msf/agent-inventory.json")) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
         // Everything passes until the daemon probe INSIDE the container.
         if (args[0] === "run" && args.includes("info")) throw new Error("permission denied while trying to connect");
         return { stdout: "ok", stderr: "" };

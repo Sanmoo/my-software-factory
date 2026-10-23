@@ -10,9 +10,6 @@ dedicated bot account. The human is the gate — the factory never merges.
 - Docker whose daemon answers on a unix socket: the workers are containers and
   each one inherits that daemon (ADR 0003)
 - Docker, for the real local integration test (see Tests)
-- No Pi, personal Pi profile or personal skills on the host: the worker image
-  provisions the factory's agent environment from `agent-resources.json`
-  (ADR 0001)
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml
@@ -59,9 +56,9 @@ The worker model is required in `msf.yaml`; invocations do not select it.
 Model credentials come from Pi's supported provider API-key variables in the
 factory's environment or from `worker-auth-file` — never from a personal
 profile. `npm run build:image` provisions every declared skill, extension and
-reviewer agent into the image; a failed build keeps the previous image. The
-live proof's exact script — commands, what the human does, the REST budget —
-lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
+reviewer agent into the image. The operator's exact script — build, credentials,
+clean-host verification and the real proof — lives in the
+[RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
 ## Design
 
@@ -72,9 +69,9 @@ check results) — never LLM prose.
 
 The worker's agent environment is factory-owned: `agent-resources.json` pins
 Pi, the upstream skill revision, the delegation extension and the reviewer
-agents; the image records what it provisioned in an inventory that every
-launch compares with the checkout. Only those resources load — target-project
-and host skills/packages are ignored (ADR 0001).
+agents; the image records what it provisioned in an inventory. Only those
+resources load — target-project and host skills/packages are ignored
+(ADR 0001).
 
 ## Tests
 
@@ -94,10 +91,6 @@ includes a real container check of what the provisioned image actually loads
 `npm run proof:real` and `npm run smoke:github` stay outside it. At the deadline
 the running check and its subprocesses are killed and the interrupted check is
 named.
-
-An isolated checkout may set `MSF_WORKER_IMAGE` to keep its image tag apart
-from another checkout building on the same Docker host; the plan and ceiling
-never change, and the image inventory is still compared with the declaration.
 
 Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted;
 otherwise the failing check's status (`1` when it reported none, `127` when it

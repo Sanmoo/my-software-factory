@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseAgentResources } from "./agent-resources.mjs";
 import { WORKER_IMAGE } from "./worker-image.mjs";
 
 /**
@@ -19,15 +21,34 @@ import { WORKER_IMAGE } from "./worker-image.mjs";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TEMP_TAG = (image) => `${image}-build-${process.pid}`;
 
+/** The declaration is the single source of Pi's package and version: the
+ *  Dockerfile receives them as build args and installs exactly that spec. */
+function piSpec() {
+  const declarationPath = resolve(ROOT, "agent-resources.json");
+  let raw;
+  try {
+    raw = readFileSync(declarationPath, "utf8");
+  } catch {
+    throw new Error(`agent-resource declaration is unreadable: ${declarationPath}`);
+  }
+  const declaration = parseAgentResources(raw, declarationPath);
+  return { package: declaration.pi.package, version: declaration.pi.version };
+}
+
 function main() {
   const image = WORKER_IMAGE;
   const staging = TEMP_TAG(image);
+  const pi = piSpec();
   const args = [
     "build",
     "--build-arg",
     `AGENT_UID=${typeof process.getuid === "function" ? process.getuid() : 1000}`,
     "--build-arg",
     `AGENT_GID=${typeof process.getgid === "function" ? process.getgid() : 1000}`,
+    "--build-arg",
+    `PI_PACKAGE=${pi.package}`,
+    "--build-arg",
+    `PI_VERSION=${pi.version}`,
     "-t",
     staging,
     "-f",

@@ -1,3 +1,4 @@
+// Hand-maintained types for the companion .mjs module: keep them in sync.
 export interface AgentResourcesDeclaration {
   schema: "msf-agent-resources/v1";
   pi: { package: string; version: string };
