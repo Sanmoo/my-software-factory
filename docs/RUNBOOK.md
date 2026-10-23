@@ -138,15 +138,17 @@ resumes the SAME attempts — there is no hot reload, so compiling and
 
 Restarting after a crash loses nothing either: the next boot re-derives every
 reserved work from disk + tracker alone (a crashed round is an interruption:
-the SAME attempt is recovered after the configured backoff; a written failure
-still releases the work to the pool, its 2nd consecutive one blocks it, and an
-exhausted recovery budget pauses it and asks for help; a PR waiting for you
-stays parked; a merge you already did becomes done → archive). A model provider
-outage during an interruption recovery retries on its own `model-provider`
-budget; exhausted, the work is **awaiting model provider** (GLOSSARY) — answer
-on the issue to resume, or raise `model-provider.max-retries`; the awaiting
-state is never a block. A repair round keeps its own ruler, and a repair fall
-resumes on the same branch and PR (see GLOSSARY.md).
+the SAME attempt is recovered after the configured backoff by reopening its own
+session — or, when that session cannot be proven safe to continue, pauses and
+asks for help; a written failure still releases the work to the pool, its 2nd
+consecutive one blocks it, and an exhausted recovery budget pauses it and asks
+for help; a PR waiting for you stays parked; a merge you already did becomes
+done → archive). A model provider outage during an interruption recovery
+retries on its own `model-provider` budget; exhausted, the work is **awaiting
+model provider** (GLOSSARY) — answer on the issue to resume, or raise
+`model-provider.max-retries`; the awaiting state is never a block. A repair
+round keeps its own ruler, and a repair fall resumes on the same branch and PR
+(see GLOSSARY.md).
 
 A surviving worker keeps its work and its slot; when it ends, the factory
 reconciles the result on its own. If Docker stops answering, launches pause and

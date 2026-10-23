@@ -145,10 +145,13 @@ async function classifyLiveness(
     })),
   );
   const carried = new Set(running.map((worker) => worker.key));
+  const paused = new Set(registry.continuityPauses.map((entry) => entry.key));
   return {
     state: "known",
     running,
     duplicates: duplicateWorkers(observation.workers),
-    orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key)),
+    // A work whose attempt waits for the operator is not "orphaned, awaiting
+    // the factory's next reconciliation" (issue 119): it has its own section.
+    orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key) && !paused.has(entry.key)),
   };
 }

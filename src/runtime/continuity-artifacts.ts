@@ -19,6 +19,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
+import type { IssueRef } from "../tracker/port.js";
 import { parseJsonLine, type JsonValue } from "./json-line.js";
 
 export const SESSION_LINKS_FILENAME = "sessao-vinculos.jsonl";
@@ -29,7 +30,7 @@ export const PAUSE_FILENAME = "pausa.json";
 export interface SessionLink {
   version: 1;
   /** The work the session belongs to — its identity, never the directory name. */
-  work: { repo: string; number: number };
+  work: IssueRef;
   /** The attempt this session carries (the SAME number a recovery continues). */
   attempt: number;
   /** 1 for the attempt's first launch; a resumption of the same attempt that
@@ -115,13 +116,16 @@ export type PauseReason =
 
 export interface PauseRecord {
   version: 1;
-  work: { repo: string; number: number };
+  work: IssueRef;
   attempt: number;
   reason: PauseReason;
   /** The operator's diagnosis — paths and effect keys, never credentials. */
   detail: string;
   at: string;
   sessionId?: string;
+  /** The block and the help request landed. A pause persisted without this is
+   *  a pause the factory died before announcing: the next cycle must ask. */
+  announced?: boolean;
 }
 
 // ---- the session association ----
@@ -293,6 +297,7 @@ export function readPause(workDir: string): PauseRecord | null {
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
     at: typeof record["at"] === "string" ? record["at"] : "",
     ...(typeof record["sessionId"] === "string" ? { sessionId: record["sessionId"] } : {}),
+    ...(record["announced"] === true ? { announced: true } : {}),
   };
 }
 
