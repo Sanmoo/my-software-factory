@@ -371,7 +371,9 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set();
  */
 function persistedPause(pause: PauseRecord, ref: IssueRef, attempt: number): PauseRecord {
   if (pause.reason !== "record-unreadable") return pause;
-  return { ...pause, work: ref, attempt: pause.attempt >= 1 ? pause.attempt : attempt };
+  // `readPause` fabricates no attempt for an unreadable record, so the caller's
+  // is the only one there is.
+  return { ...pause, work: ref, attempt };
 }
 
 /** The stable rendering order of a key set — presentation only, never the schedule. */

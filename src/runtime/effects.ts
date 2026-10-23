@@ -115,17 +115,18 @@ const NETWORK_OR_UNKNOWN: ReadonlySet<string> = new Set([
 export function classifyCommand(command: string): CommandSafety {
   const trimmed = command.trim();
   if (trimmed === "") return { safety: "safe" };
+  const scan = scanShell(trimmed);
   // `$(…)`, a backtick, `<(…)`/`>(…)`: each runs a command whose text is not
   // visible here, so the effect is not this call's to classify.
-  if (/[`]|\$\(|[<>]\(/.test(trimmed)) {
+  if (scan.substitution) {
     return { safety: "unknown", reason: "command or process substitution can hide any effect" };
   }
-  if (trimmed.replaceAll("||", "").includes("|")) {
+  if (scan.pipeline) {
     return { safety: "unknown", reason: "a pipeline hides the right side's effect" };
   }
   // A redirection is not resolved here: its target can be any path (and an
   // fd duplication hides one), so the call is not proven local.
-  if (/>/.test(trimmed)) {
+  if (scan.redirect) {
     return { safety: "unknown", reason: "a redirection is not resolved — its effect is not local by proof" };
   }
 
@@ -141,10 +142,77 @@ export function classifyCommand(command: string): CommandSafety {
   return actions.length === 0 ? { safety: "safe" } : { safety: "effect", actions };
 }
 
+/**
+ * What the shell will do with a piece of text, read ONCE for the whole
+ * classifier: quoting decides what is syntax and what is literal, and two
+ * readers disagreeing (one quote-blind) is how a quoted message became
+ * `unknown` while a quoted `$` became safe.
+ *
+ * Inside single quotes nothing is special; inside double quotes only `$` and a
+ * backtick are; outside both, `\` escapes the next character.
+ */
+interface ShellScan {
+  /** `$(…)`, a backtick, `<(…)`, `>(…)`. */
+  substitution: boolean;
+  /** `$VAR` / `${…}` — a value this classifier cannot see. */
+  expansion: boolean;
+  /** A real pipe (`||` separates commands and is not one). */
+  pipeline: boolean;
+  /** `>` in any form, including `>>` and `2>`. */
+  redirect: boolean;
+}
+
+function scanShell(text: string): ShellScan {
+  const scan: ShellScan = { substitution: false, expansion: false, pipeline: false, redirect: false };
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    const next = text[index + 1];
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "'") {
+      quote = quote === '"' ? quote : "'";
+      continue;
+    }
+    if (char === '"') {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (char === "`") {
+      scan.substitution = true;
+      continue;
+    }
+    if (char === "$") {
+      if (next === "(") scan.substitution = true;
+      else scan.expansion = true;
+      continue;
+    }
+    if ((char === "<" || char === ">") && next === "(") {
+      scan.substitution = true;
+      continue;
+    }
+    if (char === ">") {
+      scan.redirect = true;
+      continue;
+    }
+    if (char === "|" && next !== "|") scan.pipeline = true;
+    // `||` is a separator, not a pipe: consume both halves so the second one
+    // is not read as a pipe of its own.
+    if (char === "|" && next === "|") index += 1;
+  }
+  return scan;
+}
+
 function splitSegments(command: string): string[] {
-  // Newlines and `;` separate commands; `&&`/`||` separate independent
-  // commands. Redirections never reach here: `classifyCommand` refuses them
-  // before splitting, because their target is not resolved.
+  // Newlines, `;` and a lone `&` (background) separate commands; `&&`/`||`
+  // separate independent ones. A pipe never reaches here: `classifyCommand`
+  // refuses it, because the right side's effect is not decidable.
   const segments: string[] = [];
   let current = "";
   for (let i = 0; i < command.length; i += 1) {
@@ -160,6 +228,12 @@ function splitSegments(command: string): string[] {
       i += 1;
       continue;
     }
+    if (char === "&") {
+      // `a & b` starts `b` before `a` finishes: a compound call like any other.
+      segments.push(current);
+      current = "";
+      continue;
+    }
     current += char;
   }
   segments.push(current);
@@ -172,7 +246,7 @@ function classifySegment(segment: string): CommandSafety {
 
   // An expansion resolves to something this classifier never sees, whatever
   // program runs — so it is refused before the program is even looked at.
-  if (hasUnquotedExpansion(segment)) {
+  if (scanShell(segment).expansion) {
     return { safety: "unknown", reason: "a shell expansion names a value this classifier cannot resolve" };
   }
 
@@ -215,6 +289,11 @@ function classifyBinary(command: string, args: string[]): CommandSafety {
 
   if (binary === "git") return classifyGit(args);
   if (binary === "gh") return classifyGh(args);
+  // `tar` can hand a member to a program (`--to-command`) or a compressor it
+  // starts itself: both run code this classifier never sees.
+  if (binary === "tar" && args.some((arg) => /^--(to-command|use-compress-program|checkpoint-action)/.test(arg) || arg === "-I")) {
+    return { safety: "unknown", reason: "tar --to-command/--use-compress-program runs an arbitrary command" };
+  }
 
   if (isSafeBinary(binary)) return { safety: "safe" };
   return { safety: "unknown", reason: `${binary} is not a proven-local command` };
@@ -229,6 +308,16 @@ function classifyGit(args: string[]): CommandSafety {
   // `git config` writes a file too: outside the clone with --global/--system.
   if (subcommand === "config" && args.some((arg) => arg === "--global" || arg === "--system")) {
     return { safety: "unknown", reason: "git config --global/--system writes outside the worktree" };
+  }
+  // These run a PROGRAM this classifier never sees — the same class as `sudo`.
+  if (subcommand === "rebase" && args.some((arg) => arg.startsWith("--exec"))) {
+    return { safety: "unknown", reason: "git rebase --exec runs an arbitrary command" };
+  }
+  if (subcommand === "bisect" && args[1] === "run") {
+    return { safety: "unknown", reason: "git bisect run executes an arbitrary command" };
+  }
+  if (subcommand === "submodule" && args[1] === "foreach") {
+    return { safety: "unknown", reason: "git submodule foreach executes an arbitrary command" };
   }
   if (SAFE_GIT_SUBCOMMANDS.has(subcommand)) return { safety: "safe" };
   return { safety: "unknown", reason: `git ${subcommand || "(none)"} is not a proven-local subcommand` };
@@ -429,43 +518,17 @@ function isSafeBinary(binary: string): boolean {
  *  component climbs out, and a flag carrying a path (`-C/tmp`, `-C..`) hides
  *  where the path begins. A plain relative path (`src/x.ts`, `refs/heads/x`,
  *  `origin`) is the worktree. Shell expansions are refused once per segment
- *  ({@link hasUnquotedExpansion}), where quoting is still visible.
+ *  ({@link scanShell}), where quoting is still visible.
  */
 function namesOutsideWorktree(token: string): boolean {
-  const value = token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
+  // `--flag=value` carries its value after the `=`; a bare `x=y` (a commit
+  // message, say) is not a flag and its `=` says nothing about a path.
+  const value = token.startsWith("-") && token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
   if (value === "") return false;
   // A short flag may carry the path glued to it: `-C/tmp`, `-C..`, `-o/tmp`.
   const path = /^-[A-Za-z]/.test(value) && !value.startsWith("--") ? value.slice(2) : value;
   if (path.startsWith("/") || path.startsWith("~")) return true;
   return path.split("/").includes("..");
-}
-
-/** `$VAR`, `${…}` or a backtick OUTSIDE single quotes names a value this
- *  classifier cannot see. Inside single quotes the shell expands nothing, so
- *  `git commit -m 'fix $PATH note'` stays literal and stays safe. */
-function hasUnquotedExpansion(segment: string): boolean {
-  let quote: '"' | "'" | null = null;
-  for (let index = 0; index < segment.length; index += 1) {
-    const char = segment[index]!;
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      continue;
-    }
-    if (char === "\\") {
-      index += 1;
-      continue;
-    }
-    if (char === "'") {
-      quote = "'";
-      continue;
-    }
-    if (char === '"') {
-      quote = quote === '"' ? null : '"';
-      continue;
-    }
-    if (char === "$" || char === "`") return true;
-  }
-  return false;
 }
 
 function tokenize(segment: string): string[] {

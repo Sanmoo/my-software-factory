@@ -10,6 +10,7 @@ import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 import type { PauseReason } from "../runtime/continuity-artifacts.js";
+import { knownAttempt } from "../runtime/continuity-artifacts.js";
 
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
@@ -299,7 +300,8 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
 export async function continuityPausedCommentBody(input: ContinuityPausedInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   // An attempt the record never named is said so, not printed as "attempt 0".
-  const attempt = input.attempt >= 1 ? `attempt ${input.attempt}` : "this work's current attempt";
+  const known = knownAttempt(input.attempt);
+  const attempt = known === null ? "this work's current attempt" : `attempt ${known}`;
   const header =
     `${attempt} cannot be continued safely (${describePauseReason(input.reason)}) — ` +
     "no attempt was consumed and nothing was relaunched.";
