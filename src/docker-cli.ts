@@ -1,6 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 
+import { describeError } from "./format.js";
+
 const execFile = promisify(execFileCallback);
 
 /**
@@ -33,14 +35,10 @@ export async function runDocker(
  *  the daemon's stderr, or of execFile's message when there is no stderr. */
 function dockerReason(error: unknown): string {
   const stderr = (error as { stderr?: unknown }).stderr;
-  const source = typeof stderr === "string" && stderr.trim() !== "" ? stderr : errorMessage(error);
+  const source = typeof stderr === "string" && stderr.trim() !== "" ? stderr : describeError(error);
   const lines = source
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
   return lines.at(-1) ?? source;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

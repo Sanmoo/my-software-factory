@@ -1209,7 +1209,7 @@ export class SweepEngine {
           forced.push(key);
           this.log(`forced stop of ${key}: its worker is gone`);
         } catch (error) {
-          this.log(`forcing ${key} failed: ${error instanceof Error ? error.message : String(error)}`);
+          this.log(`forcing ${key} failed: ${describeError(error)}`);
         }
         return undefined;
       }),
