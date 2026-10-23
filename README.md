@@ -9,7 +9,6 @@ dedicated bot account. The human is the gate — the factory never merges.
 - Node 22+
 - Docker whose daemon answers on a unix socket: the workers are containers and
   each one inherits that daemon (ADR 0003)
-- Docker, for the real local integration test (see Tests)
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml
@@ -67,7 +66,8 @@ factory's classification lives in code and reads only structured facts
 (`desfecho.json` schema, labels, PR existence, PR mergeability and required
 check results) — never LLM prose.
 
-The worker's agent environment is factory-owned: `agent-resources.json` pins
+Nothing of Pi is needed on the host. The worker's agent environment is
+factory-owned: `agent-resources.json` pins
 Pi, the upstream skill revision, the delegation extension and the reviewer
 agents; the image records what it provisioned in an inventory. Only those
 resources load — target-project and host skills/packages are ignored

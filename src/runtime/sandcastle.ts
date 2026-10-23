@@ -79,7 +79,7 @@ interface RunningSession {
   forced: Deferred;
 }
 
-/** Inside the container: the agent dir is the writable COPY of the snapshot. */
+/** Inside the container: the image-provisioned agent dir; only sessions/ is a host bind. */
 export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 export const AGENT_DIR = "/home/agent/.pi/agent";
 export const SESSIONS_CONTAINER_DIR = `${AGENT_DIR}/sessions`;
