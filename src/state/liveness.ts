@@ -3,7 +3,7 @@ import { isAbsolute, relative, sep } from "node:path";
 import { runDocker } from "../docker-cli.js";
 import { SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 import { describeError } from "../format.js";
-import { parseWorkKey, scanRegistry } from "../pool/registry.js";
+import { parseWorkKey } from "../pool/registry.js";
 
 /**
  * The liveness probe (issue 102, ADR 0002): the workers ARE containers, so
@@ -20,7 +20,8 @@ import { parseWorkKey, scanRegistry } from "../pool/registry.js";
  * The identity is the container's bind of a work dir under the works root,
  * never the configured worker image (issue 160): Docker resolves that image
  * reference to whichever image it points at NOW, so filtering by it silently
- * loses the workers launched before the reference moved.
+ * loses the workers launched before the reference moved. An unfiltered listing
+ * that shows no running container is therefore a decided zero, not an unknown.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -139,27 +140,21 @@ export interface DockerProbeOptions {
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /**
-   * Whether this workspace holds an attempt with no outcome record of its own
-   * — a work whose worker may still be alive. Consulted only when the listing
-   * cannot show mount sources: then absence is not decidable (issue 160).
-   */
-  hasUnsettledAttempts?: () => Promise<boolean>;
   /** Test-only injection: the Docker command runner; production spawns docker. */
   run?: DockerRunner;
 }
 
 /**
  * The real probe: the shell the pure parser sits in. `docker ps` supplies every
- * running container's bind sources (so a worker is found by its work mount,
- * whatever image it was launched from); `docker inspect` of the candidates
- * supplies the start time and the authoritative mounts.
+ * running container's bind sources, so a worker is found by its work mount
+ * whatever image it was launched from; `docker inspect` supplies the start time
+ * and the authoritative mounts.
  *
- * An empty listing is a reliable zero even with reserved attempts: the listing
- * is not image-filtered, so there is no worker it can hide, and any other rule
- * would suspend the recovery of every genuinely interrupted attempt. What is
- * not reliable is a listing that carries no mount sources (an older Docker, a
- * truncated column): then an unsettled attempt's absence is unknown.
+ * A container whose mounts the listing did not render is inspected too: the
+ * listing never concludes an absence it never saw, so no attempt is presumed
+ * stopped on the strength of a mounts column. An empty listing needs no such
+ * care — it is not image-filtered, so it hides no worker and stays a decided
+ * zero (issue 160).
  */
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   const run = options.run ?? runDocker;
@@ -167,56 +162,48 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     const listing = await run(["ps", "--no-trunc", "--format", "{{.ID}} {{.Mounts}}"], timeoutMs);
     const screened = screenWorkerContainers(listing, options.worksRoot);
-    if (screened.candidates.length > 0) {
-      return parseWorkerContainers(
-        screened.candidates.join("\n"),
-        await inspectContainers(run, screened.candidates, timeoutMs),
-        options.worksRoot,
-        new Date(),
-      );
-    }
-    if (
-      screened.rows > 0 &&
-      !screened.mountsObservable &&
-      options.hasUnsettledAttempts !== undefined &&
-      (await options.hasUnsettledAttempts())
-    ) {
-      throw new Error(
-        "the container listing carries no usable mount sources, and this workspace holds " +
-          "attempts with no outcome of their own — their workers' absence cannot be decided, " +
-          "liveness unknown",
-      );
-    }
-    return [];
+    const inspectable = [...screened.candidates, ...screened.unreadable];
+    if (inspectable.length === 0) return [];
+    return parseWorkerContainers(
+      inspectable.join("\n"),
+      await inspectContainers(run, inspectable, timeoutMs),
+      options.worksRoot,
+      new Date(),
+    );
   };
+}
+
+/** The screen's reading of a `docker ps` listing: the containers the mounts
+ *  column places under this workspace's works root, and the ones it left
+ *  without a usable mounts rendering (issue 160). */
+export interface ScreenedListing {
+  /** Containers whose rendered mounts name a path under the works root. */
+  candidates: string[];
+  /** Containers whose mounts column rendered no source at all, or was
+   *  truncated: only `docker inspect` can say what they bind. */
+  unreadable: string[];
 }
 
 /**
  * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"` listing
  * (issue 160): the containers binding a path under this workspace's works root,
- * how many rows the listing had, and whether it demonstrably carries mount
- * sources. The mounts column is searched whole — not split on its comma
- * separator — so a source containing a comma stays visible; `docker inspect`
- * re-filters the candidates.
+ * and those whose mounts the listing could not show. Nothing is concluded from
+ * the column alone — `docker inspect` decides every candidate's identity; the
+ * column only spares the inspect of the containers it already places elsewhere.
+ * It is searched whole — not split on its comma separator — so a source
+ * containing a comma stays visible.
  */
-export function screenWorkerContainers(
-  psListing: string,
-  worksRoot: string,
-): { candidates: string[]; rows: number; mountsObservable: boolean } {
+export function screenWorkerContainers(psListing: string, worksRoot: string): ScreenedListing {
   const underRoot = worksRoot.endsWith(sep) ? worksRoot : `${worksRoot}${sep}`;
   const candidates: string[] = [];
-  let rows = 0;
-  let withMounts = 0;
-  let truncated = false;
+  const unreadable: string[] = [];
   for (const line of psListing.split("\n")) {
     const listed = listedContainer(line);
     if (listed === null) continue;
-    rows += 1;
-    if (listed.mounts !== "") withMounts += 1;
-    if (listed.mounts.includes("…")) truncated = true;
     if (listed.mounts.includes(underRoot)) candidates.push(listed.id);
+    else if (listed.mounts === "" || listed.mounts.includes("…")) unreadable.push(listed.id);
   }
-  return { candidates, rows, mountsObservable: rows > 0 && withMounts > 0 && !truncated };
+  return { candidates, unreadable };
 }
 
 /** One row of the listing: the container's ID and the mount sources Docker
@@ -231,17 +218,10 @@ function listedContainer(line: string): { id: string; mounts: string } | null {
 
 /**
  * The production probe of one workspace: every running container correlated by
- * its work mount, and the unusable-listing guard read from the workspace's own
- * registry (an attempt with no outcome of its own).
+ * its work mount, never by the configured worker image.
  */
 export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
-  return dockerWorkerProbe({
-    worksRoot: layout.works,
-    hasUnsettledAttempts: async () => {
-      const registry = await scanRegistry(layout);
-      return registry.attemptsWithoutOwnOutcome.length > 0;
-    },
-  });
+  return dockerWorkerProbe({ worksRoot: layout.works });
 }
 
 /**
@@ -317,14 +297,13 @@ export function parseWorkerContainers(
   for (const container of containers) {
     if (!listed.some((id) => container.Id.startsWith(id))) continue;
     const correlation = correlateWork(container.Mounts ?? [], worksRoot);
-    // A container of the worker image without a work mount is not a worker; a
-    // work of ANOTHER workspace is a decided "not ours". An identity that
-    // cannot be decided is UNKNOWN, never "no worker" (issue 118) — it may
-    // still be one of ours.
+    // A container with no work mount is not a worker; a work of ANOTHER
+    // workspace is a decided "not ours". An identity that cannot be decided is
+    // UNKNOWN, never "no worker" (issue 118) — it may still be one of ours.
     if (correlation.kind === "foreign" || correlation.kind === "not-a-worker") continue;
     if (correlation.kind === "inconclusive") {
       throw new Error(
-        `worker-image container ${container.Id} carries no work this workspace can name — ` +
+        `container ${container.Id} carries no work this workspace can name — ` +
           "its identity is inconclusive, liveness unknown",
       );
     }
@@ -378,8 +357,8 @@ type WorkCorrelation =
 
 /**
  * A mount that points at a work dir — <anywhere>/<repo>#<n>[/sessao]. A
- * container of the worker image without one carries no work: it is an
- * auxiliary container (a probe, a debug run), not a worker.
+ * container without one carries no work: it is an auxiliary container (a
+ * probe, a debug run), not a worker.
  */
 const WORK_SHAPED_MOUNT = /(?:^|\/)[^/]+#\d+(?:\/${SESSIONS_SUBDIR})?$/;
 

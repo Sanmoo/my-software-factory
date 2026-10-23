@@ -194,10 +194,17 @@ describe("status — derivation on demand + local registry scan", () => {
       `${second} ${dirOf(4)}/sessao`,
       `${third} ${dirOf(5)}`,
     ].join("\n");
-    const inspect = [first, second, third].map((containerId, index) => ({
-      Id: containerId,
-      State: { Running: true, StartedAt: new Date(Date.now() - (5 - index) * 60_000).toISOString() },
-      Mounts: [{ Source: dirOf(index < 2 ? 4 : 5), Destination: "/msf-work" }],
+    const inspect = [
+      { id: first, work: 4, startedMinutesAgo: 5 },
+      { id: second, work: 4, startedMinutesAgo: 3 },
+      { id: third, work: 5, startedMinutesAgo: 1 },
+    ].map((container) => ({
+      Id: container.id,
+      State: {
+        Running: true,
+        StartedAt: new Date(Date.now() - container.startedMinutesAgo * 60_000).toISOString(),
+      },
+      Mounts: [{ Source: dirOf(container.work), Destination: "/msf-work" }],
     }));
     const shell = fakeDocker({ listing, inspect: JSON.stringify(inspect) });
     const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
