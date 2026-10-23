@@ -50,7 +50,7 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
 
     assert.deepEqual(await readTurnModelProviderError(dir, 1), {
       message: "429: upstream unavailable",
-      at: AT_ISO,
+      identity: AT_ISO,
     });
   });
 
@@ -79,7 +79,7 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
 
     assert.deepEqual(await readTurnModelProviderError(dir, 1), {
       message: "500: internal server error",
-      at: AT_ISO,
+      identity: AT_ISO,
     });
   });
 
@@ -96,13 +96,13 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
 
     const first = await readTurnModelProviderError(dir, 1);
     // The factory's own settlement events are appended AFTER the failure.
-    appendAttemptEvent(dir, 1, { event: "provider-failure", message: "429: unavailable" });
-    appendAttemptEvent(dir, 1, { event: "provider-retry", retry: 1 });
+    appendAttemptEvent(dir, 1, { event: "model-provider-failure", message: "429: unavailable" });
+    appendAttemptEvent(dir, 1, { event: "model-provider-retry", retry: 1 });
     const second = await readTurnModelProviderError(dir, 1);
 
     assert.ok(first);
-    assert.equal(first.at, second?.at, "the appended lines never move the failure's identity");
-    assert.match(first.at, /^line:\d+$/);
+    assert.equal(first.identity, second?.identity, "the appended lines never move the failure's identity");
+    assert.match(first.identity, /^line:\d+$/);
   });
 
   test("only the CURRENT session counts: an earlier error is not this session's ending", async () => {

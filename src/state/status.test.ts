@@ -423,7 +423,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const at = seedModelProviderEnding(dir, 1);
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "429: upstream unavailable",
-      at,
+      identity: at,
     });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
@@ -447,12 +447,12 @@ describe("status — derivation on demand + local registry scan", () => {
     for (let index = 0; index < DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries; index += 1) {
       await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
         message: "503: unavailable",
-        at: `2026-01-01T00:00:0${index}.000Z`,
+        identity: `2026-01-01T00:00:0${index}.000Z`,
       });
     }
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "503: unavailable",
-      at,
+      identity: at,
     });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
@@ -471,7 +471,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const at = seedModelProviderEnding(dir, 1);
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "429: upstream unavailable",
-      at,
+      identity: at,
     });
     // The retry session started and was killed before writing any message.
     appendAttemptEvent(dir, 1, { event: "session-start" });

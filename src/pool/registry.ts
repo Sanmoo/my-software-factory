@@ -349,12 +349,12 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // model provider failure, still the current session's ending, is the
     // work's condition: a later outcome, a new attempt, or a later plain
     // interruption settles it (the attempt's log stays as the history).
-    const providerLedger = await readModelProviderLedger(dir);
-    const last = providerLedger.last;
+    const modelProviderLedger = await readModelProviderLedger(dir);
+    const last = modelProviderLedger.last;
     if (last !== null && last.attempt === lastAttempt && ownOutcomeRecord(record, lastAttempt) === null) {
       const ending = await readTurnModelProviderError(dir, lastAttempt);
-      if (ending !== null && ending.at === last.failureAt) {
-        modelProvider.push({ key, attempt: lastAttempt, ledger: providerLedger, last });
+      if (ending !== null && ending.identity === last.failureIdentity) {
+        modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }
     }
   }

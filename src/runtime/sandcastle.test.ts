@@ -505,7 +505,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.equal(result.outcome, "abrupt-death");
     assert.deepEqual(await readTurnModelProviderError(request.workDir, 1), {
       message: '429: {"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}',
-      at: new Date(at).toISOString(),
+      identity: new Date(at).toISOString(),
     });
   });
 

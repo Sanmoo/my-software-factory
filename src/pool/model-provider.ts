@@ -36,14 +36,14 @@ export interface ModelProviderRetryEvent {
 
 /**
  * The last model provider failure that ended the attempt, with its settlement.
- * `failureAt` is the failure's own identity (the stream's timestamp), so
+ * `failureIdentity` is the failure's own identity (the stream's timestamp), so
  * re-reading the same settled failure after a restart is recognised instead of
  * counted twice.
  */
 export type ModelProviderSettlement = {
   attempt: number;
   /** The failure's identity (the stream's timestamp, or its line) — never the settlement time. */
-  failureAt: string;
+  failureIdentity: string;
   message: string;
   settledAt: string;
 } & (
@@ -59,7 +59,7 @@ export interface ModelProviderLedger {
   /** Retries consumed by THIS attempt. */
   consumed: number;
   events: ModelProviderRetryEvent[];
-  /** The last provider failure that ended the attempt. */
+  /** The last model provider failure that ended the attempt. */
   last: ModelProviderSettlement | null;
 }
 
@@ -69,15 +69,15 @@ export function emptyModelProviderLedger(): ModelProviderLedger {
 
 export type ModelProviderDecision =
   | { decision: "retry"; waitMs: number; consumed: number }
-  | { decision: "await-provider"; consumed: number; reason: string };
+  | { decision: "awaiting-model-provider"; consumed: number; reason: string };
 
 /** A settlement and whether THIS call recorded it (the comment fires once). */
 export type ModelProviderSettlementResult = ModelProviderDecision & { recorded: boolean };
 
 /**
- * Read the provider ledger of a work. An absent or corrupt file is the honest
+ * Read the model provider ledger of a work. An absent or corrupt file is the honest
  * initial state: no retry was ever granted, nothing is invented and nothing is
- * deleted. A work that never met a provider failure reads exactly like one
+ * deleted. A work that never met a model provider failure reads exactly like one
  * that never launched.
  */
 export async function readModelProviderLedger(workDir: string): Promise<ModelProviderLedger> {
@@ -130,7 +130,7 @@ function isSettlement(value: unknown): value is ModelProviderSettlement {
   const settlement = value as Record<string, unknown>;
   if (
     positiveInteger(settlement["attempt"]) === null ||
-    typeof settlement["failureAt"] !== "string" ||
+    typeof settlement["failureIdentity"] !== "string" ||
     typeof settlement["message"] !== "string" ||
     typeof settlement["settledAt"] !== "string"
   ) {
@@ -166,7 +166,7 @@ export function modelProviderDecision(
     return { decision: "retry", waitMs: scoped.last.waitMs, consumed: scoped.consumed };
   }
   if (scoped.consumed >= budget.maxRetries) {
-    return { decision: "await-provider", consumed: scoped.consumed, reason: exhaustedModelProviderReason(budget) };
+    return { decision: "awaiting-model-provider", consumed: scoped.consumed, reason: exhaustedModelProviderReason(budget) };
   }
   const index = scoped.consumed;
   return {
@@ -177,7 +177,7 @@ export function modelProviderDecision(
 }
 
 /**
- * Settle one provider failure for the attempt and persist it BEFORE the
+ * Settle one model provider failure for the attempt and persist it BEFORE the
  * relaunch, so a death during the backoff or the session continues the count
  * instead of renewing it. Idempotent by the failure's identity: settling the
  * same failure again reports the standing decision without spending a second
@@ -196,13 +196,13 @@ export async function settleModelProviderFailure(
   const settled = isModelProviderFailureSettled(ledger, attempt, failure);
 
   if (settled && ledger.last?.granted === true) return { ...decision, recorded: false };
-  if (decision.decision === "await-provider" && settled) return { ...decision, recorded: false };
+  if (decision.decision === "awaiting-model-provider" && settled) return { ...decision, recorded: false };
 
   const at = now().toISOString();
-  if (decision.decision === "await-provider") {
+  if (decision.decision === "awaiting-model-provider") {
     await writeLedger(workDir, {
       ...ledger,
-      last: { attempt, failureAt: failure.at, message: failure.message, granted: false, waitMs: null, helpRequested: false, settledAt: at },
+      last: { attempt, failureIdentity: failure.identity, message: failure.message, granted: false, waitMs: null, helpRequested: false, settledAt: at },
     });
     return { ...decision, recorded: true };
   }
@@ -220,7 +220,7 @@ export async function settleModelProviderFailure(
     events: [...ledger.events, event],
     last: {
       attempt,
-      failureAt: failure.at,
+      failureIdentity: failure.identity,
       message: failure.message,
       granted: true,
       waitMs: decision.waitMs,
@@ -242,7 +242,7 @@ export async function markModelProviderHelpRequested(
 ): Promise<void> {
   const ledger = await readModelProviderLedger(workDir);
   const last = ledger.last;
-  if (last === null || last.attempt !== attempt || last.failureAt !== failure.at || last.granted) return;
+  if (last === null || last.attempt !== attempt || last.failureIdentity !== failure.identity || last.granted) return;
   if (last.helpRequested) return;
   await writeLedger(workDir, { ...ledger, last: { ...last, helpRequested: true } });
 }
@@ -277,11 +277,28 @@ function ledgerForAttempt(ledger: ModelProviderLedger, attempt: number): ModelPr
   return { ...ledger, attempt, consumed: 0 };
 }
 
+/** Whether this settled failure still owes its help request: awaiting, and
+ *  the comment was not posted yet (a death between the ledger and the comment). */
+export function isModelProviderHelpPending(
+  ledger: ModelProviderLedger,
+  attempt: number,
+  failure: ModelProviderFailure,
+): boolean {
+  const last = ledger.last;
+  return (
+    last !== null &&
+    last.attempt === attempt &&
+    last.failureIdentity === failure.identity &&
+    !last.granted &&
+    !last.helpRequested
+  );
+}
+
 /** Whether the last settlement is this exact failure of this attempt. */
 export function isModelProviderFailureSettled(
   ledger: ModelProviderLedger,
   attempt: number,
   failure: ModelProviderFailure,
 ): boolean {
-  return ledger.last !== null && ledger.last.attempt === attempt && ledger.last.failureAt === failure.at;
+  return ledger.last !== null && ledger.last.attempt === attempt && ledger.last.failureIdentity === failure.identity;
 }

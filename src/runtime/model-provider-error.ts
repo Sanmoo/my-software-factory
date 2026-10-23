@@ -27,7 +27,7 @@ export interface ModelProviderFailure {
    * stable when the factory appends its own events after the turn, so the
    * persisted settlement is never double-counted after a restart.
    */
-  at: string;
+  identity: string;
 }
 
 /** The last model provider error of an attempt's turn, or null when the turn ended otherwise. */
@@ -50,7 +50,7 @@ export async function readTurnModelProviderError(
   const message = typeof last.errorMessage === "string" ? last.errorMessage.trim() : "";
   if (message === "") return null;
 
-  return { message, at: failureIdentity(last, ending.lineIndex) };
+  return { message, identity: failureIdentity(last, ending.lineIndex) };
 }
 
 /** The fields of an assistant message this reader depends on. */
