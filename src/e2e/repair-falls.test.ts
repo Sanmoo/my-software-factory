@@ -1005,6 +1005,140 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     );
   });
 
+  test("a concurrent change whose impediment cannot be re-read is held — never a help request", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 123);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+    await runOnce(deps); // the round is charged and ends without publishing
+
+    // The operator pushes the resolution; GitHub has not computed the PR's
+    // mergeability yet, so the premise cannot be confirmed either way.
+    const resolved = "effc1b3c";
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: resolved,
+      mergeState: "unknown",
+      requiredChecks: [],
+    });
+    git.remoteHead = resolved;
+    git.localWork = { headSha: OBSERVED, commits: 0, uncommitted: false, operationInProgress: null };
+
+    const held = await runOnce(deps);
+    assert.equal(held.launched.length, 0, "an unreadable premise opens no worker");
+    assert.ok(
+      !held.reserved.some((decision) => decision.state === "repair-fall-blocked"),
+      "uncertainty is not turned into a block",
+    );
+    assert.ok(
+      logs.some(
+        (line) =>
+          line.includes("reconciliation pending") &&
+          line.includes("the impediment the round addressed could not be re-read"),
+      ),
+      "the log says what could not be re-read",
+    );
+    const heldCycle = await readRepairCycle(workDir(layout, REPO, 123));
+    assert.equal(heldCycle.attempt?.publication, "pending", "the attempt is held, not settled");
+    assert.equal(heldCycle.usedRounds, 1, "the round is neither returned nor renewed while uncertain");
+    assert.equal(heldCycle.consecutiveFalls, 0, "no fall is invented");
+    const issue = await tracker.readIssue({ repo: REPO, number: 123 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no help request");
+
+    // The facts resolve: the impediment is gone and the round returns.
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: resolved,
+      mergeState: "mergeable",
+      requiredChecks: [],
+    });
+    const resolvedSweep = await runOnce(deps);
+    assert.equal(resolvedSweep.launched.length, 0, "recovery launches nothing");
+    assert.ok(
+      resolvedSweep.reserved.some((decision) => decision.ref.number === 123 && decision.state === "repair-recovered"),
+      "the mergeable PR is a confirmed recovery",
+    );
+    assert.ok(
+      logs.some((line) => line.includes("premise is obsolete") && line.includes("the round returns")),
+      "the log names the returned round",
+    );
+    const after = await readRepairCycle(workDir(layout, REPO, 123));
+    assert.equal(after.usedRounds, 0, "the round is returned");
+    assert.equal(after.consecutiveFalls, 0, "no fall was counted");
+  });
+
+  test("a mergeable PR whose required check still fails keeps the impediment — the round is not returned", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 124);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+    await runOnce(deps);
+
+    // The remote moved, but the required check concluded failing on the new
+    // head: a real impediment, so the round is NOT returned.
+    const moved = "fa11ed";
+    tracker.setPrRepairFacts({
+      repo: REPO,
+      prNumber: pr,
+      headSha: moved,
+      mergeState: "mergeable",
+      requiredChecks: [failing("build", "failure")],
+    });
+    git.remoteHead = moved;
+    git.localWork = { headSha: OBSERVED, commits: 0, uncommitted: false, operationInProgress: null };
+
+    const first = await runOnce(deps);
+    assert.equal(first.launched.length, 0, "nothing is published over the concurrent change");
+    const held = await readRepairCycle(workDir(layout, REPO, 124));
+    assert.equal(held.attempt?.publication, "concurrent-change", "the moved head stays a human question");
+    assert.equal(held.usedRounds, 1, "the round is not returned while the check still fails");
+
+    const blocked = await runOnce(deps);
+    assert.equal(blocked.launched.length, 0);
+    const issue = await tracker.readIssue({ repo: REPO, number: 124 });
+    assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the human is asked");
+    const comments = await tracker.readComments({ repo: REPO, number: 124 });
+    assert.ok(comments.known);
+    assert.match(comments.value.at(-1)!.body, /a concurrent change/);
+  });
+
+  test("a fresh round follows the recalculated evidence to the current head", async () => {
+    const { tracker, runtime, git, deps } = makeFactory(["pr-open", "pr-open"]);
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 125);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    // Between the derivation and the launch the head moved and still
+    // conflicts: the evidence is recalculated and the round opens there.
+    const recalculated = "c0ffee";
+    const prepare = git.prepareWork.bind(git);
+    git.prepareWork = async (ref: IssueRef) => {
+      tracker.setPrRepairFacts({
+        repo: REPO,
+        prNumber: pr,
+        headSha: recalculated,
+        mergeState: "conflicting",
+        requiredChecks: [],
+      });
+      git.remoteHead = recalculated;
+      return prepare(ref);
+    };
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "the round opens on the current head");
+    assert.equal(sweep.launched[0]!.request.material.repair?.observedHeadSha, recalculated, "the lease follows the head");
+    assert.equal(sweep.launched[0]!.request.material.repair?.resuming, undefined, "a fresh round, not a resumption");
+    assert.ok(
+      logs.some((line) => line.includes("the evidence was recalculated on the current head")),
+      "the log names the recalculated evidence",
+    );
+    const cycle = await readRepairCycle(workDir(layout, REPO, 125));
+    assert.equal(cycle.usedRounds, 1, "the round is charged once");
+    assert.equal(cycle.attempt?.observedHeadSha, recalculated, "the evidence on disk is the current one");
+  });
+
   test("the forward path is untouched: a published round from the start behaves as before", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 109);

@@ -66,7 +66,6 @@ const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
  * a licence to conclude either way.
  */
 export type RepairPremise = "obsolete" | "persists" | "unknown";
-
 /** The attempt a repair round put on disk, enough to attribute its publication
  *  later — after a death that wrote no outcome record. */
 export interface RepairAttempt {
@@ -282,12 +281,12 @@ export type RepairReconciliation =
  * Decide the publication of the cycle's attempt from structured facts alone
  * (issue 112): the produced commit (the work branch on disk) against the
  * remote head, with the head observed before the intervention as the anchor.
- * An unreadable remote or local state is "pending" — never "not published",
- * never "published", and it neither returns budget nor allows a new worker.
- * A published round is charged exactly once (it was charged at launch, so the
- * reconciliation only records the verdict); an attempt that fell without
- * publishing returns its round and counts as one more consecutive fall —
- * unless the premise itself is gone (issue 149): then the round returns with
+ * An unreadable remote, local state or premise is "pending" — never "not
+ * published", never "published", and it neither returns budget nor allows a
+ * new worker. A published round is charged exactly once (it was charged at
+ * launch, so the reconciliation only records the verdict); an attempt that fell
+ * without publishing returns its round and counts as one more consecutive fall
+ * — unless the premise itself is gone (issue 149): then the round returns with
  * no fall, and the work is never blamed for a fault that no longer exists.
  */
 export function reconcileRepairAttempt(input: {
@@ -322,11 +321,18 @@ export function reconcileRepairAttempt(input: {
   }
 
   const produced = localWork.headSha;
+  // One settlement of the current attempt; the ledgers are the caller's.
   const settled = (
     publication: RepairPublication,
     cycle: RepairCycle,
   ): { cycle: RepairCycle; attempt: RepairAttempt } =>
     settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
+  /** The round returns: the charge is refunded and the attempt settles as
+   *  "nothing of it reached the remote". Counting a fall is the caller's
+   *  business — an attempt that fell counts one, an obsolete premise does not
+   *  (issue 149). */
+  const refunded = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
+    settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
 
   // The remote carries exactly the commit this attempt produced: published,
   // and attributable — a different head proves nothing about this attempt.
@@ -337,18 +343,9 @@ export function reconcileRepairAttempt(input: {
   // The premise vanished while the round ran (issue 149): the obstacle it was
   // reopened for is gone, so the round returns without counting a fall — the
   // remote (whoever moved it) is still never overwritten. Only a confirmed
-  // absence reaches here; an unknown one keeps the verdict below.
+  // absence reaches here; an unknown one keeps the verdicts below.
   if (input.premise === "obsolete") {
-    return {
-      kind: "premise-obsolete",
-      ...settleAttempt(
-        { ...input.cycle, usedRounds: Math.max(0, input.cycle.usedRounds - 1) },
-        attempt,
-        "not-published",
-        localWork,
-        remoteHeadSha,
-      ),
-    };
+    return { kind: "premise-obsolete", ...refunded(input.cycle) };
   }
 
   // The remote is still where it was, or holds no such branch: nothing of this
@@ -356,11 +353,19 @@ export function reconcileRepairAttempt(input: {
   if (remoteHeadSha === null || remoteHeadSha === attempt.observedHeadSha) {
     return {
       kind: "not-published",
-      ...settled("not-published", {
-        ...input.cycle,
-        usedRounds: Math.max(0, input.cycle.usedRounds - 1),
-        consecutiveFalls: input.cycle.consecutiveFalls + 1,
-      }),
+      ...refunded({ ...input.cycle, consecutiveFalls: input.cycle.consecutiveFalls + 1 }),
+    };
+  }
+
+  // Somebody else moved the remote. The verdict needs the premise: a confirmed
+  // impediment keeps the concurrent change a human question, while an
+  // unreadable one is HELD — uncertainty is never turned into a help request
+  // for work that may already be delivered (issue 149).
+  if (input.premise === "unknown") {
+    return {
+      kind: "pending",
+      reason: "the impediment the round addressed could not be re-read",
+      cycle: settled("pending", input.cycle).cycle,
     };
   }
 
