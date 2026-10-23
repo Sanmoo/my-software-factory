@@ -4,7 +4,7 @@ import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { IssueRef } from "../tracker/port.js";
-import { workKey } from "../state/derive.js";
+import { issueRefKey } from "../pool/work-key.js";
 import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
@@ -97,7 +97,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
-    const key = workKey(request.ref);
+    const key = issueRefKey(request.ref);
     const session: FakeSession = {
       ref: request.ref,
       wake: deferred(),
@@ -128,7 +128,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   /** Ask the session to end; the launch promise resolves with its aftermath. */
   requestStop(ref: IssueRef): void {
-    const key = workKey(ref);
+    const key = issueRefKey(ref);
     this.stopRequests.push(key);
     const session = this.sessions.get(key);
     if (session === undefined) return;
@@ -138,7 +138,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   /** Force the session gone; a fake container is instantly removed. */
   async forceStop(ref: IssueRef): Promise<void> {
-    const key = workKey(ref);
+    const key = issueRefKey(ref);
     this.forcedStops.push(key);
     if (this.options.forceUnconfirmed === true) {
       throw new Error(`fake: the worker of ${key} survived the forced stop`);
@@ -159,7 +159,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   /** Resolves once a cooperative stop was requested for this work — the seam a
    *  test's hold awaits to end voluntarily inside the cooperative window. */
   whenStopRequested(ref: IssueRef): Promise<void> {
-    return this.sessions.get(workKey(ref))?.cooperative.promise ?? Promise.resolve();
+    return this.sessions.get(issueRefKey(ref))?.cooperative.promise ?? Promise.resolve();
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's
