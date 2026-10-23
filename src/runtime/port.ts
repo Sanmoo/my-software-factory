@@ -71,7 +71,9 @@ export interface WorkRequest {
    *  the recovery contract. Every relaunch of an attempt (a recovery, a model
    *  provider retry, the resume after the operator's requested stop) arrives
    *  here as `resume` with the id of ITS attempt; never a session chosen by
-   *  mtime or by being the only file found. */
+   *  mtime or by being the only file found. Only a caller driving the runtime
+   *  directly (no factory, no recovery) may omit it and get Pi's own fresh
+   *  session — such a session has no association and pauses a later recovery. */
   session?: SessionSelection;
   /** The material the prompt is built from (ticket 17). */
   material: WorkerMaterial;

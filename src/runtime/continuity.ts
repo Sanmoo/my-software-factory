@@ -220,7 +220,6 @@ function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, Effect
     work: deps.ref,
     attempt: deps.attempt,
     round: nextRound(links.links, deps.ref, deps.attempt),
-    mode: "new",
     sessionId,
     at: nowIso(deps),
   });

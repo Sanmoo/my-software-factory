@@ -36,13 +36,12 @@ describe("the session reader (issue 119)", () => {
     return path;
   }
 
-  test("a session ending with a newline is intact and its header names the id", () => {
+  test("a session ending with a newline is intact and its whole prefix is counted", () => {
     const path = writeSession("2026-01-01_session-1.jsonl", [HEADER("session-1"), USER("do the work"), ""]);
     const inspection = inspectSessionFile(path, "session-1");
     assert.equal(inspection.status, "intact");
-    assert.equal(inspection.header?.id, "session-1");
     assert.equal(inspection.intactEntries, 1);
-    assert.equal(inspection.tailBytes, 0);
+    assert.deepEqual(inspection, { status: "intact", intactEntries: 1 }, "nothing beyond the diagnosis is claimed");
   });
 
   test("a truncated last entry is a partial tail, not a corrupt history, and the prefix is counted", () => {
@@ -50,7 +49,7 @@ describe("the session reader (issue 119)", () => {
     const inspection = inspectSessionFile(path, "session-1");
     assert.equal(inspection.status, "partial");
     assert.equal(inspection.intactEntries, 2);
-    assert.ok(inspection.tailBytes > 0);
+    assert.match(inspection.detail ?? "", /incomplete entry/);
   });
 
   test("an unparseable line followed by more history is unreadable", () => {

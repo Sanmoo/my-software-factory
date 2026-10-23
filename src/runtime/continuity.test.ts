@@ -119,7 +119,6 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
       work: { repo: REF.repo, number: REF.number },
       attempt: 2,
       round: 1,
-      mode: "new",
       sessionId: plan.sessionId,
       at: "2026-01-01T00:00:00.000Z",
     });

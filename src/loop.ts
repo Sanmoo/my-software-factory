@@ -1810,9 +1810,11 @@ export class SweepEngine {
       }
       this.log(
         `recovery ${decision.consumed}/${config.recovery.maxRecoveries} for ${key} — ` +
-          `attempt ${facts.attempt} keeps its number, session ${continuity.sessionId} is reopened ` +
-          `with ${continuity.intactEntries} confirmed entries of its history; ` +
-          `waiting ${decision.waitMs}ms before the relaunch`,
+          `attempt ${facts.attempt} keeps its number, ` +
+          (continuity.mode === "resume"
+            ? `session ${continuity.sessionId} is reopened with ${continuity.intactEntries} confirmed entries of its history`
+            : `session ${continuity.sessionId} starts fresh (no session had been created yet)`) +
+          `; waiting ${decision.waitMs}ms before the relaunch`,
       );
       await this.wait(decision.waitMs);
       if (this.stopping) {
