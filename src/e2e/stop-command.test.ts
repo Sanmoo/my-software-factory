@@ -76,6 +76,31 @@ class FakeGitWork implements GitWork {
   }
 }
 
+/** The compiled module's URL, as the child programs import it. */
+const moduleUrl = (relative: string): string => JSON.stringify(new URL(relative, import.meta.url).href);
+
+/**
+ * The wiring every stopped-child proof shares: the fake seams (tracker, git,
+ * runtime) and the config literal. One home, so the two child programs cannot
+ * drift apart — the standards review caught their recovery budgets disagreeing
+ * while both claimed to prove the same lifecycle.
+ */
+function childWiring(runtimeOptions: string, configPathExpression: string): string[] {
+  return [
+    `import { FakeTrackerAdapter, seedIssue } from ${moduleUrl("../tracker/fake-adapter.js")};`,
+    `import { FakeWorkerRuntime } from ${moduleUrl("../runtime/fake-runtime.js")};`,
+    `import { workBranchName } from ${moduleUrl("../git/port.js")};`,
+    `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_RECOVERY_BUDGET } from ${moduleUrl("../config.js")};`,
+    `import { ensureWorkspace } from ${moduleUrl("../layout.js")};`,
+    "const workspace = ensureWorkspace(workspaceRoot);",
+    "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, notifications: false, configPath: " + configPathExpression + " };",
+    "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
+    "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
+    "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) };",
+    `const runtime = new FakeWorkerRuntime({ ${runtimeOptions} });`,
+  ];
+}
+
 describe("e2e: the operator's requested stop — close admissions, stop the workers, resume (issue #146)", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
@@ -229,19 +254,9 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         `import { acquireRunLock } from ${JSON.stringify(new URL("../run-lock.js", import.meta.url).href)};`,
         `import { runForever } from ${JSON.stringify(new URL("../loop.js", import.meta.url).href)};`,
         `import { installStopSignals } from ${JSON.stringify(new URL("../stop-signals.js", import.meta.url).href)};`,
-        `import { FakeTrackerAdapter, seedIssue } from ${JSON.stringify(new URL("../tracker/fake-adapter.js", import.meta.url).href)};`,
-        `import { FakeWorkerRuntime } from ${JSON.stringify(new URL("../runtime/fake-runtime.js", import.meta.url).href)};`,
-        `import { workBranchName } from ${JSON.stringify(new URL("../git/port.js", import.meta.url).href)};`,
-        `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_RECOVERY_BUDGET } from ${JSON.stringify(new URL("../config.js", import.meta.url).href)};`,
-        `import { ensureWorkspace } from ${JSON.stringify(new URL("../layout.js", import.meta.url).href)};`,
         "const [configPath, workspaceRoot, launchedFile, holdFile, resultFile] = process.argv.slice(2);",
         "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
-        "const workspace = ensureWorkspace(workspaceRoot);",
-        "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1, 1, 1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, notifications: false, configPath };",
-        "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
-        "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
-        "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) };",
-        "const runtime = new FakeWorkerRuntime({ tracker, outcomes: ['pr-open'], ignoreStop: true });",
+        ...childWiring("tracker, outcomes: ['pr-open'], ignoreStop: true", "configPath"),
         "runtime.hold = async (request) => {",
         "  appendFileSync(launchedFile, `${request.ref.number}\\n`);",
         "  if (request.ref.number === 1) while (existsSync(holdFile)) await sleep(10);",
@@ -423,22 +438,12 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         'import { join } from "node:path";',
         `import { installStopSignals } from ${JSON.stringify(new URL("../stop-signals.js", import.meta.url).href)};`,
         `import { runOnce } from ${JSON.stringify(new URL("../loop.js", import.meta.url).href)};`,
-        `import { FakeTrackerAdapter, seedIssue } from ${JSON.stringify(new URL("../tracker/fake-adapter.js", import.meta.url).href)};`,
-        `import { FakeWorkerRuntime } from ${JSON.stringify(new URL("../runtime/fake-runtime.js", import.meta.url).href)};`,
-        `import { workBranchName } from ${JSON.stringify(new URL("../git/port.js", import.meta.url).href)};`,
-        `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY } from ${JSON.stringify(new URL("../config.js", import.meta.url).href)};`,
-        `import { ensureWorkspace } from ${JSON.stringify(new URL("../layout.js", import.meta.url).href)};`,
         `import { readRecoveryLedger } from ${JSON.stringify(new URL("../pool/recovery.js", import.meta.url).href)};`,
         "const [mode, workspaceRoot, launchedFile, resultFile] = process.argv.slice(2);",
         "// A signal listener does not keep Node alive: the child must outlive its",
         "// parked worker so the test can deliver the real signal.",
         "const keepAlive = setInterval(() => {}, 1_000);",
-        "const workspace = ensureWorkspace(workspaceRoot);",
-        "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { maxRecoveries: 1, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, notifications: false, configPath: join(workspaceRoot, 'msf.yaml') };",
-        "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
-        "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
-        "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) };",
-        "const runtime = new FakeWorkerRuntime({ tracker, outcomes: ['pr-open'] });",
+        ...childWiring("tracker, outcomes: ['pr-open']", "join(workspaceRoot, 'msf.yaml')"),
         "if (mode === 'stop') runtime.hold = async (request) => { writeFileSync(launchedFile, String(request.ref.number)); await runtime.whenStopRequested(request.ref); };",
         "const stop = installStopSignals();",
         "const result = await runOnce({ config, tracker, runtime, git, workspace, log: () => {} }, { signal: stop.requested, escalate: stop.escalated, cooperativeMs: 10_000 });",

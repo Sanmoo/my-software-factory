@@ -84,7 +84,7 @@ The automatic relaunch of an interrupted attempt, after the configured backoff, 
 The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Requested stop**:
-The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
+The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. The cooperative window bounds that request phase — ten seconds for the whole run, never per worker — and a second signal escalates it, forcing what remains at once; neither shortcut skips the confirmation of the workers' end. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
 _Avoid_: shutdown, for the operator's act (the signal handling is the mechanism, not the term).
 
 **Unconfirmed stop**:
