@@ -18,7 +18,7 @@ import {
   type Config,
   type RecoveryBudget,
 } from "../config.js";
-import { readRecoveryLedger, recordStopRequest } from "../pool/recovery.js";
+import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
 import { waitFor } from "./cli-harness.js";
 
 /**
@@ -452,6 +452,11 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       runtime: stuck,
       git: new FakeGitWork(),
       workspace: layout,
+      // Docker is the authority on a surviving worker (ADR 0002): the fake
+      // hands its own live sessions to the cycle as the probe, so a forced
+      // stop that cannot end the worker shows up exactly as it would in
+      // production — the work is held, never relaunched over.
+      probe: () => stuck.liveWorkers(),
       log: (line) => logs.push(line),
     };
 
@@ -472,18 +477,70 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const held = await runOnce(deps);
     assert.equal(held.launched.length, 0, "no duplicate worker is started");
     assert.equal(stuck.launched.length, 1, "the previous worker was not replaced");
+    // The hold is said out loud. Which module says it depends on why the work
+    // is still in flight — the survivor recognition (issue 118) when the probe
+    // shows the container, the stop reconciliation when it does not — and both
+    // name the work the operator has to look at.
     assert.ok(
-      logs.some((line) => line.includes("NOT relaunching") && line.includes("still alive")),
+      logs.some(
+        (line) =>
+          line.includes(workKey) &&
+          (line.includes("NOT relaunching") || line.includes("recognizing surviving worker")),
+      ),
       `the operator gets the diagnostic: ${logs.join("\n")}`,
     );
 
     // A later invocation whose probe proves the worker gone resumes the same
     // attempt, without spending the recovery budget.
     const healthy = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
-    const resumed = await runOnce({ ...deps, runtime: healthy });
+    const resumed = await runOnce({ ...deps, runtime: healthy, probe: () => healthy.liveWorkers() });
     assert.equal(resumed.launched.length, 1, "the work resumes once the worker is gone");
     assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME attempt");
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
+  });
+
+  test("a survivor left by an unconfirmed stop resumes for free once its end is confirmed", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    // The previous invocation stopped with a worker it could not confirm: the
+    // stop is on the ledger and the container is still up.
+    await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
+    mkdirSync(workDirOf(), { recursive: true });
+    writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    await recordUnconfirmedStop(workDirOf(), 1, "a worker of this work is still alive");
+    const logs: string[] = [];
+    let alive = true;
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => (alive ? [{ key: workKey, containerId: "container-1", ageMs: 1_000 }] : []),
+      log: (line) => logs.push(line),
+    };
+
+    // The same running factory sees the survivor, then sees it gone: the end
+    // is the operator's own stop, whoever observes it — one uninterrupted run.
+    const stop = new AbortController();
+    const running = runForever(deps, { tickMs: 10, signal: stop.signal });
+    try {
+      await waitFor("the survivor to be recognised", () =>
+        logs.some((line) => line.includes("recognizing surviving worker")),
+      );
+      assert.equal(runtime.launched.length, 0, "the survivor keeps its work and its slot");
+
+      alive = false;
+      await waitFor("the resumed launch", () => runtime.launched.length === 1);
+      assert.equal(runtime.launched[0]?.attempt, 1, "the SAME attempt — the stop did not cost a new one");
+      const ledger = await ledgerOf();
+      assert.equal(ledger.consumed, 0, "the requested stop spent no recovery, whichever process saw the end");
+      assert.equal(ledger.lastStop, null, "the stop record was consumed by the resume");
+    } finally {
+      stop.abort();
+      await running.catch(() => {});
+    }
   });
 
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {

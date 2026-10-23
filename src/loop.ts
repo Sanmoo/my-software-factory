@@ -1225,9 +1225,9 @@ export class SweepEngine {
 
   /**
    * The confirmation the factory never skips (issue #146): every worker that
-   * started must be gone. The runtime answers with its live workers; an
-   * unreadable answer is uncertainty, never an empty factory. An unconfirmed
-   * work is persisted so the next invocation holds it.
+   * started must be gone. The liveness probe answers (Docker is the authority
+   * for the real runtime); an unreadable answer is uncertainty, never an empty
+   * factory. An unconfirmed work is persisted so the next invocation holds it.
    */
   private async confirmStop(
     entries: readonly InFlightLaunch[],
@@ -1699,6 +1699,23 @@ export class SweepEngine {
     return alive.has(key) ? "a worker of this work is still alive" : null;
   }
 
+  /**
+   * Whether the operator's own requested stop owns the end of this attempt
+   * (issue #146): the persisted stop-requested, or a stop-unconfirmed one whose
+   * worker this invocation just confirmed gone (promoted, so the launch
+   * consumes it like any other requested stop). A stop of another attempt, or
+   * a failure, never answers yes.
+   */
+  private async operatorStoppedAttempt(dir: string, attempt: number): Promise<boolean> {
+    const { lastStop } = await readRecoveryLedger(dir);
+    if (lastStop === null || lastStop.attempt !== attempt) return false;
+    if (lastStop.kind === "stop-unconfirmed") {
+      await confirmStopRequest(dir, attempt);
+      return true;
+    }
+    return lastStop.kind === "stop-requested";
+  }
+
   /** The exhausted recovery budget: block the work and ask the operator for
    *  help, naming the configured value and backoff — no attempt was consumed. */
   private async pauseInterrupted(
@@ -2162,6 +2179,23 @@ export class SweepEngine {
           `collected ${key}: attempt ${attempt} ended without an outcome record while the factory stops — ` +
             "no recovery is spent and the next run resumes the same attempt",
         );
+      } else if (await this.operatorStoppedAttempt(dir, attempt)) {
+        // The worker outlived the operator's stop (a survivor whose end this
+        // invocation confirmed): the attempt ends where the requested stop
+        // left it, so it resumes for free — the stop never charges the budget,
+        // no matter which process observes the end.
+        this.log(
+          `${origin} ${key}: attempt ${attempt} ended without an outcome record, and the operator's requested ` +
+            "stop owns that end — it resumes now, spending no recovery",
+        );
+        next = {
+          ref,
+          kind: "recover",
+          createdAt: null,
+          pr,
+          attempt,
+          requestedStop: true,
+        };
       } else {
         // The attempt's own stream decides whether this was the agent's
         // interruption or a model provider failure (issue 144): the latter
