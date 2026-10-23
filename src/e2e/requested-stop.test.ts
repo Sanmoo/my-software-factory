@@ -704,6 +704,35 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal((await ledgerOf()).consumed, 0, "the requested stop charged no recovery");
   });
 
+  test("a silent Docker leaves the stop unconfirmed even with no work to name", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => {
+        throw new Error("Cannot connect to the Docker daemon");
+      },
+      log: () => {},
+    };
+
+    const stop = new AbortController();
+    stop.abort();
+    const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
+
+    assert.equal(
+      result.shutdown?.unknown,
+      "Cannot connect to the Docker daemon",
+      "the factory never calls a stop safe while it cannot see the workers",
+    );
+    assert.deepEqual(result.shutdown?.unconfirmed, [], "nothing was known to be alive — nothing is named");
+    assert.equal(result.shutdown?.forced.length, 0);
+  });
+
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {
     const config = makeConfig();
     const tracker = makeTracker(config);
