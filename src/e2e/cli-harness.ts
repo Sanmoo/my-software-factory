@@ -209,6 +209,28 @@ function installRestChannel(baseDir: string, answers: Record<string, RestAnswer>
   };
 }
 
+/**
+ * Make `docker` unreachable for a spawned CLI, deterministically: the shim
+ * fails exactly as a stopped daemon does, so the factory's liveness probe is
+ * honestly unknown. It sits BESIDE the `gh` shim (same bin dir), so a test
+ * that already uses {@link installGhShim} gets it on PATH with no extra env.
+ */
+export function installUnreachableDocker(binDir: string): void {
+  const shim = join(binDir, "docker");
+  writeFileSync(
+    shim,
+    [
+      "#!/bin/sh",
+      "cat >/dev/null 2>&1 || true",
+      'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2',
+      "exit 1",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  chmodSync(shim, 0o755);
+}
+
 /** Run the built CLI to completion in `cwd` (synchronous, bounded). The
  * bound is generous on purpose: a concurrent suite may delay a node start,
  * and the calls under test answer in milliseconds. */

@@ -133,7 +133,9 @@ of that window. At the window's end the remaining workers are forced, and the
 factory calls the stop done only after confirming that no worker container
 survives. The 10 seconds bound the *request* phase, not a promise of exiting
 in 10 seconds: the factory exits as soon as every worker is confirmed gone —
-or says it could not confirm and exits nonzero, holding the affected works.
+or says it could not confirm and exits nonzero (a worker it could not end, or
+a Docker that stopped answering), leaving the affected works on record for the
+next run to check.
 
 A requested stop is not a failure. The attempt, its branch, its history and
 the artifacts on disk stay; no Cancellation or Fall is recorded and no

@@ -8,7 +8,7 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
-import { runForever, runOnce, type LoopDeps, type ShutdownReport } from "./loop.js";
+import { runForever, runOnce, stopConfirmed, type LoopDeps, type ShutdownReport } from "./loop.js";
 import { installShutdownSignals, type ShutdownSignals } from "./shutdown.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
@@ -190,7 +190,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
     // (confirmed, or reported as unconfirmed) and the exclusivity is released:
     // the process ends NOW — an internal handle of the runtime must never
     // delay the operator's restart.
-    process.exit(report.unconfirmed.length > 0 || report.unknown !== null ? 1 : 0);
+    process.exit(stopConfirmed(report) ? 0 : 1);
   }
 }
 
@@ -210,7 +210,7 @@ async function executeRun(
     if (result.shutdown !== null) {
       console.log(
         utcStamp(
-          result.shutdown.unconfirmed.length === 0 && result.shutdown.unknown === null
+          stopConfirmed(result.shutdown)
             ? "sweep stopped by the operator: the stop of every worker was confirmed, exit 0"
             : "sweep stopped by the operator: the stop could not be confirmed, exit 1",
         ),

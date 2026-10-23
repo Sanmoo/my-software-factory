@@ -235,10 +235,15 @@ export interface StopOptions {
 export interface ShutdownReport {
   forced: string[];
   unconfirmed: Array<{ key: string; because: string }>;
-  /** Why the factory cannot say that no worker survives, even with no work to
-   *  name (the liveness probe is silent): a stop is never called safe on a
-   *  guess, so the operator gets the diagnostic and the nonzero exit. */
-  unknown: string | null;
+  /** Why the liveness probe could not answer: the factory cannot say that no
+   *  worker survives, and never calls a stop safe on a guess. */
+  unreadBecause: string | null;
+}
+
+/** The one verdict of a stop: safe only when every worker's end was confirmed
+ *  and the factory could see the workspace while it concluded. */
+export function stopConfirmed(report: ShutdownReport): boolean {
+  return report.unconfirmed.length === 0 && report.unreadBecause === null;
 }
 
 /** What the engine tracks of one launch while it may still be carrying a worker. */
@@ -1210,17 +1215,15 @@ export class SweepEngine {
       }),
     );
 
-    const unconfirmed = await this.confirmStop(entries);
-    // A silent Docker leaves the whole workspace unconfirmed — even when this
-    // run had no work to name. The factory never calls a stop safe on a guess.
-    const unknown = this.liveness.state === "unknown" ? this.liveness.reason : null;
-    if (unknown !== null) {
+    const { unconfirmed, observation } = await this.confirmStop(entries);
+    const unreadBecause = observation.state === "unknown" ? observation.reason : null;
+    if (unreadBecause !== null) {
       this.log(
-        `stop NOT confirmed: the worker liveness could not be read (${unknown}) — the factory cannot say ` +
-          "that no worker survives; the next run answers the same question again",
+        `stop NOT confirmed: the worker liveness could not be read (${unreadBecause}) — the factory cannot ` +
+          "say that no worker survives; the next run asks the same question again",
       );
     }
-    return { forced, unconfirmed, unknown };
+    return { forced, unconfirmed, unreadBecause };
   }
 
   /**
@@ -1230,17 +1233,20 @@ export class SweepEngine {
    * the probe stops answering — and whatever a live container names right now.
    * An unreadable probe cannot LOSE a known worker, it only fails to add one.
    */
-  private async stopWorkers(entries: readonly InFlightLaunch[]): Promise<Map<string, number | null>> {
+  private async stopWorkers(
+    entries: readonly InFlightLaunch[],
+  ): Promise<{ workers: Map<string, number | null>; observation: LivenessObservation }> {
     const workers = new Map<string, number | null>();
     for (const entry of entries) {
       if (entry.launched) workers.set(workKey(entry.ref), entry.attempt);
     }
     for (const key of this.survivors.keys()) if (!workers.has(key)) workers.set(key, null);
     await this.observeLiveness();
-    if (this.liveness.state === "known") {
-      for (const worker of this.liveness.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
+    const observation = this.liveness;
+    if (observation.state === "known") {
+      for (const worker of observation.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
     }
-    return workers;
+    return { workers, observation };
   }
 
   /**
@@ -1251,8 +1257,9 @@ export class SweepEngine {
    * already going away; one whose container the probe still names is forced.
    */
   private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
-    const workers = await this.stopWorkers(entries);
-    const live = this.liveness.state === "known" ? this.carriedKeys : EMPTY_KEYS;
+    const { workers, observation } = await this.stopWorkers(entries);
+    const live =
+      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : EMPTY_KEYS;
     for (const entry of entries) {
       const key = workKey(entry.ref);
       if (this.inFlight.has(key) || live.has(key)) continue;
@@ -1317,9 +1324,8 @@ export class SweepEngine {
    */
   private async confirmStop(
     entries: readonly InFlightLaunch[],
-  ): Promise<Array<{ key: string; because: string }>> {
-    const answerable = await this.stopWorkers(entries);
-    const observation = this.liveness;
+  ): Promise<{ unconfirmed: Array<{ key: string; because: string }>; observation: LivenessObservation }> {
+    const { workers: answerable, observation } = await this.stopWorkers(entries);
 
     const unconfirmed: Array<{ key: string; because: string }> = [];
     for (const [key, knownAttempt] of answerable) {
@@ -1344,7 +1350,7 @@ export class SweepEngine {
     } else if (observation.state === "known") {
       this.log(`stop confirmed: every worker ended and none survives (${answerable.size} checked)`);
     }
-    return unconfirmed;
+    return { unconfirmed, observation };
   }
 
   /**
@@ -1777,7 +1783,9 @@ export class SweepEngine {
   /** Why a work's end cannot be confirmed, or null when it is: an unreadable
    *  probe is uncertainty, never an empty factory. */
   private stopHoldReason(observation: LivenessObservation, key: string): string | null {
-    if (observation.state === "unknown") return "the worker liveness could not be read (Docker unreachable)";
+    if (observation.state === "unknown") {
+      return `the worker liveness could not be read (${observation.reason})`;
+    }
     return observation.workers.some((worker) => worker.key === key)
       ? "a worker of this work is still alive"
       : null;
@@ -2516,7 +2524,7 @@ export async function runForever(
       // unconfirmed, never presumed).
       const report = await engine.beginShutdown();
       log(
-        report.unconfirmed.length === 0 && report.unknown === null
+        stopConfirmed(report)
           ? "factory ended cleanly (the operator's requested stop was confirmed)"
           : "factory ended with an UNCONFIRMED stop — the next run checks the affected works again",
       );

@@ -157,7 +157,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
     assert.deepEqual(result.launched, [], "a stop before the first admission launches nothing");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "with no worker, the stop is trivially confirmed");
+    assert.deepEqual(result.shutdown?.unconfirmed, [], "with no worker, nothing is held");
+    assert.equal(result.shutdown?.unreadBecause, null, "and the probe answered, so the stop is confirmed");
     assert.equal(existsSync(workDirOf()), false, "no reservation was created");
     const issue = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.ready), "the work stays in the pool");
@@ -655,7 +656,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       const report = await running;
       assert.deepEqual(
         report?.unconfirmed,
-        [{ key: workKey, because: "the worker liveness could not be read (Docker unreachable)" }],
+        [{ key: workKey, because: "the worker liveness could not be read (Cannot connect to the Docker daemon)" }],
         "a worker known to be alive is never declared stopped because the probe went silent",
       );
       const ledger = await ledgerOf();
@@ -725,12 +726,12 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
     assert.equal(
-      result.shutdown?.unknown,
+      result.shutdown?.unreadBecause,
       "Cannot connect to the Docker daemon",
       "the factory never calls a stop safe while it cannot see the workers",
     );
     assert.deepEqual(result.shutdown?.unconfirmed, [], "nothing was known to be alive — nothing is named");
-    assert.equal(result.shutdown?.forced.length, 0);
+    assert.deepEqual(result.shutdown?.forced, []);
   });
 
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {
