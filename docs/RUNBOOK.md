@@ -110,11 +110,10 @@ msf run --once
 
 The sweep derives the pool from the tracker and claims the issue
 (`ready-for-agent` → `agent-claimed`) BEFORE any launch, clones the repo,
-creates the work branch (`agent-issue-<n>` on github.com; another source gets
-its own identity branch) and launches ONE real worker (Pi, container, using
-the configured `worker-model`). When the worker opens the PR
-from the bot account and writes `desfecho.json`, the sweep collects it and
-exits.
+creates the work branch (github.com keeps `agent-issue-<n>`) and launches ONE
+real worker (Pi, container, using the configured `worker-model`). When the
+worker opens the PR from the bot account and writes `desfecho.json`, the sweep
+collects it and exits.
 
 ## (b) Continuous: the feedback rounds
 
@@ -223,10 +222,9 @@ address, with no window opened and no focus taken.
   for tests — the default wiring of `msf run` is all real; nothing on the
   binary's path can reach the fake adapter.
 - Every restart reconciles from disk + tracker: the registry
-  (`trabalhos/<repo>#<n>/` for GitHub, an identity dir per other source) holds
-  the reservation and PR-association records, the attempts, logs and outcome
-  records; the tracker holds the labels and the PR. No factory state lives in
-  the process.
+  (`trabalhos/`, one dir per Work) holds the reservation and PR-association
+  records, the attempts, logs and outcome records; the tracker holds the
+  labels and the PR. No factory state lives in the process.
 - **`Could not fetch from origin` on a retomada is expected, not a broken
   remote**: the work branch reaches the origin only when the worker
   publishes it (push + PR). A work that fell before publishing (blocked

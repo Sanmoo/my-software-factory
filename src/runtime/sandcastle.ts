@@ -15,6 +15,7 @@ import {
   type OutcomeRecord,
 } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
+import { describeError } from "../log.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import {
   DEFAULT_IDLE_LIMIT_MS,
@@ -353,7 +354,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         outcome = await this.observedOutcome(request);
       } catch (error) {
         this.event(request, "session-failed", {
-          reason: error instanceof Error ? error.message : String(error),
+          reason: describeError(error),
         });
         outcome = "abrupt-death";
       } finally {
@@ -664,29 +665,24 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
       await probe("docker", ["--version"]);
     } catch (error) {
       throw new Error(
-        `worker image ${deps.image} carries no usable docker CLI (docker --version failed inside it: ${reasonOf(error)}). Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} carries no usable docker CLI (docker --version failed inside it: ${describeError(error)}). Rebuild it with: npm run build:image`,
       );
     }
     try {
       await probe("docker", ["buildx", "version"]);
     } catch (error) {
       throw new Error(
-        `worker image ${deps.image} has no buildx builder (docker buildx version failed inside it: ${reasonOf(error)}) — npm run build:image would fail in the round. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} has no buildx builder (docker buildx version failed inside it: ${describeError(error)}) — npm run build:image would fail in the round. Rebuild it with: npm run build:image`,
       );
     }
     try {
       await probe("docker", ["info", "--format", "{{.ServerVersion}}"]);
     } catch (error) {
       throw new Error(
-        `worker image ${deps.image} cannot reach the Docker daemon through ${socket.hostPath} as gid ${socket.gid} (docker info inside it failed: ${reasonOf(error)}) — a worker would have no Docker. Check that this is the daemon's socket and that its group is readable by the container user.`,
+        `worker image ${deps.image} cannot reach the Docker daemon through ${socket.hostPath} as gid ${socket.gid} (docker info inside it failed: ${describeError(error)}) — a worker would have no Docker. Check that this is the daemon's socket and that its group is readable by the container user.`,
       );
     }
   };
-}
-
-/** An error's message, for a refusal that must carry what actually failed. */
-function reasonOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** The idle span in the operator's units: 300 ms is not "0 seconds". */

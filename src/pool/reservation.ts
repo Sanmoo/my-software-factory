@@ -165,7 +165,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
   if (!existsSync(works)) return [];
 
   const entries: ReservationEntry[] = [];
-  for (const dir of await workDirs(works)) {
+  for (const dir of await workDirCandidates(works, (name) => anchorOfKey(name) !== null)) {
     const key = relative(works, dir).split(sep).join("/");
     const anchor = anchorOfKey(key);
     if (anchor === null) continue;
@@ -201,29 +201,30 @@ function worksRoot(workspace: WorkspaceLayout | string): string {
   return typeof workspace === "string" ? join(workspace, WORKSPACE_SUBPATHS.works) : workspace.works;
 }
 
-/** The work dirs of the registry root, read at the layout's own depth only: a
- *  one-segment key (a source other than github.com) sits directly under the
- *  root, and a legacy GitHub "<owner>/<repo>#<n>" one level below. The scan
- *  never descends further — a proof's disposable workspace or a session
- *  artifact inside a work dir can carry a work-like name of its own, and it is
- *  never a reservation of THIS workspace. */
-async function workDirs(root: string): Promise<string[]> {
+/**
+ * The candidate work dirs of a registry root, at the layout's own depth only:
+ * `<root>/<name>` and `<root>/<owner>/<name>`. A top-level dir that is a whole
+ * Work of its own is never descended into — a proof's disposable workspace or
+ * a session artifact inside it can carry a work-like name, and it is never a
+ * reservation of THIS workspace. The caller decides what a whole Work's dir
+ * name looks like.
+ */
+export async function workDirCandidates(
+  root: string,
+  isWholeWork: (name: string) => boolean,
+): Promise<string[]> {
+  if (!existsSync(root)) return [];
   const dirs: string[] = [];
   for (const top of await readdir(root, { withFileTypes: true })) {
     if (!top.isDirectory()) continue;
     const topDir = join(root, top.name);
-    if (anchorOfKey(top.name) !== null) {
-      // A whole Work of its own: never descend into its artifacts.
-      dirs.push(topDir);
-      continue;
-    }
+    dirs.push(topDir);
+    if (isWholeWork(top.name)) continue;
     for (const nested of await readdir(topDir, { withFileTypes: true })) {
-      if (!nested.isDirectory()) continue;
-      if (anchorOfKey(`${top.name}/${nested.name}`) === null) continue;
-      dirs.push(join(topDir, nested.name));
+      if (nested.isDirectory()) dirs.push(join(topDir, nested.name));
     }
   }
-  return dirs.sort();
+  return dirs;
 }
 
 /** A GitHub dir is the issue of its destination repo itself: the legacy key is

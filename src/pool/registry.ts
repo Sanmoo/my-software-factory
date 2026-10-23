@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readdir, rename } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { join, relative, sep, basename } from "node:path";
 
 import {
   SESSIONS_SUBDIR,
@@ -20,7 +20,7 @@ import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import { issueRefOfTicket } from "../tracker/identity.js";
 import type { IssueRef } from "../tracker/port.js";
-import { scanReservations } from "./reservation.js";
+import { scanReservations, workDirCandidates } from "./reservation.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -336,22 +336,15 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };
 }
 
-/** Work dirs are exactly <root>/<repo>#<n>: the scan never descends into a
- *  work, where a proof's disposable workspace or a session artifact may carry
- *  a work-like name of its own. This status view stays GitHub-only; the
- *  expanded registry (pool/reservation.ts scanReservations) is the reader that
- *  also names reservations of other sources. */
+/** This status view's work dirs: a legacy "<repo>#<n>" name, dated copies
+ *  included, read through the same depth-bounded traversal the expanded
+ *  registry uses. It stays GitHub-only; pool/reservation.ts scanReservations is
+ *  the reader that also names reservations of other sources. */
+const LEGACY_WORK_DIR_NAME = /#\d+(-.*)?$/;
+
 async function workDirs(root: string): Promise<string[]> {
-  if (!existsSync(root)) return [];
-  const dirs: string[] = [];
-  for (const repo of await readdir(root, { withFileTypes: true })) {
-    if (!repo.isDirectory()) continue;
-    const repoDir = join(root, repo.name);
-    for (const entry of await readdir(repoDir, { withFileTypes: true })) {
-      if (entry.isDirectory() && /#\d+(-.*)?$/.test(entry.name)) dirs.push(join(repoDir, entry.name));
-    }
-  }
-  return dirs.sort();
+  const candidates = await workDirCandidates(root, (name) => LEGACY_WORK_DIR_NAME.test(name));
+  return candidates.filter((dir) => LEGACY_WORK_DIR_NAME.test(basename(dir))).sort();
 }
 
 /** The work key of a registry dir: its path relative to the registry root

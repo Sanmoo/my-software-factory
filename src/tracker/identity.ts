@@ -141,10 +141,18 @@ export function issueRefOfTicket(ticket: TicketIdentity): IssueRef | null {
 
 /** The operator-facing link of a ticket — presentation, never identity. */
 export function ticketUrl(ticket: TicketIdentity): string | undefined {
-  if (ticket.provider === "github") {
-    return `https://${ticket.site}/${ticket.repo}/issues/${ticket.number}`;
-  }
+  if (ticket.provider === "github") return githubIssueUrl(ticket.site, ticket.repo, ticket.number);
   return ticket.url;
+}
+
+/** The link of a GitHub issue on its own site — one template for every surface. */
+export function githubIssueUrl(site: string, repo: string, number: number): string {
+  return `https://${site}/${repo}/issues/${number}`;
+}
+
+/** The link of a GitHub PR on its own site — one template for every surface. */
+export function githubPullUrl(site: string, repo: string, number: number): string {
+  return `https://${site}/${repo}/pull/${number}`;
 }
 
 export function isGitHubSource(source: TicketSource): boolean {

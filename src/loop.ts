@@ -1621,7 +1621,7 @@ export class SweepEngine {
     } catch (error) {
       this.log(
         `local notification failed (${describeNotification(notification)}): ` +
-          `${error instanceof Error ? error.message : String(error)}`,
+          describeError(error),
       );
     }
   }
@@ -1679,7 +1679,7 @@ export async function runOnce(deps: LoopDeps): Promise<SweepResult> {
 /** A launch failure never takes the continuous factory down unobserved. */
 function logLaunchFailure(log: (message: string) => void, run: Promise<void>): void {
   void run.catch((error: unknown) => {
-    log(`launch failed: ${error instanceof Error ? error.message : String(error)}`);
+    log(`launch failed: ${describeError(error)}`);
   });
 }
 

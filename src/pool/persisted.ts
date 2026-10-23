@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -98,6 +98,13 @@ describe("work key — the registry's identity anchor", () => {
     assert.deepEqual(workOfAnchor(anchor, "#7"), enterprise);
   });
 
+  test("a github.com Work has ONE key: an encoded spelling of it is not a second Work", () => {
+    // The writer never emits it, and a hand-made dir must not read as an extra
+    // reservation of the same Work.
+    assert.equal(anchorOfKey("github@github.com@7@Sanmoo%2Fmy-tasks"), null);
+    assert.notEqual(anchorOfKey("github@ghe.example@7@Sanmoo%2Fmy-tasks"), null);
+  });
+
   test("unrecognized dir names are not works", () => {
     assert.equal(anchorOfKey("sessao"), null);
     assert.equal(anchorOfKey("Sanmoo/my-tasks#7/sessao"), null);

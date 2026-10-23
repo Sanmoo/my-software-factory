@@ -9,7 +9,7 @@ import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
-import { utcStamp } from "./log.js";
+import { describeError, utcStamp } from "./log.js";
 import { deriveStatus } from "./state/status.js";
 import { dockerWorkerProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
@@ -236,7 +236,7 @@ const invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((error: unknown) => {
-    console.error(utcStamp(error instanceof Error ? error.message : String(error)));
+    console.error(utcStamp(describeError(error)));
     process.exit(1);
   });
 }

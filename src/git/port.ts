@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { IssueRef } from "../tracker/port.js";
-import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
+import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../tracker/identity.js";
 
 /**
  * The git host side of the factory (ticket 10 / 15 decisions): one clone per
@@ -57,10 +57,12 @@ function encodeBranchComponent(value: string): string {
 /**
  * The path Sandcastle manages for one of our work branches inside the shared
  * clone: a pure and injective function of the branch (`/` and `%` are
- * percent-encoded, so no two branches share a path; our own names contain
- * neither). For a branch outside that convention the caller falls back to
- * whichever worktree holds it. Two Works of one repository never land on the
- * same worktree — git also refuses a branch checked out twice.
+ * percent-encoded, so no two branches share a path). Every branch this factory
+ * names is slash- and `%`-free, so this is exactly the path Sandcastle derives
+ * for it (`branch.replaceAll("/", "-")` coincides there); for a branch
+ * outside the convention the caller falls back to whichever worktree holds it.
+ * Two Works of one repository never land on the same worktree — git also
+ * refuses a branch checked out twice.
  */
 export function workerWorktreePath(repoDir: string, branch: string): string {
   return join(repoDir, ".sandcastle", "worktrees", encodeURIComponent(branch));
@@ -71,8 +73,21 @@ export function repoCloneDir(reposDir: string, repo: string): string {
   return join(reposDir, `${repo.replaceAll("/", "#")}`);
 }
 
+/**
+ * Directory of the single clone of a destination (issue 125): github.com keeps
+ * the legacy path above, so no existing clone is relocated; a destination on
+ * another code-host site carries the site in the name. The remote is a
+ * different host, and two Works of the same repo name on different sites must
+ * never share a clone, a remote or a branch.
+ */
+export function repoCloneDirFor(reposDir: string, destination: RepositoryIdentity): string {
+  return destination.site === GITHUB_SITE
+    ? repoCloneDir(reposDir, destination.repo)
+    : `${repoCloneDir(reposDir, destination.repo)}@${encodeURIComponent(destination.site)}`;
+}
+
 export interface PreparedWork {
-  /** The single clone of the target repo: <workspace>/repos/<owner>#<name>. */
+  /** The single clone of the destination: <workspace>/repos/<owner>#<name>. */
   repoDir: string;
   /** The work's branch — created now from origin/<default>, or reused. */
   branch: string;
