@@ -86,6 +86,15 @@ The finite, per-work and persisted allowance of recoveries for one attempt. Exha
 **Failed sweep**:
 A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.
 
+**Provider failure**:
+An attempt whose turn ended in the provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. It is not a failure of the work and never enters the fall ruler.
+
+**Provider budget**:
+The finite, per-work and persisted allowance of retries for an attempt ended by a provider failure, with its own backoff. It is separate from the recovery budget: a provider outage never spends an interruption's allowance.
+
+**Awaiting provider**:
+A work whose provider budget is exhausted: it holds its claim, is not blocked, and asks the operator for help naming the provider's last message. `msf status` names it and a human answer resumes it.
+
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
 _Avoid_: Issue completion, when referring only to the factory's delivery.

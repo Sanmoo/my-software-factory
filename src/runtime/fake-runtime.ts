@@ -1,10 +1,10 @@
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
-import { eventLogName } from "./attempt-logs.js";
+import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 
 /**
@@ -16,6 +16,10 @@ import { SESSIONS_SUBDIR } from "../layout.js";
  *   clean-without-pr    — writes the record (class clean-without-pr), no PR
  *   blocked-self-report — writes the record (class blocked-self-report), no PR
  *   abrupt-death        — writes nothing: the absence of the record is the class
+ *
+ * A launch may also be told to die by a provider outage: the fake records the
+ * provider's failing stream line into the attempt's log (the same artifact the
+ * real runtime writes), so the factory's own detection reads it (issue 144).
  */
 
 export type ScriptedOutcome = SessionResult["outcome"];
@@ -28,6 +32,10 @@ export interface FakeWorkerRuntimeOptions {
    * returned promise (before applying its outcome) — a worker can be parked
    * mid-flight, or a signal fired at the act of its launch, without sleeps. */
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
+  /** The provider error of one launch, when the session died upstream: the
+   *  provider's message becomes the failing stream line of the attempt's log.
+   *  Null keeps the launch a plain abrupt death. */
+  providerErrors?: (request: WorkRequest, index: number) => string | null;
 }
 
 /** The launch of one work among a run's results, by issue number. Concurrent
@@ -57,7 +65,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (hold) await hold(request, index);
     this.startSession(request);
     const outcome = this.next();
-    await this.apply(outcome, request);
+    await this.apply(outcome, request, index);
     return { request, outcome };
   }
 
@@ -70,8 +78,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
-    const line = JSON.stringify({ event, attempt: request.attempt, ...extra });
-    appendFileSync(join(request.workDir, eventLogName(request.attempt)), `${line}\n`, "utf8");
+    appendAttemptEvent(request.workDir, request.attempt, { event, ...extra });
   }
 
   private next(): ScriptedOutcome {
@@ -81,8 +88,31 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     return outcome ?? "abrupt-death";
   }
 
-  private async apply(outcome: ScriptedOutcome, request: WorkRequest): Promise<void> {
-    if (outcome === "abrupt-death") return; // the process died mid-flight: nothing further is written
+  private async apply(outcome: ScriptedOutcome, request: WorkRequest, index: number): Promise<void> {
+    if (outcome === "abrupt-death") {
+      // A provider outage leaves the provider's own stream line behind — the
+      // real runtime records pi's stdout verbatim, and the factory reads the
+      // turn's ending from it (issue 144). One identity per launch keeps the
+      // fake's failures as distinct as real sessions'.
+      const message = this.options.providerErrors?.(request, index) ?? null;
+      if (message !== null) {
+        this.event(request, "agent-raw", {
+          iteration: 1,
+          line: JSON.stringify({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              provider: "fake",
+              model: "fake/model",
+              stopReason: "error",
+              errorMessage: message,
+              timestamp: 1_700_000_000_000 + index,
+            },
+          }),
+        });
+      }
+      return; // the process died mid-flight: nothing further is written
+    }
 
     let pr: OutcomeRecord["pr"];
     if (outcome === "pr-open") {

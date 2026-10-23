@@ -17,6 +17,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
@@ -93,6 +94,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications,
       configPath: join(dir, "msf.yaml"),

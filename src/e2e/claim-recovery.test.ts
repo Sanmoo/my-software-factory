@@ -14,6 +14,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 
@@ -81,6 +82,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),

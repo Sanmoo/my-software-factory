@@ -16,6 +16,7 @@ import {
 } from "../state/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
+import { readProviderLedger, type ProviderLedger } from "./provider.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import { issueRefOfTicket } from "../tracker/identity.js";
@@ -245,6 +246,14 @@ export interface RecoveryViewEntry {
   ledger: RecoveryLedger;
 }
 
+/** A work's provider-failure ledger as `msf status` reads it (issue 144). */
+export interface ProviderViewEntry {
+  key: string;
+  /** The attempt the registry numbers right now — the awaiting is scoped to it. */
+  attempt: number;
+  ledger: ProviderLedger;
+}
+
 /** The repair cycle of a work as `msf status` reads it (issue 112). */
 export interface RepairViewEntry {
   key: string;
@@ -274,6 +283,9 @@ export interface RegistryView {
   /** Works that went through an interruption: the budget spent and what ended
    *  the last attempt (issue 123) — absent for works never interrupted. */
   recovery: RecoveryViewEntry[];
+  /** Works whose last attempt ended by a provider failure: the retries spent
+   *  and the provider's own message (issue 144). */
+  provider: ProviderViewEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
 }
@@ -291,6 +303,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const lastOutcome: LastOutcomeEntry[] = [];
   const repair: RepairViewEntry[] = [];
   const recovery: RecoveryViewEntry[] = [];
+  const provider: ProviderViewEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
     const record = await readOutcomeRecord(dir);
@@ -323,6 +336,19 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // is invented for a work that was never interrupted under this budget.
     const ledger = await readRecoveryLedger(dir);
     if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
+
+    // A work that never met a provider failure has no ledger and is not shown
+    // here either (issue 144). Only the CURRENT attempt's unresolved provider
+    // failure is the work's condition: a later outcome (or a new attempt)
+    // settles it, and the attempt's log stays as the history.
+    const providerLedger = await readProviderLedger(dir);
+    if (
+      providerLedger.last !== null &&
+      providerLedger.last.attempt === lastAttempt &&
+      ownOutcomeRecord(record, lastAttempt) === null
+    ) {
+      provider.push({ key, attempt: lastAttempt, ledger: providerLedger });
+    }
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);
@@ -331,9 +357,10 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   lastOutcome.sort(byEntryKey);
   repair.sort(byEntryKey);
   recovery.sort(byEntryKey);
+  provider.sort(byEntryKey);
 
   const archived = await workDirs(archive);
-  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };
+  return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, provider, archived };
 }
 
 /** This status view reads the dirs that carry a legacy "<repo>#<n>" name,

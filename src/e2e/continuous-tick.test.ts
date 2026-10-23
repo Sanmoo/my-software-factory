@@ -15,6 +15,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { installGhShim, spawnCli } from "./cli-harness.js";
@@ -93,6 +94,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),

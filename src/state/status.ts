@@ -1,4 +1,4 @@
-import type { Config, RecoveryBudget } from "../config.js";
+import type { Config, ProviderBudget, RecoveryBudget } from "../config.js";
 import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import {
   readLastAttempt,
@@ -84,6 +84,8 @@ export interface StatusView {
   liveness: Liveness;
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
+  /** The configured provider-failure budget (issue 144). */
+  providerBudget: ProviderBudget;
 }
 
 /**
@@ -117,6 +119,7 @@ export async function deriveStatus(
     registry,
     liveness: await classifyLiveness(registry, layout, probe),
     recoveryBudget: config.recovery,
+    providerBudget: config.provider,
   };
 }
 

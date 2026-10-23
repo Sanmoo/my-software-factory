@@ -43,6 +43,7 @@ import {
   isRecordedFailure,
   ownWrittenOutcome,
   interruptionPausedCommentBody,
+  providerAwaitingCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
 } from "./state/outcome.js";
@@ -72,6 +73,7 @@ import {
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
+import { settleProviderFailure, type ProviderDecision } from "./pool/provider.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -92,6 +94,8 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
+import { appendAttemptEvent } from "./runtime/attempt-logs.js";
+import { readTurnProviderError, type ProviderFailure } from "./runtime/provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
 import { mkdirSync } from "node:fs";
@@ -200,6 +204,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   idle: "reserved",
   fall: "reserved",
   interrupted: "reserved",
+  "provider-failure": "reserved",
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
@@ -220,6 +225,7 @@ const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = n
   "done-fallback",
   "fall",
   "interrupted",
+  "provider-failure",
   "rejected",
   "repair-fall-blocked",
   "repair-blocked",
@@ -312,7 +318,7 @@ function renderPoolSummary(
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
  *  repair — or the recovery of an interrupted attempt (issue 123). */
-type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover";
+type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "provider-retry";
 
 interface Launchable {
   ref: IssueRef;
@@ -440,6 +446,7 @@ export class SweepEngine {
       config.workerGhAccount,
       workspace,
       config.recovery,
+      config.provider,
       inFlight,
     );
 
@@ -518,6 +525,26 @@ export class SweepEngine {
               kind: "recover",
               // A recovery waits for nothing human: it sorts before the parked
               // feedback rounds, which carry their own creation time.
+              createdAt: null,
+              pr: null,
+              attempt: decision.attempt,
+            });
+          }
+          break;
+        }
+        case "provider-failure": {
+          // A provider outage is not an interruption of the agent (issue 144):
+          // it retries on its own budget, or awaits the operator when that
+          // budget is exhausted — never the recovery budget, never a block.
+          if (decision.provider.decision === "await-provider") {
+            const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
+            await this.providerFailureAction(decision.ref, dir, decision.attempt, decision.failure);
+          } else {
+            parked.push({
+              ref: decision.ref,
+              kind: "provider-retry",
+              // A retry waits for nothing human: like a recovery, it sorts
+              // before the parked feedback rounds.
               createdAt: null,
               pr: null,
               attempt: decision.attempt,
@@ -1061,6 +1088,14 @@ export class SweepEngine {
       // The claim swap itself may have been interrupted (issue 98): re-asserting
       // the idempotent claim heals it without releasing the work to the pool.
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+    } else if (kind === "provider-retry") {
+      this.log(
+        `provider retry for ${key}: attempt ${launchable.attempt} ended by a provider failure — ` +
+          "the same attempt continues (no new attempt, branch preserved)",
+      );
+      // The same idempotent re-assert as a recovery: a claim swap interrupted
+      // during the outage is healed without releasing the work.
+      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "feedback") {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
     }
@@ -1177,7 +1212,8 @@ export class SweepEngine {
     // failure — both are disk facts of this work, not process state (ticket
     // 13; an interruption never counts as a fall, issue 123).
     const dir = workDir(workspace, ref.repo, ref.number);
-    const facts = await readLaunchFacts(dir, kind === "recover" ? launchable.attempt : undefined);
+    const continuesAttempt = kind === "recover" || kind === "provider-retry";
+    const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     if (kind === "resume" && facts.previousFall) {
       // Ticket 14's decision: the human's answer resets the consecutive
       // failure count — the blocked valve already did its job and was
@@ -1235,6 +1271,25 @@ export class SweepEngine {
         return null;
       }
     }
+    // The provider retry is settled and persisted before the wait (issue 144):
+    // a death during the backoff continues the provider count instead of
+    // renewing it, and the recovery budget of issue 123 is never touched.
+    if (kind === "provider-retry") {
+      const failure = await readTurnProviderError(dir, facts.attempt);
+      if (failure === null) {
+        this.log(
+          `provider retry for ${key} skipped: the attempt's stream no longer shows a provider error — nothing is launched`,
+        );
+        return null;
+      }
+      const decision = await this.providerFailureAction(ref, dir, facts.attempt, failure);
+      if (decision.decision === "await-provider") return null;
+      await this.wait(decision.waitMs);
+      if (this.stopping) {
+        this.log(`the provider retry of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
+        return null;
+      }
+    }
     const result = await runtime.launch({
       ref,
       workDir: dir,
@@ -1280,6 +1335,66 @@ export class SweepEngine {
     );
     await this.applyBlockWithComment(ref, comment);
     this.announce(ref, "reserved");
+  }
+
+  /**
+   * Settle one provider failure and apply its decision (issue 144): the
+   * attempt's own log records the failure and each granted retry, the ledger
+   * persists the count, and an exhausted budget comments the help request on
+   * the issue — keeping the claim, never the blocked label. Idempotent: the
+   * same failure settled twice records once and comments once.
+   */
+  private async providerFailureAction(
+    ref: IssueRef,
+    dir: string,
+    attempt: number,
+    failure: ProviderFailure,
+  ): Promise<ProviderDecision> {
+    const { config, tracker, workspace } = this.deps;
+    const settlement = await settleProviderFailure(dir, config.provider, attempt, failure);
+    if (settlement.recorded) {
+      appendAttemptEvent(dir, attempt, {
+        event: "provider-failure",
+        message: failure.message,
+        failureAt: failure.at,
+      });
+      if (settlement.decision === "retry") {
+        appendAttemptEvent(dir, attempt, {
+          event: "provider-retry",
+          retry: settlement.consumed,
+          maxRetries: config.provider.maxRetries,
+          waitMs: settlement.waitMs,
+        });
+      }
+    }
+
+    if (settlement.decision === "await-provider") {
+      if (settlement.recorded) {
+        const comment = await providerAwaitingCommentBody({
+          attempt,
+          failure,
+          budget: config.provider,
+          workDir: dir,
+          workspace,
+        });
+        await tracker.comment(ref, comment);
+        await this.deliverNotice(helpNotice(ref));
+        this.log(
+          `awaiting provider for ${workKey(ref)}: attempt ${attempt} ended by a provider failure ` +
+            `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
+        );
+      }
+      return settlement;
+    }
+
+    if (settlement.recorded) {
+      this.log(
+        `provider failure on attempt ${attempt} of ${workKey(ref)}: ${failure.message} — ` +
+          `retry ${settlement.consumed}/${config.provider.maxRetries} after ${settlement.waitMs}ms ` +
+          "(the recovery budget is untouched)",
+      );
+    }
+    return settlement;
   }
 
   /**
@@ -1575,20 +1690,35 @@ export class SweepEngine {
             "settles its publication before another round (issue 112)",
         );
       } else {
-        this.log(
-          `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
-            "number and the recovery budget answers it",
-        );
-        next = {
-          ref,
-          kind: "recover",
-          createdAt: null,
-          pr,
-          // A recovery continues the SAME launch: the material of an
-          // interrupted retomada keeps the human's answer.
-          ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
-          attempt,
-        };
+        // The attempt's own stream decides whether this was the agent's
+        // interruption or a provider failure (issue 144): the latter gets its
+        // own budget and backoff, never the recovery budget.
+        const failure = await readTurnProviderError(dir, attempt);
+        if (failure !== null) {
+          next = {
+            ref,
+            kind: "provider-retry",
+            createdAt: null,
+            pr,
+            ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
+            attempt,
+          };
+        } else {
+          this.log(
+            `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
+              "number and the recovery budget answers it",
+          );
+          next = {
+            ref,
+            kind: "recover",
+            createdAt: null,
+            pr,
+            // A recovery continues the SAME launch: the material of an
+            // interrupted retomada keeps the human's answer.
+            ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
+            attempt,
+          };
+        }
       }
     } else if (ruling.decision === "release") {
       await this.settleFailure(dir, attempt, record);
