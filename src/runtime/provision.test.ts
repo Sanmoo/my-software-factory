@@ -26,20 +26,24 @@ interface Fixture {
   inventoryPath: string;
   revision: string;
   upstreamSkill: string;
+  globalRoot: string;
 }
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 }
 
-function makeFixture(options: { skills?: boolean; extensionVersion?: string; skillName?: string } = {}): Fixture {
+function makeFixture(
+  options: { skills?: boolean; extensionVersion?: string; skillName?: string; brokenReference?: boolean } = {},
+): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "msf-provision-fixture-"));
   const skillsRepo = join(dir, "upstream");
   const skillName = options.skillName ?? "implement";
   mkdirSync(join(skillsRepo, "skills/engineering", skillName), { recursive: true });
   writeFileSync(
     join(skillsRepo, "skills/engineering", skillName, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: Fixture skill.\n---\n\n# Fixture\n\nSee \`references/notes.md\`.\n`,
+    `---\nname: ${skillName}\ndescription: Fixture skill.\n---\n\n# Fixture\n\nSee \`references/notes.md\`.\n` +
+      (options.brokenReference === true ? "\nSee [missing](references/missing.md).\n" : ""),
     "utf8",
   );
   mkdirSync(join(skillsRepo, "skills/engineering", skillName, "references"), { recursive: true });
@@ -83,6 +87,16 @@ function makeFixture(options: { skills?: boolean; extensionVersion?: string; ski
   const declarationPath = join(dir, "agent-resources.json");
   writeFileSync(declarationPath, `${JSON.stringify(declaration, null, 2)}\n`, "utf8");
 
+  // The installed global Pi the provisioner reads back (package + version).
+  const globalRoot = join(dir, "global");
+  const piDir = join(globalRoot, "@earendil-works/pi-coding-agent");
+  mkdirSync(piDir, { recursive: true });
+  writeFileSync(
+    join(piDir, "package.json"),
+    JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.3.0" }),
+    "utf8",
+  );
+
   return {
     dir,
     repositoryRoot,
@@ -91,12 +105,13 @@ function makeFixture(options: { skills?: boolean; extensionVersion?: string; ski
     inventoryPath: join(dir, "inventory.json"),
     revision,
     upstreamSkill: join(skillsRepo, "skills/engineering", skillName),
+    globalRoot,
   };
 }
 
 /** The external-boundary simulation: real git on a local repository, a fake
  *  `pi --version`, and an npm that materialises the package tree. */
-function fakeRun(installedVersion: string | undefined) {
+function fakeRun(install: { extensionVersion?: string; globalRoot: string }) {
   return async (
     command: string,
     args: string[],
@@ -106,10 +121,11 @@ function fakeRun(installedVersion: string | undefined) {
       return { stdout: execFileSync("git", args, { ...options, encoding: "utf8" }), stderr: "" };
     }
     if (command === "pi") return { stdout: "1.3.0\n", stderr: "" };
+    if (command === "npm" && args[0] === "root") return { stdout: `${install.globalRoot}\n`, stderr: "" };
     if (command === "npm") {
       const prefix = args[args.indexOf("--prefix") + 1]!;
       const spec = args[args.length - 1]!;
-      const version = installedVersion ?? spec.slice(spec.lastIndexOf("@") + 1);
+      const version = install.extensionVersion ?? spec.slice(spec.lastIndexOf("@") + 1);
       const packageDir = join(prefix, "node_modules", "pi-subagents");
       mkdirSync(join(packageDir, "skills", "pi-subagents"), { recursive: true });
       writeFileSync(
@@ -143,7 +159,7 @@ function options(fixture: Fixture, extra: Partial<ProvisionOptions> = {}): Provi
     inventoryPath: fixture.inventoryPath,
     repositoryRoot: fixture.repositoryRoot,
     workDir: join(fixture.dir, "work"),
-    run: fakeRun(undefined),
+    run: fakeRun({ globalRoot: fixture.globalRoot }),
     ...extra,
   };
 }
@@ -241,7 +257,9 @@ describe("agent-resource provisioning at image build time", () => {
     const fixture = makeFixture();
     try {
       await assert.rejects(
-        provisionAgentResources(options(fixture, { run: fakeRun("0.79.0") })),
+        provisionAgentResources(
+          options(fixture, { run: fakeRun({ globalRoot: fixture.globalRoot, extensionVersion: "0.79.0" }) }),
+        ),
         /installed as pi-subagents@0\.79\.0/,
       );
       assert.ok(!existsSync(fixture.dest), "nothing is swapped in");
@@ -250,19 +268,38 @@ describe("agent-resource provisioning at image build time", () => {
     }
   });
 
-  test("Pi at the wrong version fails before any resource is copied", async () => {
+  test("Pi installed at the wrong version fails before any resource is copied", async () => {
     const fixture = makeFixture();
     try {
+      const badGlobal = join(fixture.dir, "global-bad");
+      const badPi = join(badGlobal, "@earendil-works/pi-coding-agent");
+      mkdirSync(badPi, { recursive: true });
+      writeFileSync(
+        join(badPi, "package.json"),
+        JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.2.9" }),
+        "utf8",
+      );
       await assert.rejects(
-        provisionAgentResources(
-          options(fixture, {
-            run: async (command, args, opts) =>
-              command === "pi" ? { stdout: "1.2.9\n", stderr: "" } : fakeRun(undefined)(command, args, opts),
-          }),
-        ),
-        /Pi is 1\.2\.9, declared 1\.3\.0/,
+        provisionAgentResources(options(fixture, { run: fakeRun({ globalRoot: badGlobal }) })),
+        /Pi is installed as @earendil-works\/pi-coding-agent@1\.2\.9, declared .*@1\.3\.0/,
       );
       assert.ok(!existsSync(fixture.dest));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a required bundled reference missing from the revision fails the build", async () => {
+    const fixture = makeFixture({ brokenReference: true });
+    try {
+      mkdirSync(fixture.dest, { recursive: true });
+      writeFileSync(join(fixture.dest, "previous.txt"), "previous image content\n", "utf8");
+
+      await assert.rejects(
+        provisionAgentResources(options(fixture)),
+        /references a missing file: SKILL\.md → references\/missing\.md/,
+      );
+      assert.equal(readFileSync(join(fixture.dest, "previous.txt"), "utf8"), "previous image content\n");
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }

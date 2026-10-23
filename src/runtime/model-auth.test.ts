@@ -22,6 +22,8 @@ describe("model authentication — explicit sources only", () => {
     const env = {
       OPENAI_API_KEY: "openai-value",
       OPENCODE_API_KEY: "opencode-value",
+      AZURE_OPENAI_API_KEY: "azure-value",
+      AWS_REGION: "us-west-2",
       ANTHROPIC_API_KEY: "",
       GH_TOKEN: "github-token-must-not-ride-the-model-env",
       UNRELATED_SECRET: "nope",
@@ -32,10 +34,14 @@ describe("model authentication — explicit sources only", () => {
     assert.deepEqual(forwarded, {
       OPENAI_API_KEY: "openai-value",
       OPENCODE_API_KEY: "opencode-value",
+      AZURE_OPENAI_API_KEY: "azure-value",
+      AWS_REGION: "us-west-2",
     });
     assert.ok(!("GH_TOKEN" in forwarded));
     assert.ok(PI_MODEL_AUTH_ENV_VARS.includes("OPENAI_API_KEY"));
     assert.ok(PI_MODEL_AUTH_ENV_VARS.includes("OPENCODE_API_KEY"));
+    assert.ok(PI_MODEL_AUTH_ENV_VARS.includes("AZURE_OPENAI_API_KEY"));
+    assert.ok(PI_MODEL_AUTH_ENV_VARS.includes("AWS_ACCESS_KEY_ID"));
   });
 
   test("an empty environment forwards nothing", () => {

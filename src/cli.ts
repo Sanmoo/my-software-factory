@@ -92,7 +92,7 @@ export async function wireRunDeps(
     tickets = githubTracker;
     pullRequests = githubTracker;
   }
-  const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
+  const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   const notifier = seams.notifier ?? new LinuxNotifier();
   // The operational liveness read (issue 118): the same read-only Docker probe
@@ -111,11 +111,6 @@ export async function wireRunDeps(
   };
 }
 
-/** The real runtime: Sandcastle, demanding the model and the keyring token
- * (ticket 17), fed the workspace root the toolchain binds derive from and the
- * explicitly supplied model credentials (issue #159) — never a personal
- * profile, never an implicit ambient credential beyond Pi's supported
- * provider variables. */
 /**
  * The production launch composition (issue #159): config → SandcastleRuntime
  * options. Exported so the wiring itself is testable without a container: the
@@ -145,7 +140,7 @@ export function sandcastleRuntimeOptions(
   };
 }
 
-async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string): Promise<WorkerRuntime> {
+async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Promise<WorkerRuntime> {
   const token = await workerToken(config.workerGhAccount);
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }

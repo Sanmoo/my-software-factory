@@ -115,7 +115,7 @@ declaradas pela fábrica estão na imagem. Além disso, crie um recurso NÃO dec
 no repositório (\`.pi/skills/nao-declarada/SKILL.md\` e \`.pi/agents/nao-declarado.md\`)
 e confirme que ele NÃO é carregado.
 
-Siga o procedimento de implementação do seu prompt (as skills do seu perfil), terminando
+Siga o procedimento de implementação do seu prompt (as skills declaradas pela imagem), terminando
 com a revisão de dois eixos e os relatórios gravados no work dir.`;
 
 describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { skip: ENABLED ? false : SKIP_REASON }, () => {

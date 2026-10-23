@@ -15,7 +15,10 @@ FROM node:22-trixie-slim
 
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
-ARG PI_VERSION=1.3.0
+# Passed from agent-resources.json by `npm run build:image` — never defaulted
+# here, so the declaration is the only source of what Pi gets installed.
+ARG PI_PACKAGE
+ARG PI_VERSION
 
 # git pushes the work branch and fetches the pinned skill revision during the
 # build; gh opens the PR, reads the issue and comments, authenticated by
@@ -79,7 +82,7 @@ RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth g
 
 # Pi at the exact declared version. The provisioning step below verifies the
 # installed version against the declaration and refuses a mismatch.
-RUN npm install --global --no-fund --no-audit "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+RUN npm install --global --no-fund --no-audit "${PI_PACKAGE}@${PI_VERSION}" \
  && pi --version
 
 # The factory-owned agent resources. The script stages everything, validates

@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ import {
   verifyAgentInventory,
   type LoadedAgentResources,
 } from "./inventory.js";
-import { authFileProblem, modelAuthEnv, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
+import { authFileProblem, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
@@ -295,9 +295,9 @@ export interface SandcastleRuntimeOptions {
   /** An explicitly supplied Pi auth.json (worker-auth-file); mounted
    * read-only and copied into the container's agent dir at start. */
   authFile?: string;
-  /** Pi-supported provider API-key variables to forward; defaults to the
-   * supported variables present in this process's environment. */
-  authEnv?: Readonly<Record<string, string>>;
+  /** Pi-supported provider API-key variables to forward. Required: the
+   *  runtime never reads the ambient environment on its own. */
+  authEnv: Readonly<Record<string, string>>;
   /** The workspace root the toolchain binds derive from (the convergence
    * layer): <workspace>/toolchains/... created idempotently at launch and
    * bound read-write so installed toolchains survive the container. */
@@ -362,7 +362,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.workspace = options.workspace;
     this.resolveDockerSocket = options.dockerSocket ?? (() => dockerSocketFromHost());
     this.authFile = options.authFile;
-    this.authEnv = options.authEnv ?? modelAuthEnv();
+    this.authEnv = options.authEnv;
     this.agentResources = options.agentResources ?? loadAgentResources();
     this.blockedLabel = options.blockedLabel ?? DEFAULT_LABELS.blocked;
     this.maxIterations = options.maxIterations ?? 1;
@@ -796,12 +796,20 @@ export async function dockerAuthProbe(deps: {
   authEnv: Readonly<Record<string, string>>;
 }): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const args = ["run", "--rm", "--network", "none"];
-  for (const [name, value] of Object.entries(deps.authEnv)) {
-    args.push("-e", `${name}=${value}`);
-  }
-  const check = `exec pi auth check --model '${deps.model}' --json --no-refresh`;
+  let envDir: string | undefined;
   let authDir: string | undefined;
   try {
+    // A temp env-file keeps provider key VALUES off the docker argv (ps).
+    if (Object.keys(deps.authEnv).length > 0) {
+      envDir = mkdtempSync(join(tmpdir(), "msf-auth-env-"));
+      const envFile = join(envDir, "env");
+      writeFileSync(
+        envFile,
+        `${Object.entries(deps.authEnv).map(([name, value]) => `${name}=${value}`).join("\n")}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      args.push("--env-file", envFile);
+    }
     if (deps.authFile !== undefined) {
       authDir = stageAuthFile(deps.authFile);
       args.push("-v", `${authDir}:${AUTH_MOUNT_DIR}:ro`);
@@ -811,7 +819,10 @@ export async function dockerAuthProbe(deps: {
         deps.image,
         "-c",
         `mkdir -p /tmp/msf-auth && cp ${AUTH_MOUNT} /tmp/msf-auth/auth.json && ` +
-          `chmod 600 /tmp/msf-auth/auth.json && PI_CODING_AGENT_DIR=/tmp/msf-auth ${check}`,
+          `chmod 600 /tmp/msf-auth/auth.json && PI_CODING_AGENT_DIR=/tmp/msf-auth ` +
+          'exec pi auth check --model "$1" --json --no-refresh',
+        "msf-auth-probe",
+        deps.model,
       );
     } else {
       args.push("-e", "PI_CODING_AGENT_DIR=/tmp", "--entrypoint", "pi", deps.image, "auth", "check", "--model", deps.model, "--json", "--no-refresh");
@@ -819,6 +830,7 @@ export async function dockerAuthProbe(deps: {
     return await execFileResult("docker", args);
   } finally {
     if (authDir !== undefined) rmSync(authDir, { recursive: true, force: true });
+    if (envDir !== undefined) rmSync(envDir, { recursive: true, force: true });
   }
 }
 

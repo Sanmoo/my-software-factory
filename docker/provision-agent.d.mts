@@ -1,3 +1,4 @@
+// Hand-maintained types for the companion .mjs module: keep them in sync.
 import type { AgentInventory } from "../scripts/agent-resources.mjs";
 
 export class ProvisionError extends Error {}

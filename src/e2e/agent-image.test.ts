@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
-import { loadAgentResources, verifyAgentInventory } from "../runtime/inventory.js";
-import { workerFlagArgs } from "../runtime/sandcastle.js";
+import { IMAGE_INVENTORY_PATH, loadAgentResources, verifyAgentInventory } from "../runtime/inventory.js";
+import { agentGuidancePath, workerFlagArgs } from "../runtime/sandcastle.js";
 
 /**
  * The provisioned environment's actual behaviour (issue #159). Arguments
@@ -69,22 +69,27 @@ function piCommand(): string {
 }
 
 function behaviourScript(): string {
+  const guidance = `${agentGuidancePath(RESOURCES.declaration.extensions[0]!)}/SKILL.md`;
   return [
     "set -e",
     "mkdir -p /tmp/msf-probe /tmp/msf-project /tmp/msf-home",
-    "mkdir -p /tmp/msf-project/.pi/skills/nao-declarada /tmp/msf-project/.agents/skills/nao-declarada2 /tmp/msf-project/.pi/agents",
-    'printf -- "---\\nname: nao-declarada\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.pi/skills/nao-declarada/SKILL.md',
-    'printf -- "---\\nname: nao-declarada2\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.agents/skills/nao-declarada2/SKILL.md',
-    'printf -- "---\\nname: evil\\ndescription: must not load\\ntools: read\\n---\\n" > /tmp/msf-project/.pi/agents/evil.md',
+    "mkdir -p /tmp/msf-project/.pi/skills/undeclared-skill /tmp/msf-project/.agents/skills/undeclared-legacy",
+    'printf -- "---\\nname: undeclared-skill\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.pi/skills/undeclared-skill/SKILL.md',
+    'printf -- "---\\nname: undeclared-legacy\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.agents/skills/undeclared-legacy/SKILL.md',
     `cat > /tmp/msf-probe/extension.ts <<'PROBE_EOF'\n${PROBE_EXTENSION}\nPROBE_EOF`,
     "cd /tmp/msf-project",
     "set +e",
     `HOME=/tmp/msf-home PI_CODING_AGENT_DIR=/home/agent/.pi/agent ${piCommand()} >/tmp/msf-probe/stdout 2>/tmp/msf-probe/stderr`,
     "set -e",
-    'echo "LOADED=$(cat /tmp/msf-probe/loaded.json)"',
+    'if [ ! -f /tmp/msf-probe/loaded.json ]; then',
+    '  echo "LOADED=missing"',
+    '  echo "IMAGE_DOES_NOT_CARRY_THE_DECLARED_RESOURCES — rebuild with npm run build:image" >&2',
+    "else",
+    '  echo "LOADED=$(cat /tmp/msf-probe/loaded.json)"',
+    "fi",
     'if [ -e /home/agent/.pi/agent/npm ]; then echo "CACHE=present"; else echo "CACHE=absent"; fi',
     'echo "SKILLS=$(ls /home/agent/.pi/agent/skills | sort | tr \'\\n\' \',\')"',
-    'test -f /home/agent/.pi/agent/extensions/node_modules/pi-subagents/skills/pi-subagents/SKILL.md && echo "GUIDANCE=present"',
+    `test -f ${guidance} && echo "GUIDANCE=present"`,
     'if grep -qi "npm install\\|installing" /tmp/msf-probe/stderr; then echo "INSTALL=yes"; else echo "INSTALL=no"; fi',
   ].join("\n");
 }
@@ -99,32 +104,47 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
   test("only the declared skills, guidance and reviewer tools load — no host profile, no project discovery", { timeout: 120_000 }, () => {
     const output = docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", WORKER_IMAGE, "-c", behaviourScript()]);
 
-    const loaded = JSON.parse(line(output, "LOADED=")) as { commands: string[]; tools: string[] };
-    assert.deepEqual(loaded.commands, [
-      "skill:code-review",
-      "skill:codebase-design",
-      "skill:implement",
-      "skill:pi-subagents",
-      "skill:pr",
-      "skill:tdd",
-    ]);
-    assert.ok(!loaded.commands.some((command) => command.includes("nao-declarada")), "project skills are ignored");
+    const loadedLine = line(output, "LOADED=");
+    assert.notEqual(loadedLine, "missing", "the image does not carry the declared resources; rebuild with npm run build:image");
+    const loaded = JSON.parse(loadedLine) as { commands: string[]; tools: string[] };
+    const expectedSkills = [
+      ...RESOURCES.declaration.skills.selected.map((skill) => `skill:${skill.name}`),
+      ...RESOURCES.declaration.extensions.map((extension) => `skill:${extension.guidance.name}`),
+    ].sort();
+    assert.deepEqual(loaded.commands, expectedSkills);
+    assert.ok(!loaded.commands.some((command) => command.includes("undeclared")), "project skills are ignored");
     assert.deepEqual(loaded.tools, ["bash", "edit", "read", "subagent", "subagents_enable", "write"]);
 
     assert.equal(line(output, "CACHE="), "absent", "an empty runtime cache is the starting state");
-    assert.equal(line(output, "SKILLS="), "code-review,codebase-design,implement,pr,tdd,");
+    const expectedDirs = RESOURCES.declaration.skills.selected
+      .map((skill) => skill.name)
+      .sort()
+      .join(",");
+    assert.equal(line(output, "SKILLS="), `${expectedDirs},`);
     assert.equal(line(output, "GUIDANCE="), "present", "the extension's operating guidance ships inside its package");
     assert.equal(line(output, "INSTALL="), "no", "the session installs no skill or extension");
   });
 
   test("the image's own inventory matches the committed declaration", () => {
-    const inventoryText = docker(["run", "--rm", "--network", "none", "--entrypoint", "cat", WORKER_IMAGE, "/opt/msf/agent-inventory.json"]);
+    const inventoryText = docker([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--entrypoint",
+      "cat",
+      WORKER_IMAGE,
+      IMAGE_INVENTORY_PATH,
+    ]);
     const inventory = verifyAgentInventory(RESOURCES, inventoryText);
 
     assert.equal(inventory.pi.version, "1.3.0");
     assert.deepEqual(
       inventory.skills.map((skill) => skill.name).sort(),
-      ["code-review", "codebase-design", "implement", "pi-subagents", "pr", "tdd"],
+      [
+        ...RESOURCES.declaration.skills.selected.map((skill) => skill.name),
+        ...RESOURCES.declaration.extensions.map((extension) => extension.guidance.name),
+      ].sort(),
     );
     assert.equal(inventory.extensions[0]?.package, "pi-subagents");
     assert.equal(inventory.extensions[0]?.version, "0.79.1");

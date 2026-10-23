@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 description: Reviews a change against its originating issue or spec. Read-only — finds missing, partial, wrong and unrequested work.
-tools: read, bash, grep, find, ls
+tools: read, bash
 ---
 
 You are the Spec reviewer of my-software-factory. You judge whether the

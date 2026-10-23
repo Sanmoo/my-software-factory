@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -253,6 +253,97 @@ function readPackage(directory, versions) {
   }
 }
 
+/**
+ * Markdown links are relative to the file; inline code paths in the upstream
+ * skills and guidance are sometimes written relative to the skill root. Both
+ * forms are collected so the existence check can accept either resolution.
+ */
+function referencedPaths(markdown) {
+  const references = [];
+  const seen = new Set();
+  const add = (target, kind) => {
+    const key = `${kind}:${target}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    references.push({ target, kind });
+  };
+  for (const match of markdown.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) add(match[1], "link");
+  for (const match of markdown.matchAll(/`([^`\n]+)`/g)) {
+    const token = match[1].trim();
+    if (/^(?:\.{1,2}\/|references\/|docs\/)/.test(token) && /\.(?:md|markdown|json|ya?ml|sh|ts|js|mjs)$/.test(token)) {
+      add(token, "code");
+    }
+  }
+  return references;
+}
+
+/**
+ * Verify every auxiliary reference a markdown file names: the target must
+ * exist inside the provisioned root, so a bundled file renamed or absent
+ * upstream fails the build instead of shipping a skill whose links lead
+ * nowhere.
+ */
+function validateReferences(directory, allowedRoot, what) {
+  const root = resolve(allowedRoot);
+  for (const file of listFiles(directory).filter((candidate) => candidate.endsWith(".md"))) {
+    const absolute = join(directory, file);
+    const markdown = readFileSync(absolute, "utf8");
+    for (const reference of referencedPaths(markdown)) {
+      const raw = reference.target;
+      if (/^(?:https?:|mailto:|#)/.test(raw)) continue;
+      const target = raw.split("#")[0].split("?")[0];
+      if (target === "") continue;
+      const bases = reference.kind === "link" ? [dirname(absolute)] : [dirname(absolute), resolve(directory), root];
+      const candidates = bases.map((base) => resolve(base, target));
+      let found = false;
+      let escaped = false;
+      for (const candidate of candidates) {
+        const inside = relative(root, candidate);
+        if (inside.startsWith("..") || isAbsolute(inside)) {
+          escaped = true;
+          continue;
+        }
+        if (existsSync(candidate)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        fail(
+          escaped
+            ? `${what} reference escapes its provisioned root: ${file} → ${raw}`
+            : `${what} references a missing file: ${file} → ${raw}`,
+        );
+      }
+    }
+  }
+}
+
+async function installedPi(declaration, run) {
+  const { stdout: rootOut } = await runCommand(run, "npm", ["root", "--global"]);
+  const globalRoot = String(rootOut).trim();
+  const packageDir = join(globalRoot, declaration.pi.package);
+  const manifestFile = requireFile(join(packageDir, "package.json"), `installed Pi package ${declaration.pi.package}`);
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  } catch {
+    fail(`installed Pi package ${declaration.pi.package} has an unreadable package.json`);
+  }
+  if (manifest.name !== declaration.pi.package || manifest.version !== declaration.pi.version) {
+    fail(
+      `Pi is installed as ${String(manifest.name)}@${String(manifest.version)}, ` +
+        `declared ${declaration.pi.package}@${declaration.pi.version}`,
+    );
+  }
+  const { stdout: versionOut } = await runCommand(run, "pi", ["--version"]);
+  const reported = String(versionOut).trim();
+  if (reported !== declaration.pi.version) {
+    fail(`pi --version reports ${reported}, declared ${declaration.pi.version}`);
+  }
+  return { package: manifest.name, version: manifest.version };
+}
+
 function attribution(declaration) {
   const lines = [
     "# Factory agent resources",
@@ -269,8 +360,8 @@ function attribution(declaration) {
     ),
     `- Reviewer agents: factory-owned (${declaration.agents.map((agent) => agent.path).join(", ")})`,
     "",
-    "The full license texts are under `licenses/`. Upstream skill content is",
-    "copied unchanged.",
+    "The licenses of the declared skills and extensions are under `licenses/`.",
+    "Upstream skill content is copied unchanged.",
     "",
   ];
   return lines.join("\n");
@@ -306,11 +397,7 @@ export async function provisionAgentResources(options) {
     throw error;
   }
 
-  const { stdout: piVersionOut } = await runCommand(run, "pi", ["--version"]);
-  const piVersion = String(piVersionOut).trim();
-  if (piVersion !== declaration.pi.version) {
-    fail(`Pi is ${piVersion}, declared ${declaration.pi.version} — install the exact declared version`);
-  }
+  const installed = await installedPi(declaration, run);
 
   const staging = `${resolve(dest)}.staging-${process.pid}`;
   rmSync(staging, { recursive: true, force: true });
@@ -327,6 +414,7 @@ export async function provisionAgentResources(options) {
       if (directoryDigest(source) !== directoryDigest(target)) {
         fail(`skill "${skill.name}" changed while being copied`);
       }
+      validateReferences(target, target, `skill "${skill.name}"`);
     }
 
     const agentsRoot = join(staging, "agents");
@@ -345,14 +433,15 @@ export async function provisionAgentResources(options) {
     const extensionsRoot = join(staging, "extensions");
     const extensionRecords = [];
     for (const extension of declaration.extensions) {
-      const installed = await installExtension(extension, extensionsRoot, workDir, run);
-      requireFile(join(installed, extension.entry), `extension "${extension.package}" entry`);
+      const installedPackageRoot = await installExtension(extension, extensionsRoot, workDir, run);
+      requireFile(join(installedPackageRoot, extension.entry), `extension "${extension.package}" entry`);
       const guidance = requireSkill(
-        join(installed, extension.guidance.path),
+        join(installedPackageRoot, extension.guidance.path),
         extension.guidance.name,
         `extension "${extension.package}" guidance`,
       );
-      const license = requireFile(join(installed, "LICENSE"), `extension "${extension.package}" LICENSE`);
+      validateReferences(guidance, installedPackageRoot, `extension "${extension.package}" guidance`);
+      const license = requireFile(join(installedPackageRoot, "LICENSE"), `extension "${extension.package}" LICENSE`);
       const licensesRoot = join(staging, "licenses");
       mkdirSync(licensesRoot, { recursive: true });
       copyFileSync(license, join(licensesRoot, `${extension.package}-LICENSE`));
@@ -362,7 +451,7 @@ export async function provisionAgentResources(options) {
         license: extension.license,
         path: `extensions/node_modules/${extension.package}`,
         entry: extension.entry,
-        digest: directoryDigest(installed),
+        digest: directoryDigest(installedPackageRoot),
         dependencies: installedPackages(join(extensionsRoot, "node_modules")),
         guidance: {
           name: extension.guidance.name,
@@ -404,7 +493,7 @@ export async function provisionAgentResources(options) {
     const inventory = {
       schema: AGENT_INVENTORY_SCHEMA,
       declaration: { file: basename(declarationPath), sha256: sha256(rawDeclaration) },
-      pi: { package: declaration.pi.package, version: piVersion },
+      pi: installed,
       skills,
       extensions: extensionRecords,
       agents,
