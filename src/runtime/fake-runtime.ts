@@ -17,7 +17,7 @@ import { SESSIONS_SUBDIR } from "../layout.js";
  *   blocked-self-report — writes the record (class blocked-self-report), no PR
  *   abrupt-death        — writes nothing: the absence of the record is the class
  *
- * A launch may also be told to die by a provider outage: the fake records the
+ * A launch may also be told to die by a model provider outage: the fake records the
  * provider's failing stream line into the attempt's log (the same artifact the
  * real runtime writes), so the factory's own detection reads it (issue 144).
  */
@@ -35,7 +35,7 @@ export interface FakeWorkerRuntimeOptions {
   /** The provider error of one launch, when the session died upstream: the
    *  provider's message becomes the failing stream line of the attempt's log.
    *  Null keeps the launch a plain abrupt death. */
-  providerErrors?: (request: WorkRequest, index: number) => string | null;
+  modelProviderErrors?: (request: WorkRequest, index: number) => string | null;
 }
 
 /** The launch of one work among a run's results, by issue number. Concurrent
@@ -90,11 +90,11 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   private async apply(outcome: ScriptedOutcome, request: WorkRequest, index: number): Promise<void> {
     if (outcome === "abrupt-death") {
-      // A provider outage leaves the provider's own stream line behind — the
+      // A model provider outage leaves the provider's own stream line behind — the
       // real runtime records pi's stdout verbatim, and the factory reads the
       // turn's ending from it (issue 144). One identity per launch keeps the
       // fake's failures as distinct as real sessions'.
-      const message = this.options.providerErrors?.(request, index) ?? null;
+      const message = this.options.modelProviderErrors?.(request, index) ?? null;
       if (message !== null) {
         this.event(request, "agent-raw", {
           iteration: 1,

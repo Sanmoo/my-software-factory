@@ -16,7 +16,7 @@ import {
 } from "./model-provider.js";
 
 /**
- * The provider-failure budget (issue 144): a provider outage is not an
+ * The model provider failure budget (issue 144): an outage is not an
  * interruption of the agent, so it retries on its own finite, persisted
  * allowance with its own backoff — never spending the interruption budget of
  * issue 123. The ledger is an artifact of the work (provedor.json), so a
@@ -25,7 +25,7 @@ import {
 
 const BUDGET = { maxRetries: 3, waitsMs: [15_000, 30_000, 60_000] } as const;
 const NOW = () => new Date("2026-01-01T00:00:00Z");
-const FAILURE: ModelProviderFailure = { message: "429: upstream unavailable", at: "2026-01-01T00:00:00.000Z" };
+const FAILURE: ModelProviderFailure = { message: "429: upstream unavailable", identity: "2026-01-01T00:00:00.000Z" };
 
 describe("the provider-failure budget — its own retries, its own backoff", () => {
   let dir: string;
@@ -41,16 +41,16 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
   test("three retries at 15/30/60 s, then awaiting provider — never a fourth", async () => {
     const waits: number[] = [];
     for (let index = 0; index < 3; index += 1) {
-      const failure = { ...FAILURE, at: `2026-01-01T00:00:0${index}.000Z` };
+      const failure = { ...FAILURE, identity: `2026-01-01T00:00:0${index}.000Z` };
       const settlement = await settleModelProviderFailure(dir, BUDGET, 1, failure, NOW);
       assert.equal(settlement.decision, "retry");
       if (settlement.decision === "retry") waits.push(settlement.waitMs);
     }
     assert.deepEqual(waits, [15_000, 30_000, 60_000], "the configured schedule, by index");
 
-    const exhausted = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, at: "2026-01-01T00:00:09.000Z" }, NOW);
-    assert.equal(exhausted.decision, "await-provider");
-    assert.match(exhausted.decision === "await-provider" ? exhausted.reason : "", /provider budget is exhausted/);
+    const exhausted = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, identity: "2026-01-01T00:00:09.000Z" }, NOW);
+    assert.equal(exhausted.decision, "awaiting-model-provider");
+    assert.match(exhausted.decision === "awaiting-model-provider" ? exhausted.reason : "", /provider budget is exhausted/);
     const ledger = await readModelProviderLedger(dir);
     assert.equal(ledger.consumed, 3, "an exhausted budget is never consumed further");
     assert.equal(ledger.last?.granted, false);
@@ -70,7 +70,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
 
   test("a NEW failure of the same attempt is a new retry — the count advances", async () => {
     await settleModelProviderFailure(dir, BUDGET, 1, FAILURE, NOW);
-    const second = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, at: "2026-01-01T00:00:05.000Z" }, NOW);
+    const second = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, identity: "2026-01-01T00:00:05.000Z" }, NOW);
 
     assert.equal(second.decision === "retry" && second.consumed, 2);
     assert.equal((await readModelProviderLedger(dir)).consumed, 2);
@@ -78,7 +78,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
 
   test("the allowance is per attempt: a new attempt starts with a full model provider budget", async () => {
     await settleModelProviderFailure(dir, BUDGET, 1, FAILURE, NOW);
-    const next = await settleModelProviderFailure(dir, BUDGET, 2, { ...FAILURE, at: "2026-01-02T00:00:00.000Z" }, NOW);
+    const next = await settleModelProviderFailure(dir, BUDGET, 2, { ...FAILURE, identity: "2026-01-02T00:00:00.000Z" }, NOW);
 
     assert.equal(next.decision === "retry" && next.consumed, 1, "attempt 2 has its own allowance");
     const ledger = await readModelProviderLedger(dir);
@@ -87,12 +87,12 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
 
   test("raising the configured budget after exhaustion revives the work — the operator's lever", async () => {
     for (let index = 0; index < 3; index += 1) {
-      await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, at: `2026-01-01T00:00:0${index}.000Z` }, NOW);
+      await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, identity: `2026-01-01T00:00:0${index}.000Z` }, NOW);
     }
-    const exhausted = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, at: "2026-01-01T00:00:09.000Z" }, NOW);
-    assert.equal(exhausted.decision, "await-provider");
+    const exhausted = await settleModelProviderFailure(dir, BUDGET, 1, { ...FAILURE, identity: "2026-01-01T00:00:09.000Z" }, NOW);
+    assert.equal(exhausted.decision, "awaiting-model-provider");
 
-    const raised = await settleModelProviderFailure(dir, { maxRetries: 4, waitsMs: [15_000] }, 1, { ...FAILURE, at: "2026-01-01T00:00:09.000Z" }, NOW);
+    const raised = await settleModelProviderFailure(dir, { maxRetries: 4, waitsMs: [15_000] }, 1, { ...FAILURE, identity: "2026-01-01T00:00:09.000Z" }, NOW);
 
     assert.equal(raised.decision, "retry", "the operator raised the limit; the same failure gets its retry");
     assert.equal((await readModelProviderLedger(dir)).consumed, 4);
@@ -103,7 +103,7 @@ describe("the provider-failure budget — its own retries, its own backoff", () 
       attempt: 1,
       consumed: 2,
       events: [],
-      last: { attempt: 1, failureAt: FAILURE.at, message: FAILURE.message, granted: false, waitMs: null, helpRequested: false, settledAt: NOW().toISOString() },
+      last: { attempt: 1, failureIdentity: FAILURE.identity, message: FAILURE.message, granted: false, waitMs: null, helpRequested: false, settledAt: NOW().toISOString() },
     };
     assert.equal(awaitingModelProvider(ledger, 1, { maxRetries: 2, waitsMs: [1] }), true);
     assert.equal(awaitingModelProvider(ledger, 2, { maxRetries: 2, waitsMs: [1] }), false, "another attempt is not awaiting");

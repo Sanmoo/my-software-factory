@@ -401,7 +401,7 @@ export type ReservedDerivation =
    *  awaits the operator when that budget is exhausted (never a block). */
   | {
       ref: IssueRef;
-      state: "provider-failure";
+      state: "model-provider-failure";
       attempt: number;
       failure: ModelProviderFailure;
       modelProvider: ModelProviderDecision;
@@ -422,12 +422,12 @@ export async function deriveReserved(
   workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
-  provider: ModelProviderBudget,
+  modelProvider: ModelProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
   return Promise.all(
     reserved.map((work) =>
-      deriveReservedWork(port, work, labels, workerAccount, workspace, recovery, provider, inFlight),
+      deriveReservedWork(port, work, labels, workerAccount, workspace, recovery, modelProvider, inFlight),
     ),
   );
 }
@@ -439,7 +439,7 @@ async function deriveReservedWork(
   _workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
-  provider: ModelProviderBudget,
+  modelProvider: ModelProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -594,7 +594,7 @@ async function deriveReservedWork(
     const unreconciled = await deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
     // Only an interruption can be a provider failure: the attempt's own stream
     // decides it (issue 144) — a written outcome or a bare reservation never
-    // reads the provider ledger.
+    // reads the model provider ledger.
     if (unreconciled.state === "interrupted") {
       const providerFailure = await deriveModelProviderFailure(
         port,
@@ -604,7 +604,7 @@ async function deriveReservedWork(
           attempt: unreconciled.attempt,
           createdAt: issue.value.createdAt,
         },
-        provider,
+        modelProvider,
       );
       if (providerFailure !== null) return providerFailure;
     }
@@ -675,14 +675,14 @@ async function deriveUnreconciledAttempt(
 async function deriveModelProviderFailure(
   port: TrackerPort,
   work: InterruptedAttempt,
-  provider: ModelProviderBudget,
+  modelProvider: ModelProviderBudget,
 ): Promise<ReservedDerivation | null> {
   const failure = await readTurnModelProviderError(work.dir, work.attempt);
   if (failure === null) return null;
 
-  const providerLedger = await readModelProviderLedger(work.dir);
-  const decision = modelProviderDecision(providerLedger, provider, work.attempt, failure);
-  if (decision.decision === "await-provider") {
+  const modelProviderLedger = await readModelProviderLedger(work.dir);
+  const decision = modelProviderDecision(modelProviderLedger, modelProvider, work.attempt, failure);
+  if (decision.decision === "awaiting-model-provider") {
     // The model provider budget is exhausted: the work waits for the operator
     // — a help request, never a block. A human answer after the marker resumes it,
     // the same channel a blocked work listens to.
@@ -690,7 +690,7 @@ async function deriveModelProviderFailure(
     const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
     if (issueReplies.length > 0) return resumableState(port, work.ref, work.createdAt, issueReplies);
   }
-  return { ref: work.ref, state: "provider-failure", attempt: work.attempt, failure, modelProvider: decision };
+  return { ref: work.ref, state: "model-provider-failure", attempt: work.attempt, failure, modelProvider: decision };
 }
 
 /** The interrupted attempt the provider decision reads: its work, dir, number

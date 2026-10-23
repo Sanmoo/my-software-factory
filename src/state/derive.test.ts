@@ -576,9 +576,9 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
 
       const derived = await deriveFrom(path, 26);
 
-      assert.equal(derived.state, "provider-failure", "a provider error is not an interruption of the agent");
+      assert.equal(derived.state, "model-provider-failure", "a provider error is not an interruption of the agent");
       assert.equal(derived.attempt, 1);
-      if (derived.state !== "provider-failure") assert.fail("expected a provider-failure derivation");
+      if (derived.state !== "model-provider-failure") assert.fail("expected a provider-failure derivation");
       assert.equal(derived.failure.message, "429: upstream unavailable");
       assert.equal(derived.modelProvider.decision, "retry");
       assert.equal(derived.modelProvider.decision === "retry" && derived.modelProvider.waitMs, 15_000, "the provider's own backoff");
@@ -591,17 +591,17 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       for (let index = 0; index < DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries; index += 1) {
         await settleModelProviderFailure(path, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
           message: "429: upstream unavailable",
-          at: `2026-01-01T00:00:0${index}.000Z`,
+          identity: `2026-01-01T00:00:0${index}.000Z`,
         });
       }
       await settleModelProviderFailure(path, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
         message: "429: upstream unavailable",
-        at: "2026-01-01T00:00:09.000Z",
+        identity: "2026-01-01T00:00:09.000Z",
       });
 
       const waiting = await deriveFrom(path, 27);
-      assert.equal(waiting.state, "provider-failure");
-      assert.equal(waiting.state === "provider-failure" && waiting.modelProvider.decision, "await-provider");
+      assert.equal(waiting.state, "model-provider-failure");
+      assert.equal(waiting.state === "model-provider-failure" && waiting.modelProvider.decision, "awaiting-model-provider");
 
       adapter.addComment({ repo: REPO, number: 27 }, "operator", "the provider is back — go on");
       const resumed = await deriveFrom(path, 27);

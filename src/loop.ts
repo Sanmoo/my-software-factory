@@ -75,6 +75,7 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
 import {
   isModelProviderFailureSettled,
+  isModelProviderHelpPending,
   markModelProviderHelpRequested,
   modelProviderDecision,
   readModelProviderLedger,
@@ -211,7 +212,7 @@ const RESERVED_OPERATIONAL_CLASS = {
   idle: "reserved",
   fall: "reserved",
   interrupted: "reserved",
-  "provider-failure": "reserved",
+  "model-provider-failure": "reserved",
   unknown: "reserved",
   feedback: "feedback",
   resumable: "resumable",
@@ -232,7 +233,7 @@ const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = n
   "done-fallback",
   "fall",
   "interrupted",
-  "provider-failure",
+  "model-provider-failure",
   "rejected",
   "repair-fall-blocked",
   "repair-blocked",
@@ -325,7 +326,7 @@ function renderPoolSummary(
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
  *  repair — or the recovery of an interrupted attempt (issue 123). */
-type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "provider-retry";
+type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 interface Launchable {
   ref: IssueRef;
@@ -539,17 +540,17 @@ export class SweepEngine {
           }
           break;
         }
-        case "provider-failure": {
-          // A provider outage is not an interruption of the agent (issue 144):
+        case "model-provider-failure": {
+          // A model provider outage is not an interruption of the agent (issue 144):
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
-          if (decision.modelProvider.decision === "await-provider") {
+          if (decision.modelProvider.decision === "awaiting-model-provider") {
             const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
             await this.applyModelProviderFailure(decision.ref, dir, decision.attempt, decision.failure);
           } else {
             parked.push({
               ref: decision.ref,
-              kind: "provider-retry",
+              kind: "model-provider-retry",
               // A retry waits for nothing human: like a recovery, it sorts
               // before the parked feedback rounds.
               createdAt: null,
@@ -1095,7 +1096,7 @@ export class SweepEngine {
       // The claim swap itself may have been interrupted (issue 98): re-asserting
       // the idempotent claim heals it without releasing the work to the pool.
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
-    } else if (kind === "provider-retry") {
+    } else if (kind === "model-provider-retry") {
       this.log(
         `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
           "the same attempt continues (no new attempt, branch preserved)",
@@ -1219,7 +1220,7 @@ export class SweepEngine {
     // failure — both are disk facts of this work, not process state (ticket
     // 13; an interruption never counts as a fall, issue 123).
     const dir = workDir(workspace, ref.repo, ref.number);
-    const continuesAttempt = kind === "recover" || kind === "provider-retry";
+    const continuesAttempt = kind === "recover" || kind === "model-provider-retry";
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     if (kind === "resume" && facts.previousFall) {
       // Ticket 14's decision: the human's answer resets the consecutive
@@ -1279,9 +1280,9 @@ export class SweepEngine {
       }
     }
     // The model provider retry is settled and persisted before the wait (issue 144):
-    // a death during the backoff continues the provider count instead of
+    // a death during the backoff continues the model provider count instead of
     // renewing it, and the recovery budget of issue 123 is never touched.
-    if (kind === "provider-retry") {
+    if (kind === "model-provider-retry") {
       const failure = await readTurnModelProviderError(dir, facts.attempt);
       if (failure === null) {
         this.log(
@@ -1290,7 +1291,7 @@ export class SweepEngine {
         return null;
       }
       const decision = await this.applyModelProviderFailure(ref, dir, facts.attempt, failure);
-      if (decision.decision === "await-provider") return null;
+      if (decision.decision === "awaiting-model-provider") return null;
       await this.wait(decision.waitMs);
       if (this.stopping) {
         this.log(`the model provider retry of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
@@ -1368,15 +1369,15 @@ export class SweepEngine {
     // never a silent loss of the failure or of the retry it granted.
     if (!settled) {
       appendAttemptEvent(dir, attempt, {
-        event: "provider-failure",
+        event: "model-provider-failure",
         message: failure.message,
-        failureAt: failure.at,
+        failureIdentity: failure.identity,
       });
     }
     const alreadyGranted = settled && ledger.last?.granted === true;
     if (decision.decision === "retry" && !alreadyGranted) {
       appendAttemptEvent(dir, attempt, {
-        event: "provider-retry",
+        event: "model-provider-retry",
         retry: decision.consumed,
         maxRetries: config.modelProvider.maxRetries,
         waitMs: decision.waitMs,
@@ -1384,18 +1385,15 @@ export class SweepEngine {
     }
 
     const settlement = await settleModelProviderFailure(dir, config.modelProvider, attempt, failure);
-    if (settlement.decision === "await-provider") {
+    if (settlement.decision === "awaiting-model-provider") {
       // The help request is retryable, not tied to the settlement that raised
       // it: a death between the ledger and the comment leaves it unrequested,
       // and the next sweep asks again.
-      const ledger = await readModelProviderLedger(dir);
-      const last = ledger.last;
-      const helpPending =
-        last !== null &&
-        last.attempt === attempt &&
-        last.failureAt === failure.at &&
-        !last.granted &&
-        !last.helpRequested;
+      const helpPending = isModelProviderHelpPending(
+        await readModelProviderLedger(dir),
+        attempt,
+        failure,
+      );
       if (helpPending) {
         // Keep the work reserved before asking: re-asserting the (already held)
         // claim is idempotent and is what the operator's answer resumes.
@@ -1736,7 +1734,7 @@ export class SweepEngine {
           // A provider failure retries on its own budget; an interruption of
           // the agent keeps issue 123's recovery. Either way the SAME attempt
           // continues, with the material of the interrupted launch preserved.
-          kind: failure === null ? "recover" : "provider-retry",
+          kind: failure === null ? "recover" : "model-provider-retry",
           createdAt: null,
           pr,
           ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
