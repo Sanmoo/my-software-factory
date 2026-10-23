@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runOnce, type LoopDeps } from "../loop.js";
+import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
@@ -547,6 +547,27 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.ok(existsSync(reserved.dir), "the readable reservation is preserved where it is");
     assert.ok(existsSync(join(layout.works, bareKey)), "the unknown reservation is preserved where it is");
     assert.ok(existsSync(unreadableDir), "the unreadable reservation is preserved where it is");
+  });
+
+  test("the hold of an unaddressable reservation is said once per appearance, never once per sweep", async () => {
+    const config = makeConfig(1);
+    const { deps } = makeFactory(config, ["pr-open"]);
+    const jiraWork: WorkIdentity = {
+      ticket: jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      destination: githubRepository(REPO),
+    };
+    reserveWork(layout, reservationRecordOf(jiraWork, { title: "Jira request" }));
+
+    const logs: string[] = [];
+    const engine = new SweepEngine({ ...deps, log: (message) => logs.push(message) });
+    await engine.deriveAndAct();
+    await engine.deriveAndAct();
+
+    assert.equal(
+      logs.filter((line) => line.includes("the composed ticket adapter does not serve")).length,
+      1,
+      "the operator reads the hold once, not on every tick",
+    );
   });
 
   test("ticket facts and PR facts travel through their own expanded ports", async () => {
