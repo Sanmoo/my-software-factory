@@ -52,7 +52,7 @@ export interface OutcomeRecord {
   paths?: Record<string, string>;
 }
 
-  /** The ruled transition of a collection, decided in state/, executed by the loop. */
+/** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
   /** The terminal state reached while the claim was held: the human's merge
    * closed the issue ("issue-closed"), or the PR itself was merged while the

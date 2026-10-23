@@ -979,7 +979,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal(after.consecutiveFalls, 0, "the vanished premise clears the fall streak");
   });
 
-  test("a PR merged before the round ended is done immediately — never a repair block", async () => {
+  test("a PR already merged before the round is due is done immediately — never a repair state", async () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 122);
     seedFallenLegacyRound(122);
