@@ -59,7 +59,8 @@ interface FakeSession {
   ref: IssueRef;
   /** Ends the parked launch either way. */
   wake: Deferred;
-  /** The cooperative request; the launch reports the stop through it. */
+  /** The cooperative request: what a test's hold awaits to end voluntarily
+   *  inside the window (the launch itself reacts to `wake`/`forced`). */
   cooperative: Deferred;
   /** The forced stop; the launch reports the stop through it. */
   forced: Deferred;

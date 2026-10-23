@@ -148,6 +148,19 @@ function serialized<T>(workDir: string, mutate: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** One serialized read-modify-write of the ledger's `lastStop` (and of the
+ *  count it scopes to). The mutation returns the ledger to write, or null to
+ *  leave the file untouched — every stop record differs only in that value. */
+async function updateLastStop(
+  workDir: string,
+  mutate: (ledger: RecoveryLedger) => RecoveryLedger | null,
+): Promise<void> {
+  await serialized(workDir, async () => {
+    const next = mutate(await readRecoveryLedger(workDir));
+    if (next !== null) await writeLedger(workDir, next);
+  });
+}
+
 /**
  * The decision the current count supports, without consuming it: the next wait
  * by index (the last value repeats for longer schedules) or the pause that asks
@@ -224,13 +237,10 @@ export async function recordStopRequest(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
-    await writeLedger(workDir, {
-      ...ledger,
-      lastStop: { kind: "stop-requested", attempt, at: now().toISOString() },
-    });
-  });
+  await updateLastStop(workDir, (ledger) => ({
+    ...ledgerForAttempt(ledger, attempt),
+    lastStop: { kind: "stop-requested", attempt, at: now().toISOString() },
+  }));
 }
 
 /**
@@ -244,13 +254,10 @@ export async function recordUnconfirmedStop(
   because: string,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
-    await writeLedger(workDir, {
-      ...ledger,
-      lastStop: { kind: "stop-unconfirmed", attempt, at: now().toISOString(), because },
-    });
-  });
+  await updateLastStop(workDir, (ledger) => ({
+    ...ledgerForAttempt(ledger, attempt),
+    lastStop: { kind: "stop-unconfirmed", attempt, at: now().toISOString(), because },
+  }));
 }
 
 /**
@@ -263,14 +270,14 @@ export async function confirmStopRequest(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = await readRecoveryLedger(workDir);
-    if (!isStopOfAttempt(ledger.lastStop, "stop-unconfirmed", attempt)) return;
-    await writeLedger(workDir, {
-      ...ledgerForAttempt(ledger, attempt),
-      lastStop: { kind: "stop-requested", attempt, at: now().toISOString() },
-    });
-  });
+  await updateLastStop(workDir, (ledger) =>
+    isStopOfAttempt(ledger.lastStop, "stop-unconfirmed", attempt)
+      ? {
+          ...ledgerForAttempt(ledger, attempt),
+          lastStop: { kind: "stop-requested", attempt, at: now().toISOString() },
+        }
+      : null,
+  );
 }
 
 /**
@@ -279,11 +286,9 @@ export async function confirmStopRequest(
  * attempt is charged like any other — the requested stop only excuses itself.
  */
 export async function consumeStopRequest(workDir: string, attempt: number): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = await readRecoveryLedger(workDir);
-    if (!isStopOfAttempt(ledger.lastStop, "stop-requested", attempt)) return;
-    await writeLedger(workDir, { ...ledger, lastStop: null });
-  });
+  await updateLastStop(workDir, (ledger) =>
+    isStopOfAttempt(ledger.lastStop, "stop-requested", attempt) ? { ...ledger, lastStop: null } : null,
+  );
 }
 
 /**
@@ -321,13 +326,10 @@ export async function recordInterruptionStop(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
-    await writeLedger(workDir, {
-      ...ledger,
-      lastStop: { kind: "interruption", attempt, at: now().toISOString() },
-    });
-  });
+  await updateLastStop(workDir, (ledger) => ({
+    ...ledgerForAttempt(ledger, attempt),
+    lastStop: { kind: "interruption", attempt, at: now().toISOString() },
+  }));
 }
 
 /**

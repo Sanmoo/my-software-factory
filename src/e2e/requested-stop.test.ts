@@ -8,6 +8,7 @@ import { runForever, runOnce, type LoopDeps, type StopOptions } from "../loop.js
 import { installShutdownSignals } from "../shutdown.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
+import { deferred } from "../runtime/deferred.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef, Known, PrFeedback } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
@@ -61,12 +62,6 @@ class FakeGitWork implements GitWork {
   async diffWork(_ref: IssueRef): Promise<string> {
     return "";
   }
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
 }
 
 /**
@@ -623,6 +618,90 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const held = await runOnce(deps);
     assert.equal(held.launched.length, 0, "nothing is relaunched while the worker may be alive");
     assert.equal((await ledgerOf()).consumed, 0, "the hold spends no recovery");
+  });
+
+  test("a probe outage at the stop never declares a known survivor safe", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
+    mkdirSync(workDirOf(), { recursive: true });
+    writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    let dockerAnswers = true;
+    const logs: string[] = [];
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => {
+        if (!dockerAnswers) throw new Error("Cannot connect to the Docker daemon");
+        return [{ key: workKey, containerId: "container-1", ageMs: 1_000 }];
+      },
+      log: (line) => logs.push(line),
+    };
+
+    // The factory recognised the surviving worker; then Docker stops answering
+    // and the operator stops the factory.
+    const stop = new AbortController();
+    const running = runForever(deps, { tickMs: 10, signal: stop.signal, cooperativeMs: 100 });
+    try {
+      await waitFor("the survivor to be recognised", () =>
+        logs.some((line) => line.includes("recognizing surviving worker")),
+      );
+      dockerAnswers = false;
+      stop.abort();
+      const report = await running;
+      assert.deepEqual(
+        report?.unconfirmed,
+        [{ key: workKey, because: "the worker liveness could not be read (Docker unreachable)" }],
+        "a worker known to be alive is never declared stopped because the probe went silent",
+      );
+      const ledger = await ledgerOf();
+      assert.equal(ledger.lastStop?.kind, "stop-unconfirmed", "the uncertainty is persisted on its attempt");
+      assert.equal(ledger.lastStop?.attempt, 1);
+    } finally {
+      stop.abort();
+      await running.catch(() => {});
+    }
+  });
+
+  test("a survivor with only a bare reservation gets the stop recorded, so its resume spends nothing", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    // The claim landed, the worker container is alive, and it never wrote an
+    // attempt log — the registry dir is all the evidence there is.
+    await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
+    mkdirSync(workDirOf(), { recursive: true });
+    const containers = new Set([workKey]);
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const forcedByTheFake = runtime.forceStop.bind(runtime);
+    runtime.forceStop = async (ref) => {
+      containers.delete(workKeyOf(ref));
+      await forcedByTheFake(ref);
+    };
+    const deps: LoopDeps = {
+      config,
+      tracker,
+      runtime,
+      git: new FakeGitWork(),
+      workspace: layout,
+      probe: async () => [...containers].map((key) => ({ key, containerId: `container-${key}`, ageMs: 1_000 })),
+      log: () => {},
+    };
+
+    const stop = new AbortController();
+    stop.abort();
+    await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
+    const recorded = await ledgerOf();
+    assert.equal(recorded.lastStop?.kind, "stop-requested", "the stop is recorded on the bare reservation");
+    assert.equal(recorded.lastStop?.attempt, 1, "the attempt its first launch would carry");
+
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "the work resumes");
+    assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME first attempt");
+    assert.equal((await ledgerOf()).consumed, 0, "the requested stop charged no recovery");
   });
 
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {

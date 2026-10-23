@@ -6,12 +6,11 @@ implementation is pending in [#118](https://github.com/Sanmoo/my-software-factor
 [#119](https://github.com/Sanmoo/my-software-factory/issues/119) and
 [#123](https://github.com/Sanmoo/my-software-factory/issues/123).
 
-An infrastructure interruption — hard stop by the operator, factory crash,
-worker crash, machine restart with the disk intact — ends no attempt and
-consumes none. The operator's own stop is since
-[issue #146](https://github.com/Sanmoo/my-software-factory/issues/146) its own
-persisted condition: it keeps every guarantee here and, unlike a crash, the
-resume after it does not draw on the recovery budget. Only a written failure/abandonment outcome, or an explicit
+An infrastructure interruption — factory crash, worker crash, machine restart
+with the disk intact — ends no attempt and consumes none. The operator's own
+stop is since [issue #146](https://github.com/Sanmoo/my-software-factory/issues/146)
+its own persisted condition: it keeps every guarantee here and, unlike a crash,
+the resume after it does not draw on the recovery budget. Only a written failure/abandonment outcome, or an explicit
 operator close, spends an attempt. A resumed attempt keeps its identity (same
 attempt number, branch preserved) and the relaunch reopens the Pi session of
 that attempt instead of starting a new session with reconstructed context.

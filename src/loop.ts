@@ -95,6 +95,7 @@ import {
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
 import { COOPERATIVE_STOP_MS } from "./shutdown.js";
+import { deferred } from "./runtime/deferred.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -432,11 +433,7 @@ export class SweepEngine {
   /** The requested stop in progress (issue #146); null before any request. */
   private shutdownRun: Promise<ShutdownReport> | null = null;
   /** Resolves the moment a requested stop begins — the boundary's wake. */
-  private readonly shutdownBegan = (() => {
-    let resolve!: () => void;
-    const promise = new Promise<void>((r) => (resolve = r));
-    return { promise, resolve };
-  })();
+  private readonly shutdownBegan = deferred();
   /** The launches that may still be carrying a worker, by work key. */
   private readonly inFlight = new Map<string, InFlightLaunch>();
   /** Waiters of the backoff wait — the requested stop ends the wait at once. */
@@ -923,7 +920,7 @@ export class SweepEngine {
       const parsed = parseWorkKey(key);
       if (parsed === null) continue;
       const dir = workDirOfKey(this.deps.workspace, key);
-      const attempt = await readLastAttempt(dir);
+      const attempt = await this.lastAttemptOf(key);
       this.survivors.set(key, {
         key,
         dir,
@@ -1182,8 +1179,8 @@ export class SweepEngine {
     // Whatever still carries a work is forced now. The evidence of the stop
     // lands on a survivor's attempt BEFORE it is ended, exactly as for the
     // launches below: the next invocation resumes it instead of charging it.
-    const settledInWindow = await this.awaitCooperativeWindow();
-    const doomed = await this.stopCandidates(entries, settledInWindow);
+    await this.awaitCooperativeWindow();
+    const doomed = await this.stopCandidates(entries);
     const own = new Set(entries.map((entry) => workKey(entry.ref)));
     for (const key of doomed) if (!own.has(key)) await this.recordStopOf(key);
 
@@ -1214,40 +1211,64 @@ export class SweepEngine {
   }
 
   /**
-   * The works the stop has to end (issue #146): the launches whose end the
-   * cooperative window did not see, plus every worker a live container still
-   * carries — the survivors of a previous process included (issue 118). An
-   * unreadable probe still ends the launches; it cannot name the survivors.
+   * Every worker this stop is answerable for (issue #146), with the attempt
+   * already known when the caller has it: the launches this run carried, the
+   * survivors it recognised (issue 118) — which it knows were alive even when
+   * the probe stops answering — and whatever a live container names right now.
+   * An unreadable probe cannot LOSE a known worker, it only fails to add one.
    */
-  private async stopCandidates(
-    entries: readonly InFlightLaunch[],
-    settledInWindow: boolean,
-  ): Promise<string[]> {
-    const keys = new Set<string>();
-    if (!settledInWindow) {
-      for (const entry of entries) if (entry.launched) keys.add(workKey(entry.ref));
+  private async stopWorkers(entries: readonly InFlightLaunch[]): Promise<Map<string, number | null>> {
+    const workers = new Map<string, number | null>();
+    for (const entry of entries) {
+      if (entry.launched) workers.set(workKey(entry.ref), entry.attempt);
     }
+    for (const key of this.survivors.keys()) if (!workers.has(key)) workers.set(key, null);
     await this.observeLiveness();
     if (this.liveness.state === "known") {
-      for (const worker of this.liveness.workers) keys.add(worker.key);
+      for (const worker of this.liveness.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
     }
-    return byKey(keys);
+    return workers;
+  }
+
+  /**
+   * The works the stop has to end: every worker the stop knows about — the
+   * survivors of a previous process included, which it can only end, never
+   * ask — minus the launches that really ended. A launch whose end the window
+   * saw is gone, and forcing it again would only race a container that is
+   * already going away; one whose container the probe still names is forced.
+   */
+  private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
+    const workers = await this.stopWorkers(entries);
+    const live = this.liveness.state === "known" ? this.carriedKeys : EMPTY_KEYS;
+    for (const entry of entries) {
+      const key = workKey(entry.ref);
+      if (this.inFlight.has(key) || live.has(key)) continue;
+      workers.delete(key);
+    }
+    return byKey(workers.keys());
   }
 
   /** Persist the operator's stop on a work the shutdown ends: the next
    *  invocation resumes that attempt rather than charging it a recovery. A work
-   *  with no attempt on disk has nothing to resume. */
+   *  with no registry dir has nothing to resume. */
   private async recordStopOf(key: string): Promise<void> {
     const attempt = await this.lastAttemptOf(key);
     if (attempt === null) return;
     await recordStopRequest(workDirOfKey(this.deps.workspace, key), attempt);
   }
 
-  /** The last attempt on disk of a work, or null when the registry has none. */
+  /**
+   * The attempt a work is on right now, or null when the registry has no dir
+   * for it. A bare reservation (a claim whose worker never wrote anything) is
+   * on attempt 1 — the number its first launch would carry — so the stop is
+   * recorded for it and its resume is free.
+   */
   private async lastAttemptOf(key: string): Promise<number | null> {
     const parsed = parseWorkKey(key);
     if (parsed === null) return null;
-    return readLastAttempt(workDir(this.deps.workspace, parsed.repo, parsed.number));
+    const dir = workDir(this.deps.workspace, parsed.repo, parsed.number);
+    if (!existsSync(dir)) return null;
+    return (await readLastAttempt(dir)) ?? 1;
   }
 
   /** True when every in-flight launch settled inside the cooperative window. */
@@ -1284,20 +1305,8 @@ export class SweepEngine {
   private async confirmStop(
     entries: readonly InFlightLaunch[],
   ): Promise<Array<{ key: string; because: string }>> {
-    await this.observeLiveness();
+    const answerable = await this.stopWorkers(entries);
     const observation = this.liveness;
-
-    // Every work this stop is answerable for: the launches it carried (their
-    // attempt already known) and whatever else a live container names.
-    const answerable = new Map<string, number | null>();
-    for (const entry of entries) {
-      if (entry.launched) answerable.set(workKey(entry.ref), entry.attempt);
-    }
-    if (observation.state === "known") {
-      for (const worker of observation.workers) {
-        if (!answerable.has(worker.key)) answerable.set(worker.key, null);
-      }
-    }
 
     const unconfirmed: Array<{ key: string; because: string }> = [];
     for (const [key, knownAttempt] of answerable) {
