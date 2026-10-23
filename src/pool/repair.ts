@@ -35,10 +35,13 @@ export const MAX_REPAIR_FALLS = 2;
 /**
  * The publication verdict of one attempt, as structured facts alone can say it:
  * `published` (the remote carries the commit the attempt produced),
- * `not-published` (the remote is still at the observed head — or holds no such
- * branch), `concurrent-change` (the remote moved to something the attempt did
- * not produce) and the two honest uncertainties (`unknown` before the first
- * reconciliation, `pending` while the remote cannot be read).
+ * `not-published` (nothing of the attempt reached the remote — the remote is
+ * still where it was, holds no such branch, or moved while the round's premise
+ * was already gone), `concurrent-change` (the remote moved to something the
+ * attempt did not produce while the impediment stood) and the two honest
+ * uncertainties (`unknown` before the first reconciliation, `pending` while the
+ * remote, the local work or the premise cannot be read). Whether the end counts
+ * as a fall is the FALL LEDGER's business, never this verdict's.
  */
 export type RepairPublication =
   | "unknown"
@@ -274,8 +277,7 @@ export type RepairReconciliation =
   /** The impediment the round was launched for no longer exists (issue 149):
    *  the round returns, and no fall is counted — there is nothing left to
    *  fix, so the remote is still never overwritten. */
-  | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }
-  | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
+  | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }  | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
 
 /**
  * Decide the publication of the cycle's attempt from structured facts alone

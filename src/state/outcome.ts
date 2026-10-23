@@ -52,12 +52,14 @@ export interface OutcomeRecord {
   paths?: Record<string, string>;
 }
 
-/** The ruled transition of a collection, decided in state/, executed by the loop. */
+  /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
-  /** The terminal state reached while the claim was held (the human's merge
-   * closed the issue mid-flight — ticket 14): archive the artifacts, no
-   * release, no fall. */
-  | { decision: "done"; because: "issue-closed" }
+  /** The terminal state reached while the claim was held: the human's merge
+   * closed the issue ("issue-closed"), or the PR itself was merged while the
+   * attempt ran ("pr-merged" — delivery, whatever the attempt wrote; issue
+   * 149). Archive the artifacts, no release, no fall; a pr-merged ruling also
+   * closes the open issue first (the linkage fallback). */
+  | { decision: "done"; because: "issue-closed" | "pr-merged" }
   /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
    * reserved awaiting the human; a fall is never recorded, the claim is held. */
   | { decision: "reserve"; because: "pr-open" }
@@ -83,6 +85,9 @@ export interface OutcomeFacts {
   record: OutcomeRecord | null;
   /** The port's fact: an open PR linked to the issue (recorded now or pre-existing). */
   prOpen: boolean;
+  /** The port's fact: the PR linked to the issue was merged — delivery, even
+   *  when the attempt wrote nothing (issue 149). Never a fall. */
+  prMerged: boolean;
   /** The port's fact: the blocked label is on the issue (the worker's self-report). */
   blockedLabelOnIssue: boolean;
   /** The registry's fact from launch time: the previous attempt on this branch
@@ -114,6 +119,10 @@ export interface OutcomeFacts {
  */
 export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
+  // A merged PR is delivery (issue 149): the attempt's own record never turns
+  // a delivered work into a release or a 2nd-fall block. The closed issue is
+  // still the primary fact; this one closes it (the linkage fallback).
+  if (facts.prMerged) return { decision: "done", because: "pr-merged" };
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
 

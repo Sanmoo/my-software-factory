@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { TrackerPort, IssueComment, IssueRef, PrRepairFacts, PullRequest } from "./tracker/port.js";
+import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import {
@@ -15,9 +15,10 @@ import { workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
   deriveTrackerState,
   deriveReserved,
+  fallbackDoneComment,
+  readRepairPremise,
   repairPremise,
   repairSignature,
-  repairTrigger,
   workKey,
   renderUnbackedClaim,
   renderUnmarkedReservation,
@@ -1027,9 +1028,6 @@ export class SweepEngine {
       if (launchable.pr !== null && launchable.pr.state === "closed") {
         await tracker.reopenPr(ref);
       }
-    } else if (kind === "repair") {
-      // The round is announced only after its facts are re-read below: a round
-      // whose premise is gone is "not opened", never "reactivated" (issue 149).
     } else if (kind === "recover") {
       this.log(
         `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
@@ -1038,7 +1036,7 @@ export class SweepEngine {
       // The claim swap itself may have been interrupted (issue 98): re-asserting
       // the idempotent claim heals it without releasing the work to the pool.
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
-    } else {
+    } else if (kind === "feedback") {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
     }
     // Every launch kind holds the claim, so the work is reserved from here.
@@ -1077,20 +1075,17 @@ export class SweepEngine {
       // human pushing the resolution, by a base advance. Only a confirmed
       // premise buys a session; an obsolete one returns the round unspent,
       // and an unconfirmed one waits for the next derivation instead of
-      // paying for stale evidence.
-      const facts = await this.readRepairFacts(ref);
-      if (repairPremise(facts) === "obsolete") {
+      // paying for stale evidence. The round is announced below, after this
+      // decision: a returned round is never also "reactivated".
+      const reading = readRepairPremise(await tracker.readPrRepairFacts(ref));
+      const confirmed = reading.trigger;
+      if (reading.premise !== "persists" || confirmed === null) {
         this.log(
-          `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
-            `(the premise is obsolete) — no round is spent`,
-        );
-        return null;
-      }
-      const confirmed = facts === null ? null : repairTrigger(facts);
-      if (confirmed === null) {
-        this.log(
-          `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
-            "nothing is spent and the next sweep re-derives",
+          reading.premise === "obsolete"
+            ? `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
+                "(the premise is obsolete) — no round is spent"
+            : `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
+                "nothing is spent and the next sweep re-derives",
         );
         return null;
       }
@@ -1307,7 +1302,7 @@ export class SweepEngine {
       // round addressed still exists — a human's own resolution is never
       // taken for a reason to ask for help. The read happens once per
       // settlement: a settled or attempt-less cycle never reaches this line.
-      const premise = repairPremise(await this.readRepairFacts(work.ref));
+      const premise = repairPremise(await this.deps.tracker.readPrRepairFacts(work.ref));
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
@@ -1404,13 +1399,6 @@ export class SweepEngine {
     }
   }
 
-  /** The PR's repair facts, read now; null when the read is not known —
-   *  never an invented clean bill (issue 149). */
-  private async readRepairFacts(ref: IssueRef): Promise<PrRepairFacts | null> {
-    const facts = await this.deps.tracker.readPrRepairFacts(ref);
-    return facts.known ? facts.value : null;
-  }
-
   /** The remote head now, or the honest uncertainty (an unreadable remote is
    *  not an empty branch). */
   private async observeRemote(ref: IssueRef): Promise<RemoteObservation> {
@@ -1500,6 +1488,7 @@ export class SweepEngine {
     const ruling = await classifyOutcome({
       record,
       prOpen: prConfirmed,
+      prMerged: pr !== null && pr.merged,
       blockedLabelOnIssue,
       consecutiveFall,
       attempt,
@@ -1511,10 +1500,21 @@ export class SweepEngine {
     let resulting: OperationalClass | null;
     let next: Launchable | null = null;
     if (ruling.decision === "done") {
-      // The terminal state was reached while this claim was held (the
-      // human's merge closed the issue mid-flight — ticket 14): archive the
-      // artifacts and clean the branches, nothing is released or recorded.
-      this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
+      // The terminal state was reached while this claim was held: archive the
+      // artifacts and clean the branches, nothing is released or recorded. A
+      // merge that did not close the issue is closed here first — done must
+      // always be reflected on the tracker (ticket 04 Q11), including a merge
+      // that landed mid-round (issue 149).
+      if (ruling.because === "pr-merged") {
+        this.log(
+          `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
+            "(fallback of the linkage), then archives",
+        );
+        await tracker.markDone(ref);
+        await tracker.comment(ref, fallbackDoneComment());
+      } else {
+        this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
+      }
       await this.finishWork(ref);
       resulting = null;
     } else if (ruling.decision === "reserve") {
