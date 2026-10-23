@@ -14,6 +14,7 @@ import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
@@ -90,10 +91,10 @@ function childWiring(runtimeOptions: string, configPathExpression: string): stri
     `import { FakeTrackerAdapter, seedIssue } from ${moduleUrl("../tracker/fake-adapter.js")};`,
     `import { FakeWorkerRuntime } from ${moduleUrl("../runtime/fake-runtime.js")};`,
     `import { workBranchName } from ${moduleUrl("../git/port.js")};`,
-    `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_RECOVERY_BUDGET } from ${moduleUrl("../config.js")};`,
+    `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET } from ${moduleUrl("../config.js")};`,
     `import { ensureWorkspace } from ${moduleUrl("../layout.js")};`,
     "const workspace = ensureWorkspace(workspaceRoot);",
-    "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, notifications: false, configPath: " + configPathExpression + " };",
+    "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, profileAllowedRoots: [], profileSkipDanglingLinks: false, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET }, notifications: false, configPath: " + configPathExpression + " };",
     "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
     "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
     "const git = { prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) };",
@@ -130,6 +131,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1, 1, 1] },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
     };

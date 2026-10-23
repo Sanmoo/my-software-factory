@@ -15,6 +15,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   loadConfigFrom,
   type Config,
   type RecoveryBudget,
@@ -122,6 +123,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       profileSkipDanglingLinks: false,
       recovery,
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
       ...overrides,
