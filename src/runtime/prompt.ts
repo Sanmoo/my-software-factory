@@ -88,8 +88,8 @@ export function reviewReportPath(attempt: number, axis: "standards" | "spec"): s
 }
 
 /**
- * The implementation procedure (ticket 85): the operator's /implement and
- * /code-review skills, loaded from the profile, adapted to Pi and chained in
+ * The implementation procedure (ticket 85): the factory's /implement and
+ * /code-review skills, provisioned into the image, adapted to Pi and chained in
  * a fixed one-way order. Mandatory for every code-changing session; exempt
  * for purely explanatory ones. The prose is the worker's ruler — the factory
  * reads only the structured facts (the reports in "paths", the outcome).

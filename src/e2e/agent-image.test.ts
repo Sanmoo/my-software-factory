@@ -9,8 +9,8 @@ import { agentGuidancePath, workerFlagArgs } from "../runtime/sandcastle.js";
 /**
  * The provisioned environment's actual behaviour (issue #159). Arguments
  * alone do not prove loading: these tests start the real image, point Pi at a
- * target project carrying UNDECLARED skills and reviewer agents, start with an
- * empty HOME and no personal profile, and read what Pi actually loaded from a
+ * target project carrying UNDECLARED skills, start with an empty HOME and no
+ * personal profile, and read what Pi actually loaded from a
  * probe extension. Docker and the built image are mandatory in the gateway
  * (MSF_REQUIRE_DOCKER); a missing prerequisite fails there, never skips.
  */
