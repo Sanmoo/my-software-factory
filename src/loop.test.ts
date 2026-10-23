@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "./git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -88,9 +89,10 @@ describe("loop wiring — the git host feeds every launch", () => {
         notifications: true,
         configPath: join(root, "msf.yaml"),
       },
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git,
+      git: expandedGitWorkOf(git),
       workspace: ensureWorkspace(root),
     };
   });
@@ -169,7 +171,7 @@ describe("loop wiring — the git host feeds every launch", () => {
 
   test("an empty pool never touches the git host", async () => {
     const emptyTracker = new FakeTrackerAdapter({ workerAccount: "bot" });
-    const { pool } = await runOnce({ ...deps, tracker: emptyTracker });
+    const { pool } = await runOnce({ ...deps, tickets: emptyTracker, pullRequests: emptyTracker });
 
     assert.equal(pool.length, 0);
     assert.equal(git.prepared.length, 0);

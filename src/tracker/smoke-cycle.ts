@@ -1,6 +1,8 @@
 import { type ContractHarness } from "./contract.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
 import { deriveTrackerState } from "../state/derive.js";
+import { githubSelections } from "./identity.js";
+import type { TicketTracker } from "./expanded-port.js";
 import { DEFAULT_LABELS } from "../config.js";
 
 /**
@@ -83,7 +85,7 @@ export async function recheckLateOpenIssues(
 /** The full cycle of one issue: every operation executed, verified — reverted by the harness's cleanup. */
 export async function runSmokeCycle(
   harness: ContractHarness,
-  adapter: TrackerPort,
+  adapter: TrackerPort & TicketTracker,
 ): Promise<SmokeCycleReport> {
   const repo = harness.repo;
   const account = harness.workerAccount;
@@ -205,8 +207,8 @@ export async function runSmokeCycle(
   // derivation over the real adapter: the pool derivation of ticket 11 —
   // the work's own open PR (op9b, "Closes #N") keeps it out of the pool
   // (ticket 12: only sem-PR issues enter), and the blocked label would too
-  const { pool } = await deriveTrackerState(adapter, [repo], DEFAULT_LABELS);
-  if (pool.some((entry) => entry.ref.number === issue.ref.number)) {
+  const { pool } = await deriveTrackerState(adapter, githubSelections([repo]), DEFAULT_LABELS);
+  if (pool.some((entry) => entry.work.ticket.provider === "github" && entry.work.ticket.number === issue.ref.number)) {
     throw new Error("derive: the PR-linked blocked claim must NOT be eligible");
   }
   console.log("extra EXECUTED+VERIFIED: deriveTrackerState over the real adapter → the PR-linked blocked claim kept out of the pool");

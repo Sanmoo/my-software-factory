@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { spawnSync } from "node:child_process";
@@ -121,9 +122,10 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: (line) => logs.push(line),
     };
@@ -437,9 +439,10 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     };
     const deps: LoopDeps = {
       config: makeConfig(),
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: (line) => logs.push(line),
     };

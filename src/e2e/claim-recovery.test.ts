@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -102,9 +103,10 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
       runtime,
       deps: {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
-        git: new FakeGitWork(),
+        git: expandedGitWorkOf(new FakeGitWork()),
         workspace: layout,
         log: (m) => logs?.push(m),
         wait: async () => {},

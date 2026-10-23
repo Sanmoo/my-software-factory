@@ -200,11 +200,14 @@ export async function writeRepairCycle(workDir: string, cycle: RepairCycle): Pro
   await writeFile(join(workDir, REPAIR_FILENAME), `${JSON.stringify(cycle, null, 2)}\n`, "utf8");
 }
 
-/** The evidence that makes a trigger new: the head it concerns and the exact
- *  failing checks. A different head, or a different failing check on the same
- *  head, is new evidence; the same failure is consumed. */
+/** The evidence that makes a trigger new: the Work it belongs to, the head it
+ *  concerns and the exact failing checks. A different head, or a different
+ *  failing check on the same head, is new evidence; the same failure is
+ *  consumed. The first component is the registry Work key, so two Works of one
+ *  repository never share a consumed signature. */
 export function repairEvidenceSignature(input: {
-  ref: { repo: string; number: number };
+  /** The registry key of the Work ("<repo>#<n>" for GitHub, the encoded Work key otherwise). */
+  workKey: string;
   headSha: string;
   reasons: readonly RepairReason[];
   failingChecks: readonly RequiredCheckResult[];
@@ -214,7 +217,7 @@ export function repairEvidenceSignature(input: {
     .sort()
     .join(",");
   return [
-    `${input.ref.repo}#${input.ref.number}`,
+    input.workKey,
     input.headSha,
     input.reasons.includes("conflicts") ? "conflicts" : "no-conflicts",
     checks,

@@ -1,4 +1,5 @@
 import { readActivityStamp, workActivityDirs } from "../runtime/activity.js";
+import type { WorkIdentity } from "../tracker/identity.js";
 import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
 
 /**
@@ -22,6 +23,8 @@ import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
 /** One surviving worker as the cycle tracks it. */
 export interface SurvivorRecord {
   key: string;
+  /** The Work as its reservation names it — the source is never re-derived. */
+  work: WorkIdentity;
   /** The work's registry dir, where its attempt evidence and logs live. */
   dir: string;
   /** The activity stamp of the previous observation (null = baseline pending). */

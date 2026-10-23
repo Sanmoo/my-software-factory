@@ -2,7 +2,7 @@ import { createGitHubAdapter, type CommandRunner, type GitHubTrackerAdapter } fr
 import { GitHubSim, type SimIssue } from "./github-sim.js";
 import type { ContractFaults, ContractHarness, ContractIssue } from "./contract.js";
 import type { IssueRef, ReadCost, TrackerPort } from "./port.js";
-import { legacyTrackerPort } from "./legacy-bridge.js";
+import type { TicketTracker } from "./expanded-port.js";
 
 /**
  * The real adapter over the in-memory REST simulator, shared by the contract
@@ -42,9 +42,9 @@ export class SimulatedRepoHarness implements ContractHarness {
     return this.adapter;
   }
 
-  /** The old TrackerPort shape, through the transitional bridge. */
-  getAdapter(): TrackerPort {
-    return legacyTrackerPort(this.getExpandedAdapter(), this.getExpandedAdapter());
+  /** The adapter itself: it serves the legacy port and the expanded contract. */
+  getAdapter(): TrackerPort & TicketTracker {
+    return this.getExpandedAdapter();
   }
 
   /** The REST-based read cost, counted from the recorded `gh api` calls. */

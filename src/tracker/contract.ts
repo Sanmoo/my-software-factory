@@ -7,6 +7,7 @@ import type {
   ReadCost,
   TrackerPort,
 } from "./port.js";
+import type { TicketTracker } from "./expanded-port.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
@@ -34,8 +35,10 @@ export interface ContractHarness {
   readonly workerAccount: string;
   readonly claimedLabel: string;
 
-  /** The adapter under test (re-created by reset, when the harness supports it). */
-  getAdapter(): TrackerPort;
+  /** The adapter under test (re-created by reset, when the harness supports it).
+   *  It serves the legacy port and the expanded ticket contract: the same
+   *  adapter, never a second implementation. */
+  getAdapter(): TrackerPort & TicketTracker;
   /** Per-test isolation: the fake starts empty; the real adapter is a no-op. */
   reset(): Promise<void>;
   /** Create an open issue (optionally with labels, optionally already closed). */

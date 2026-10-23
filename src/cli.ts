@@ -7,7 +7,6 @@ import { parseCliArgs } from "./cli-args.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
-import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
@@ -18,8 +17,8 @@ import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
-import type { TrackerPort } from "./tracker/port.js";
-import type { GitWork } from "./git/port.js";
+import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
+import type { ExpandedGitWork } from "./git/port.js";
 import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
@@ -41,12 +40,14 @@ import type { Notifier } from "./notify/port.js";
 /** Test-only injection points: the seams tests replace with fakes. The
  * production wiring (`msf run`) passes none of them. */
 export interface WiredSeams {
-  /** The tracker adapter; default is the real GitHub adapter (keyring boot check). */
-  tracker?: TrackerPort;
+  /** The ticket adapter; default is the real GitHub adapter (keyring boot check). */
+  tickets?: TicketTracker;
+  /** The PR/code-host adapter; default is the same real GitHub adapter. */
+  pullRequests?: PullRequestTracker;
   /** The worker runtime; default is the real Sandcastle runtime. */
   runtime?: WorkerRuntime;
   /** The git host; default is the real local git (clone/fetch/branch). */
-  git?: GitWork;
+  git?: ExpandedGitWork;
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
   /** The liveness probe; default is the real read-only Docker probe over the
@@ -72,15 +73,17 @@ export async function wireRunDeps(
   options: WireRunOptions = {},
 ): Promise<LoopDeps> {
   const seams = options.seams ?? {};
-  let tracker = seams.tracker;
-  if (tracker === undefined) {
-    // Production speaks the old TrackerPort through the transitional bridge;
-    // the real adapter itself serves the expanded ticket/PR contracts.
+  let tickets = seams.tickets;
+  let pullRequests = seams.pullRequests;
+  if (tickets === undefined || pullRequests === undefined) {
+    // The real adapter serves both expanded ports: GitHub owns the issues and
+    // the PRs of a GitHub-selected Work (issue 124/126).
     const githubTracker = await createGitHubAdapter({
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
     });
-    tracker = legacyTrackerPort(githubTracker, githubTracker);
+    tickets ??= githubTracker;
+    pullRequests ??= githubTracker;
   }
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
@@ -90,7 +93,8 @@ export async function wireRunDeps(
   const probe = seams.probe ?? workspaceLivenessProbe(workspace);
   return {
     config,
-    tracker,
+    tickets,
+    pullRequests,
     runtime,
     git,
     workspace,
@@ -253,8 +257,8 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // themselves are the same REST reads the sweep does, and the command
   // writes NOTHING to the tracker. Without the bot credential in the
   // keyring, status fails with the same clear boot message as run.
-  const tracker = await createGitHubAdapter({ account: config.workerGhAccount });
-  const view = await deriveStatus(tracker, config, layout);
+  const tickets = await createGitHubAdapter({ account: config.workerGhAccount });
+  const view = await deriveStatus(tickets, config, layout);
   console.log(renderStatus(view, { all: args.all }));
 }
 

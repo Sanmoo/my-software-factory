@@ -1,3 +1,5 @@
+import { issueRefOf } from "../tracker/identity.js";
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -91,9 +93,10 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const deps: LoopDeps = {
       config: makeConfig(),
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       log: (line) => logs.push(line),
     };
@@ -148,7 +151,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     assert.ok(existsSync(workDir(layout, REPO, 4)), "the parked work's dir was not moved");
     const claimed = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(claimed.known && claimed.value.labels.includes(DEFAULT_LABELS.claimed), "the mark survives");
-    assert.ok(engine.lastPool.some((entry) => entry.ref.number === 3), "the sweep continued normally");
+    assert.ok(engine.lastPool.some((entry) => issueRefOf(entry.work.ticket).number === 3), "the sweep continued normally");
 
     // The next tick with the same leftovers is silent.
     await engine.deriveAndAct();
@@ -176,7 +179,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     const result = await runOnce(deps);
 
     assert.equal(result.reconciliation.unbackedClaims.length, 1);
-    assert.equal(result.reconciliation.unbackedClaims[0]?.ref.number, 5);
+    assert.equal(issueRefOf(result.reconciliation.unbackedClaims[0]!.work.ticket).number, 5);
     assert.equal(result.reconciliation.unmarkedReservations.length, 0);
   });
 });

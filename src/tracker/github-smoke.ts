@@ -8,9 +8,11 @@ import {
   ghCliEnv,
   readGhToken,
   type CommandRunner,
+  type GitHubTrackerAdapter,
 } from "./github-adapter.js";
 import { type ContractHarness, type ContractIssue } from "./contract.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
+import type { TicketTracker } from "./expanded-port.js";
 import { runSmokeCycle } from "./smoke-cycle.js";
 import { DEFAULT_LABELS } from "../config.js";
 
@@ -123,7 +125,7 @@ class RealGithubHarness implements ContractHarness {
     readonly repo: string,
     readonly workerAccount: string,
     readonly claimedLabel: string,
-    readonly adapter: TrackerPort,
+    readonly adapter: GitHubTrackerAdapter,
     token: string,
     runner: CommandRunner = defaultCommandRunner,
   ) {
@@ -131,7 +133,7 @@ class RealGithubHarness implements ContractHarness {
     this.runner = runner;
   }
 
-  getAdapter(): TrackerPort {
+  getAdapter(): TrackerPort & TicketTracker {
     return this.adapter;
   }
 

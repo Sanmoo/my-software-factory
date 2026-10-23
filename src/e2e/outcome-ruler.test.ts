@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -125,9 +126,10 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       git,
       deps: {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
-        git,
+        git: expandedGitWorkOf(git),
         workspace: layout,
         log: () => {},
         wait: async () => {},
@@ -205,9 +207,10 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       });
       const deps: LoopDeps = {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime: new FakeWorkerRuntime({ tracker, outcomes: ["clean-without-pr"] }),
-        git,
+        git: expandedGitWorkOf(git),
         workspace: layout,
         log: () => {},
       };

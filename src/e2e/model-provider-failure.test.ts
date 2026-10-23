@@ -24,6 +24,7 @@ import {
 import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
 import { seedSession } from "./session-fixtures.js";
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
@@ -127,9 +128,10 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       waits,
       deps: {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
-        git: new FakeGitWork(),
+        git: expandedGitWorkOf(new FakeGitWork()),
         workspace: layout,
         log: () => {},
         wait: waits.wait,

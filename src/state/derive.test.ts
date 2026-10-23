@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
+import { githubRepository, githubSelections, githubTicket, issueRefOf } from "../tracker/identity.js";
 import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
   BLOCKER_READS_IN_FLIGHT,
@@ -24,7 +25,7 @@ const derivePool = async (
   port: FakeTrackerAdapter,
   repos: string[],
   labels = DEFAULT_LABELS,
-) => (await deriveTrackerState(port, repos, labels)).pool;
+) => (await deriveTrackerState(port, githubSelections(repos), labels)).pool;
 
 /** A tracker whose blocker read costs real time, as the REST one does: the
  *  derivation must not await them one at a time (issue 147). `unreadable`
@@ -65,7 +66,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => entry.ref),
+      pool.map((entry) => issueRefOf(entry.work.ticket)),
       [{ repo: "Sanmoo/a", number: 1 }],
     );
   });
@@ -133,7 +134,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => entry.ref.number),
+      pool.map((entry) => issueRefOf(entry.work.ticket).number),
       [2, 3, 1],
     );
   });
@@ -156,10 +157,10 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     seedIssue(tracker, { repo: "Sanmoo/a", number: 90 }); // the open blocker
     tracker.addBlocker({ repo: "Sanmoo/a", number: 1 }, { repo: "Sanmoo/a", number: 90 });
 
-    const state = await deriveTrackerState(tracker, ["Sanmoo/a"], DEFAULT_LABELS);
+    const state = await deriveTrackerState(tracker, githubSelections(["Sanmoo/a"]), DEFAULT_LABELS);
 
     assert.deepEqual(
-      state.pool.map((entry) => entry.ref.number),
+      state.pool.map((entry) => issueRefOf(entry.work.ticket).number),
       [2, 3, 4, 5, 6, 8, 9, 10, 11, 12],
       "a blocked or unreadable work is still out, and the rest keep their order",
     );
@@ -176,7 +177,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      new Set(pool.map((entry) => entry.ref.repo)),
+      new Set(pool.map((entry) => issueRefOf(entry.work.ticket).repo)),
       new Set(["Sanmoo/a", "Sanmoo/b"]),
     );
   });
@@ -198,7 +199,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => entry.ref.number),
+      pool.map((entry) => issueRefOf(entry.work.ticket).number),
       [1, 5],
       "only the plain ready issue and the closed-PR issue are eligible",
     );
@@ -237,13 +238,13 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     seedIssue(adapter, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.claimed] });
     await adapter.claim({ repo: REPO, number: 1 }, "bot", DEFAULT_LABELS.ready);
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS);
 
     assert.deepEqual(state.pool, []);
     assert.equal(state.unbackedClaims.length, 1);
-    assert.equal(state.unbackedClaims[0]?.ref.number, 1);
+    assert.equal(issueRefOf(state.unbackedClaims[0]!.work.ticket).number, 1);
     assert.equal(
-      state.unbackedClaims[0]?.command,
+      state.unbackedClaims[0]?.command!,
       `gh issue edit 1 --repo ${REPO} --add-label ${DEFAULT_LABELS.ready} --remove-label ${DEFAULT_LABELS.claimed} --remove-assignee bot`,
     );
     const line = renderUnbackedClaim(state.unbackedClaims[0]!);
@@ -256,24 +257,24 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     seedIssue(adapter, { repo: REPO, number: 10, labels: [DEFAULT_LABELS.claimed] });
     await adapter.claim({ repo: REPO, number: 10 }, "humano");
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS);
 
-    assert.match(state.unbackedClaims[0]!.command, /--remove-assignee humano/);
+    assert.match(state.unbackedClaims[0]!.command!, /--remove-assignee humano/);
   });
 
   test("the blocked label is a claim mark too — an unbacked block is reported like an unbacked claim", async () => {
     seedIssue(adapter, { repo: REPO, number: 2, labels: [DEFAULT_LABELS.blocked] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS);
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS);
 
     assert.equal(state.unbackedClaims.length, 1);
-    assert.match(state.unbackedClaims[0]!.command, /--remove-label agent-blocked/);
+    assert.match(state.unbackedClaims[0]!.command!, /--remove-label agent-blocked/);
   });
 
   test("a claim with a reservation in this workspace is normal — never a leftover", async () => {
     seedIssue(adapter, { repo: REPO, number: 3, labels: [DEFAULT_LABELS.claimed] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(3));
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, keys(3));
 
     assert.deepEqual(state.unbackedClaims, []);
     assert.deepEqual(state.unmarkedReservations, []);
@@ -282,7 +283,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("a work this process is launching right now is never reported", async () => {
     seedIssue(adapter, { repo: REPO, number: 4, labels: [DEFAULT_LABELS.claimed] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, new Set(), keys(4));
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, new Set(), keys(4));
 
     assert.deepEqual(state.unbackedClaims, []);
     assert.deepEqual(state.unmarkedReservations, []);
@@ -291,10 +292,10 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("an unmarked reservation is reported as a fact, without a command", async () => {
     seedIssue(adapter, { repo: REPO, number: 5, labels: ["outra-etiqueta"] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(5));
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, keys(5));
 
     assert.equal(state.unmarkedReservations.length, 1);
-    assert.equal(state.unmarkedReservations[0]?.ref.number, 5);
+    assert.equal(issueRefOf(state.unmarkedReservations[0]!.work.ticket).number, 5);
     const line = renderUnmarkedReservation(state.unmarkedReservations[0]!);
     assert.match(line, /unmarked reservation: Sanmoo\/a#5/);
     assert.match(line, /no factory mark/);
@@ -304,17 +305,17 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   test("a released reservation (pool label back) is normal — never reported", async () => {
     seedIssue(adapter, { repo: REPO, number: 6, labels: [DEFAULT_LABELS.ready] });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(6));
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, keys(6));
 
     assert.deepEqual(state.unmarkedReservations, []);
     assert.deepEqual(state.unbackedClaims, []);
-    assert.deepEqual(state.pool.map((entry) => entry.ref.number), [6]);
+    assert.deepEqual(state.pool.map((entry) => issueRefOf(entry.work.ticket).number), [6]);
   });
 
   test("an unmarked reservation whose issue is closed is the done derivation's business, not a leftover", async () => {
     seedIssue(adapter, { repo: REPO, number: 7, state: "closed", stateReason: "completed" });
 
-    const state = await deriveTrackerState(adapter, repos, DEFAULT_LABELS, keys(7));
+    const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, keys(7));
 
     assert.deepEqual(state.unmarkedReservations, []);
   });
@@ -324,7 +325,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     seedIssue(adapter, { repo: REPO, number: 9, labels: [] });
 
     const before = adapter.readCost();
-    const state = await deriveTrackerState(adapter, [REPO, "Sanmoo/b"], DEFAULT_LABELS, keys(9));
+    const state = await deriveTrackerState(adapter, githubSelections([REPO, "Sanmoo/b"]), DEFAULT_LABELS, keys(9));
     const after = adapter.readCost();
 
     assert.equal(state.unbackedClaims.length, 1);
@@ -338,7 +339,11 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
   let adapter: FakeTrackerAdapter;
   const REPO = "Sanmoo/a";
   const ref = (number: number) => ({ repo: REPO, number });
-  const entry = (number: number) => ({ ref: ref(number), dir: `/ws/trabalhos/${REPO}#${number}` });
+  const work = (number: number) => ({
+    ticket: githubTicket(REPO, number),
+    destination: githubRepository(REPO),
+  });
+  const entry = (number: number) => ({ work: work(number), dir: `/ws/trabalhos/${REPO}#${number}` });
   /** The layout the fake dirs live under; the non-fall states never probe it. */
   const layout: WorkspaceLayout = {
     root: "/ws",
@@ -353,6 +358,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
 
   async function deriveOne(number: number) {
     const [derived] = await deriveReserved(
+      adapter,
       adapter,
       [entry(number)],
       DEFAULT_LABELS,
@@ -508,7 +514,8 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     async function deriveFrom(path: string, number: number, inFlight?: Set<string>) {
       const [derived] = await deriveReserved(
         adapter,
-        [{ ref: ref(number), dir: path }],
+        adapter,
+        [{ work: work(number), dir: path }],
         DEFAULT_LABELS,
         "bot",
         layout,

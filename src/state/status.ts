@@ -6,7 +6,8 @@ import {
   type AttemptWithoutOwnOutcome,
   type RegistryView,
 } from "../pool/registry.js";
-import type { TrackerPort } from "../tracker/port.js";
+import type { TicketTracker } from "../tracker/expanded-port.js";
+import { githubSelections } from "../tracker/identity.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -93,7 +94,7 @@ export interface StatusView {
  * another one — never a CLI flag.
  */
 export async function deriveStatus(
-  tracker: TrackerPort,
+  tickets: TicketTracker,
   config: Config,
   layout: WorkspaceLayout,
   probe: LivenessProbe = workspaceLivenessProbe(layout),
@@ -106,8 +107,8 @@ export async function deriveStatus(
     ...registry.lastOutcome.map((entry) => entry.key),
   ]);
   const state = await deriveTrackerState(
-    tracker,
-    config.repos,
+    tickets,
+    githubSelections(config.repos),
     config.labels,
     reservations,
   );

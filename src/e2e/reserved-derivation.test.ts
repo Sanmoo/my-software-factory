@@ -1,9 +1,15 @@
+import { issueRefOf, githubRepository, githubTicket, type WorkIdentity } from "../tracker/identity.js";
+import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
+import { reservationRecordOf, reserveWork, readReservation } from "../pool/reservation.js";
+import { activePullRequest, readPrAssociations } from "../pool/pr-association.js";
+import { workKeyOf } from "../pool/work-key.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -114,9 +120,10 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       git,
       deps: {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
-        git,
+        git: expandedGitWorkOf(git),
         workspace: layout,
         log: () => {},
         wait: async () => {},
@@ -427,7 +434,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     // Sweep #2 (--once): absence of a session is an interruption, not a
     // failure — the SAME attempt 1 is recovered and launched, the claim held.
     const sweep = await runOnce(deps);
-    const interrupted = sweep.reserved.find((decision) => decision.ref.number === 7);
+    const interrupted = sweep.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 7);
     assert.ok(interrupted, "the orphan was derived as a reserved work");
     assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption (issue 123)");
     assert.ok(
@@ -440,4 +447,76 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.ok((await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.claimed), "the claim is held (re-asserted)");
     assert.ok(!(await labelsOf(tracker, 7)).includes(DEFAULT_LABELS.ready), "never released back to the pool");
   });
+  /** A call-recording view of the same adapter: the two expanded ports stay
+   *  separate seams even when one adapter serves both. */
+  function recordingPort<T extends object>(port: T, calls: string[]): T {
+    return new Proxy(port, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver) as unknown;
+        if (typeof value === "function") {
+          if (typeof property === "string") calls.push(property);
+          return (value as (...args: unknown[]) => unknown).bind(target);
+        }
+        return value;
+      },
+    });
+  }
+
+  // ---- issue 126: the orchestration crosses the expanded contracts ----
+
+  test("a reserved Work keeps its own source when the configured selection changes — no implicit tracker migration", async () => {
+    const config = { ...makeConfig(1), repos: ["Sanmoo/other"] };
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+    const work: WorkIdentity = {
+      ticket: githubTicket(REPO, 7),
+      destination: githubRepository(REPO),
+    };
+    reserveWork(layout, reservationRecordOf(work, { title: "reserved before the configuration changed" }));
+    seedIssue(tracker, { repo: REPO, number: 7, state: "closed", stateReason: "completed" });
+
+    const sweep = await runOnce(deps);
+
+    const derived = sweep.reserved.find((decision) => workKeyOf(decision.work) === workKeyOf(work));
+    assert.ok(derived, "the Work is derived from its reservation, not from the current selection");
+    assert.equal(derived.state, "done", "the ticket facts are read from the Work's own source");
+    assert.equal(sweep.pool.length, 0, "the configured selection contributes nothing");
+    assert.equal(tracker.claimedOrder.length, 0, "no claim is invented on the new selection");
+
+    const archived = readdirSync(layout.archive, { recursive: true, encoding: "utf8" });
+    assert.ok(
+      archived.some((name) => name.includes(`${workKeyOf(work)}-`)),
+      "the Work is archived under its own registry key",
+    );
+  });
+
+  test("ticket facts and PR facts travel through their own expanded ports", async () => {
+    const config = makeConfig(1);
+    const { tracker, deps, runtime } = makeFactory(config, ["pr-open"]);
+    seedIssue(tracker, { repo: REPO, number: 9, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const ticketCalls: string[] = [];
+    const prCalls: string[] = [];
+    const tickets: TicketTracker = recordingPort(tracker, ticketCalls);
+    const pullRequests: PullRequestTracker = recordingPort(tracker, prCalls);
+
+    const sweep = await runOnce({ ...deps, tickets, pullRequests });
+
+    assert.equal(runtime.launched.length, 1, "the normal cycle still launches");
+    assert.ok(ticketCalls.includes("listOpenTickets"), "the pool is selected through the ticket port");
+    assert.ok(ticketCalls.includes("claimTicket"), "the claim is a ticket fact");
+    assert.ok(ticketCalls.includes("readTicket"), "the ticket snapshot is read through the ticket port");
+    assert.ok(prCalls.includes("readPullRequestFeedback"), "the PR feedback is read through the PR port");
+    assert.ok(!ticketCalls.includes("readPullRequestFeedback"), "the ticket port never carries PR facts");
+    assert.ok(!prCalls.includes("claimTicket"), "the PR port never carries claim facts");
+
+    const dir = workDir(layout, REPO, 9);
+    const reservation = readReservation(dir);
+    assert.equal(reservation.state, "persisted", "the reservation records the Work's own facts");
+    assert.ok(reservation.state === "persisted" && reservation.record.ticket.provider === "github");
+    const associations = readPrAssociations(dir);
+    assert.equal(associations.state, "persisted", "the collection persists the PR association");
+    assert.ok(sweep.collected[0]?.prConfirmed);
+    assert.ok(associations.state === "persisted" && activePullRequest(associations.record) !== null);
+  });
+
 });

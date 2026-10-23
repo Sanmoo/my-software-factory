@@ -73,6 +73,18 @@ export function readPrAssociations(dir: string): PrAssociationsFacts {
 }
 
 /**
+ * The PR the Work currently has, as read from its registry dir: null covers
+ * both "no association recorded" and "the record cannot be trusted". The
+ * caller keeps the distinction by reading {@link readPrAssociations} itself
+ * when it must report the unknown; a PR lookup may fall back to the code
+ * host's own linkage, which is never an invented absence.
+ */
+export function activePullRequestOf(dir: string): PullRequestIdentity | null {
+  const facts = readPrAssociations(dir);
+  return facts.state === "persisted" ? activePullRequest(facts.record) : null;
+}
+
+/**
  * Record the PR of an attempt. Idempotent for the same Work and PR (a
  * feedback/repair round adds nothing); a new PR becomes the active one and the
  * previous one stays as history. An unreadable file or a file of another Work
