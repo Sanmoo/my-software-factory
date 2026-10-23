@@ -306,6 +306,7 @@ const HOLDS_WHILE_LIVENESS_UNKNOWN: ReadonlySet<ReservedDerivation["state"]> = n
   "fall",
   "interrupted",
   "model-provider-failure",
+  "continuity-paused",
   "rejected",
   "repair-fall-blocked",
   "repair-blocked",

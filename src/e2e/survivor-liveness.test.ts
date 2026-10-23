@@ -716,11 +716,25 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     // A retomada: blocked with a human answer after the marker.
     seedIssue(tracker, { repo: REPO, number: 72, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
     tracker.addComment({ repo: REPO, number: 72 }, "Sanmoo", "go ahead, the API is approved");
-    for (const number of [70, 71, 72]) {
+    // A continuity pause waiting for the operator (issue 119).
+    seedIssue(tracker, { repo: REPO, number: 73, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+    for (const number of [70, 71, 72, 73]) {
       const target = workDir(layout, REPO, number);
       mkdirSync(target, { recursive: true });
       writeFileSync(join(target, "log-1.jsonl"), "{}\n", "utf8");
     }
+    writeFileSync(
+      join(workDir(layout, REPO, 73), "pausa.json"),
+      JSON.stringify({
+        version: 1,
+        work: { repo: REPO, number: 73 },
+        attempt: 1,
+        reason: "session-missing",
+        detail: "the recorded session is gone",
+        at: NOW,
+      }),
+      "utf8",
+    );
 
     const sweep = await runOnce(deps);
 
@@ -728,6 +742,11 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.equal(runtime.launched.length, 0);
     assert.deepEqual(tracker.claimedOrder, [], "no resume swapped labels during the outage");
     assert.deepEqual(await labelSet(tracker, 72), [DEFAULT_LABELS.blocked], "the retomada stays parked");
+    assert.deepEqual(
+      await labelSet(tracker, 73),
+      [DEFAULT_LABELS.claimed],
+      "a continuity pause publishes no block over a worker Docker cannot rule out",
+    );
   });
 
   test("a slot freed by a collection does not launch while liveness is unknown", async () => {

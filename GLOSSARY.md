@@ -130,7 +130,7 @@ Reading the real state (the remote branch, the PR, the conversation, the labels)
 _Avoid_: Verification, when no external state is read.
 
 **Continuity pause**:
-The persisted wait for the operator when an interrupted attempt cannot be continued safely — its session is missing, unreadable or of another identity, or an interrupted effect stayed unknown. It spends no attempt and no recovery, survives a restart, asks once, and is not the Docker-unavailability suspension.
+The persisted wait for the operator when an interrupted attempt cannot be continued safely — its session is missing, unreadable or of another identity, or an interrupted effect stayed unknown. It spends no attempt and no recovery and survives a restart; it is not the Docker-unavailability suspension.
 The issue is marked blocked while it waits, but the cause is the session or an unknown effect, not a fall — the pause asks once and spends nothing.
 _Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt.
 

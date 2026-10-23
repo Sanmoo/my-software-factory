@@ -369,8 +369,10 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }
     }
+    // Only THIS attempt's pause: one left by an attempt that has since
+    // advanced is history, and must not hide the current attempt's state.
     const pause = readPause(dir);
-    if (pause !== null) continuityPauses.push({ key, pause });
+    if (pause !== null && pause.attempt === lastAttempt) continuityPauses.push({ key, pause });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);
