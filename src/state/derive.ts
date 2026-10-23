@@ -474,9 +474,9 @@ export async function deriveReserved(
  *  unreadable record would silently retarget a feedback or repair read. */
 export function workPullRequest(
   work: WorkIdentity,
-  known: PullRequestRecord | null = null,
+  seen: PullRequestRecord | null = null,
 ): WorkPullRequest {
-  return { work, pullRequest: known?.identity ?? null };
+  return { work, pullRequest: seen?.identity ?? null };
 }
 
 async function deriveReservedWork(

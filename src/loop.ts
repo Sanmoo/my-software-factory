@@ -523,6 +523,10 @@ export class SweepEngine {
   private livenessEpisode: UnavailableEpisode | null = null;
   /** The works whose duplicate containers were already reported. */
   private announcedDuplicates: ReadonlySet<string> = new Set();
+  /** Live containers whose reservation names no Work this composition can
+   *  address: said once, and once more when the worker is gone (issue 126) —
+   *  never a line per tick. */
+  private readonly heldSurvivors = new Set<string>();
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -1037,17 +1041,34 @@ export class SweepEngine {
       await this.reconcileSurvivorExit(key, record);
     }
 
+    const live = new Set(survivorWorkKeys(workers, local));
+
+    // A held container whose worker is gone: the reservation still names no
+    // Work this composition serves, so the end is said once — the slot it
+    // occupied is free, the decision stays human.
+    for (const key of [...this.heldSurvivors]) {
+      if (live.has(key)) continue;
+      this.heldSurvivors.delete(key);
+      this.log(
+        `the held worker of ${key} is gone; its reservation still names no Work this composition can serve — ` +
+          "a human must settle it",
+      );
+    }
+
     // Recognition: a work carried by a container this process did not launch.
-    for (const key of survivorWorkKeys(workers, local)) {
+    for (const key of live) {
       if (this.survivors.has(key)) continue;
       const reserved = reservations.get(key);
       if (reserved === undefined) {
+        if (this.heldSurvivors.has(key)) continue;
+        this.heldSurvivors.add(key);
         this.log(
-          `a live container carries ${key}, but this workspace has no readable reservation for it — ` +
-            "it occupies a slot and no substitute is launched; the reservation needs a human",
+          `a live container carries ${key}, but this workspace has no reservation that names a Work this ` +
+            "composition serves — it occupies a slot and no substitute is launched; the reservation needs a human",
         );
         continue;
       }
+      this.heldSurvivors.delete(key);
       const { work, dir } = reserved;
       const attempt = await readLastAttempt(dir);
       this.survivors.set(key, {
@@ -1112,7 +1133,7 @@ export class SweepEngine {
         `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
           "no new launch for it, no owner chosen and nothing ended; a human decision is needed",
       );
-      const work = reservations.get(duplicate.key)?.work ?? workOfKeyForNotice(duplicate.key);
+      const work = reservations.get(duplicate.key)?.work ?? legacyWorkOfKey(duplicate.key);
       if (work === null) {
         this.log(
           `no intervention notice for duplicate ${duplicate.key}: this workspace has no readable reservation ` +
@@ -2745,11 +2766,11 @@ export class SweepEngine {
 
 type WakeEvent = "worker-end" | "tick" | "abort";
 
-/** A GitHub key carries its readable number, so a duplicate container of a
- *  work without a readable reservation can still be named to the operator.
- *  A non-GitHub key needs the reservation for its readable key — none is
- *  invented from the stable id. */
-function workOfKeyForNotice(key: string): WorkIdentity | null {
+/** The GitHub Work a legacy-shaped registry key anchors — enough to NAME a
+ *  worker or a duplicate whose reservation is unreadable. A non-GitHub key
+ *  needs the reservation for its readable ticket key: none is invented from
+ *  the stable id. */
+function legacyWorkOfKey(key: string): WorkIdentity | null {
   const anchor = anchorOfKey(key);
   return anchor === null ? null : legacyWorkOf(anchor);
 }
@@ -2757,7 +2778,7 @@ function workOfKeyForNotice(key: string): WorkIdentity | null {
 /** The address the worker-facing runtime seams still speak (issue 126 leaves
  *  them for #127). A key that shape cannot express names no worker to end. */
 function workerRefOfKey(key: string): IssueRef | null {
-  const work = workOfKeyForNotice(key);
+  const work = legacyWorkOfKey(key);
   return work === null ? null : issueRefOfTicket(work.ticket);
 }
 
