@@ -36,8 +36,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   const liveness = view.liveness;
   // A work whose attempt ended by a model provider failure is NOT an
   // interruption of the agent (issue 144): the model provider section owns its
-  // state,
-  // so it is not repeated under the liveness/interruption wording.
+  // state, so it is not repeated under the liveness/interruption wording.
   const modelProviderKeys = new Set(view.registry.modelProvider.map((entry) => entry.key));
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 

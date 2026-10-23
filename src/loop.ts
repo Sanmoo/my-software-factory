@@ -76,6 +76,7 @@ import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionS
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
+  isModelProviderRetryGranted,
   markModelProviderHelpRequested,
   modelProviderDecision,
   readModelProviderLedger,
@@ -325,7 +326,9 @@ function renderPoolSummary(
 }
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
- *  repair — or the recovery of an interrupted attempt (issue 123). */
+ *  repair — or the continuation of an attempt that ended without its own
+ *  outcome: the recovery of an interruption (issue 123) or the retry of a
+ *  model provider failure (issue 144). */
 type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 interface Launchable {
@@ -333,8 +336,9 @@ interface Launchable {
   kind: LaunchKind;
   /** The ticket's title when the pool supplied it — presentation of the reservation. */
   title?: string;
-  /** ISO 8601 — age-based priority inside each group; null for a recovery,
-   *  which waits for nothing human and is launched before the parked rounds. */
+  /** ISO 8601 — age-based priority inside each group; null for a recovery or a
+   *  model provider retry, which wait for nothing human and are launched before
+   *  the parked rounds. */
   createdAt: string | null;
   /** The work's linked PR when the derivation saw one (the retomada reopens a closed one). */
   pr: PullRequest | null;
@@ -344,7 +348,8 @@ interface Launchable {
   repair?: RepairTrigger;
   /** The unpublished attempt this repair takes over (issue 112), when resuming. */
   resuming?: RepairAttempt | null;
-  /** The interrupted attempt a recovery continues — the SAME number (issue 123). */
+  /** The attempt a recovery or a model provider retry continues — the SAME
+   *  number (issues 123, 144). */
   attempt?: number;
 }
 
@@ -1357,20 +1362,19 @@ export class SweepEngine {
   ): Promise<ModelProviderDecision> {
     const { config, tracker, workspace } = this.deps;
     const ledger = await readModelProviderLedger(dir);
-    const settled = isModelProviderFailureSettled(ledger, attempt, failure);
     const decision = modelProviderDecision(ledger, config.modelProvider, attempt, failure);
 
     // The attempt's own log carries the event BEFORE the ledger is written: a
     // death between the two leaves the evidence (at worst a repeated line),
     // never a silent loss of the failure or of the retry it granted.
-    if (!settled) {
+    const alreadyGranted = isModelProviderRetryGranted(ledger, attempt, failure);
+    if (!isModelProviderFailureSettled(ledger, attempt, failure)) {
       appendAttemptEvent(dir, attempt, {
         event: "model-provider-failure",
         message: failure.message,
         failureIdentity: failure.identity,
       });
     }
-    const alreadyGranted = settled && ledger.last?.granted === true;
     if (decision.decision === "retry" && !alreadyGranted) {
       appendAttemptEvent(dir, attempt, {
         event: "model-provider-retry",

@@ -17,6 +17,7 @@ import {
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import {
+  isModelProviderFailureSettled,
   readModelProviderLedger,
   type ModelProviderLedger,
   type ModelProviderSettlement,
@@ -351,9 +352,9 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // interruption settles it (the attempt's log stays as the history).
     const modelProviderLedger = await readModelProviderLedger(dir);
     const last = modelProviderLedger.last;
-    if (last !== null && last.attempt === lastAttempt && ownOutcomeRecord(record, lastAttempt) === null) {
+    if (last !== null && ownOutcomeRecord(record, lastAttempt) === null) {
       const ending = await readTurnModelProviderError(dir, lastAttempt);
-      if (ending !== null && ending.identity === last.failureIdentity) {
+      if (ending !== null && isModelProviderFailureSettled(modelProviderLedger, lastAttempt, ending)) {
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }
     }
