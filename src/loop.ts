@@ -1684,6 +1684,27 @@ function logLaunchFailure(log: (message: string) => void, run: Promise<void>): v
 }
 
 /**
+ * A failed sweep never takes the continuous factory down (issue 158): a
+ * tracker read that GitHub did not answer — or any other error escaping the
+ * derivation — ends the sweep, not the factory. Nothing of the sweep is
+ * applied, so the pooled work and the parked queue still hold the PREVIOUS
+ * sweep's state; the caller launches nothing from them and the next tick
+ * repeats the derivation from disk + tracker alone. `false` = failed sweep.
+ */
+async function sweepOrLog(
+  engine: SweepEngine,
+  log: (message: string) => void,
+): Promise<boolean> {
+  try {
+    await engine.deriveAndAct();
+    return true;
+  } catch (error) {
+    log(`sweep failed: ${describeError(error)} — retrying on the next tick`);
+    return false;
+  }
+}
+
+/**
  * The continuous run (ticket 14): the idle factory keeps sweeping on the
  * fixed tick forever — ending it is a human act (the signal below). The
  * wake is hybrid: end of worker ends the wait immediately (the collection
@@ -1706,8 +1727,9 @@ export async function runForever(
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
-    await engine.deriveAndAct();
-    for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+    if (await sweepOrLog(engine, log)) {
+      for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+    }
 
     for (;;) {
       const event = await engine.waitForWake(tickMs, signal);
@@ -1723,8 +1745,9 @@ export async function runForever(
         // human changes wait for the tick (staleness bounded by the interval).
         continue;
       }
-      await engine.deriveAndAct();
-      for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+      if (await sweepOrLog(engine, log)) {
+        for (const run of engine.fillSlots()) logLaunchFailure(log, run);
+      }
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);

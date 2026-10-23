@@ -140,6 +140,11 @@ resume without intervention; one notice appears after
 `liveness.unavailable-warn-ms` (60 s by default), and every worker and
 reservation is preserved meanwhile.
 
+A sweep that cannot read the tracker says `sweep failed: … — retrying on the
+next tick` and the factory keeps sweeping: it acts on nothing, spends no
+attempt, and the next tick derives from disk + tracker again. Only `--once` and
+`msf status` fail out loud, since a single sweep has no next tick.
+
 ## (c) Status — the trail, factory stopped
 
 ```sh

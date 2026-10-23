@@ -83,6 +83,9 @@ The automatic relaunch of an interrupted attempt, after the configured backoff, 
 **Recovery budget**:
 The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
+**Failed sweep**:
+A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.
+
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
 _Avoid_: Issue completion, when referring only to the factory's delivery.
