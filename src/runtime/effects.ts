@@ -604,7 +604,10 @@ function tokenize(segment: string): string[] {
       continue;
     }
     if (char === "\\" && i + 1 < segment.length) {
-      current += segment[i + 1];
+      // Outside quotes a backslash escapes ANY character, and a backslash before
+      // a newline is a line continuation: the newline is removed, not kept.
+      const escaped = segment[i + 1]!;
+      if (escaped !== "\n") current += escaped;
       i += 1;
       continue;
     }
