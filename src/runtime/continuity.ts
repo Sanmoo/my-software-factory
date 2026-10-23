@@ -81,7 +81,7 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
       pause: pauseOf(deps, "session-identity", "the session-association journal is unreadable"),
     };
   }
-  const link = linkForAttempt(links.links, { repo: deps.ref.repo, number: deps.ref.number }, deps.attempt);
+  const link = linkForAttempt(links.links, deps.ref, deps.attempt);
   if (link === null) {
     // A claim whose worker never started (a death between the claim and the
     // spawn) leaves ZERO attempt evidence: there is no session to lose, so the
@@ -210,9 +210,9 @@ function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, Effect
   const sessionId = randomUUID();
   appendSessionLink(deps.workDir, {
     version: 1,
-    work: { repo: deps.ref.repo, number: deps.ref.number },
+    work: deps.ref,
     attempt: deps.attempt,
-    round: nextRound(links.links, { repo: deps.ref.repo, number: deps.ref.number }, deps.attempt),
+    round: nextRound(links.links, deps.ref, deps.attempt),
     mode: "new",
     sessionId,
     at: nowIso(deps),
@@ -374,7 +374,7 @@ function guardrailState(
 function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sessionId?: string): PauseRecord {
   return {
     version: 1,
-    work: { repo: deps.ref.repo, number: deps.ref.number },
+    work: deps.ref,
     attempt: deps.attempt,
     reason,
     detail,
