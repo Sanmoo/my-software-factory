@@ -216,10 +216,7 @@ function listedContainer(line: string): { id: string; mounts: string } | null {
   return { id: trimmed.slice(0, spaceAt), mounts: trimmed.slice(spaceAt + 1).trim() };
 }
 
-/**
- * The production probe of one workspace: every running container correlated by
- * its work mount, never by the configured worker image.
- */
+/** The probe `msf status` and the operational cycle share for one workspace. */
 export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
   return dockerWorkerProbe({ worksRoot: layout.works });
 }
@@ -262,8 +259,9 @@ function vanished(error: unknown): boolean {
   return /no such (object|container)/i.test(describeError(error));
 }
 
-/** The container IDs of a listing (one per line or whitespace-separated token);
- *  the shell re-renders the screened IDs in this form for the pure parser. */
+/** The container IDs of a listing — the shell re-renders the screened rows in
+ *  this form, so the pure parser reads one listing shape whatever the screen
+ *  selected. */
 function parseContainerIds(listing: string): string[] {
   return listing.split(/\s+/).filter((id) => id !== "");
 }

@@ -71,6 +71,16 @@ function worker(number: number, containerId: string, ageMs = 5 * 60_000): LiveWo
   return { key: `${REPO}#${number}`, containerId, ageMs };
 }
 
+/** One container as `docker inspect` renders it, bound to the work the way the
+ *  runtime binds it. */
+function inspected(id: string, work: string): Record<string, unknown> {
+  return {
+    Id: id,
+    State: { Running: true, StartedAt: new Date().toISOString() },
+    Mounts: [{ Source: work, Destination: "/msf-work" }],
+  };
+}
+
 /** A promise a test resolves by hand — the worker parked in flight, no sleep. */
 function deferred(): { promise: Promise<void>; fire: () => void } {
   let fire: () => void = () => {};
@@ -192,6 +202,25 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     const issue = await tracker.readIssue({ repo: REPO, number });
     assert.ok(issue.known, `issue #${number} exists`);
     return issue.value.labels;
+  }
+
+  /** The cycle over a work Docker reports a worker for: the assertions every
+   *  survivor test shares — no substitute, no claim, no recovery, evidence and
+   *  label untouched. Returns the operator log. */
+  async function survivorSweep(probe: LivenessProbe, number: number): Promise<string[]> {
+    const { tracker, deps, runtime, log } = makeFactory({ config: makeConfig(2), probe });
+    bindTracker(tracker);
+    const target = seedReserved(number, [1]);
+
+    const sweep = await runOnce(deps);
+
+    assert.equal(sweep.launched.length, 0, "a survivor is never replaced by a launch");
+    assert.equal(runtime.launched.length, 0);
+    assert.deepEqual(tracker.claimedOrder, [], "no claim is written for a work already reserved");
+    assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
+    assert.deepEqual(readdirSync(target).sort(), ["log-1.jsonl"], "its attempt's evidence is untouched");
+    assert.deepEqual(await labelSet(tracker, number), [DEFAULT_LABELS.claimed], "its work stays reserved");
+    return log;
   }
 
   test("a survivor seen after a restart keeps the work reserved: no substitute, no new attempt, no recovery spent", async () => {
@@ -529,32 +558,18 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
   });
 
   test("a worker launched before the image tag moved is a survivor — no substitute, no recovery, no attempt spent (issue 160)", async () => {
-    const config = makeConfig(2);
     const work = join(layout.works, `${REPO}#61`);
     const containerId = "d".repeat(64);
     const shell = fakeDocker({
       listing: `${containerId} ${work},/var/run/docker.sock`,
-      inspect: JSON.stringify([
-        {
-          Id: containerId,
-          State: { Running: true, StartedAt: new Date().toISOString() },
-          Mounts: [{ Source: work, Destination: "/msf-work" }],
-        },
-      ]),
+      inspect: JSON.stringify([inspected(containerId, work)]),
     });
-    const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
-    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
-    bindTracker(tracker);
-    const target = seedReserved(61, [1]);
 
-    const sweep = await runOnce(deps);
+    const log = await survivorSweep(
+      dockerWorkerProbe({ worksRoot: layout.works, run: shell.run }),
+      61,
+    );
 
-    assert.equal(sweep.launched.length, 0, "a survivor is never replaced by a launch");
-    assert.equal(runtime.launched.length, 0);
-    assert.deepEqual(tracker.claimedOrder, []);
-    assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
-    assert.deepEqual(readdirSync(target).sort(), ["log-1.jsonl"], "its attempt's evidence is untouched");
-    assert.deepEqual(await labelSet(tracker, 61), [DEFAULT_LABELS.claimed], "its work stays reserved");
     assert.ok(
       log.some((line) => line.includes("recognizing surviving worker") && line.includes(`${REPO}#61`)),
       "the operation names the worker the moved image reference had hidden",
@@ -562,36 +577,20 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
   });
 
   test("a container the listing did not describe is recognised before its attempt is presumed interrupted (issue 160)", async () => {
-    const config = makeConfig(2);
     const work = join(layout.works, `${REPO}#60`);
     const containerId = "e".repeat(64);
-    const probe = dockerWorkerProbe({
-      worksRoot: layout.works,
-      // The listing rendered no mount source for the container; the inspect —
-      // the authoritative mounts — carries the work mount that makes it ours.
-      run: fakeDocker({
-        listing: containerId,
-        inspect: JSON.stringify([
-          {
-            Id: containerId,
-            State: { Running: true, StartedAt: new Date().toISOString() },
-            Mounts: [{ Source: work, Destination: "/msf-work" }],
-          },
-        ]),
-      }).run,
+    // The listing rendered no mount source for the row: the inspect — the
+    // authoritative mounts — carries the work mount that makes it ours.
+    const shell = fakeDocker({
+      listing: containerId,
+      inspect: JSON.stringify([inspected(containerId, work)]),
     });
-    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
-    bindTracker(tracker);
-    const interrupted = seedReserved(60, [1]);
 
-    const sweep = await runOnce(deps);
+    const log = await survivorSweep(
+      dockerWorkerProbe({ worksRoot: layout.works, run: shell.run }),
+      60,
+    );
 
-    assert.equal(sweep.launched.length, 0, "no substitute is launched over the worker");
-    assert.equal(runtime.launched.length, 0);
-    assert.deepEqual(tracker.claimedOrder, []);
-    assert.ok(!existsSync(join(interrupted, RECOVERY_FILENAME)), "no recovery is spent over a live worker");
-    assert.deepEqual(readdirSync(interrupted).sort(), ["log-1.jsonl"], "the attempt's evidence is preserved");
-    assert.deepEqual(await labelSet(tracker, 60), [DEFAULT_LABELS.claimed], "no block is invented");
     assert.ok(
       log.some((line) => line.includes("recognizing surviving worker") && line.includes(`${REPO}#60`)),
       "the operator sees the worker the listing had left undescribed",

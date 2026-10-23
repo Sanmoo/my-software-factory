@@ -153,11 +153,9 @@ round keeps its own ruler, and a repair fall resumes on the same branch and PR
 A surviving worker keeps its work and its slot; when it ends, the factory
 reconciles the result on its own. Its identity is the work mount, not the
 configured image: a worker launched before the image tag moved stays
-recognised, and a container whose mounts Docker did not render is inspected
-before the factory presumes it stopped. If Docker stops answering, launches
-pause and resume without intervention; one notice appears after
-`liveness.unavailable-warn-ms` (60 s by default), and every worker and
-reservation is preserved meanwhile.
+recognised. If Docker stops answering, launches pause and resume without
+intervention; one notice appears after `liveness.unavailable-warn-ms` (60 s by
+default), and every worker and reservation is preserved meanwhile.
 
 A sweep that cannot read the tracker says `sweep failed: … — retrying on the
 next tick` and the factory keeps sweeping: it acts on nothing, spends no
