@@ -163,7 +163,7 @@ A worker whose container is still alive after the factory process that launched 
 _Avoid_: Orphan, when the worker is alive.
 
 **Liveness unknown**:
-Docker did not answer — a failure, a timeout, an invalid answer, or a worker container whose work this workspace cannot name. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
+Docker did not answer — a failure, a timeout, an invalid answer, a listing that carries no usable mount sources while this workspace holds an attempt with no outcome of its own, or a worker container whose work this workspace cannot name. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
 _Avoid_: No workers, when the answer is missing.
 
 **Duplicate workers**:

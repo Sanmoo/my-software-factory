@@ -25,6 +25,7 @@ import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
+import { fakeDocker } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
@@ -198,14 +199,8 @@ describe("status — derivation on demand + local registry scan", () => {
       State: { Running: true, StartedAt: new Date(Date.now() - (5 - index) * 60_000).toISOString() },
       Mounts: [{ Source: dirOf(index < 2 ? 4 : 5), Destination: "/msf-work" }],
     }));
-    const probe = dockerWorkerProbe({
-      worksRoot: layout.works,
-      run: async (args) => {
-        if (args[0] === "ps") return listing;
-        if (args[0] === "inspect") return JSON.stringify(inspect);
-        throw new Error(`unexpected docker command: ${args.join(" ")}`);
-      },
-    });
+    const shell = fakeDocker({ listing, inspect: JSON.stringify(inspect) });
+    const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, probe);
 
