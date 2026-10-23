@@ -236,11 +236,9 @@ address, with no window opened and no focus taken.
   restart needs no cleanup, and `msf status` stays available. Two names for the
   same file (a hard link) count as one configuration. If the protection cannot
   be established, the run refuses to start rather than run unprotected.
-- **Ctrl-C/SIGTERM do not wait for a whole Work**; the stop mechanism is in
-  (b). A worker whose end cannot be confirmed holds its work — with a
-  diagnostic in the log and in `msf status` — until a later run sees it gone;
-  no duplicate worker is launched over it, and the exclusivity above holds
-  through the whole stop.
+- **Ctrl-C/SIGTERM do not wait for a whole Work**: the stop of (b) also ends
+  the workers a previous run left, and the exclusivity above holds through
+  it. What the stop cannot confirm is in (b) too.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target

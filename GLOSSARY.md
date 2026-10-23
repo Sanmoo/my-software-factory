@@ -75,7 +75,7 @@ One logical try by a worker to carry out a work, counted per work. It survives i
 The verdict of how an attempt ended.
 
 **Interruption**:
-An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container. It is not a failure: it consumes no attempt and never enters the fall ruler. A requested stop also leaves no outcome record, but it is persisted as itself and is not an interruption to charge.
+An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container. It is not a failure: it consumes no attempt and never enters the fall ruler.
 
 **Recovery**:
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
@@ -84,7 +84,8 @@ The automatic relaunch of an interrupted attempt, after the configured backoff, 
 The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
 
 **Requested stop**:
-The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. It preserves the attempt, branch, history and artifacts; it is never a Fall, a Cancellation or a new Attempt, and the resume after it spends no Recovery budget.
+The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
+_Avoid_: shutdown, for the operator's act (the signal handling is the mechanism, not the term).
 
 **Failed sweep**:
 A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.

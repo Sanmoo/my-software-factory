@@ -1,9 +1,5 @@
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
-
+import { runDocker } from "../docker-cli.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, dockerWorkerProbe, type DockerProbeOptions } from "../state/liveness.js";
-
-const execFile = promisify(execFileCallback);
 
 /**
  * The forced stop of a work's workers (issue #146) — the one place that writes
@@ -29,11 +25,7 @@ export function dockerWorkerForceStop(options: DockerProbeOptions): (key: string
     const doomed = await running(key);
     if (doomed.length > 0) {
       try {
-        await execFile("docker", ["rm", "-f", ...doomed], {
-          encoding: "utf8",
-          maxBuffer: 16 * 1024 * 1024,
-          timeout: timeoutMs,
-        });
+        await runDocker(["rm", "-f", ...doomed], timeoutMs);
       } catch {
         // The runtime's own teardown may already be removing the same
         // container ("removal ... already in progress"). The proof is the
