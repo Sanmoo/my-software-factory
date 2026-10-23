@@ -129,11 +129,10 @@ as you want; each round ends with the worker commenting what it addressed).
 You end the factory with Ctrl-C or SIGTERM (exit 0); a second signal skips the
 rest of the cooperative window. A stop the factory cannot confirm says so and
 exits nonzero, leaving the affected works on record for the next run to check.
-Nothing is lost and no recovery is spent: **Requested stop** and **Unconfirmed
-stop** in GLOSSARY.md are the contract. The next `msf run` loads the current
-`msf.yaml` and the compiled code and resumes the SAME attempts — there is no
-hot reload, so compiling and `npm run build:image` stay explicit steps between
-runs.
+**Requested stop** and **Unconfirmed stop** in GLOSSARY.md are the contract.
+The next `msf run` loads the current `msf.yaml` and the compiled code and
+resumes the SAME attempts — there is no hot reload, so compiling and
+`npm run build:image` stay explicit steps between runs.
 
 Restarting after a crash loses nothing either: the next boot re-derives every
 reserved work from disk + tracker alone (a crashed round is an interruption:
