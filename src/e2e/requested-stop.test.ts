@@ -234,6 +234,11 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal(next.launched.length, 1, "the next invocation resumes the reserved work");
     assert.equal(next.launched[0]?.request.attempt, 1, "the SAME attempt, no new one");
     assert.equal(next.launched[0]?.request.branch, workBranchName(1), "the branch is preserved, not recreated");
+    assert.equal(
+      next.launched[0]?.request.resume,
+      true,
+      "the resume reopens the attempt's native Pi session (ADR 0005)",
+    );
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
     assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");
   });

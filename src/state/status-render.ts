@@ -34,10 +34,20 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt ended by a model provider failure is NOT an
-  // interruption of the agent (issue 144): the model provider section owns its
-  // state, so it is not repeated under the liveness/interruption wording.
-  const modelProviderKeys = new Set(view.registry.modelProvider.map((entry) => entry.key));
+  // A work whose attempt ended by a model provider failure (issue 144) or by
+  // the operator's requested stop (issue 146) is NOT an interruption: the
+  // section that owns the cause already names it, so it is not repeated under
+  // the liveness/interruption wording.
+  const explainedKeys = new Set([
+    ...view.registry.modelProvider.map((entry) => entry.key),
+    ...view.registry.recovery
+      .filter(
+        (entry) =>
+          entry.ledger.lastStop?.kind === "stop-requested" ||
+          entry.ledger.lastStop?.kind === "stop-unconfirmed",
+      )
+      .map((entry) => entry.key),
+  ]);
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
   lines.push(
@@ -64,7 +74,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive)",
       liveness.state === "known"
         ? liveness.orphaned
-            .filter((entry) => !modelProviderKeys.has(entry.key))
+            .filter((entry) => !explainedKeys.has(entry.key))
             .map(renderOrphaned)
         : null,
       cap,
@@ -78,7 +88,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       ...section(
         "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell)",
         view.registry.attemptsWithoutOwnOutcome
-          .filter((entry) => !modelProviderKeys.has(entry.key))
+          .filter((entry) => !explainedKeys.has(entry.key))
           .map((entry) => renderInterrupted(entry.key, entry.attempt, entry.recordedAttempt)),
         cap,
       ),

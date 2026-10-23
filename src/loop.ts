@@ -360,6 +360,13 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set();
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
+/** Remove a settled waiter from the array it parked in: the arrays live as
+ *  long as the run, and a stop may be waited out many times. */
+function dropWaiter(waiters: Array<() => void>, waiter: () => void): void {
+  const index = waiters.indexOf(waiter);
+  if (index >= 0) waiters.splice(index, 1);
+}
+
 /**
  * The first observation renders the whole composition; later ones only what
  * changed. A swap with equal counts still names both works involved.
@@ -449,7 +456,8 @@ export class SweepEngine {
   private readonly stopWaiters: Array<() => void> = [];
   /** Waiters of the cooperative phase — the escalation ends it at once. */
   private readonly escalationWaiters: Array<() => void> = [];
-  private escalations = 0;
+  /** The second signal arrived: force what the cooperative window left. */
+  private escalated = false;
   private readonly cooperativeMs: number;
   /** The works held by an unconfirmed stop, with the reason last logged. */
   private readonly reportedStopHolds = new Map<string, string>();
@@ -1130,7 +1138,7 @@ export class SweepEngine {
    * remaining workers NOW, without skipping the confirmation of their end.
    */
   private escalate(): void {
-    this.escalations += 1;
+    this.escalated = true;
     for (const fire of this.escalationWaiters.splice(0)) fire();
   }
 
@@ -1297,16 +1305,19 @@ export class SweepEngine {
    * escalation's own fact, not a value to branch on.
    */
   private async awaitCooperativeWindow(): Promise<void> {
+    const escalation = deferred();
+    if (this.escalated) escalation.resolve();
+    else this.escalationWaiters.push(escalation.resolve);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, this.cooperativeMs);
     });
-    const escalation = new Promise<void>((resolve) => {
-      if (this.escalations > 0) resolve();
-      else this.escalationWaiters.push(resolve);
-    });
-    await Promise.race([this.waitPending(), deadline, escalation]);
-    if (timer !== undefined) clearTimeout(timer);
+    try {
+      await Promise.race([this.waitPending(), deadline, escalation.promise]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      dropWaiter(this.escalationWaiters, escalation.resolve);
+    }
   }
 
   /** Wait until no launch of this engine is pending, failures included. */
@@ -1364,15 +1375,11 @@ export class SweepEngine {
    * grant was actually returned.
    */
   private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    if (entry.recoveryIndex !== null && !entry.launched) {
-      const index = entry.recoveryIndex;
-      entry.recoveryIndex = null;
-      const refunded = await refundRecovery(entry.dir, attempt, index);
-      await recordStopRequest(entry.dir, attempt);
-      return refunded;
-    }
+    const grant = entry.recoveryIndex !== null && !entry.launched ? entry.recoveryIndex : null;
+    entry.recoveryIndex = null;
+    const refunded = grant === null ? false : await refundRecovery(entry.dir, attempt, grant);
     await recordStopRequest(entry.dir, attempt);
-    return false;
+    return refunded;
   }
 
   /** The attempt the pending launch would use, read from the registry. A work
@@ -1764,9 +1771,10 @@ export class SweepEngine {
       baseBranch,
       attempt: facts.attempt,
       material,
-      // A recovery or a resume reopens the attempt's native Pi session
-      // (ADR 0005) instead of reconstructing context from the files alone.
-      ...(kind === "recover" ? { resume: true } : {}),
+      // A recovery, a model provider retry or the resume after a requested
+      // stop continues the attempt, so it reopens the attempt's native Pi
+      // session (ADR 0005) instead of reconstructing context from the files.
+      ...(continuesAttempt ? { resume: true } : {}),
     });
     this.launched.push(result);
 
@@ -1778,8 +1786,13 @@ export class SweepEngine {
    *  the requested stop. */
   private async wait(ms: number): Promise<void> {
     if (ms <= 0 || this.stopping) return;
-    const stopped = new Promise<void>((resolve) => this.stopWaiters.push(resolve));
-    await Promise.race([(this.deps.wait ?? sleepMs)(ms), stopped]);
+    const stopped = deferred();
+    this.stopWaiters.push(stopped.resolve);
+    try {
+      await Promise.race([(this.deps.wait ?? sleepMs)(ms), stopped.promise]);
+    } finally {
+      dropWaiter(this.stopWaiters, stopped.resolve);
+    }
   }
 
   /** Why a work's end cannot be confirmed, or null when it is: an unreadable
@@ -2505,7 +2518,7 @@ async function sweepOrLog(
 export async function runForever(
   deps: LoopDeps,
   options: StopOptions & { tickMs?: number } = {},
-): Promise<StopReport | null> {
+): Promise<StopReport> {
   const engine = new SweepEngine(deps, options);
   const log = operationalLog(deps.log);
   const tickMs = options.tickMs ?? TICK_MS;
