@@ -220,7 +220,40 @@ async function installExtension(extension, prefix, workDir, run) {
       `extension ${extension.package}@${extension.version} installed as ${String(manifest.name)}@${String(manifest.version)}`,
     );
   }
+  requireDependencies(manifest, installed);
   return installed;
+}
+
+/** Node's resolution order: the package's own node_modules first, then each
+ *  ancestor's. A declared dependency that resolves nowhere fails the build. */
+function resolveDependency(fromDir, name) {
+  let current = fromDir;
+  for (;;) {
+    const candidate = join(current, "node_modules", name, "package.json");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/**
+ * Validate the extension's dependency closure at build time (issue #159): a
+ * `dependencies` entry that did not install is a broken provisioning, not a
+ * runtime surprise for the worker. Peer dependencies are excluded on purpose
+ * (`--omit=peer`): Pi supplies them at run time from the image's own install.
+ */
+function requireDependencies(manifest, installed) {
+  const declared = manifest.dependencies ?? {};
+  const missing = Object.keys(declared).filter(
+    (name) => typeof name === "string" && resolveDependency(installed, name) === null,
+  );
+  if (missing.length > 0) {
+    fail(
+      `extension ${String(manifest.name)}@${String(manifest.version)} is missing declared dependenc` +
+        `${missing.length === 1 ? "y" : "ies"}: ${missing.join(", ")}`,
+    );
+  }
 }
 
 function installedPackages(nodeModules) {

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -68,7 +69,7 @@ export function verifyAgentInventory(loaded: LoadedAgentResources, inventoryText
   const mismatches = compareAgentInventory(loaded.declaration, loaded.sha256, inventory);
   if (mismatches.length > 0) {
     throw new AgentImageMismatchError(
-      `the worker image does not match this checkout's ${"agent-resources.json"}: ${mismatches.join("; ")}. ` +
+      `the worker image does not match this checkout's ${basename(AGENT_DECLARATION_PATH)}: ${mismatches.join("; ")}. ` +
         `Rebuild it with: npm run build:image`,
     );
   }

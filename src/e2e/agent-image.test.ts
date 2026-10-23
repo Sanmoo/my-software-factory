@@ -154,7 +154,7 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
 
 describe("the provisioned worker image — model authentication", { skip: skipReason }, () => {
   test("the absent-credential failure is explicit and carries no secret", () => {
-    let stderr = "";
+    let failed: { stdout?: string; stderr?: string } | undefined;
     try {
       execFileSync(
         "docker",
@@ -162,13 +162,12 @@ describe("the provisioned worker image — model authentication", { skip: skipRe
         { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
       );
     } catch (error) {
-      const failed = error as { stdout?: string; stderr?: string };
-      assert.match(failed.stdout ?? "", /not_ready/);
-      assert.match(failed.stdout ?? "", /credentials_not_configured/);
-      stderr = failed.stderr ?? "";
-      assert.doesNotMatch(stderr, /api[_-]?key/i);
+      failed = error as { stdout?: string; stderr?: string };
     }
-    assert.equal(stderr.includes("sentinel"), false);
+    assert.ok(failed, "the probe fails when no credential exists");
+    assert.match(failed.stdout ?? "", /not_ready/);
+    assert.match(failed.stdout ?? "", /credentials_not_configured/);
+    assert.doesNotMatch(failed.stderr ?? "", /api[_-]?key/i, "the diagnostic never names a credential value");
   });
 
   test("a provider env var authenticates the model without printing its value", () => {

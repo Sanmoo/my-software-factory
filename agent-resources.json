@@ -9,11 +9,11 @@
     "revision": "49dd158d1076134a641b33efb035946536778336",
     "license": "MIT (upstream LICENSE; copied unchanged with the selected skills)",
     "selected": [
-      { "name": "implement", "path": "skills/engineering/implement" },
-      { "name": "tdd", "path": "skills/engineering/tdd" },
-      { "name": "code-review", "path": "skills/engineering/code-review" },
-      { "name": "pr", "path": "skills/engineering/pr" },
-      { "name": "codebase-design", "path": "skills/engineering/codebase-design" }
+      { "name": "implement", "path": "skills/engineering/implement", "role": "implement" },
+      { "name": "tdd", "path": "skills/engineering/tdd", "role": "tdd" },
+      { "name": "code-review", "path": "skills/engineering/code-review", "role": "review" },
+      { "name": "pr", "path": "skills/engineering/pr", "role": "pr" },
+      { "name": "codebase-design", "path": "skills/engineering/codebase-design", "role": "design" }
     ]
   },
   "extensions": [
@@ -26,7 +26,7 @@
     }
   ],
   "agents": [
-    { "name": "code-reviewer", "path": "agents/code-reviewer.md" },
-    { "name": "spec-reviewer", "path": "agents/spec-reviewer.md" }
+    { "name": "code-reviewer", "path": "agents/code-reviewer.md", "role": "standards" },
+    { "name": "spec-reviewer", "path": "agents/spec-reviewer.md", "role": "spec" }
   ]
 }

@@ -201,6 +201,42 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     );
   });
 
+  test("the launch never reads the operator's personal Pi profile — a profile on the host reaches nothing", async () => {
+    // Issue #159: no snapshot, no personal skills, no personal credentials.
+    // A poisoned ~/.pi/agent is the honest probe: nothing of it may enter the
+    // container or the launch's arguments.
+    const fakeHome = join(root, "home");
+    mkdirSync(join(fakeHome, ".pi", "agent", "skills", "implement"), { recursive: true });
+    writeFileSync(
+      join(fakeHome, ".pi", "agent", "skills", "implement", "SKILL.md"),
+      "---\nname: implement\n---\npersonal\n",
+      "utf8",
+    );
+    writeFileSync(join(fakeHome, ".pi", "agent", "auth.json"), '{"openai":{"type":"api_key","key":"personal"}}', "utf8");
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      await runtime.launch(request);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+
+    const mounts = dockerOptions?.mounts ?? [];
+    assert.ok(mounts.every((mount) => !mount.hostPath.startsWith(fakeHome)), "no mount comes from the personal profile");
+    const agent = runOptions?.agent as unknown as { env: Record<string, string> };
+    assert.equal(agent.env[AGENT_DIR_ENV], "/home/agent/.pi/agent", "the agent dir is the image's");
+    const hooks = (runOptions?.hooks?.sandbox?.onSandboxReady ?? []).map((hook) => hook.command).join("\n");
+    assert.ok(!hooks.includes(fakeHome), "no setup hook copies a personal profile");
+    const command = (
+      runOptions?.agent as unknown as { buildPrintCommand(options: { prompt: string }): { command: string } }
+    ).buildPrintCommand({ prompt: "p" }).command;
+    assert.ok(!command.includes(fakeHome), "no personal path rides the print command");
+    assert.ok(!(runOptions?.prompt ?? "").includes(fakeHome), "no personal path rides the prompt");
+    assert.ok(!command.includes("auth.json"), "no personal auth rides the launch");
+  });
+
   test("the toolchain host dir is created idempotently at launch — pre-existing state is never clobbered", async () => {
     const miseDir = join(workspace, TOOLCHAIN_SUBPATHS.mise);
     mkdirSync(miseDir, { recursive: true });
@@ -867,6 +903,33 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       assert.ok(!error.message.includes("sentinel-value"));
       return true;
     });
+  });
+
+  test("a stale image is refused at preflight: the image inventory must match this checkout's declaration", async () => {
+    const stale = JSON.parse(inventoryJson()) as { pi: { version: string } };
+    stale.pi.version = "1.2.0";
+    const checks: string[][] = [];
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
+      dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
+      run: async (command, args) => {
+        checks.push([command, ...args]);
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: JSON.stringify(stale), stderr: "" };
+        return { stdout: "29.7.2", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /does not match this checkout's agent-resources\.json/);
+    await assert.rejects(failing, /Pi is @earendil-works\/pi-coding-agent@1\.2\.0/);
+    await assert.rejects(failing, /npm run build:image/);
+    assert.ok(
+      !checks.some((call) => call.includes("git") || call.includes("--version")),
+      "the refusal happens at the inventory check — no later probe and no worker launch",
+    );
   });
 
   test("the default preflight refuses a socket the container user cannot reach — an actionable gid", async () => {

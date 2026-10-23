@@ -22,6 +22,12 @@ import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
 import {
+  AGENT_DIR,
+  agentExtensionEntry,
+  agentGuidancePath,
+  agentSkillPath,
+} from "./agent-paths.js";
+import {
   DEFAULT_IDLE_LIMIT_MS,
   startActivityWatch,
   workActivityDirs,
@@ -38,6 +44,8 @@ import { authFileProblem, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
+
+export { AGENT_DIR, AGENT_SKILLS_DIR, agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -81,7 +89,6 @@ interface RunningSession {
 
 /** Inside the container: the image-provisioned agent dir; only sessions/ is a host bind. */
 export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
-export const AGENT_DIR = "/home/agent/.pi/agent";
 export const SESSIONS_CONTAINER_DIR = `${AGENT_DIR}/sessions`;
 
 /**
@@ -111,21 +118,6 @@ export function stageAuthFile(authFile: string): string {
   copyFileSync(authFile, target);
   chmodSync(target, 0o600);
   return dir;
-}
-
-/** The image path of a declared skill. */
-export function agentSkillPath(name: string): string {
-  return `${AGENT_DIR}/skills/${name}`;
-}
-
-/** The image path of a declared extension's entry point. */
-export function agentExtensionEntry(extension: { package: string; entry: string }): string {
-  return `${AGENT_DIR}/extensions/node_modules/${extension.package}/${extension.entry}`;
-}
-
-/** The image path of an extension's operating-guidance skill. */
-export function agentGuidancePath(extension: { package: string; guidance: { path: string } }): string {
-  return `${AGENT_DIR}/extensions/node_modules/${extension.package}/${extension.guidance.path}`;
 }
 
 /**
@@ -634,6 +626,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       prompt: buildWorkerPrompt(request, {
         blockedLabel: this.blockedLabel,
         continuesSession: resumeSession !== undefined,
+        agentResources: this.agentResources,
       }),
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,

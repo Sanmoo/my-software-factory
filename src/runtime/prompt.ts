@@ -2,6 +2,8 @@ import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
+import { agentLayout, type AgentLayout } from "./agent-paths.js";
+import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
 
 /**
@@ -40,13 +42,6 @@ import type { RepairMaterial, WorkRequest } from "./port.js";
  */
 export const WORK_MOUNT = "/msf-work";
 
-/** Image-provisioned skill paths (issue #159): the worker loads exactly these,
- *  with Pi discovery disabled. */
-export const AGENT_SKILLS_DIR = "/home/agent/.pi/agent/skills";
-export const DELEGATION_GUIDANCE_PATH =
-  "/home/agent/.pi/agent/extensions/node_modules/pi-subagents/skills/pi-subagents/SKILL.md";
-export const REGISTERED_REVIEW_AGENTS = ["code-reviewer", "spec-reviewer"] as const;
-
 /** The completion signal: when the agent prints it, the iteration loop ends. */
 export const COMPLETION_SIGNAL = "<promise>MSF-RESULT</promise>";
 
@@ -56,6 +51,10 @@ export interface PromptOptions {
   blockedLabel: string;
   /** The runtime found the attempt's native session and reopened it. */
   continuesSession?: boolean;
+  /** The declared agent resources the image carries (issue #159); defaults to
+   * this checkout's `agent-resources.json`, the same declaration the launch
+   * compares the image against. */
+  agentResources?: LoadedAgentResources;
 }
 
 const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
@@ -94,7 +93,7 @@ export function reviewReportPath(attempt: number, axis: "standards" | "spec"): s
  * for purely explanatory ones. The prose is the worker's ruler — the factory
  * reads only the structured facts (the reports in "paths", the outcome).
  */
-function implementationProcedure(request: WorkRequest): string {
+function implementationProcedure(request: WorkRequest, layout: AgentLayout): string {
   const attempt = request.attempt;
   const standardsReport = reviewReportPath(attempt, "standards");
   const specReport = reviewReportPath(attempt, "spec");
@@ -112,12 +111,12 @@ function implementationProcedure(request: WorkRequest): string {
     `  what it says IS using a skill in Pi — there is no tool named "Skill", and merely mentioning`,
     `  \`/implement\` without loading it is not following it.`,
     `- The skills this session must load and obey:`,
-    `  - \`${AGENT_SKILLS_DIR}/implement/SKILL.md\` — the implementation procedure;`,
-    `  - \`${AGENT_SKILLS_DIR}/code-review/SKILL.md\` — the two-axis review (Standards + Spec).`,
+    `  - \`${layout.skills.implement.path}/SKILL.md\` — the implementation procedure;`,
+    `  - \`${layout.skills.review.path}/SKILL.md\` — the two-axis review (Standards + Spec).`,
     `  Where /implement says to call the "tdd" skill at a seam, load`,
-    `  \`${AGENT_SKILLS_DIR}/tdd/SKILL.md\` and follow it the same way.`,
-    `  The conditional design guidance is \`${AGENT_SKILLS_DIR}/codebase-design/SKILL.md\`;`,
-    `  the PR-body guidance is \`${AGENT_SKILLS_DIR}/pr/SKILL.md\`.`,
+    `  \`${layout.skills.tdd.path}/SKILL.md\` and follow it the same way.`,
+    `  The conditional design guidance is \`${layout.skills.design.path}/SKILL.md\`;`,
+    `  the PR-body guidance is \`${layout.skills.pr.path}/SKILL.md\`.`,
     ``,
     `The order is fixed and one-way — publishing happens ONLY after the review:`,
     ``,
@@ -130,12 +129,12 @@ function implementationProcedure(request: WorkRequest): string {
     `   committed diff since the starting SHA, and an empty diff fails there.`,
     `5. REVIEW per /code-review, against the starting SHA of step 1. Delegation is`,
     `   operator-authorized for this procedure: before the first subagent call, read the`,
-    `   delegation guidance at \`${DELEGATION_GUIDANCE_PATH}\` and follow it. The`,
-    `   registered reviewer agents are ${REGISTERED_REVIEW_AGENTS.map((agent) => `\`${agent}\``).join(" and ")}.`,
+    `   delegation guidance at ${layout.guidance.map((guidance) => `\`${guidance.path}/SKILL.md\``).join(", ")} and follow it.`,
+    `   The registered reviewer agents are ${Object.values(layout.reviewers).map((agent) => `\`${agent}\``).join(" and ")}.`,
     `   - TWO SEPARATE subagent runs, issued IN PARALLEL (the subagent tool): one for the Standards`,
     `     axis, one for the Spec axis — never one agent doing both, never your own inline review;`,
-    `   - set the registered agent explicitly: \`code-reviewer\` for Standards and`,
-    `     \`spec-reviewer\` for Spec; never use the generic \`default\` agent;`,
+    `   - set the registered agent explicitly: \`${layout.reviewers.standards}\` for Standards and`,
+    `     \`${layout.reviewers.spec}\` for Spec; never use the generic \`default\` agent;`,
     `   - each reviewer's context: the diff \`git diff <starting-sha>...HEAD\`, the commit list, the`,
     `     spec (the issue and, in a feedback round, the applicable PR comments), the repo's`,
     `     documented standards files and the smell baseline the skill defines;`,
@@ -351,7 +350,7 @@ End the round with one consolidated reply on the PR (marked, obligation 2): what
       ? `(empty — this branch has no changes yet)`
       : `\`\`\`diff\n${material.diff}\n\`\`\``,
     ``,
-    implementationProcedure(request),
+    implementationProcedure(request, agentLayout((options.agentResources ?? loadAgentResources()).declaration)),
     `## Your obligations — the factory reads them as structured facts; never skip one`,
     ``,
     `1. BEFORE the session ends, ALWAYS write the structured outcome record to ${desfechoPath} — JSON exactly in this schema:`,
