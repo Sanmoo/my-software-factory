@@ -3,7 +3,7 @@ import { isAbsolute, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
-import { describeError } from "../log.js";
+import { describeError } from "../format.js";
 import { parseWorkKey } from "../pool/registry.js";
 
 const execFile = promisify(execFileCallback);

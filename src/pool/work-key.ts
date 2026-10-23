@@ -26,7 +26,15 @@ import {
  * presentation, persisted in the reservation record.
  */
 
-/** What a key encodes: provider + site + stable ticket id + destination repo. */
+/**
+ * What a key encodes: provider + site + stable ticket id + destination repo.
+ *
+ * A GitHub ticket is taken to live in its destination repo — the only shape the
+ * factory produces today (a legacy `IssueRef` names one repo for both). A
+ * GitHub site other than github.com whose ticket repo differs from the
+ * destination would collapse two tickets of the same number onto one key; that
+ * shape has no producer yet, and admitting it means widening this anchor.
+ */
 export interface WorkAnchor {
   provider: TicketProvider;
   site: string;

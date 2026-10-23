@@ -15,7 +15,7 @@ import {
   type OutcomeRecord,
 } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { describeError } from "../log.js";
+import { describeError } from "../format.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, PROFILE_MOUNT, WORK_MOUNT } from "./prompt.js";
 import {
   DEFAULT_IDLE_LIMIT_MS,

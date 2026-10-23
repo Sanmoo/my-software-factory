@@ -90,7 +90,8 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { describeError, operationalLog } from "./log.js";
+import { operationalLog } from "./log.js";
+import { describeError } from "./format.js";
 import { formatDuration } from "./format.js";
 import { mkdirSync } from "node:fs";
 

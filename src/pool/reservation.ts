@@ -126,17 +126,9 @@ export function reserveWork(
   // order (issue 98).
   const existing = readPersistedRecord(dir, RESERVATION_FILE);
   if (existing.state === "persisted") {
-    const existingWork = workIdentity(existing.record.ticket, existing.record.destination);
-    if (workKeyOf(existingWork) !== key) {
-      return {
-        key,
-        dir,
-        created: false,
-        reservation: {
-          state: "unreadable",
-          reason: `${RESERVATION_FILENAME} names ${workIdentityKey(existingWork)}, not this Work`,
-        },
-      };
+    const mismatch = mismatchReason(existing.record, key);
+    if (mismatch !== null) {
+      return { key, dir, created: false, reservation: { state: "unreadable", reason: mismatch } };
     }
     return { key, dir, created: false, reservation: existing };
   }
@@ -170,9 +162,10 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
     const reservation = readReservation(dir);
 
     if (reservation.state === "persisted") {
-      const persistedWork = workIdentity(reservation.record.ticket, reservation.record.destination);
-      if (workKeyOf(persistedWork) === key) {
-        entries.push({ key, dir, anchor, work: persistedWork, reservation });
+      const mismatch = mismatchReason(reservation.record, key);
+      if (mismatch === null) {
+        const work = workIdentity(reservation.record.ticket, reservation.record.destination);
+        entries.push({ key, dir, anchor, work, reservation });
       } else {
         // The record and the dir disagree: keep the Work visible by its key,
         // and never present the mismatched facts as its own.
@@ -181,10 +174,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
           dir,
           anchor,
           work: legacyWork(anchor),
-          reservation: {
-            state: "unreadable",
-            reason: `${RESERVATION_FILENAME} names ${workIdentityKey(persistedWork)}, not the Work of this dir key`,
-          },
+          reservation: { state: "unreadable", reason: mismatch },
         });
       }
       continue;
@@ -193,6 +183,17 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/**
+ * Why a persisted record may not be read as the Work of `key` — null when it
+ * may. The dir key is the anchor: a record naming another Work is unknown, and
+ * an unknown record is never presented as this Work's facts.
+ */
+function mismatchReason(record: ReservationRecord, key: string): string | null {
+  const persistedWork = workIdentity(record.ticket, record.destination);
+  if (workKeyOf(persistedWork) === key) return null;
+  return `${RESERVATION_FILENAME} names ${workIdentityKey(persistedWork)}, not the Work of ${key}`;
 }
 
 function worksRoot(workspace: WorkspaceLayout | string): string {
