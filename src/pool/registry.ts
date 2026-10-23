@@ -22,7 +22,7 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
-import { readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import { issueRefOfTicket } from "../tracker/identity.js";
@@ -370,9 +370,10 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
       }
     }
     // Only THIS attempt's pause: one left by an attempt that has since
-    // advanced is history, and must not hide the current attempt's state.
+    // advanced is history, and must not hide the current attempt's state. A
+    // record too unreadable to name its attempt still waits.
     const pause = readPause(dir);
-    if (pause !== null && pause.attempt === lastAttempt) continuityPauses.push({ key, pause });
+    if (pause !== null && pauseWaits(pause, lastAttempt)) continuityPauses.push({ key, pause });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);

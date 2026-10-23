@@ -26,6 +26,7 @@ import { eventLogName } from "./attempt-logs.js";
 import {
   appendJournalResult,
   appendSessionLink,
+  callKey,
   linkForAttempt,
   nextRound,
   readEffectJournal,
@@ -151,12 +152,19 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
     };
   }
 
-  const intentsByCall = new Map(journal.intents.map((intent) => [intent.callId, intent]));
+  // Paired with the journal's own rule (`callKey`), scoped to the session
+  // being resumed: a `call-1` from an earlier round of the same attempt is not
+  // evidence for THIS round's call, and would hide a call nobody journaled.
+  const intentsByCall = new Map(
+    journal.intents
+      .filter((intent) => intent.sessionId === link.sessionId)
+      .map((intent) => [callKey(intent.sessionId, intent.callId), intent]),
+  );
   for (const call of sessionToolCalls(file, inspection.intactEntries)) {
     if (call.tool !== "bash") continue;
     const safety = classifyCommand(call.command);
     if (safety.safety === "safe") continue;
-    if (!intentsByCall.has(call.callId)) {
+    if (!intentsByCall.has(callKey(link.sessionId, call.callId))) {
       return {
         decision: "pause",
         pause: pauseOf(

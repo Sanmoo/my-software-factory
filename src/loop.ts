@@ -1735,7 +1735,7 @@ export class SweepEngine {
     if (kind === "resume") {
       const pause = readPause(dir);
       if (pause !== null) {
-        const recheck = await recheckPausedEffects({ ...continuityDeps, attempt: pause.attempt });
+        const recheck = await recheckPausedEffects({ ...continuityDeps, attempt: pause.attempt >= 1 ? pause.attempt : facts.attempt });
         if (!recheck.resolved && recheck.pause !== null) {
           this.log(
             `the human answered ${key}, but the interrupted effect is still unresolved — ` +

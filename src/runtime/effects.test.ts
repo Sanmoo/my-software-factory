@@ -33,6 +33,10 @@ describe("the external-effect classifier (issue 119)", () => {
       "gh api -X GET repos/o/r/pulls/12",
       "tar -xzf pkg.tgz",
       "cp a b && rm -rf dist",
+      // A path-carrying operand that stays in the worktree keeps the call safe.
+      "sort -o out f",
+      "tar -xzf a.tar -C dist",
+      "git show refs/heads/agent-issue-7",
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -103,6 +107,23 @@ describe("the external-effect classifier (issue 119)", () => {
       "gh api -XDELETE repos/o/r/issues/1/labels/x",
       "gh api --method=DELETE repos/o/r/issues/1/labels/x",
       "gh api -XPUT repos/o/r/pulls/12/update-branch",
+      // `gh api`'s BODY flags in every spelling: `-fbody=x`, `--field=x` and
+      // `--input=p.json` all make a POST, and only the bare flags were read.
+      "gh api --field=body=hi repos/o/r/issues/1/comments",
+      "gh api -fbody=hi repos/o/r/issues/1/comments",
+      "gh api --raw-field=body=hi repos/o/r/issues/1/comments",
+      "gh api --input=p.json repos/o/r/issues/1/comments",
+      // The allowlist names WHICH program runs, never WHERE it writes: every
+      // spelling below passed the program check and reached the host.
+      "sort -o /tmp/x f",
+      "uniq in /tmp/out",
+      "tar -C/tmp -xf a.tar",
+      "patch -d/tmp -i p.diff",
+      "tee $HOME/x",
+      "git init /tmp/new",
+      "git clone x /tmp/dest",
+      "git apply --directory=/tmp",
+      "git config --global user.name x",
       // A local writer is safe only inside the worktree: an absolute path
       // reaches the host, where nothing reconciles the effect.
       "cp a /tmp/b",
@@ -142,13 +163,16 @@ describe("the external-effect classifier (issue 119)", () => {
       "time git push origin x",
       'bash -c "git push"',
       "./script.sh",
-      // A binary named like an object prototype member is just unknown: a
-      // lookup that fell through to Object.prototype once threw here, and the
-      // throw escaped the guardrail's hook — a mutation journaled by nobody.
-      "constructor --add x",
-      "toString x",
-      "hasOwnProperty --force",
     ]) {
+      assert.equal(classifyCommand(command).safety, "unknown", command);
+    }
+  });
+
+  test("a binary named like an object prototype member is unknown, never a throw", () => {
+    // A lookup that fell through to Object.prototype once threw here, and the
+    // throw escaped the guardrail's tool_call hook — a mutation no journal
+    // recorded. The classifier must answer, not explode.
+    for (const command of ["constructor --add x", "toString x", "hasOwnProperty --force", "__proto__ x"]) {
       assert.equal(classifyCommand(command).safety, "unknown", command);
     }
   });

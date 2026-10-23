@@ -18,7 +18,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
-import { appendJournalIntent, appendJournalStart, appendSessionLink } from "../runtime/continuity-artifacts.js";
+import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -250,8 +250,35 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
   });
 
+  test("an unreadable pause keeps the work waiting instead of spending a recovery", async () => {
+    // The record says "wait" and cannot be read. Falling back to a recovery
+    // would spend the budget and post a second help request for a pause the
+    // operator was already asked about — so the doubt itself keeps the work
+    // parked, and the corrupt evidence is preserved for inspection.
+    seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+    const target = workDir(layout, REPO, 7);
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "log-1.jsonl"), '{"event":"session-start","attempt":1}\n', "utf8");
+    writeFileSync(join(target, "pausa.json"), '{not a record', "utf8");
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 0, "no recovery on a record it could not read");
+    assert.equal(runtime.launched.length, 0);
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "no recovery was spent");
+    assert.equal(readFileSync(join(target, "pausa.json.unreadable"), "utf8"), "{not a record", "evidence preserved");
+    const comments = await agentComments(7);
+    assert.equal(comments.length, 1, "the operator is asked once");
+    assert.match(comments[0] ?? "", /keeps waiting instead of recovering/);
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true);
+
+    // The record was rewritten as a real, announced pause: a restart asks nothing.
+    const restart = await runOnce(deps(config()));
+    assert.equal(restart.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 1, "no repeated request, no repeated recovery");
+  });
+
   test("a pause persisted before its block landed is announced on the next cycle — once", async () => {
-    const ref: IssueRef = { repo: REPO, number: 7 };
     seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     const target = workDir(layout, REPO, 7);
     mkdirSync(target, { recursive: true });
@@ -295,7 +322,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
 
     const cfg = config(1);
-    const sweep = await runOnce(deps(cfg));
+    await runOnce(deps(cfg));
 
     assert.equal(readPause(workDir(layout, REPO, 7))?.reason, "effect-unsupported");
     assert.deepEqual(

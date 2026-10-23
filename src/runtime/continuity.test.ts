@@ -359,6 +359,33 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(readFileSync(session.file, "utf8").endsWith('{"type":"message","id":"cut'), true, "the original file is never rewritten");
   });
 
+  test("an earlier round's call id is not evidence for this round's call", async () => {
+    // `call-1` repeats across a session's rounds. An intent journaled by the
+    // PREVIOUS session says nothing about the current one: a mutating call the
+    // guardrail never journaled here would otherwise look accounted for.
+    const earlier = seedSession(workDir, REF, 2, { round: 1, sessionId: "11111111-2222-3333-4444-000000000002" });
+    appendJournalStart(workDir, { attempt: 2, sessionId: earlier.sessionId });
+    appendJournalIntent(workDir, {
+      attempt: 2,
+      sessionId: earlier.sessionId,
+      callId: "call-1",
+      tool: "bash",
+      command: "git push origin agent-issue-7",
+      safety: "effect",
+      actions: [{ kind: "push", key: "push:agent-issue-7@abc", detail: "push", branch: "agent-issue-7", sha: "abc" }],
+    });
+
+    const current = seedSession(workDir, REF, 2, { round: 2, sessionId: "11111111-2222-3333-4444-000000000022" });
+    appendJournalStart(workDir, { attempt: 2, sessionId: current.sessionId });
+    seedSessionToolCall(current, { callId: "call-1", command: "git push origin agent-issue-7", answered: true });
+
+    const plan = await planContinuity(deps, "resume");
+    assert.equal(plan.decision, "pause", JSON.stringify(plan));
+    if (plan.decision !== "pause") return;
+    assert.equal(plan.pause.reason, "tool-evidence-missing");
+    assert.equal(plan.pause.sessionId, current.sessionId, "the CURRENT round is the one whose evidence is missing");
+  });
+
   test("an interrupted comment is reconciled against the PR conversation, not against a mock", async () => {
     const session = seedSession(workDir, REF, 2);
     appendJournalStart(workDir, { attempt: 2, sessionId: session.sessionId });

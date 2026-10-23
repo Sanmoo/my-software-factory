@@ -69,7 +69,7 @@ check results) — never LLM prose.
 ## Tests
 
 ```sh
-npm run build:image   # provisioning; see RUNBOOK (rebuild after upgrading)
+npm run build:image   # provisioning (RUNBOOK)
 npm run gateway
 ```
 
