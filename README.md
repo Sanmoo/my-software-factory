@@ -69,7 +69,7 @@ check results) — never LLM prose.
 ## Tests
 
 ```sh
-npm run build:image   # once, with Docker installed and running
+npm run build:image   # provisioning; see RUNBOOK (rebuild after upgrading)
 npm run gateway
 ```
 

@@ -546,10 +546,11 @@ export class SandcastleRuntime implements WorkerRuntime {
       ...agent,
       buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
         const command = agent.buildPrintCommand(options);
-        const sessionId = newSessionId === null ? "" : ` --session-id ${newSessionId}`;
+        // The flag fragment, named for what it is: the id itself is above.
+        const sessionFlag = newSessionId === null ? "" : ` --session-id ${newSessionId}`;
         return {
           ...command,
-          command: `${command.command} ${WORKER_FLAG_ARGS.join(" ")}${sessionId}`,
+          command: `${command.command} ${WORKER_FLAG_ARGS.join(" ")}${sessionFlag}`,
         };
       },
     };

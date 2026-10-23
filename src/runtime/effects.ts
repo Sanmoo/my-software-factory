@@ -66,30 +66,40 @@ const SAFE_COMMANDS: ReadonlySet<string> = new Set([
   "unzip", "zip", "gzip", "gunzip", "base64", "sha256sum", "md5sum",
 ]);
 
-/** The safe subcommands of the binaries whose other subcommands reach outside. */
-const SAFE_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
-  git: new Set([
-    "add", "commit", "status", "diff", "log", "show", "branch", "checkout",
-    "switch", "restore", "reset", "stash", "rebase", "merge", "cherry-pick",
-    "revert", "rev-parse", "rev-list", "cat-file", "config", "fetch", "pull",
-    "remote", "tag", "worktree", "ls-files", "ls-tree", "blame", "describe",
-    "show-ref", "for-each-ref", "gc", "prune", "clean", "mv", "rm", "apply",
-    "init", "clone", "submodule", "notes", "shortlog", "whatchanged", "reflog",
-    "symbolic-ref", "update-ref", "check-ignore", "check-attr", "hash-object",
-    "count-objects", "fsck", "format-patch", "am", "bisect", "grep",
-  ]),
-  gh: new Set([
-    "pr view", "pr list", "pr diff", "pr checks", "pr status",
-    "issue view", "issue list", "issue status",
-    "api", "auth", "repo view", "repo list", "search", "run view", "run list",
-    "workflow view", "workflow list", "release view", "release list",
-  ]),
-};
+/**
+ * The binaries of {@link SAFE_COMMANDS} that WRITE the paths they are given.
+ * They are safe only while every operand stays inside the worktree: an
+ * absolute path (or a `..` that climbs out) reaches the host, where no
+ * reconciliation covers the effect — so such a call is unknown, not safe.
+ */
+const PATH_WRITERS: ReadonlySet<string> = new Set([
+  "mkdir", "cp", "mv", "rm", "touch", "chmod", "chown", "ln", "tee",
+  "tar", "unzip", "zip", "gzip", "gunzip", "patch",
+]);
 
-/** Subcommands we must never call safe even under an allowlisted binary. */
-const NEVER_SAFE: Readonly<Record<string, ReadonlySet<string>>> = {
-  gh: new Set(["release create", "release edit", "release delete", "repo create", "repo delete", "repo edit", "gist"]),
-};
+/** The git subcommands that cannot reach outside the worktree. `push` is
+ *  classified separately ({@link classifyGitPush}); everything absent from
+ *  this set is unknown. */
+const SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "add", "commit", "status", "diff", "log", "show", "branch", "checkout",
+  "switch", "restore", "reset", "stash", "rebase", "merge", "cherry-pick",
+  "revert", "rev-parse", "rev-list", "cat-file", "config", "fetch", "pull",
+  "remote", "tag", "worktree", "ls-files", "ls-tree", "blame", "describe",
+  "show-ref", "for-each-ref", "gc", "prune", "clean", "mv", "rm", "apply",
+  "init", "clone", "submodule", "notes", "shortlog", "whatchanged", "reflog",
+  "symbolic-ref", "update-ref", "check-ignore", "check-attr", "hash-object",
+  "count-objects", "fsck", "format-patch", "am", "bisect", "grep",
+]);
+
+/** The `gh` invocations that only read. Every `gh` write is either one of the
+ *  four recognised effects (classified before this set is consulted) or
+ *  unknown — this set never grants safety to a mutation. */
+const SAFE_GH_INVOCATIONS: ReadonlySet<string> = new Set([
+  "pr view", "pr list", "pr diff", "pr checks", "pr status",
+  "issue view", "issue list", "issue status",
+  "auth", "search", "repo view", "repo list", "run view", "run list",
+  "workflow view", "workflow list", "release view", "release list",
+]);
 
 /** Commands that are never safe when they appear as a whole segment. */
 const NETWORK_OR_UNKNOWN: ReadonlySet<string> = new Set([
@@ -184,16 +194,18 @@ function classifySegment(segment: string): CommandSafety {
   if (binary === "git") return classifyGit(args);
   if (binary === "gh") return classifyGh(args);
 
-  const subcommand = args[0]?.toLowerCase() ?? "";
-  const safeSubcommands = SAFE_SUBCOMMANDS[binary];
-  if (safeSubcommands !== undefined) {
-    if (NEVER_SAFE[binary]?.has(subcommand) === true) {
-      return { safety: "unknown", reason: `${binary} ${subcommand} publishes or authenticates` };
+  if (isSafeBinary(binary)) {
+    if (PATH_WRITERS.has(binary)) {
+      const escaping = args.find((arg) => escapesWorktree(arg));
+      if (escaping !== undefined) {
+        return {
+          safety: "unknown",
+          reason: `${binary} ${escaping} writes outside the worktree, where no reconciliation covers the effect`,
+        };
+      }
     }
-    if (subcommand === "" || safeSubcommands.has(subcommand)) return { safety: "safe" };
-    return { safety: "unknown", reason: `${binary} ${subcommand} is not a proven-local subcommand` };
+    return { safety: "safe" };
   }
-  if (isSafeBinary(binary)) return { safety: "safe" };
   return { safety: "unknown", reason: `${binary} is not a proven-local command` };
 }
 
@@ -203,7 +215,7 @@ function classifyGit(args: string[]): CommandSafety {
   if (subcommand === "send-email" || subcommand === "request-pull") {
     return { safety: "unknown", reason: `git ${subcommand} publishes outside the worktree` };
   }
-  if (SAFE_SUBCOMMANDS.git?.has(subcommand) === true) return { safety: "safe" };
+  if (SAFE_GIT_SUBCOMMANDS.has(subcommand)) return { safety: "safe" };
   return { safety: "unknown", reason: `git ${subcommand || "(none)"} is not a proven-local subcommand` };
 }
 
@@ -223,9 +235,12 @@ function classifyGitPush(args: string[]): CommandSafety {
     return { safety: "unknown", reason: "a tag/all-refs push has no branch-shaped identity to reconcile" };
   }
   // git push [<remote> [<refspec>]] — the refspec may be HEAD, a branch, or
-  // LOCAL:REMOTE (and +LOCAL:REMOTE for a force).
-  const refspec = positional.length >= 2 ? (positional[1] ?? "HEAD") : (positional[0] ?? "HEAD");
-  const [rawLocal, rawRemote] = refspec.replace(/^\+/, "").split(":");
+  // LOCAL:REMOTE (and +LOCAL:REMOTE for a force). With ONE positional the
+  // argument is the remote and the refspec is git's own default, so the branch
+  // is left unresolved: the guardrail reads it from the worktree instead of
+  // recording the remote's name as a branch.
+  const refspec = positional.length >= 2 ? positional[1] : undefined;
+  const [rawLocal, rawRemote] = (refspec ?? "HEAD").replace(/^\+/, "").split(":");
   const local = rawLocal ?? "";
   const remote = rawRemote;
   if (local === "" || local === "HEAD" || local === "@") {
@@ -263,7 +278,6 @@ function classifyGitPush(args: string[]): CommandSafety {
 function classifyGh(args: string[]): CommandSafety {
   const [group, sub] = [args[0], args[1]];
   const words = args.filter((arg) => !arg.startsWith("-"));
-  const rest = skipFlags(args);
 
   if (group === "pr") {
     if (sub === "create") {
@@ -282,24 +296,11 @@ function classifyGh(args: string[]): CommandSafety {
       };
     }
     if (sub === "comment") {
-      const number = Number(rest.find((arg) => /^\d+$/.test(arg)) ?? "");
-      const body = commentBody(args);
-      if (!Number.isInteger(number) || body === null) {
+      const comment = parseComment(args);
+      if (comment === null) {
         return { safety: "unknown", reason: "a PR comment without its number and body cannot be reconciled" };
       }
-      return {
-        safety: "effect",
-        actions: [
-          {
-            kind: "comment",
-            key: `comment:pr:${number}:${digest(body)}`,
-            detail: `comment on PR #${number}`,
-            target: "pr",
-            number,
-            body,
-          },
-        ],
-      };
+      return { safety: "effect", actions: [commentAction("pr", comment)] };
     }
     if (sub === "merge" || sub === "close" || sub === "edit" || sub === "ready" || sub === "reopen") {
       return { safety: "unknown", reason: `gh pr ${sub} has no supported reconciliation` };
@@ -308,27 +309,14 @@ function classifyGh(args: string[]): CommandSafety {
 
   if (group === "issue") {
     if (sub === "comment") {
-      const number = Number(rest.find((arg) => /^\d+$/.test(arg)) ?? "");
-      const body = commentBody(args);
-      if (!Number.isInteger(number) || body === null) {
+      const comment = parseComment(args);
+      if (comment === null) {
         return { safety: "unknown", reason: "an issue comment without its number and body cannot be reconciled" };
       }
-      return {
-        safety: "effect",
-        actions: [
-          {
-            kind: "comment",
-            key: `comment:issue:${number}:${digest(body)}`,
-            detail: `comment on issue #${number}`,
-            target: "issue",
-            number,
-            body,
-          },
-        ],
-      };
+      return { safety: "effect", actions: [commentAction("issue", comment)] };
     }
     if (sub === "edit") {
-      const number = Number(rest.find((arg) => /^\d+$/.test(arg)) ?? "");
+      const number = issueNumberOf(args);
       const label = flagValue(args, "--add-label");
       if (Number.isInteger(number) && label !== undefined && label !== "") {
         return {
@@ -349,8 +337,11 @@ function classifyGh(args: string[]): CommandSafety {
   }
 
   if (group === "api") {
-    // gh api without a mutating method is a read.
-    const method = flagValue(args, "--method") ?? flagValue(args, "-X");
+    // `gh api` without a mutating method is a read. The method may be spelled
+    // `-X POST`, `--method POST`, `--method=POST` or, as pflag allows, `-XPOST`
+    // — reading only the separated forms classified `-XPOST .../merge` as a
+    // read, which is the one thing this classifier must never do.
+    const method = methodFlag(args);
     const mutatingFields = args.some((arg) => ["-f", "-F", "--field", "--raw-field", "--input"].includes(arg));
     if (method === undefined || method.toUpperCase() === "GET") {
       if (!mutatingFields) return { safety: "safe" };
@@ -358,8 +349,7 @@ function classifyGh(args: string[]): CommandSafety {
     return { safety: "unknown", reason: "gh api with a mutating method has no supported reconciliation" };
   }
 
-  const readOnly = SAFE_SUBCOMMANDS.gh;
-  if (group !== undefined && readOnly?.has(`${group} ${sub ?? ""}`)) return { safety: "safe" };
+  if (group !== undefined && SAFE_GH_INVOCATIONS.has(`${group} ${sub ?? ""}`)) return { safety: "safe" };
   if (group === "auth" || group === "search") return { safety: "safe" };
   if (group === "run" || group === "workflow" || group === "release" || group === "repo") {
     if (sub === "view" || sub === "list") return { safety: "safe" };
@@ -367,8 +357,59 @@ function classifyGh(args: string[]): CommandSafety {
   return { safety: "unknown", reason: `gh ${words.slice(0, 2).join(" ")} is not a proven read` };
 }
 
+/**
+ * `gh api`'s method in every spelling gh accepts. A method this does not
+ * recognise is never read as GET — `methodFlag` returning the raw value keeps
+ * the caller's `=== "GET"` comparison the only way to reach safety.
+ */
+function methodFlag(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "-X" || arg === "--method") return args[i + 1];
+    if (arg.startsWith("--method=")) return arg.slice("--method=".length);
+    if (arg.startsWith("-X") && arg.length > 2) return arg.slice(2).replace(/^=/, "");
+  }
+  return undefined;
+}
+
+/** The issue/PR number of a `gh issue|pr <write>` call: the first bare number. */
+function issueNumberOf(args: string[]): number {
+  return Number(skipFlags(args).find((arg) => /^\d+$/.test(arg)) ?? "");
+}
+
+/** The number and body of a comment call, or null when either is unreadable
+ *  (an unreadable body makes the effect unreconcilable, never safe). */
+function parseComment(args: string[]): { number: number; body: string } | null {
+  const number = issueNumberOf(args);
+  const body = commentBody(args);
+  if (!Number.isInteger(number) || body === null) return null;
+  return { number, body };
+}
+
+/** The ONE comment effect shape: its key digests the body, so a re-read of the
+ *  conversation can prove whether that exact comment landed. */
+function commentAction(target: "pr" | "issue", comment: { number: number; body: string }): EffectAction {
+  return {
+    kind: "comment",
+    key: `comment:${target}:${comment.number}:${digest(comment.body)}`,
+    detail: `comment on ${target === "pr" ? "PR" : "issue"} #${comment.number}`,
+    target,
+    number: comment.number,
+    body: comment.body,
+  };
+}
+
 function isSafeBinary(binary: string): boolean {
   return SAFE_COMMANDS.has(binary) || SAFE_COMMANDS.has(binary.replace(/[0-9]+$/, ""));
+}
+
+/** Does this operand name a path outside the worktree? Absolute paths and `~`
+ *  do by construction; a `..` segment climbs out. `--flag=value` is read by
+ *  its value, so `--directory=/tmp` cannot slip through as a bare flag. */
+function escapesWorktree(operand: string): boolean {
+  const value = operand.includes("=") ? operand.slice(operand.indexOf("=") + 1) : operand;
+  if (value.startsWith("/") || value.startsWith("~")) return true;
+  return value.split("/").includes("..");
 }
 
 function tokenize(segment: string): string[] {

@@ -30,6 +30,9 @@ describe("the external-effect classifier (issue 119)", () => {
       "gh pr view 12",
       "git status || true",
       "gh api repos/o/r/pulls/12",
+      "gh api -X GET repos/o/r/pulls/12",
+      "tar -xzf pkg.tgz",
+      "cp a b && rm -rf dist",
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -39,6 +42,13 @@ describe("the external-effect classifier (issue 119)", () => {
     const [head] = effectActions("git push -u origin HEAD");
     assert.equal(head?.kind, "push");
     assert.equal(head?.branch, undefined);
+
+    // One positional is the REMOTE, whatever it happens to be called: the
+    // branch stays unresolved for the guardrail to read from the worktree.
+    // Recording `origin` as a branch made every such push unreconcilable.
+    const [bareRemote] = effectActions("git push origin");
+    assert.equal(bareRemote?.branch, undefined);
+    assert.equal(bareRemote?.key, "push:<current>");
 
     const [named] = effectActions("git push origin agent-issue-7");
     assert.equal(named?.branch, "agent-issue-7");
@@ -86,6 +96,21 @@ describe("the external-effect classifier (issue 119)", () => {
       "gh pr close 12",
       "gh release create v1",
       "gh api -X POST repos/o/r/issues/1/comments -f body=hi",
+      // `gh api`'s method in every spelling gh accepts: a combined short form
+      // (`-XPOST`) is a mutation too, and reading only the separated form made
+      // a merge look like a read.
+      "gh api -XPOST repos/o/r/pulls/12/merge",
+      "gh api -XDELETE repos/o/r/issues/1/labels/x",
+      "gh api --method=DELETE repos/o/r/issues/1/labels/x",
+      "gh api -XPUT repos/o/r/pulls/12/update-branch",
+      // A local writer is safe only inside the worktree: an absolute path
+      // reaches the host, where nothing reconciles the effect.
+      "cp a /tmp/b",
+      "rm -rf ../escaped",
+      "tar -xzf pkg.tgz -C /opt",
+      "mkdir -p ~/.config/msf",
+      "tee --output=/etc/x",
+      "ln -s a /usr/local/bin/b",
       "gh issue edit 7 --remove-label agent-claimed",
       "gh pr comment 12 --body-file /tmp/body",
       'curl -X POST https://example.com -d x',
@@ -117,6 +142,12 @@ describe("the external-effect classifier (issue 119)", () => {
       "time git push origin x",
       'bash -c "git push"',
       "./script.sh",
+      // A binary named like an object prototype member is just unknown: a
+      // lookup that fell through to Object.prototype once threw here, and the
+      // throw escaped the guardrail's hook — a mutation journaled by nobody.
+      "constructor --add x",
+      "toString x",
+      "hasOwnProperty --force",
     ]) {
       assert.equal(classifyCommand(command).safety, "unknown", command);
     }
