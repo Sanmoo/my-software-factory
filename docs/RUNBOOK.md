@@ -126,24 +126,14 @@ ends. Comment your feedback on the PR — the next derivation relaunches a
 worker that addresses it on the SAME branch and the SAME PR (as many rounds
 as you want; each round ends with the worker commenting what it addressed).
 
-You end the factory with Ctrl-C or SIGTERM — both carry the same guarantee.
-The factory stops admitting workers at once, asks the running ones to stop,
-and gives them 10 seconds to end; a second Ctrl-C (or SIGTERM) skips the rest
-of that window. At the window's end the remaining workers are forced, and the
-factory calls the stop done only after confirming that no worker container
-survives. The 10 seconds bound the *request* phase, not a promise of exiting
-in 10 seconds: the factory exits as soon as every worker is confirmed gone —
-or says it could not confirm and exits nonzero (a worker it could not end, or
-a Docker that stopped answering), leaving the affected works on record for the
-next run to check.
-
-A requested stop is not a failure. The attempt, its branch, its history and
-the artifacts on disk stay; no Cancellation or Fall is recorded and no
-recovery is spent. The next `msf run` loads the current `msf.yaml` and the
-compiled code, resumes the SAME attempts — reopening the attempt's native Pi
-session — and the worker reconciles the real state (branch, PR, comments,
-labels) before repeating any external effect. There is no hot reload:
-compiling and `npm run build:image` stay explicit steps between runs.
+You end the factory with Ctrl-C or SIGTERM (exit 0); a second signal skips the
+rest of the cooperative window. A stop the factory cannot confirm says so and
+exits nonzero, leaving the affected works on record for the next run to check.
+Nothing is lost and no recovery is spent: **Requested stop** and **Unconfirmed
+stop** in GLOSSARY.md are the contract. The next `msf run` loads the current
+`msf.yaml` and the compiled code and resumes the SAME attempts — there is no
+hot reload, so compiling and `npm run build:image` stay explicit steps between
+runs.
 
 Restarting after a crash loses nothing either: the next boot re-derives every
 reserved work from disk + tracker alone (a crashed round is an interruption:
@@ -241,7 +231,7 @@ address, with no window opened and no focus taken.
   be established, the run refuses to start rather than run unprotected.
 - **Ctrl-C/SIGTERM do not wait for a whole Work**: the stop of (b) also ends
   the workers a previous run left, and the exclusivity above holds through
-  it. What the stop cannot confirm is in (b) too.
+  it.
 - **REST budget**: the bot account's REST budget is 60/h **shared with the
   whole machine** (the same IP/account budget as everything else that runs
   `gh` here). One sweep consumes only a FEW calls: one listing per target

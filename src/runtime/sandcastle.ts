@@ -299,6 +299,8 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly sessions = new Map<string, RunningSession>();
   /** Keys whose stop was requested before their session registered. */
   private readonly stopRequested = new Set<string>();
+  /** The one forced stop of this runtime: same image, same workspace. */
+  private stopper: ((key: string) => Promise<void>) | null = null;
 
   constructor(options: SandcastleRuntimeOptions) {
     this.model = options.model;
@@ -349,8 +351,10 @@ export class SandcastleRuntime implements WorkerRuntime {
     await this.preflight();
 
     // Stopped while the preconditions ran: no footprint, no worker. The
-    // requested stop is not a session this runtime has to report.
-    if (stopSignal.aborted || this.stopRequested.has(workKey(request.ref))) {
+    // requested stop is not a session this runtime has to report, and the
+    // request is consumed here — it was remembered for exactly this launch.
+    const key = workKey(request.ref);
+    if (stopSignal.aborted || this.stopRequested.delete(key)) {
       return { request, outcome: "abrupt-death" };
     }
 
@@ -450,7 +454,11 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   private forceStopper(): (key: string) => Promise<void> {
-    return dockerWorkerForceStop({ image: this.image, worksRoot: workspaceLayout(this.workspace).works });
+    this.stopper ??= dockerWorkerForceStop({
+      image: this.image,
+      worksRoot: workspaceLayout(this.workspace).works,
+    });
+    return this.stopper;
   }
 
   /**

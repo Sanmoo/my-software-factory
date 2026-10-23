@@ -162,6 +162,11 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       [1, 1, 1],
       "every retry continues the SAME attempt",
     );
+    assert.deepEqual(
+      result.launched.map((launch) => launch.request.resume === true),
+      [false, true, true],
+      "the claim starts a fresh session; each retry reopens the attempt's native one (ADR 0005)",
+    );
     assert.equal(result.collected.at(-1)?.ruling.decision, "reserve", "the third session opened the PR");
 
     const wd = workDir(layout, REPO, 1);
