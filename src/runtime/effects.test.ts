@@ -28,6 +28,7 @@ describe("the external-effect classifier (issue 119)", () => {
       "mkdir -p dist && cp a b",
       "jq -r .name package.json",
       "gh pr view 12",
+      "git status || true",
       "gh api repos/o/r/pulls/12",
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);

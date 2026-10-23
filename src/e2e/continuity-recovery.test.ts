@@ -250,7 +250,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
   });
 
-  test("a pause that survived a crash before the block keeps the work paused: no launch, no second request", async () => {
+  test("a pause persisted before its block landed is announced on the next cycle — once", async () => {
     const ref: IssueRef = { repo: REPO, number: 7 };
     seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     const target = workDir(layout, REPO, 7);
@@ -279,6 +279,15 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
       logs.some((line) => line.includes("paused for help") && line.includes("session-missing")),
       "the diagnosis names the pause",
     );
+    // The death landed before the block and the request: the operator is told now.
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true, "the block lands on the next cycle");
+    assert.equal((await agentComments(7)).length, 1, "and exactly one help request");
+    assert.equal(readPause(target)?.announced, true);
+
+    // Once announced, a restart neither blocks again nor repeats the request.
+    const restart = await runOnce(deps(config()));
+    assert.equal(restart.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 1, "no second request");
   });
 
   test("an interrupted command with no reconciliation pauses; another eligible work keeps progressing", async () => {

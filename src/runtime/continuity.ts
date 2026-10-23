@@ -88,15 +88,12 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
     // SAME attempt legitimately creates its first session. A legacy attempt
     // that left any evidence but no association is a different case: its
     // session cannot be identified and the work pauses.
-    if (!hasAttemptEvidence(deps)) return startFirstSession(deps, effects.verdicts);
-    return {
-      decision: "pause",
-      pause: pauseOf(
-        deps,
-        "link-missing",
-        `attempt ${deps.attempt} has no recorded Pi session — a fresh session would be a new execution, not a continuation`,
-      ),
-    };
+    return firstSessionOrPause(
+      deps,
+      effects.verdicts,
+      "link-missing",
+      `attempt ${deps.attempt} has no recorded Pi session — a fresh session would be a new execution, not a continuation`,
+    );
   }
 
   const file = findSessionFile(deps.sessionsDir, link.sessionId);
@@ -105,11 +102,13 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
     // leaves no log, no journal record and no session file: nothing can be
     // lost, so the SAME attempt starts its first session. Once any evidence
     // exists (the session ran), its absence pauses the work.
-    if (!hasAttemptEvidence(deps)) return startFirstSession(deps, effects.verdicts);
-    return {
-      decision: "pause",
-      pause: pauseOf(deps, "session-missing", `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk`, link.sessionId),
-    };
+    return firstSessionOrPause(
+      deps,
+      effects.verdicts,
+      "session-missing",
+      `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk`,
+      link.sessionId,
+    );
   }
   const inspection = inspectSessionFile(file, link.sessionId);
   if (inspection.status === "identity-mismatch" || inspection.status === "missing") {
@@ -186,9 +185,25 @@ export async function recheckPausedEffects(deps: ContinuityDeps): Promise<Rechec
 }
 
 /**
+ * No session to continue. When the attempt left ZERO evidence it never reached
+ * a worker (a death between the claim and the spawn): nothing can be lost, so
+ * the SAME attempt legitimately starts its first session. Once any evidence
+ * exists, the session that ran cannot be identified and the work pauses.
+ */
+function firstSessionOrPause(
+  deps: ContinuityDeps,
+  verdicts: Record<string, EffectVerdict>,
+  reason: PauseReason,
+  detail: string,
+  sessionId?: string,
+): ContinuityPlan {
+  if (hasAttemptEvidence(deps)) return { decision: "pause", pause: pauseOf(deps, reason, detail, sessionId) };
+  return startFirstSession(deps, verdicts);
+}
+
+/**
  * The attempt's FIRST session: the association is recorded before the worker
- * starts, so the very next recovery can only pick THIS session. Used for a new
- * launch and for a claim whose worker never started (nothing can be lost).
+ * starts, so the very next recovery can only pick THIS session.
  */
 function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, EffectVerdict>): ContinuityPlan {
   const links = readSessionLinks(deps.workDir);

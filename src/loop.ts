@@ -711,14 +711,17 @@ export class SweepEngine {
         }
         case "continuity-paused": {
           // Continuity could not safely reopen the attempt's session (issue
-          // 119): the pause is persisted and already asked the operator for
-          // help, so no cycle retries the recovery or posts the request again.
-          // Other works keep progressing.
+          // 119). The pause is persisted, so no cycle retries the recovery;
+          // a pause whose block and help request never landed (a death in
+          // between) is announced now, exactly once. Other works keep going.
           this.log(
             `derived ${workKey(decision.ref)}: attempt ${decision.attempt} is paused for help ` +
               `(${decision.pause.reason}) — no recovery is spent and nothing is relaunched`,
           );
           this.announce(decision.ref, "reserved");
+          if (decision.pause.announced !== true) {
+            await this.pauseForContinuity(decision.ref, workDir(workspace, decision.ref.repo, decision.ref.number), decision.pause);
+          }
           break;
         }
         case "feedback":
@@ -1910,13 +1913,23 @@ export class SweepEngine {
   ): Promise<void> {
     const { tracker, config, workspace } = this.deps;
     const previous = readPause(dir);
-    writePause(dir, pause);
+    const alreadyAnnounced =
+      note === undefined &&
+      previous !== null &&
+      previous.attempt === pause.attempt &&
+      previous.reason === pause.reason &&
+      previous.announced === true;
+    // The record lands FIRST (a restart must know the work waits), marked
+    // unannounced until the block and the request really landed: a death in
+    // between leaves the fact that the operator was never told.
+    writePause(dir, { ...pause, announced: false });
     this.announce(ref, "reserved");
-    if (note === undefined && previous !== null && previous.attempt === pause.attempt && previous.reason === pause.reason) {
+    if (alreadyAnnounced) {
       // The same pause was already announced: re-assert the blocked label
       // without repeating the request (a failed retomada swapped it), so the
       // work stays out of every launch and the human sees one request.
       await tracker.blockClaim(ref, config.labels);
+      writePause(dir, { ...pause, announced: true });
       this.log(
         `continuity of ${workKey(ref)} still paused (${pause.reason}) — no new help request, no recovery spent`,
       );
@@ -1938,6 +1951,7 @@ export class SweepEngine {
         ...(note === undefined ? {} : { note }),
       }),
     );
+    writePause(dir, { ...pause, announced: true });
   }
 
   /** The exhausted recovery budget: block the work and ask the operator for

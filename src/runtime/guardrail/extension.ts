@@ -133,7 +133,9 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
   pi.on("tool_result", (event) => {
     if (state === null) return;
     const journal = readEffectJournal(workMount);
-    if (!journal.intents.some((intent) => intent.callId === event.toolCallId)) return;
+    // The call id belongs to the session that issued it; another round's
+    // "call-1" is not this one.
+    if (!journal.intents.some((intent) => intent.sessionId === state!.sessionId && intent.callId === event.toolCallId)) return;
     appendJournalResult(workMount, {
       attempt: state.attempt,
       sessionId: state.sessionId,

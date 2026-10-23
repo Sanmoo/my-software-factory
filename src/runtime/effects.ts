@@ -112,7 +112,7 @@ export function classifyCommand(command: string): CommandSafety {
   if (/[`]|\$\(/.test(trimmed)) {
     return { safety: "unknown", reason: "command substitution can hide any effect" };
   }
-  if (trimmed.includes("|")) {
+  if (trimmed.replaceAll("||", "").includes("|")) {
     return { safety: "unknown", reason: "a pipeline hides the right side's effect" };
   }
   // A redirection is not resolved here: its target can be any path (and an

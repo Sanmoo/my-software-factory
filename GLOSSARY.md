@@ -131,10 +131,11 @@ _Avoid_: Verification, when no external state is read.
 
 **Continuity pause**:
 The persisted wait for the operator when an interrupted attempt cannot be continued safely — its session is missing, unreadable or of another identity, or an interrupted effect stayed unknown. It spends no attempt and no recovery, survives a restart, asks once, and is not the Docker-unavailability suspension.
-_Avoid_: Block, when no fall was written; Liveness unknown, when the session or the effect is the doubt.
+The issue is marked blocked while it waits, but the cause is the session or an unknown effect, not a fall — the pause asks once and spends nothing.
+_Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt.
 
 **Guardrail**:
-The factory-owned extension loaded inside the worker container that journals effect intents and blocks an effect the host proved already realized — code at the tool boundary, never prompt obedience.
+The factory-owned extension loaded inside the worker container that journals effect intents before they run and blocks a repeat at the tool boundary — an effect the host proved already realized, an effect proven absent already run once in the round, or one a previous round already attempted. It is code at the boundary, never prompt obedience.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.
@@ -186,7 +187,7 @@ The runtime's structured fact for a session that ended with no outcome record: a
 A WRITTEN failure or abandon of an attempt, ruled by the 1st/2nd-fall rule (1st releases, 2nd consecutive blocks). An interruption is never a fall.
 
 **Block**:
-A work the factory stopped driving (2nd consecutive failed attempt, exhausted recovery budget, 2nd consecutive Repair fall, or PR closed without merge) until a human answers on its issue.
+A work the factory stopped driving (2nd consecutive failed attempt, exhausted recovery budget, 2nd consecutive Repair fall, PR closed without merge, or a continuity pause) until a human answers on its issue.
 
 **Occurrence**:
 A new act that needs human continuity, such as a PR awaiting attention, a help request or a block; never an ordinary sweep.
