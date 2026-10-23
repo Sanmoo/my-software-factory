@@ -5,6 +5,7 @@ import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { IssueRef } from "../tracker/port.js";
 import { workKey } from "../state/derive.js";
+import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
@@ -145,10 +146,10 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** The sessions alive right now: a stopped launch still counts until it
-   *  ended. Not part of the port — it is the double's own view, which a test
-   *  hands to the cycle as its liveness probe. */
-  async liveWorkers(): Promise<ReadonlyArray<{ key: string }>> {
-    return [...this.sessions.keys()].map((key) => ({ key }));
+   *  ended. Not part of the port — it is the double's own view of its
+   *  "containers", which a test hands to the cycle as its liveness probe. */
+  async liveWorkers(): Promise<LiveWorker[]> {
+    return [...this.sessions.keys()].map((key) => ({ key, containerId: `fake-${key}`, ageMs: 0 }));
   }
 
   /** Resolves once a cooperative stop was requested for this work — the seam a
