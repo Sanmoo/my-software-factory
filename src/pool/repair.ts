@@ -64,11 +64,11 @@ const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
  * re-derived from the PR's current facts before the round spends work and
  * before the factory asks for help. `obsolete` means no confirmed impediment
  * remains — the PR is mergeable and the required set is KNOWN (the empty set
- * of a repository without CI is known); `persists` means a confirmed
+ * of a repository without CI is known); `persisting` means a confirmed
  * impediment is still there; `unknown` is an unreadable fact, and it is never
  * a licence to conclude either way.
  */
-export type RepairPremise = "obsolete" | "persists" | "unknown";
+export type RepairPremise = "obsolete" | "persisting" | "unknown";
 /** The attempt a repair round put on disk, enough to attribute its publication
  *  later — after a death that wrote no outcome record. */
 export interface RepairAttempt {

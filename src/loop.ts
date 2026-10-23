@@ -1075,8 +1075,7 @@ export class SweepEngine {
       // paying for stale evidence. The round is announced below, after this
       // decision: a returned round is never also "reactivated".
       const reading = readRepairPremise(await tracker.readPrRepairFacts(ref));
-      const confirmed = reading.trigger;
-      if (reading.premise !== "persists" || confirmed === null) {
+      if (reading.premise !== "persisting") {
         this.log(
           reading.premise === "obsolete"
             ? `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
@@ -1086,6 +1085,7 @@ export class SweepEngine {
         );
         return null;
       }
+      const confirmed = reading.trigger;
       // A FRESH round follows the facts as they read now: when the head moved
       // while the impediment persists, the evidence was recalculated, so the
       // round opens on the current head and is charged on the new evidence

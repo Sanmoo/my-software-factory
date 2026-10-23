@@ -32,7 +32,6 @@ import {
   repairEvidenceSignature,
   type RepairAttempt,
   type RepairCycle,
-  type RepairPremise,
 } from "../pool/repair.js";
 
 /**
@@ -266,13 +265,11 @@ export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
   });
 }
 
-/** The premise of a repair round, with the trigger it presents while it
- *  stands: one reading from the facts read NOW (issue 149), so the launch
- *  neither derives the trigger twice nor decides twice. */
-export interface RepairPremiseReading {
-  premise: RepairPremise;
-  trigger: RepairTrigger | null;
-}
+/** A premise reading: `persisting` always carries the trigger it presents. */
+export type RepairPremiseReading =
+  | { premise: "persisting"; trigger: RepairTrigger }
+  | { premise: "obsolete" }
+  | { premise: "unknown" };
 
 /** The premise of a repair round read from the PR's current facts (issue 149):
  *  a confirmed trigger persists; only a mergeable PR with a known required set
@@ -280,12 +277,12 @@ export interface RepairPremiseReading {
  *  proves nothing); an unreadable read is unknown, never an invented clean
  *  bill. The vocabulary lives in pool/repair.ts. */
 export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseReading {
-  if (!facts.known) return { premise: "unknown", trigger: null };
+  if (!facts.known) return { premise: "unknown" };
   const trigger = repairTrigger(facts.value);
-  if (trigger !== null) return { premise: "persists", trigger };
-  if (facts.value.mergeState !== "mergeable") return { premise: "unknown", trigger: null };
-  if (facts.value.requiredChecks === null) return { premise: "unknown", trigger: null };
-  return { premise: "obsolete", trigger: null };
+  if (trigger !== null) return { premise: "persisting", trigger };
+  if (facts.value.mergeState !== "mergeable") return { premise: "unknown" };
+  if (facts.value.requiredChecks === null) return { premise: "unknown" };
+  return { premise: "obsolete" };
 }
 
 /** Confirmed recovery (story 22): no conflicts and every required check
