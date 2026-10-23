@@ -1,5 +1,6 @@
 import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type {
+  ExpandedPrFeedback,
   OpenTicket,
   PullRequestRecord,
   PullRequestTracker,
@@ -853,7 +854,7 @@ async function deriveUnreconciledFailure(
  * agent marker" (ticket 07 Q3, amended in 18) — login cannot separate the
  * sides when they are the same account.
  */
-export function lastPrComment(feedback: { comments: IssueComment[]; reviews: IssueComment[] } | null): IssueComment | null {
+export function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null {
   if (feedback === null) return null;
   const all = [...feedback.comments, ...feedback.reviews].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt), // stable — ties keep read order
@@ -934,7 +935,7 @@ async function repairFallBlocked(
 }
 
 /** The rejection comment: points at the PR (ticket 04 Q5). */
-export function rejectionComment(pr: { number: number; headBranch: string; baseBranch: string }): string {
+export function rejectionComment(pr: PullRequestRecord): string {
   return (
     `work rejected: PR #${pr.number} (${pr.headBranch} → ${pr.baseBranch}) was closed without merging. ` +
     "The work is blocked and the branch stays — answer on this issue (after the marker) to resume from the existing branch."
