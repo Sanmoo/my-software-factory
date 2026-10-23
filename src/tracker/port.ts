@@ -2,7 +2,8 @@
  * The legacy tracker port (issue 124): the transitional shape existing
  * consumers still speak. The expanded contracts split ticket operations from
  * PR/code-host operations (`expanded-port.ts`); `legacyTrackerPort` bridges
- * this shape onto them, and the bridge is removed once consumers migrate.
+ * this shape onto them. The orchestration migrated (issue 126); the bridge
+ * stays as the declared compatibility surface until #127 removes it.
  *
  * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
  * speaks of works (trabalhos). A Jira ticket adapter serves the expanded
@@ -185,8 +186,8 @@ export class PartialWriteError extends Error {
 
 /**
  * @deprecated Transitional (issue 124): new code speaks `TicketTracker` /
- * `PullRequestTracker`; existing consumers keep this shape through
- * `legacyTrackerPort` until they migrate.
+ * `PullRequestTracker`. The orchestration migrated (issue 126); the contract
+ * regression still exercises this shape, and #127 removes it.
  *
  * The 9 operations + rank (ticket 02, table 1), in port terms:
  *

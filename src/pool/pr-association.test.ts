@@ -16,7 +16,6 @@ import {
 import {
   PR_ASSOCIATIONS_FILENAME,
   activePullRequest,
-  activePullRequestOf,
   readPrAssociations,
   recordPrAssociation,
 } from "./pr-association.js";
@@ -151,14 +150,4 @@ describe("PR association — the Work's persisted PR history", () => {
     const legacyRead = readPrAssociations(legacyDir);
     assert.equal(legacyRead.state === "persisted" ? activePullRequest(legacyRead.record)?.number : null, 1);
   });
-  test("the active association read is null for absent and unreadable, and the identity when persisted", () => {
-    assert.equal(activePullRequestOf(dir), null, "absent is the honest empty state");
-
-    recordPrAssociation(dir, { work, pullRequest: pr(42), attempt: 1 });
-    assert.equal(activePullRequestOf(dir)?.number, 42);
-
-    writeFileSync(join(dir, PR_ASSOCIATIONS_FILENAME), "{not json", "utf8");
-    assert.equal(activePullRequestOf(dir), null, "unreadable is never invented as an association");
-  });
-
 });

@@ -15,7 +15,7 @@ import type {
   RequiredCheckResult,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
-import { workIdentity, type WorkIdentity } from "../tracker/identity.js";
+import { issueRefOfTicket, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
 import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
@@ -29,7 +29,6 @@ import {
 } from "./outcome.js";
 import { readAttemptLedger } from "../pool/registry.js";
 import { peekRecovery, readRecoveryLedger, type RecoveryDecision } from "../pool/recovery.js";
-import { activePullRequestOf } from "../pool/pr-association.js";
 import { workKeyOf } from "../pool/work-key.js";
 import {
   modelProviderDecision,
@@ -220,10 +219,12 @@ function compareLeftoverWorks(a: { work: WorkIdentity }, b: { work: WorkIdentity
 /** A stable presentation order that keeps GitHub's historical repo-then-number
  *  comparison (#2 before #10) and falls back to the Work key for other sources. */
 function compareWorks(a: WorkIdentity, b: WorkIdentity): number {
-  if (a.ticket.provider === "github" && b.ticket.provider === "github") {
+  const left = issueRefOfTicket(a.ticket);
+  const right = issueRefOfTicket(b.ticket);
+  if (left !== null && right !== null) {
     return (
-      a.destination.repo.localeCompare(b.destination.repo) ||
-      a.ticket.number - b.ticket.number ||
+      left.repo.localeCompare(right.repo) ||
+      left.number - right.number ||
       workKeyOf(a).localeCompare(workKeyOf(b))
     );
   }
@@ -248,8 +249,9 @@ function hasAnyFactoryLabel(issue: OpenTicket, labels: Labels): boolean {
  *  assignee(s) — an assigned work is never eligible. A non-GitHub ticket has
  *  no `gh` command; null is offered instead of a fabricated one. */
 function releaseCommand(issue: OpenTicket, labels: Labels): string | null {
-  if (issue.ticket.provider !== "github") return null;
-  const parts = [`gh issue edit ${issue.ticket.number}`, `--repo ${issue.ticket.repo}`];
+  const ref = issueRefOfTicket(issue.ticket);
+  if (ref === null) return null;
+  const parts = [`gh issue edit ${ref.number}`, `--repo ${ref.repo}`];
   if (!issue.labels.includes(labels.ready)) parts.push(`--add-label ${labels.ready}`);
   if (issue.labels.includes(labels.claimed)) parts.push(`--remove-label ${labels.claimed}`);
   if (issue.labels.includes(labels.blocked)) parts.push(`--remove-label ${labels.blocked}`);
@@ -465,14 +467,15 @@ export async function deriveReserved(
   );
 }
 
-/** The PR read target of a Work: the association the caller already saw, else
- *  the persisted one; null lets the code host answer from its own linkage. */
+/** The PR read target of a Work: the PR the caller already saw, else null —
+ *  which lets the code host answer from its own linkage. The persisted
+ *  association is never preferred over the host's linkage: a stale or
+ *  unreadable record would silently retarget a feedback or repair read. */
 export function workPullRequest(
   work: WorkIdentity,
-  dir: string,
   known: PullRequestRecord | null = null,
 ): WorkPullRequest {
-  return { work, pullRequest: known?.identity ?? activePullRequestOf(dir) };
+  return { work, pullRequest: known?.identity ?? null };
 }
 
 async function deriveReservedWork(
@@ -522,7 +525,7 @@ async function deriveReservedWork(
   }
 
   // The PR states listen only to the PR (the feedback channel).
-  const target = workPullRequest(work, dir);
+  const target = workPullRequest(work);
   const feedback = await pullRequests.readPullRequestFeedback(target);
   const pr = feedback.known ? feedback.value.pr : null;
   if (pr !== null) {
@@ -806,7 +809,7 @@ async function resumableState(
   createdAt: string,
   issueReplies: IssueComment[],
 ): Promise<ReservedDerivation> {
-  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, dir));
+  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work));
   const pr = feedback.known ? feedback.value.pr : null;
   return { work, dir, state: "resumable", pr, createdAt, issueReplies };
 }

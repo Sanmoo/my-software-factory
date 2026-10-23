@@ -6,7 +6,9 @@ import { join } from "node:path";
 
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
-import { archiveDoneWork, parseWorkKey, readLaunchFacts, scanRegistry, scanReservedWorks } from "./registry.js";
+import { archiveDoneWorkFor, parseWorkKey, readLaunchFacts, scanRegistry } from "./registry.js";
+import { githubRepository, githubTicket, type WorkIdentity } from "../tracker/identity.js";
+import { scanReservations } from "./reservation.js";
 
 /**
  * The registry (pool/registry.ts, ticket 13; issue 123): reads back the
@@ -190,6 +192,12 @@ describe("registry — the derivation's reserved-works scan and the done archive
   let dir: string;
   let layout: WorkspaceLayout;
 
+  /** The Work a GitHub issue of the destination repo names. */
+  const workOf = (repo: string, number: number): WorkIdentity => ({
+    ticket: githubTicket(repo, number),
+    destination: githubRepository(repo),
+  });
+
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "msf-registry14-"));
     layout = ensureWorkspace(join(dir, "ws"));
@@ -199,43 +207,41 @@ describe("registry — the derivation's reserved-works scan and the done archive
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("scanReservedWorks: every trabalhos/<repo>#<n> dir becomes a ref — the factory's memory of what it launched", async () => {
+  test("scanReservations: every trabalhos/<repo>#<n> dir becomes a Work — the factory's memory of what it launched", async () => {
     mkdirSync(join(layout.works, "Sanmoo", "a#1"), { recursive: true });
     mkdirSync(join(layout.works, "Sanmoo", "my-tasks#12"), { recursive: true });
     // A dir that is not a work (the repo's nested path itself) is not a work.
     mkdirSync(join(layout.works, "Sanmoo", "b"), { recursive: true });
 
-    const reserved = await scanReservedWorks(layout);
+    const reserved = await scanReservations(layout);
 
     assert.deepEqual(
-      reserved.map((r) => r.ref).sort((x, y) => x.repo.localeCompare(y.repo) || x.number - y.number),
-      [
-        { repo: "Sanmoo/a", number: 1 },
-        { repo: "Sanmoo/my-tasks", number: 12 },
-      ],
+      reserved.map((entry) => entry.key).sort(),
+      ["Sanmoo/a#1", "Sanmoo/my-tasks#12"],
     );
     for (const entry of reserved) {
       assert.ok(existsSync(entry.dir), "the dir is handed over — launches and archiving need it");
+      assert.equal(entry.work?.ticket.provider, "github", "a legacy GitHub dir names its own ticket");
     }
   });
 
-  test("scanReservedWorks: a work-like dir nested inside a work is not a work of this registry", async () => {
+  test("scanReservations: a work-like dir nested inside a work is not a work of this registry", async () => {
     // A proof's disposable workspace can live under a work's dir and carry
     // its own trabalhos/<repo>#<n>; it is never a reservation of THIS one.
     mkdirSync(join(layout.works, "Sanmoo", "a#1", "proof", "fabrica", "trabalhos", "Sanmoo", "b#2"), {
       recursive: true,
     });
 
-    const reserved = await scanReservedWorks(layout);
+    const reserved = await scanReservations(layout);
 
     assert.deepEqual(
-      reserved.map((r) => r.ref),
-      [{ repo: "Sanmoo/a", number: 1 }],
+      reserved.map((entry) => entry.key),
+      ["Sanmoo/a#1"],
     );
   });
 
-  test("scanReservedWorks: a workspace never created reads empty", async () => {
-    assert.deepEqual(await scanReservedWorks(join("/nowhere/nonexistent-msf-ws")), []);
+  test("scanReservations: a workspace never created reads empty", async () => {
+    assert.deepEqual(await scanReservations(join("/nowhere/nonexistent-msf-ws")), []);
   });
 
   test("parseWorkKey: the dir name is <repo>#<n> with the repo keeping its slash", () => {
@@ -243,13 +249,13 @@ describe("registry — the derivation's reserved-works scan and the done archive
     assert.equal(parseWorkKey("no-number"), null);
   });
 
-  test("archiveDoneWork MOVES the work dir into arquivo/<repo>#<n>-<date> — nothing is deleted", async () => {
+  test("archiveDoneWorkFor MOVES the work dir into arquivo/<work key>-<date> — nothing is deleted", async () => {
     const src = join(layout.works, "Sanmoo", "a#1");
     mkdirSync(src, { recursive: true });
     writeFileSync(join(src, DESFECHO_FILENAME), JSON.stringify({ class: "pr-open", attempt: 1 }), "utf8");
     writeFileSync(join(src, "log-1.jsonl"), "{}\n", "utf8");
 
-    const dest = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 1 });
+    const dest = await archiveDoneWorkFor(layout, workOf("Sanmoo/a", 1));
     assert.ok(dest, "the archive path is returned");
 
     assert.ok(!existsSync(src), "the work dir left trabalhos");
@@ -261,18 +267,18 @@ describe("registry — the derivation's reserved-works scan and the done archive
     assert.deepEqual(view.archived, [dest]);
   });
 
-  test("archiveDoneWork of a work with no dir is a no-op (nothing to archive)", async () => {
-    const dest = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 42 });
+  test("archiveDoneWorkFor of a work with no dir is a no-op (nothing to archive)", async () => {
+    const dest = await archiveDoneWorkFor(layout, workOf("Sanmoo/a", 42));
     assert.equal(dest, null);
   });
 
-  test("archiveDoneWork twice on the same day never collides (the second gets a fresh name)", async () => {
+  test("archiveDoneWorkFor twice on the same day never collides (the second gets a fresh name)", async () => {
     const src = join(layout.works, "Sanmoo", "a#2");
     mkdirSync(src, { recursive: true });
-    const first = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 2 });
+    const first = await archiveDoneWorkFor(layout, workOf("Sanmoo/a", 2));
     assert.ok(first);
     mkdirSync(src, { recursive: true }); // a second run's artifacts for the same work
-    const second = await archiveDoneWork(layout, { repo: "Sanmoo/a", number: 2 });
+    const second = await archiveDoneWorkFor(layout, workOf("Sanmoo/a", 2));
     assert.ok(second, "the second archive also happens");
     assert.notEqual(first, second, "a unique dest, never the same dir");
     const view = await scanRegistry(layout);

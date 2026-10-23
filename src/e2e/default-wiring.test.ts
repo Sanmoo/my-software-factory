@@ -315,6 +315,22 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed]);
   });
 
+  test("a half-injected seam pair is refused — never a silent boot of the real adapter for the other half", async () => {
+    writeConfig();
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const half = /the ticket and PR seams must be supplied together/;
+    // Either half alone would reach the real adapter (keyring + network) for
+    // the missing side while the test believes it controls both.
+    await assert.rejects(
+      () => wireRunDeps(loadConfigFrom(dir), layout, { seams: { tickets: tracker } }),
+      (error: unknown) => error instanceof Error && half.test(error.message),
+    );
+    await assert.rejects(
+      () => wireRunDeps(loadConfigFrom(dir), layout, { seams: { pullRequests: tracker } }),
+      (error: unknown) => error instanceof Error && half.test(error.message),
+    );
+  });
+
   test("the default wiring (no seams) demands the keyring credential at boot — clear failure, offline", async () => {
     writeConfig();
     // A config naming an account the machine's gh keyring has no token for:

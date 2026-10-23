@@ -25,11 +25,10 @@ import {
 import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
-import { issueRefOfTicket, workOfIssueRef, type WorkIdentity } from "../tracker/identity.js";
+import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
-import type { IssueRef } from "../tracker/port.js";
 import { workKeyOf } from "./work-key.js";
-import { scanReservations, workDirCandidates } from "./reservation.js";
+import { workDirCandidates } from "./reservation.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -158,58 +157,10 @@ async function attemptsAndRecord(workDir: string): Promise<{
 
 // ---- the derivation's reserved-works scan + the done archive (ticket 14) ----
 
-/** A reserved work as the registry sees it: its ref and where its artifacts live. */
-export interface ReservedWorkEntry {
-  ref: IssueRef;
-  /** Absolute path of the work's registry dir (launches, archiving). */
-  dir: string;
-}
-
 /** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
 export function parseWorkKey(name: string): { repo: string; number: number } | null {
   const match = /^(.+)#(\d+)$/.exec(name);
   return match ? { repo: match[1]!, number: Number(match[2]) } : null;
-}
-
-/**
- * The works the factory ever launched and still owns on disk. This is the
- * derivation's source of "who is reserved": the tracker tells the state, the
- * registry tells WHO (ticket 14 — nothing but disk survives a restart, and a
- * released work keeps its dir until done).
- *
- * TRANSITIONAL bridge (issue 125): it is the {@link scanReservations} read,
- * filtered to the Works an `IssueRef` can express — a GitHub ticket. A
- * reservation of another provider stays visible to the expanded registry and
- * is simply outside this legacy consumer until it migrates; nothing is
- * relocated and no evidence is lost.
- */
-export async function scanReservedWorks(
-  workspace: WorkspaceLayout | string,
-): Promise<ReservedWorkEntry[]> {
-  const entries: ReservedWorkEntry[] = [];
-  for (const entry of await scanReservations(workspace)) {
-    // `work` is null only for a non-GitHub dir with no trustworthy record —
-    // never a Work this legacy consumer could address.
-    if (entry.work === null) continue;
-    const ref = issueRefOfTicket(entry.work.ticket);
-    if (ref === null) continue;
-    entries.push({ ref, dir: entry.dir });
-  }
-  return entries.sort((a, b) => a.ref.repo.localeCompare(b.ref.repo) || a.ref.number - b.ref.number);
-}
-
-/**
- * Done-only disk duty (ticket 05 Q5, executed for real in 14): MOVE the
- * work's artifacts out of trabalhos/ into arquivo/<repo>#<n>-<date>/ —
- * nothing is deleted, the audit trail stays forever. Returns the archive
- * path, or null when there was nothing to move. A same-day re-archive (a
- * second run's artifacts) gets a fresh name — never overwritten.
- */
-export async function archiveDoneWork(
-  layout: WorkspaceLayout,
-  ref: IssueRef,
-): Promise<string | null> {
-  return archiveDoneWorkFor(layout, workOfIssueRef(ref));
 }
 
 /**
