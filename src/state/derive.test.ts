@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
+  BLOCKER_READ_CONCURRENCY,
   deriveReserved,
   deriveTrackerState,
   renderUnbackedClaim,
@@ -23,11 +24,14 @@ const derivePool = async (
   labels = DEFAULT_LABELS,
 ) => (await deriveTrackerState(port, repos, labels)).pool;
 
-/** A tracker whose blocker read costs real time — the REST round-trip the
- *  status derivation awaited one candidate at a time (issue 147). `unreadable`
- *  answers unknown for a work, so the test also pins that unknown is never an
- *  unblocked result. */
+/** A tracker whose blocker read costs real time, as the REST one does: the
+ *  derivation must not await them one at a time (issue 147). `unreadable`
+ *  answers unknown for a work, pinning that unknown never unblocks. */
 class SlowBlockerTracker extends FakeTrackerAdapter {
+  /** The most blocker reads this tracker ever had in flight at once. */
+  peakInFlight = 0;
+  private inFlight = 0;
+
   constructor(
     private readonly delayMs: number,
     private readonly unreadable: ReadonlySet<number> = new Set(),
@@ -36,7 +40,10 @@ class SlowBlockerTracker extends FakeTrackerAdapter {
   }
 
   override async readBlockers(ref: IssueRef): Promise<Known<Blocker[]>> {
+    this.inFlight += 1;
+    this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
     await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    this.inFlight -= 1;
     if (this.unreadable.has(ref.number)) return notKnown;
     return super.readBlockers(ref);
   }
@@ -157,12 +164,17 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
       "a blocked or unreadable work is still out, and the rest keep their order",
     );
     // One at a time the reads alone cost 12 * 250 ms = 3 s; bounded they are a
-    // couple of waves. The bound is loose on purpose: it names serialization,
-    // never the machine's speed.
+    // couple of waves. The time bound is loose on purpose: it names
+    // serialization, never the machine's speed.
     assert.ok(elapsedMs < 1_500, `the blocker reads serialized: ${elapsedMs}ms for ${candidates} candidates`);
+    assert.ok(
+      tracker.peakInFlight <= BLOCKER_READ_CONCURRENCY,
+      `${tracker.peakInFlight} blocker reads were in flight at once — the concurrency must stay bounded`,
+    );
   });
 
-  test("the pool spans all target repos of the config", async () => {    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
+  test("the pool spans all target repos of the config", async () => {
+    seedIssue(adapter, { repo: "Sanmoo/a", number: 1, labels: [DEFAULT_LABELS.ready] });
     seedIssue(adapter, { repo: "Sanmoo/b", number: 9, labels: [DEFAULT_LABELS.ready] });
     seedIssue(adapter, { repo: "Sanmoo/other", number: 5, labels: [DEFAULT_LABELS.ready] });
 

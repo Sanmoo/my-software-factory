@@ -85,14 +85,9 @@ export interface TrackerState extends Reconciliation {
   pool: PoolEntry[];
 }
 
-/**
- * How many blocker reads the derivation may have in flight at once (issue
- * 147): the reads are independent, and each is a full REST round-trip — the
- * latency of a status with many candidates was their SUM while they ran one at
- * a time. The bound preserves the tracker's rate budget; it never changes what
- * a read means (unknown is still never "without impediment").
- */
-const BLOCKER_READ_CONCURRENCY = 8;
+/** How many blocker reads may be in flight at once (issue 147): independent
+ *  round-trips, bounded so the tracker's rate budget still holds. */
+export const BLOCKER_READ_CONCURRENCY = 8;
 
 export const UNBACKED_CLAIM_CAVEAT =
   "another factory or workspace may hold this claim — confirm before releasing";
@@ -141,18 +136,16 @@ export async function deriveTrackerState(
     }
   }
 
-  // The listing answered every rule but the blockers, so the blocker read is
-  // the only per-issue round-trip left — and it runs bounded-concurrently
-  // (issue 147): one at a time, the command waited the sum of them. The pool
-  // is assembled afterwards from the reads' answers, in the same order.
-  const unblocked = await mapBounded(candidates, BLOCKER_READ_CONCURRENCY, (issue) =>
-    hasNoOpenBlocker(port, issue.ref),
-  );
+  // The blocker read is the only per-candidate round-trip the listing could
+  // not answer, and it is issued with bounded concurrency (issue 147).
+  const verdicts = await mapBounded(candidates, BLOCKER_READ_CONCURRENCY, async (issue) => ({
+    issue,
+    unblocked: await hasNoOpenBlocker(port, issue.ref),
+  }));
   const pool: PoolEntry[] = [];
-  for (const [index, issue] of candidates.entries()) {
-    if (unblocked[index] === true) {
-      pool.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
-    }
+  for (const { issue, unblocked } of verdicts) {
+    if (!unblocked) continue;
+    pool.push({ ref: issue.ref, title: issue.title, createdAt: issue.createdAt });
   }
 
   // A reservation whose open work carries no factory mark (not even the pool

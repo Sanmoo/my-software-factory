@@ -144,8 +144,8 @@ export function installGhShim(baseDir: string, options: GhShimOptions = {}): GhS
   };
 }
 
-/** The REST channel the shim delegates to: canned answers by path + the log of
- *  what the child actually read. Once per install, the answers are rewritten. */
+/** The REST channel the shim delegates to: canned answers by path, and the log
+ *  that records what the child actually read. Each call rewrites both. */
 function installRestChannel(
   baseDir: string,
   answers: Record<string, RestAnswer>,
