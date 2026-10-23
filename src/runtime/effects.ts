@@ -582,7 +582,19 @@ function tokenize(segment: string): string[] {
     if (quote !== null) {
       if (char === quote) quote = null;
       else if (char === "\\" && quote === '"' && i + 1 < segment.length) {
-        current += segment[i + 1];
+        // Inside `""` bash drops the backslash only before a character it can
+        // escape ($, backtick, ", \ and newline); before anything else the
+        // backslash is LITERAL, so `"a\|b"` posts `a\|b`. Dropping it here made
+        // the recorded body differ from the one the shell posts, and a recovery
+        // then read the comment as absent and allowed a duplicate.
+        const escaped = segment[i + 1]!;
+        if (escaped === "\n") {
+          // A backslash-newline inside `""` is a line continuation.
+        } else if ('$`"\\'.includes(escaped)) {
+          current += escaped;
+        } else {
+          current += `\\${escaped}`;
+        }
         i += 1;
       } else current += char;
       continue;

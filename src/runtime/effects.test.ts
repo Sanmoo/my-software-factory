@@ -220,6 +220,19 @@ describe("the external-effect classifier (issue 119)", () => {
     assert.equal(classifyCommand("gh pr comment 5 --body a | b").safety, "unknown");
   });
 
+  test("the recorded comment body is the one the shell posts", () => {
+    // The body keys the effect, so it must match the text bash produces after
+    // quoting/escaping — a mismatch makes a recovery read the comment as absent
+    // and post it twice.
+    const bodyOf = (command: string): string | undefined => effectActions(command)[0]?.body;
+    // Inside `""` a backslash survives before an ordinary character…
+    assert.equal(bodyOf(`gh pr comment 5 --body "a\\|b"`), "a\\|b");
+    assert.equal(bodyOf(`gh pr comment 5 --body "a\\>b"`), "a\\>b");
+    // …and is dropped before the four it can escape.
+    assert.equal(bodyOf(`gh pr comment 5 --body "a \\"q\\" b"`), `a "q" b`);
+    assert.equal(bodyOf(`gh pr comment 5 --body "a \\\\ b"`), "a \\ b");
+  });
+
   test("one unknown segment makes the whole compound command unknown", () => {
     assert.equal(classifyCommand("git commit -m x && curl https://example.com").safety, "unknown");
   });
