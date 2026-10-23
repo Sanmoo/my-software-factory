@@ -72,7 +72,7 @@ export type ModelProviderDecision =
   | { decision: "awaiting-model-provider"; consumed: number; reason: string };
 
 /** A settlement and whether THIS call recorded it (the comment fires once). */
-export type ModelProviderSettlementResult = ModelProviderDecision & { recorded: boolean };
+export type SettledModelProviderDecision = ModelProviderDecision & { recorded: boolean };
 
 /**
  * Read the model provider ledger of a work. An absent or corrupt file is the honest
@@ -190,7 +190,7 @@ export async function settleModelProviderFailure(
   attempt: number,
   failure: ModelProviderFailure,
   now: () => Date = () => new Date(),
-): Promise<ModelProviderSettlementResult> {
+): Promise<SettledModelProviderDecision> {
   const ledger = ledgerForAttempt(await readModelProviderLedger(workDir), attempt);
   const decision = modelProviderDecision(ledger, budget, attempt, failure);
   const settled = isModelProviderFailureSettled(ledger, attempt, failure);

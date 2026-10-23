@@ -569,7 +569,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       });
     }
 
-    test("claimed, no PR, the stream carries a provider error → provider-failure on its own budget (issue 144)", async () => {
+    test("claimed, no PR, the stream carries a model provider error → model-provider-failure on its own budget (issue 144)", async () => {
       seedIssue(adapter, { repo: REPO, number: 26, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(26);
       providerErrorLog(path, 1);
@@ -584,7 +584,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.modelProvider.decision === "retry" && derived.modelProvider.waitMs, 15_000, "the provider's own backoff");
     });
 
-    test("claimed, no PR, the provider budget exhausted → awaiting provider; a human answer resumes it (issue 144)", async () => {
+    test("claimed, no PR, the model provider budget exhausted → awaiting model provider; a human answer resumes it (issue 144)", async () => {
       seedIssue(adapter, { repo: REPO, number: 27, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(27);
       providerErrorLog(path, 1, 1_700_000_000_777);

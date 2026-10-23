@@ -34,9 +34,9 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt ended by a provider failure is NOT an interruption of
-  // the agent (issue 144): the provider section owns its state, so it is not
-  // repeated under the liveness/interruption wording.
+  // A work whose attempt ended by a model provider failure is NOT an
+  // interruption of the agent (issue 144): the provider section owns its state,
+  // so it is not repeated under the liveness/interruption wording.
   const modelProviderKeys = new Set(view.registry.modelProvider.map((entry) => entry.key));
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
@@ -101,9 +101,9 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // The provider's own budget (issue 144): a work whose last attempt ended by
-  // a provider failure is named here — retrying on its own backoff, or
-  // awaiting the operator's help. It is never an interruption of the agent.
+  // The model provider's own budget (issue 144): a work whose last attempt
+  // ended by a model provider failure is named here — retrying on its own
+  // backoff, or awaiting the operator's help.
   lines.push(
     ...section(
       "model provider (the last attempt ended by a model provider failure — not an interruption of the agent)",
@@ -210,12 +210,12 @@ function renderModelProvider(entry: ModelProviderViewEntry, budget: ModelProvide
     : "retrying after the model provider backoff";
   return (
     `${entry.key} (attempt ${entry.attempt}: ${spend}; ` +
-    `last model provider error: ${oneLine(last.message)} — ${state})`
+    `last model provider error: ${collapseWhitespace(last.message)} — ${state})`
   );
 }
 
 /** The provider's message as one status line: whitespace collapsed, never a new section. */
-function oneLine(message: string): string {
+function collapseWhitespace(message: string): string {
   return message.replace(/\s+/g, " ").trim();
 }
 
