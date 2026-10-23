@@ -59,7 +59,6 @@ import {
   archiveDoneWorkFor,
   readAttemptLedger,
   readLastAttempt,
-  parseWorkKey,
 } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
@@ -90,6 +89,7 @@ import {
   type RecoveryDecision,
 } from "./pool/recovery.js";
 import { workKeyOf } from "./pool/work-key.js";
+import { anchorOfKey, workKeyOf, workOfAnchor } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
@@ -1055,7 +1055,7 @@ export class SweepEngine {
 
     for (const key of [...this.survivors.keys()]) await this.watchSurvivorActivity(key);
 
-    await this.announceDuplicates();
+    await this.announceDuplicates(reservations);
     return settled;
   }
 
@@ -1086,7 +1086,9 @@ export class SweepEngine {
    * work are several occupied slots, no new launch for that work and no owner
    * chosen or ended — the evidence stays for the human.
    */
-  private async announceDuplicates(): Promise<void> {
+  private async announceDuplicates(
+    reservations: ReadonlyMap<string, ReservationEntry & { work: WorkIdentity }>,
+  ): Promise<void> {
     if (this.liveness.state !== "known") return;
     const { fresh, next } = freshDuplicates(
       this.announcedDuplicates,
@@ -1098,8 +1100,16 @@ export class SweepEngine {
         `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
           "no new launch for it, no owner chosen and nothing ended; a human decision is needed",
       );
-      const parsed = parseWorkKey(duplicate.key);
-      if (parsed !== null) await this.deliverNotice(interventionNotice(parsed));
+      const work = reservations.get(duplicate.key)?.work ?? workOfKeyForNotice(duplicate.key);
+      if (work === null) {
+        this.log(
+          `no intervention notice for duplicate ${duplicate.key}: this workspace has no readable reservation ` +
+            "for it (the facts above are preserved for the human)",
+        );
+        continue;
+      }
+      const ref = this.noticeRefOf(work);
+      if (ref !== null) await this.deliverNotice(interventionNotice(ref));
     }
   }
 
@@ -2730,6 +2740,16 @@ export class SweepEngine {
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";
+
+/** A GitHub key carries its readable number, so a duplicate container of a
+ *  work without a readable reservation can still be named to the operator.
+ *  A non-GitHub key needs the reservation for its readable key — none is
+ *  invented from the stable id. */
+function workOfKeyForNotice(key: string): WorkIdentity | null {
+  const anchor = anchorOfKey(key);
+  if (anchor === null || anchor.provider !== "github") return null;
+  return workOfAnchor(anchor, `#${anchor.stableId}`);
+}
 
 const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
