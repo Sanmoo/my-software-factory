@@ -25,7 +25,7 @@ import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
-import { fakeDocker } from "./fake-docker.js";
+import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
@@ -198,14 +198,13 @@ describe("status — derivation on demand + local registry scan", () => {
       { id: first, work: 4, startedMinutesAgo: 5 },
       { id: second, work: 4, startedMinutesAgo: 3 },
       { id: third, work: 5, startedMinutesAgo: 1 },
-    ].map((container) => ({
-      Id: container.id,
-      State: {
-        Running: true,
-        StartedAt: new Date(Date.now() - container.startedMinutesAgo * 60_000).toISOString(),
-      },
-      Mounts: [{ Source: dirOf(container.work), Destination: "/msf-work" }],
-    }));
+    ].map((container) =>
+      inspectedContainer(
+        container.id,
+        [dirOf(container.work)],
+        new Date(Date.now() - container.startedMinutesAgo * 60_000).toISOString(),
+      ),
+    );
     const shell = fakeDocker({ listing, inspect: JSON.stringify(inspect) });
     const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
 
