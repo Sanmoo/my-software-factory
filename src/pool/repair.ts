@@ -56,6 +56,17 @@ const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
   "concurrent-change",
 ];
 
+/**
+ * The renewed reading of the premise that opened a repair round (issue 149),
+ * re-derived from the PR's current facts before the round spends work and
+ * before the factory asks for help. `obsolete` means no confirmed impediment
+ * remains — the PR is mergeable and the required set is KNOWN (the empty set
+ * of a repository without CI is known); `persists` means a confirmed
+ * impediment is still there; `unknown` is an unreadable fact, and it is never
+ * a licence to conclude either way.
+ */
+export type RepairPremise = "obsolete" | "persists" | "unknown";
+
 /** The attempt a repair round put on disk, enough to attribute its publication
  *  later — after a death that wrote no outcome record. */
 export interface RepairAttempt {
@@ -261,6 +272,10 @@ export type RepairReconciliation =
   | { kind: "pending"; reason: string; cycle: RepairCycle }
   | { kind: "published"; cycle: RepairCycle; attempt: RepairAttempt }
   | { kind: "not-published"; cycle: RepairCycle; attempt: RepairAttempt }
+  /** The impediment the round was launched for no longer exists (issue 149):
+   *  the round returns, and no fall is counted — there is nothing left to
+   *  fix, so the remote is still never overwritten. */
+  | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }
   | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
 
 /**
@@ -271,12 +286,16 @@ export type RepairReconciliation =
  * never "published", and it neither returns budget nor allows a new worker.
  * A published round is charged exactly once (it was charged at launch, so the
  * reconciliation only records the verdict); an attempt that fell without
- * publishing returns its round and counts as one more consecutive fall.
+ * publishing returns its round and counts as one more consecutive fall —
+ * unless the premise itself is gone (issue 149): then the round returns with
+ * no fall, and the work is never blamed for a fault that no longer exists.
  */
 export function reconcileRepairAttempt(input: {
   cycle: RepairCycle;
   remote: RemoteObservation;
   localWork: LocalWorkFacts | null;
+  /** The PR's facts re-read now, not the ones the round was launched on. */
+  premise: RepairPremise;
 }): RepairReconciliation {
   const attempt = input.cycle.attempt;
   if (attempt === null) return { kind: "none" };
@@ -313,6 +332,23 @@ export function reconcileRepairAttempt(input: {
   // and attributable — a different head proves nothing about this attempt.
   if (produced !== null && remoteHeadSha === produced && produced !== attempt.observedHeadSha) {
     return { kind: "published", ...settled("published", { ...input.cycle, consecutiveFalls: 0 }) };
+  }
+
+  // The premise vanished while the round ran (issue 149): the obstacle it was
+  // reopened for is gone, so the round returns without counting a fall — the
+  // remote (whoever moved it) is still never overwritten. Only a confirmed
+  // absence reaches here; an unknown one keeps the verdict below.
+  if (input.premise === "obsolete") {
+    return {
+      kind: "premise-obsolete",
+      ...settleAttempt(
+        { ...input.cycle, usedRounds: Math.max(0, input.cycle.usedRounds - 1) },
+        attempt,
+        "not-published",
+        localWork,
+        remoteHeadSha,
+      ),
+    };
   }
 
   // The remote is still where it was, or holds no such branch: nothing of this

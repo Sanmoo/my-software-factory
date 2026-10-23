@@ -31,6 +31,7 @@ import {
   repairEvidenceSignature,
   type RepairAttempt,
   type RepairCycle,
+  type RepairPremise,
 } from "../pool/repair.js";
 
 /**
@@ -264,12 +265,29 @@ export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
   });
 }
 
+/**
+ * The premise of a repair round, re-read from the PR's CURRENT facts (issue
+ * 149): the same facts the derivation reads, asked again before the round
+ * spends work and before the factory asks for help. Only a confirmed
+ * impediment is `persists`; only a mergeable PR with a KNOWN required set is
+ * `obsolete` (an unknown mergeability, or an undetermined required set, proves
+ * nothing); null facts — the read failed — are `unknown`.
+ */
+export function repairPremise(facts: PrRepairFacts | null): RepairPremise {
+  if (facts === null) return "unknown";
+  if (repairTrigger(facts) !== null) return "persists";
+  if (facts.mergeState !== "mergeable") return "unknown";
+  if (facts.requiredChecks === null) return "unknown";
+  return "obsolete";
+}
+
 /** Confirmed recovery (story 22): no conflicts and every required check
- *  approved. Unknown facts never count as recovery. */
+ *  approved. The required set must be KNOWN — the empty set a repository
+ *  without CI declares is a confirmation (issue 149); null (unknown) is never
+ *  one. */
 function repairRecovered(facts: PrRepairFacts): boolean {
-  if (facts.mergeState !== "mergeable") return false;
-  if (facts.requiredChecks === null) return false;
-  return facts.requiredChecks.every((check) => check.conclusion === "success");
+  if (repairPremise(facts) !== "obsolete") return false;
+  return facts.requiredChecks !== null && facts.requiredChecks.every((check) => check.conclusion === "success");
 }
 
 /**
