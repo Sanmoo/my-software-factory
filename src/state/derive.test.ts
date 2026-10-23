@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
-  BLOCKER_READ_CONCURRENCY,
+  BLOCKER_READS_IN_FLIGHT,
   deriveReserved,
   deriveTrackerState,
   renderUnbackedClaim,
@@ -154,23 +154,16 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     seedIssue(tracker, { repo: "Sanmoo/a", number: 90 }); // the open blocker
     tracker.addBlocker({ repo: "Sanmoo/a", number: 1 }, { repo: "Sanmoo/a", number: 90 });
 
-    const started = Date.now();
     const state = await deriveTrackerState(tracker, ["Sanmoo/a"], DEFAULT_LABELS);
-    const elapsedMs = Date.now() - started;
 
     assert.deepEqual(
       state.pool.map((entry) => entry.ref.number),
       [2, 3, 4, 5, 6, 8, 9, 10, 11, 12],
       "a blocked or unreadable work is still out, and the rest keep their order",
     );
-    // One at a time the reads alone cost 12 * 250 ms = 3 s; bounded they are a
-    // couple of waves. The time bound is loose on purpose: it names
-    // serialization, never the machine's speed.
-    assert.ok(elapsedMs < 1_500, `the blocker reads serialized: ${elapsedMs}ms for ${candidates} candidates`);
-    assert.ok(
-      tracker.peakInFlight <= BLOCKER_READ_CONCURRENCY,
-      `${tracker.peakInFlight} blocker reads were in flight at once — the concurrency must stay bounded`,
-    );
+    // The reads overlap up to the bound and never past it — a fact of how many
+    // were in flight, never of how fast this machine ran them.
+    assert.equal(tracker.peakInFlight, Math.min(candidates, BLOCKER_READS_IN_FLIGHT));
   });
 
   test("the pool spans all target repos of the config", async () => {

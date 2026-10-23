@@ -87,7 +87,7 @@ export interface TrackerState extends Reconciliation {
 
 /** How many blocker reads may be in flight at once (issue 147): independent
  *  round-trips, bounded so the tracker's rate budget still holds. */
-export const BLOCKER_READ_CONCURRENCY = 8;
+export const BLOCKER_READS_IN_FLIGHT = 8;
 
 export const UNBACKED_CLAIM_CAVEAT =
   "another factory or workspace may hold this claim — confirm before releasing";
@@ -138,7 +138,7 @@ export async function deriveTrackerState(
 
   // The blocker read is the only per-candidate round-trip the listing could
   // not answer, and it is issued with bounded concurrency (issue 147).
-  const verdicts = await mapBounded(candidates, BLOCKER_READ_CONCURRENCY, async (issue) => ({
+  const verdicts = await mapBounded(candidates, BLOCKER_READS_IN_FLIGHT, async (issue) => ({
     issue,
     unblocked: await hasNoOpenBlocker(port, issue.ref),
   }));
