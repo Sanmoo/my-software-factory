@@ -195,7 +195,7 @@ export async function settleModelProviderFailure(
   const decision = modelProviderDecision(ledger, budget, attempt, failure);
   const settled = isModelProviderFailureSettled(ledger, attempt, failure);
 
-  if (settled && ledger.last?.granted === true) return { ...decision, recorded: false };
+  if (isModelProviderRetryGranted(ledger, attempt, failure)) return { ...decision, recorded: false };
   if (decision.decision === "awaiting-model-provider" && settled) return { ...decision, recorded: false };
 
   const at = now().toISOString();
