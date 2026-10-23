@@ -334,6 +334,19 @@ describe("liveness — the worker identity survives the image reference moving (
     );
   });
 
+  test("another factory's containers beside a reserved attempt are a decided absence, not unknown", async () => {
+    // Every row carries its mounts and none of them binds OUR works root: the
+    // absence is decided, so an interrupted attempt stays recoverable instead
+    // of stalling the factory behind a permanent unknown.
+    const probe = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: fakeDocker({ listing: `${SECOND} ${WORKS}-other/Sanmoo/my-tasks#9` }).run,
+      hasUnsettledAttempts: async () => true,
+    });
+
+    assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
+  });
+
   test("a listing without usable mount sources is unknown while a reserved attempt may own a worker", async () => {
     const probe = dockerWorkerProbe({
       worksRoot: WORKS,
