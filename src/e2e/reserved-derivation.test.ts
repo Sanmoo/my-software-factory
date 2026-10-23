@@ -506,6 +506,11 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(derived.state, "done", "done is still derived and archived with no configured repo");
     assert.equal(sweep.pool.length, 0, "the empty selection contributes nothing to the pool");
     assert.equal(tracker.claimedOrder.length, 0, "no claim is written");
+    const archived = readdirSync(layout.archive, { recursive: true, encoding: "utf8" });
+    assert.ok(
+      archived.some((name) => name.includes(`${workKeyOf(work)}-`)),
+      "the Work is archived under its own registry key",
+    );
   });
 
   test("a reservation from a source the composition does not serve is held — no adapter substitution, no sweep abort", async () => {

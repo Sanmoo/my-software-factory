@@ -188,7 +188,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
   });
 });
 
-describe("registry — the done archive of a finished work (ticket 14)", () => {
+describe("workspace registry — the reservations on disk and the done archive (ticket 14)", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 

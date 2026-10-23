@@ -68,7 +68,7 @@ export function githubRepository(repo: string): RepositoryIdentity {
 }
 
 /** The source a GitHub Issues selection reads: the code host's own issue tracker. */
-export function githubSource(): TicketSource {
+function githubSource(): TicketSource {
   return { provider: "github", site: GITHUB_SITE };
 }
 
