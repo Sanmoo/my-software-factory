@@ -25,7 +25,7 @@ import {
   unixSocketPath,
   workerShapedDockerRun,
 } from "./sandcastle.js";
-import { readTurnProviderError } from "./provider-error.js";
+import { readTurnModelProviderError } from "./model-provider-error.js";
 import type { WorkRequest } from "./port.js";
 
 /**
@@ -503,7 +503,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     const result = await emitting.launch(request);
 
     assert.equal(result.outcome, "abrupt-death");
-    assert.deepEqual(await readTurnProviderError(request.workDir, 1), {
+    assert.deepEqual(await readTurnModelProviderError(request.workDir, 1), {
       message: '429: {"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}',
       at: new Date(at).toISOString(),
     });

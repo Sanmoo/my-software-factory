@@ -1,4 +1,4 @@
-import type { Labels, ProviderBudget, RecoveryBudget } from "../config.js";
+import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type {
   IssueComment,
   IssueRef,
@@ -25,11 +25,11 @@ import {
 import { readAttemptLedger } from "../pool/registry.js";
 import { peekRecovery, readRecoveryLedger, type RecoveryDecision } from "../pool/recovery.js";
 import {
-  providerDecision,
-  readProviderLedger,
-  type ProviderDecision,
-} from "../pool/provider.js";
-import { readTurnProviderError, type ProviderFailure } from "../runtime/provider-error.js";
+  modelProviderDecision,
+  readModelProviderLedger,
+  type ModelProviderDecision,
+} from "../pool/model-provider.js";
+import { readTurnModelProviderError, type ModelProviderFailure } from "../runtime/model-provider-error.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
@@ -403,8 +403,8 @@ export type ReservedDerivation =
       ref: IssueRef;
       state: "provider-failure";
       attempt: number;
-      failure: ProviderFailure;
-      provider: ProviderDecision;
+      failure: ModelProviderFailure;
+      modelProvider: ModelProviderDecision;
     }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
@@ -422,7 +422,7 @@ export async function deriveReserved(
   workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
-  provider: ProviderBudget,
+  provider: ModelProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
   return Promise.all(
@@ -439,7 +439,7 @@ async function deriveReservedWork(
   _workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
-  provider: ProviderBudget,
+  provider: ModelProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -591,9 +591,24 @@ async function deriveReservedWork(
     if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
       return { ref, state: "idle" };
     }
-    const providerFailure = await deriveProviderFailure(port, ref, work.dir, issue.value.createdAt, provider);
-    if (providerFailure !== null) return providerFailure;
-    return deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
+    const unreconciled = await deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
+    // Only an interruption can be a provider failure: the attempt's own stream
+    // decides it (issue 144) — a written outcome or a bare reservation never
+    // reads the provider ledger.
+    if (unreconciled.state === "interrupted") {
+      const providerFailure = await deriveModelProviderFailure(
+        port,
+        {
+          ref,
+          dir: work.dir,
+          attempt: unreconciled.attempt,
+          createdAt: issue.value.createdAt,
+        },
+        provider,
+      );
+      if (providerFailure !== null) return providerFailure;
+    }
+    return unreconciled;
   }
   return { ref, state: "idle" };
 }
@@ -652,44 +667,44 @@ async function deriveUnreconciledAttempt(
 }
 
 /**
- * The provider-failure derivation of a claimed work whose current attempt wrote
- * no outcome record (issue 144), or null when the attempt's stream carries no
- * provider error — an ordinary interruption, a written outcome, or a settled
- * attempt. A provider error retries on its own budget; exhausted, it awaits the
- * operator — a help request a human answer resumes, never a block.
+ * The provider-failure derivation of an INTERRUPTED attempt (issue 144), or
+ * null when the attempt's stream carries no provider error. A provider error
+ * retries on its own budget; exhausted, it awaits the operator — a help
+ * request a human answer resumes, never a block.
  */
-async function deriveProviderFailure(
+async function deriveModelProviderFailure(
   port: TrackerPort,
-  ref: IssueRef,
-  dir: string,
-  createdAt: string,
-  provider: ProviderBudget,
+  work: InterruptedAttempt,
+  provider: ModelProviderBudget,
 ): Promise<ReservedDerivation | null> {
-  const ledger = await readAttemptLedger(dir);
-  if (ledger.lastAttempt === 0) return null;
-  const record = await readOutcomeRecord(dir);
-  if (ownWrittenOutcome(record, ledger.lastAttempt) !== null) return null;
-  if (selfReportedBlocked(record, ledger.lastAttempt)) return null;
-
-  const failure = await readTurnProviderError(dir, ledger.lastAttempt);
+  const failure = await readTurnModelProviderError(work.dir, work.attempt);
   if (failure === null) return null;
 
-  const providerLedger = await readProviderLedger(dir);
-  const decision = providerDecision(providerLedger, provider, ledger.lastAttempt, failure);
+  const providerLedger = await readModelProviderLedger(work.dir);
+  const decision = modelProviderDecision(providerLedger, provider, work.attempt, failure);
   if (decision.decision === "await-provider") {
     // The provider budget is exhausted: the work waits for the operator — a
     // help request, never a block. A human answer after the marker resumes it,
     // the same channel a blocked work listens to.
-    const comments = await port.readComments(ref);
+    const comments = await port.readComments(work.ref);
     const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
-    if (issueReplies.length > 0) return resumableState(port, ref, createdAt, issueReplies);
+    if (issueReplies.length > 0) return resumableState(port, work.ref, work.createdAt, issueReplies);
   }
-  return { ref, state: "provider-failure", attempt: ledger.lastAttempt, failure, provider: decision };
+  return { ref: work.ref, state: "provider-failure", attempt: work.attempt, failure, modelProvider: decision };
+}
+
+/** The interrupted attempt the provider decision reads: its work, dir, number
+ *  and the issue's creation time (the retomada's priority fact). */
+interface InterruptedAttempt {
+  ref: IssueRef;
+  dir: string;
+  attempt: number;
+  createdAt: string;
 }
 
 /** The retomada: a human answer after the marker resumes the work on its
- *  existing branch and PR — shared by the blocked channel and the provider
- *  awaiting (issue 144), so their shape cannot drift apart. */
+ *  existing branch and PR — shared by the blocked channel and the model
+ *  provider awaiting (issue 144), so their shape cannot drift apart. */
 async function resumableState(
   port: TrackerPort,
   ref: IssueRef,

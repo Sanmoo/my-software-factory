@@ -9,7 +9,7 @@ import {
   DEFAULT_CONCURRENCY,
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
 } from "./config.js";
 
@@ -253,28 +253,28 @@ describe("config", () => {
     }
   });
 
-  // ---- the provider-failure budget (issue 144) ----
+  // ---- the model provider failure budget (issue 144) ----
 
-  test("the provider budget defaults to 4 retries at 15/30/60/120 s — a dedicated outage backoff", () => {
+  test("the model provider budget defaults to 4 retries at 15/30/60/120 s — a dedicated outage backoff", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.provider, DEFAULT_PROVIDER_BUDGET);
-    assert.deepEqual(config.provider, {
+    assert.deepEqual(config.modelProvider, DEFAULT_MODEL_PROVIDER_BUDGET);
+    assert.deepEqual(config.modelProvider, {
       maxRetries: 4,
       waitsMs: [15_000, 30_000, 60_000, 120_000],
     });
   });
 
-  test("the provider budget is configurable — the value and the backoff are the operator's", () => {
+  test("the model provider budget is configurable — the value and the backoff are the operator's", () => {
     const path = writeYaml(
       dir,
       [
         "worker-gh-account: bot",
         "worker-model: opencode-go/glm-5.3-flash",
         "repos: [Sanmoo/a]",
-        "provider:",
+        "model-provider:",
         "  max-retries: 2",
         "  waits-ms: [500, 2000]",
       ].join("\n"),
@@ -282,37 +282,37 @@ describe("config", () => {
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.provider, { maxRetries: 2, waitsMs: [500, 2000] });
+    assert.deepEqual(config.modelProvider, { maxRetries: 2, waitsMs: [500, 2000] });
   });
 
-  test("a partially given provider mapping keeps the default for the missing key", () => {
+  test("a partially given model provider mapping keeps the default for the missing key", () => {
     const path = writeYaml(
       dir,
-      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "provider:", "  max-retries: 0"].join("\n"),
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "model-provider:", "  max-retries: 0"].join("\n"),
     );
 
     const config = loadConfig(path);
 
-    assert.deepEqual(config.provider, { maxRetries: 0, waitsMs: DEFAULT_PROVIDER_BUDGET.waitsMs });
+    assert.deepEqual(config.modelProvider, { maxRetries: 0, waitsMs: DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs });
   });
 
-  test("provider.max-retries must be a non-negative integer when given", () => {
+  test("model-provider.max-retries must be a non-negative integer when given", () => {
     for (const bad of ["-1", "1.5", '"three"']) {
       const path = writeYaml(
         dir,
-        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `provider:\n  max-retries: ${bad}`].join("\n"),
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `model-provider:\n  max-retries: ${bad}`].join("\n"),
       );
-      assert.throws(() => loadConfig(path), /provider\.max-retries/, `rejected: ${bad}`);
+      assert.throws(() => loadConfig(path), /model-provider\.max-retries/, `rejected: ${bad}`);
     }
   });
 
-  test("provider.waits-ms must be a non-empty list of non-negative milliseconds when given", () => {
+  test("model-provider.waits-ms must be a non-empty list of non-negative milliseconds when given", () => {
     for (const bad of ["[]", "[1, -2]", "[1, nope]", "3"]) {
       const path = writeYaml(
         dir,
-        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `provider:\n  waits-ms: ${bad}`].join("\n"),
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `model-provider:\n  waits-ms: ${bad}`].join("\n"),
       );
-      assert.throws(() => loadConfig(path), /provider\.waits-ms/, `rejected: ${bad}`);
+      assert.throws(() => loadConfig(path), /model-provider\.waits-ms/, `rejected: ${bad}`);
     }
   });
 

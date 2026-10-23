@@ -2,11 +2,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
-import type { ProviderBudget, RecoveryBudget } from "../config.js";
+import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { RepairAttempt } from "../pool/repair.js";
 import { exhaustedReason } from "../pool/recovery.js";
-import { exhaustedProviderReason } from "../pool/provider.js";
-import type { ProviderFailure } from "../runtime/provider-error.js";
+import { exhaustedModelProviderReason } from "../pool/model-provider.js";
+import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
@@ -245,29 +245,29 @@ export async function interruptionPausedCommentBody(input: InterruptionPausedInp
 
 /** What the provider awaiting needs: the failure, the budget spent and the
  *  attempt's evidence. */
-export interface ProviderAwaitingInput {
+export interface ModelProviderAwaitingInput {
   attempt: number;
-  failure: ProviderFailure;
-  budget: ProviderBudget;
+  failure: ModelProviderFailure;
+  budget: ModelProviderBudget;
   workDir: string;
   workspace: WorkspaceLayout;
 }
 
 /**
- * The help request of an exhausted provider budget (issue 144): the attempt
- * ended by a provider failure, the factory stopped retrying, and the work is
+ * The help request of an exhausted model provider budget (issue 144): the
+ * attempt ended by a model provider failure, the factory stopped retrying, and the work is
  * NOT blocked — it waits for the operator. It names the provider's own message
  * and the configured allowance, and says how to go on (raise the budget, or
  * answer on the issue to resume with a new attempt).
  */
-export async function providerAwaitingCommentBody(input: ProviderAwaitingInput): Promise<string> {
+export async function modelProviderAwaitingCommentBody(input: ModelProviderAwaitingInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
   const header =
-    `attempt ${input.attempt} ended by a provider failure and ${exhaustedProviderReason(input.budget)} — ` +
+    `attempt ${input.attempt} ended by a model provider failure and ${exhaustedModelProviderReason(input.budget)} — ` +
     "the work is NOT blocked and no attempt was consumed.";
   return [
     header,
-    `last provider error: ${input.failure.message}`,
+    `last model provider error: ${input.failure.message}`,
     "The factory stops retrying this attempt until an operator acts: raise provider.max-retries in msf.yaml, " +
       "or answer on this issue to resume with a new attempt.",
     "",

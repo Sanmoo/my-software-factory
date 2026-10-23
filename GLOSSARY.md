@@ -86,14 +86,21 @@ The finite, per-work and persisted allowance of recoveries for one attempt. Exha
 **Failed sweep**:
 A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.
 
-**Provider failure**:
-An attempt whose turn ended in the provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. It is not a failure of the work and never enters the fall ruler.
+**Model provider**:
+The external service that serves the worker model's inference. Distinct from the ticket provider of a Work's Source.
+_Avoid_: Provider, alone, when the ticket provider may be meant.
 
-**Provider budget**:
-The finite, per-work and persisted allowance of retries for an attempt ended by a provider failure, with its own backoff. It is separate from the recovery budget: a provider outage never spends an interruption's allowance.
+**Model provider failure**:
+An attempt whose turn ended in the model provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. It is not a failure of the work and never enters the fall ruler.
+_Avoid_: Provider failure, when the ticket provider could be read as the cause.
 
-**Awaiting provider**:
-A work whose provider budget is exhausted: it holds its claim, is not blocked, and asks the operator for help naming the provider's last message. `msf status` names it and a human answer resumes it.
+**Model provider budget**:
+The finite, per-work and persisted allowance of retries for an attempt ended by a model provider failure, with its own backoff. It is separate from the recovery budget: a model provider outage never spends an interruption's allowance.
+_Avoid_: Provider budget, when the ticket provider could be read as the subject.
+
+**Awaiting model provider**:
+A work whose model provider budget is exhausted: it holds its claim, is not blocked, and asks the operator for help naming the model provider's last message. `msf status` names it and a human answer resumes it.
+_Avoid_: Awaiting provider, when the ticket provider could be read as the one awaited.
 
 **Delivery**:
 The factory's completion of a requested change through a confirmed merged PR, distinct from issue completion.

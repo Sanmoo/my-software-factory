@@ -8,7 +8,7 @@ import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { appendAttemptEvent, eventLogName } from "../runtime/attempt-logs.js";
-import { readTurnProviderError } from "../runtime/provider-error.js";
+import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import type { WorkRequest } from "../runtime/port.js";
 import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { workBranchName } from "../git/port.js";
@@ -17,16 +17,16 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { settleProviderFailure, PROVIDER_FILENAME } from "../pool/provider.js";
+import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
- * PROVIDER FAILURE from an interruption of the agent. A provider error in the
+ * MODEL PROVIDER FAILURE from an interruption of the agent. A provider error in the
  * attempt's own stream retries on its own budget and backoff; an interruption
  * without it keeps issue 123's recovery untouched; an exhausted provider budget
  * waits for the operator ("awaiting provider") as a help request — never a
@@ -77,7 +77,7 @@ class FakeGitWork implements GitWork {
   }
 }
 
-describe("e2e: a provider failure is not an interruption of the agent (issue 144)", () => {
+describe("e2e: a model provider failure is not an interruption of the agent (issue 144)", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -90,7 +90,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function makeConfig(provider = DEFAULT_PROVIDER_BUDGET): Config {
+  function makeConfig(modelProvider = DEFAULT_MODEL_PROVIDER_BUDGET): Config {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
@@ -101,7 +101,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
-      provider: { ...provider },
+      modelProvider: { ...modelProvider },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
@@ -143,7 +143,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
   }
 
   function providerLedger(workDirPath: string): Record<string, unknown> {
-    return JSON.parse(readFileSync(join(workDirPath, PROVIDER_FILENAME), "utf8"));
+    return JSON.parse(readFileSync(join(workDirPath, MODEL_PROVIDER_FILENAME), "utf8"));
   }
 
   test("(a) a provider error in the stream advances the provider budget and retries on its own backoff", async () => {
@@ -151,7 +151,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const { deps, runtime, waits } = makeFactory(config, tracker, ["abrupt-death", "abrupt-death", "pr-open"], {
+    const { deps, waits } = makeFactory(config, tracker, ["abrupt-death", "abrupt-death", "pr-open"], {
       providerErrors: () => PROVIDER_MESSAGE,
     });
     const result = await runOnce(deps);
@@ -190,7 +190,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const { deps, runtime, waits } = makeFactory(config, tracker, ["abrupt-death", "pr-open"]);
+    const { deps, waits } = makeFactory(config, tracker, ["abrupt-death", "pr-open"]);
     const result = await runOnce(deps);
 
     assert.deepEqual(waits.observed, [1_000], "the recovery budget's own wait answered the interruption");
@@ -203,7 +203,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
       1,
       "the interruption consumed its recovery",
     );
-    assert.ok(!existsSync(join(wd, PROVIDER_FILENAME)), "no provider ledger is invented for a plain interruption");
+    assert.ok(!existsSync(join(wd, MODEL_PROVIDER_FILENAME)), "no provider ledger is invented for a plain interruption");
     assert.doesNotMatch(
       readFileSync(join(wd, eventLogName(1)), "utf8"),
       /provider-failure|provider-retry/,
@@ -216,7 +216,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const { deps, runtime, waits } = makeFactory(config, tracker, ["abrupt-death"], {
+    const { deps, waits } = makeFactory(config, tracker, ["abrupt-death"], {
       providerErrors: () => PROVIDER_MESSAGE,
     });
     const result = await runOnce(deps);
@@ -236,7 +236,7 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     assert.ok(comments.known);
     assert.equal(comments.value.length, 1, "exactly one help request");
     const body = comments.value[0]!.body;
-    assert.match(body, /provider budget is exhausted/);
+    assert.match(body, /model provider budget is exhausted/);
     assert.match(body, /the work is NOT blocked and no attempt was consumed/);
     assert.match(body, /429: .*Endpoint is unavailable/);
 
@@ -302,15 +302,15 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
     });
     // A retry was already granted before the factory died (the persisted
     // counter of an earlier failure of the same attempt).
-    await settleProviderFailure(
+    await settleModelProviderFailure(
       wd,
-      config.provider,
+      config.modelProvider,
       1,
       { message: "503: unavailable", at: "2026-01-01T00:00:00.000Z" },
     );
-    assert.ok(await readTurnProviderError(wd, 1), "the newest failure is the one the log carries");
+    assert.ok(await readTurnModelProviderError(wd, 1), "the newest failure is the one the log carries");
 
-    const { deps, runtime, waits } = makeFactory(config, tracker, ["pr-open"]);
+    const { deps, waits } = makeFactory(config, tracker, ["pr-open"]);
     const result = await runOnce(deps);
 
     assert.deepEqual(waits.observed, [20], "the SECOND wait of the schedule — the first was already spent");
@@ -348,13 +348,13 @@ describe("e2e: a provider failure is not an interruption of the agent (issue 144
 
     assert.match(
       text,
-      /provider \(the last attempt ended by a provider failure — not an interruption of the agent\): 1/,
+      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): 1/,
     );
     assert.match(
       text,
-      /Sanmoo\/my-tasks#1 \(attempt 1: 1\/1 retries \(waits 10ms\); last provider error: 429: .*Endpoint is unavailable/,
+      /Sanmoo\/my-tasks#1 \(attempt 1: 1\/1 retries \(waits 10ms\); last model provider error: 429: .*Endpoint is unavailable/,
     );
-    assert.match(text, /— awaiting provider — a help request, not a block\)/);
+    assert.match(text, /— awaiting model provider — a help request, not a block\)/);
     assert.match(
       text,
       /orphaned \(attempt interrupted — no outcome record of its own, no worker alive\): none/,

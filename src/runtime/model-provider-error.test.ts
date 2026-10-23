@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { appendAttemptEvent } from "./attempt-logs.js";
-import { readTurnProviderError } from "./provider-error.js";
+import { readTurnModelProviderError } from "./model-provider-error.js";
 
 /**
  * The provider failure of a turn (issue 144), read from the attempt's stream
@@ -48,7 +48,7 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
     raw({ type: "message_start", message: assistantMessage({ stopReason: "error", errorMessage: "429: upstream unavailable" }) });
     raw({ type: "turn_end", message: assistantMessage({ stopReason: "error", errorMessage: "429: upstream unavailable" }), toolResults: [] });
 
-    assert.deepEqual(await readTurnProviderError(dir, 1), {
+    assert.deepEqual(await readTurnModelProviderError(dir, 1), {
       message: "429: upstream unavailable",
       at: AT_ISO,
     });
@@ -58,13 +58,13 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
     raw({ type: "message_start", message: assistantMessage({ stopReason: "error", errorMessage: "503: unavailable" }) });
     raw({ type: "message_start", message: assistantMessage({ stopReason: "stop", content: [{ type: "text", text: "done" }] }) });
 
-    assert.equal(await readTurnProviderError(dir, 1), null);
+    assert.equal(await readTurnModelProviderError(dir, 1), null);
   });
 
   test("a turn ended by an abort (the idle limit) is not a provider failure", async () => {
     raw({ type: "message_end", message: assistantMessage({ stopReason: "aborted", errorMessage: "Request was aborted" }) });
 
-    assert.equal(await readTurnProviderError(dir, 1), null);
+    assert.equal(await readTurnModelProviderError(dir, 1), null);
   });
 
   test("agent_end's messages array is read too — the terminal event of the real stream", async () => {
@@ -77,7 +77,7 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
       willRetry: false,
     });
 
-    assert.deepEqual(await readTurnProviderError(dir, 1), {
+    assert.deepEqual(await readTurnModelProviderError(dir, 1), {
       message: "500: internal server error",
       at: AT_ISO,
     });
@@ -87,16 +87,16 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
     appendAttemptEvent(dir, 1, { event: "session-start" });
     appendAttemptEvent(dir, 1, { event: "agent-raw", line: "{not json" });
     writeFileSync(join(dir, "log-1.jsonl"), "not json at all\n", "utf8");
-    assert.equal(await readTurnProviderError(dir, 1), null);
-    assert.equal(await readTurnProviderError(dir, 2), null);
+    assert.equal(await readTurnModelProviderError(dir, 1), null);
+    assert.equal(await readTurnModelProviderError(dir, 2), null);
   });
 
   test("without a timestamp the failure's identity is the log's mtime — stable across restarts", async () => {
     mkdirSync(dir, { recursive: true });
     raw({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "429: unavailable" } });
 
-    const first = await readTurnProviderError(dir, 1);
-    const second = await readTurnProviderError(dir, 1);
+    const first = await readTurnModelProviderError(dir, 1);
+    const second = await readTurnModelProviderError(dir, 1);
     assert.ok(first);
     assert.equal(first.at, second?.at, "two reads of the same settled failure agree");
   });
@@ -107,7 +107,7 @@ describe("the provider failure of a turn, read from the attempt's stream log", (
     appendAttemptEvent(dir, 1, { event: "agent-text", message: "working" });
 
     assert.equal(
-      await readTurnProviderError(dir, 1),
+      await readTurnModelProviderError(dir, 1),
       null,
       "a retry killed before any assistant message is an interruption, not the old outage again",
     );

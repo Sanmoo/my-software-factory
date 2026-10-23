@@ -10,13 +10,13 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "./outcome.js";
 import { writeRepairCycle } from "../pool/repair.js";
 import { consumeRecovery, recordFailure } from "../pool/recovery.js";
-import { settleProviderFailure } from "../pool/provider.js";
+import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import type { LivenessProbe, LiveWorker } from "./liveness.js";
@@ -69,7 +69,7 @@ describe("status — derivation on demand + local registry scan", () => {
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
-      provider: { ...DEFAULT_PROVIDER_BUDGET },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
@@ -271,7 +271,7 @@ describe("status — derivation on demand + local registry scan", () => {
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
         "recovery (the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt): none",
-        "provider (the last attempt ended by a provider failure — not an interruption of the agent): none",
+        "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
         "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
@@ -399,7 +399,7 @@ describe("status — derivation on demand + local registry scan", () => {
   test("the provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(40, 1);
-    await settleProviderFailure(dir, DEFAULT_PROVIDER_BUDGET, 1, {
+    await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "429: upstream unavailable",
       at: "2026-01-01T00:00:00.000Z",
     });
@@ -409,11 +409,11 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /provider \(the last attempt ended by a provider failure — not an interruption of the agent\): 1/,
+      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): 1/,
     );
     assert.match(
       text,
-      /#40 \(attempt 1: 1\/4 retries \(waits 15s\/30s\/60s\/120s\); last provider error: 429: upstream unavailable — retrying after the provider backoff\)/,
+      /#40 \(attempt 1: 1\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 429: upstream unavailable — retrying after the model provider backoff\)/,
     );
     assert.doesNotMatch(text, /blocked/, "a provider failure is never rendered as a block");
   });
@@ -421,13 +421,13 @@ describe("status — derivation on demand + local registry scan", () => {
   test("awaiting provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(41, 1);
-    for (let index = 0; index < DEFAULT_PROVIDER_BUDGET.maxRetries; index += 1) {
-      await settleProviderFailure(dir, DEFAULT_PROVIDER_BUDGET, 1, {
+    for (let index = 0; index < DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries; index += 1) {
+      await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
         message: "503: unavailable",
         at: `2026-01-01T00:00:0${index}.000Z`,
       });
     }
-    await settleProviderFailure(dir, DEFAULT_PROVIDER_BUDGET, 1, {
+    await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
       message: "503: unavailable",
       at: "2026-01-01T00:00:09.000Z",
     });
@@ -437,7 +437,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /#41 \(attempt 1: 4\/4 retries \(waits 15s\/30s\/60s\/120s\); last provider error: 503: unavailable — awaiting provider — a help request, not a block\)/,
+      /#41 \(attempt 1: 4\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 503: unavailable — awaiting model provider — a help request, not a block\)/,
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
