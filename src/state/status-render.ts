@@ -95,7 +95,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(
     ...section(
-      "recovery (the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt)",
+      "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt)",
       view.registry.recovery.map((entry) => renderRecovery(entry.key, entry.ledger, view.recoveryBudget)),
       cap,
     ),

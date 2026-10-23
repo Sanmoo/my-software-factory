@@ -44,11 +44,11 @@ function deterministicAgent(): AgentProvider {
 }
 
 /** The container must appear within this bound; a real launch takes seconds. */
-const APPEARANCE_LIMIT_MS = 30_000;
+const APPEARANCE_LIMIT_MS = 20_000;
 /** The launch must settle within this bound once the forced stop ran. */
-const SETTLE_LIMIT_MS = 30_000;
+const SETTLE_LIMIT_MS = 20_000;
 /** The cooperative request's own grace in the abort mode (the factory's is 10 s). */
-const ABORT_GRACE_MS = 20_000;
+const ABORT_GRACE_MS = 15_000;
 
 function log(line: string): void {
   process.stderr.write(`[real-stop] ${line}\n`);
@@ -140,22 +140,15 @@ async function main(): Promise<void> {
 
   // The worker container is really there: the probe names the work before any
   // stop is requested (otherwise the stop would prove nothing).
-  const seen = deferred();
-  const deadline = Date.now() + APPEARANCE_LIMIT_MS;
-  while (Date.now() < deadline) {
+  let seenWorker = false;
+  const appearanceDeadline = Date.now() + APPEARANCE_LIMIT_MS;
+  while (!seenWorker && Date.now() < appearanceDeadline) {
     const live = await probe();
-    if (live.some((worker) => worker.key === `${request.ref.repo}#${request.ref.number}`)) {
-      log(`worker of ${request.ref.repo}#${request.ref.number} is alive`);
-      seen.resolve();
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    seenWorker = live.some((worker) => worker.key === `${request.ref.repo}#${request.ref.number}`);
+    if (!seenWorker) await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  const seenWorker = await Promise.race([
-    seen.promise.then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
-  ]);
   if (!seenWorker) throw new Error("the worker container never appeared — the proof cannot proceed");
+  log(`worker of ${request.ref.repo}#${request.ref.number} is alive`);
 
   // The factory's contract, exactly as the loop applies it: the requested stop
   // first, the forced stop at the end of the cooperative window (mode

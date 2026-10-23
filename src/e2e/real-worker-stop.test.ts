@@ -27,12 +27,13 @@ import { WORKER_IMAGE } from "../worker-image.js";
  */
 
 /**
- * One mode's ceiling: comfortably above the driver's own bounds (30 s to see the
- * container, 30 s to settle, 20 s of cooperative grace) and far below the
- * gateway's 240 s, so a hang fails THIS check by name instead of exhausting the
- * budget as an unidentified timeout.
+ * One mode's ceiling, and the arithmetic the gateway's shared budget gets: the
+ * driver's own bounds (20 s to see the container, 20 s to settle, 15 s of
+ * cooperative grace) end inside 60 s, and the three modes' ceilings (3 x 60 s)
+ * stay under the 240 s the whole gateway has. A hang therefore fails THIS check
+ * by name instead of exhausting the budget as an unidentified timeout.
  */
-const MODE_TIMEOUT_MS = 90_000;
+const MODE_TIMEOUT_MS = 60_000;
 
 /** The docker/image prerequisite: a focused run skips with the reason, the
  *  gateway (MSF_REQUIRE_DOCKER=1) fails — never a silent pass. */

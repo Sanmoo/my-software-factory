@@ -272,7 +272,7 @@ describe("status — derivation on demand + local registry scan", () => {
         `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk)`,
         "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
         `  ${REPO}#1`,
-        "recovery (the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt): none",
+        "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt): none",
         "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
         "repair (unpublished attempts, local work, pending reconciliation): none",
         "last outcome: 1",
@@ -384,7 +384,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /recovery \(the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt\): 2/,
+      /recovery \(what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt\): 2/,
     );
     assert.match(
       text,
@@ -528,7 +528,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.deepEqual(view.registry.recovery, []);
     assert.match(
       renderStatus(view),
-      /recovery \(the last stop: an interruption absorbed by its budget, or a failure that consumed the attempt\): none/,
+      /recovery \(what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt\): none/,
     );
     assert.equal(
       JSON.parse(readFileSync(join(dir, DESFECHO_FILENAME), "utf8")).class,
