@@ -10,6 +10,9 @@ dedicated bot account. The human is the gate — the factory never merges.
 - Docker whose daemon answers on a unix socket: the workers are containers and
   each one inherits that daemon (ADR 0003)
 - Docker, for the real local integration test (see Tests)
+- No Pi, personal Pi profile or personal skills on the host: the worker image
+  provisions the factory's agent environment from `agent-resources.json`
+  (ADR 0001)
 - Config in `msf.yaml` in the working directory (or `--config <path>`):
 
 ```yaml
@@ -26,11 +29,9 @@ repos:
 #   ready: ready-for-agent
 #   claimed: agent-claimed
 #   blocked: agent-blocked
-# profile-allowed-roots:          # roots the Pi profile reaches through links
-#   - ~/dev/github.com/Sanmoo/dotfiles
-#   - ~/.agents
-#   - ~/.local/share/omarchy
-# profile-skip-dangling-links: false  # stale profile links: fail closed
+# worker-auth-file: ~/.secrets/msf-auth.json  # optional Pi auth.json; otherwise
+#                                               # a supported provider API-key
+#                                               # env var is forwarded
 # recovery:                       # an interruption is not a failure (issue 123)
 #   max: 3                        # recoveries per attempt; 0 pauses on the first
 #   waits-ms: [1000, 4000, 16000] # the backoff before each recovery relaunch
@@ -55,9 +56,12 @@ node dist/cli.js status      # the trail, read-only
 ```
 
 The worker model is required in `msf.yaml`; invocations do not select it.
-Move any model previously selected on the command line into `worker-model`.
-The live proof's exact script — commands, what the human does, the REST
-budget — lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
+Model credentials come from Pi's supported provider API-key variables in the
+factory's environment or from `worker-auth-file` — never from a personal
+profile. `npm run build:image` provisions every declared skill, extension and
+reviewer agent into the image; a failed build keeps the previous image. The
+live proof's exact script — commands, what the human does, the REST budget —
+lives in the [RUNBOOK](docs/RUNBOOK.md) (ticket 18).
 
 ## Design
 
@@ -65,6 +69,12 @@ Two rulers, one contract: the worker's obligations live in its prompt; the
 factory's classification lives in code and reads only structured facts
 (`desfecho.json` schema, labels, PR existence, PR mergeability and required
 check results) — never LLM prose.
+
+The worker's agent environment is factory-owned: `agent-resources.json` pins
+Pi, the upstream skill revision, the delegation extension and the reviewer
+agents; the image records what it provisioned in an inventory that every
+launch compares with the checkout. Only those resources load — target-project
+and host skills/packages are ignored (ADR 0001).
 
 ## Tests
 
@@ -78,9 +88,16 @@ compilation (tsc's whole-project typecheck — the emitting build fails on type
 errors), the whole test suite and the real local Docker integration test, all
 under one 240-second wall-clock ceiling. Docker and the worker image are
 mandatory prerequisites — a missing one fails the run, it never becomes a
-skip. Provisioning and image builds happen before the measured run; LLM
-reviews, `npm run proof:real` and `npm run smoke:github` stay outside it. At the deadline the running check and
-its subprocesses are killed and the interrupted check is named.
+skip. Provisioning and image builds happen before the measured run; the suite
+includes a real container check of what the provisioned image actually loads
+(declared skills only, empty cache, no host profile). LLM reviews,
+`npm run proof:real` and `npm run smoke:github` stay outside it. At the deadline
+the running check and its subprocesses are killed and the interrupted check is
+named.
+
+An isolated checkout may set `MSF_WORKER_IMAGE` to keep its image tag apart
+from another checkout building on the same Docker host; the plan and ceiling
+never change, and the image inventory is still compared with the declaration.
 
 Exit status: `0` passed, `2` missing prerequisite, `124` budget exhausted;
 otherwise the failing check's status (`1` when it reported none, `127` when it

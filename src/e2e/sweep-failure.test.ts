@@ -110,12 +110,11 @@ describe("e2e: a failed sweep never kills the continuous factory (issue 158)", (
       concurrency: 1,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: false,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
     };
   }

@@ -15,7 +15,8 @@ import { deriveStatus } from "./state/status.js";
 import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
-import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
+import { SandcastleRuntime, workerToken, type SandcastleRuntimeOptions } from "./runtime/sandcastle.js";
+import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { GitWork } from "./git/port.js";
@@ -64,9 +65,9 @@ export interface WireRunOptions {
 /**
  * The wiring of `msf run` (ticket 18): config → boot → the thin loop's four
  * seams. Default path: real GitHub adapter (token from the gh keyring — the
- * boot check of ticket 16), real Sandcastle runtime (profile snapshot fed
- * from the config's allowed roots — the fail-closed behavior of the
- * ticket-17 proof), real git host.
+ * boot check of ticket 16), real Sandcastle runtime (image-provisioned agent
+ * resources plus explicitly supplied model credentials — issue #159), real
+ * git host.
  */
 export async function wireRunDeps(
   config: Config,
@@ -111,26 +112,42 @@ export async function wireRunDeps(
 }
 
 /** The real runtime: Sandcastle, demanding the model and the keyring token
- * (ticket 17), fed the config's profile-snapshot settings (ticket 18) and the
- * workspace root the toolchain binds derive from (the convergence layer,
- * ticket 18 — tools installed inside the volume survive the container). */
-async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string): Promise<WorkerRuntime> {
-  const token = await workerToken(config.workerGhAccount);
-  return new SandcastleRuntime({
-    model,
+ * (ticket 17), fed the workspace root the toolchain binds derive from and the
+ * explicitly supplied model credentials (issue #159) — never a personal
+ * profile, never an implicit ambient credential beyond Pi's supported
+ * provider variables. */
+/**
+ * The production launch composition (issue #159): config → SandcastleRuntime
+ * options. Exported so the wiring itself is testable without a container: the
+ * model, the worker token, the workspace, the explicitly supplied auth file,
+ * and only Pi-supported provider keys from the environment.
+ */
+export function sandcastleRuntimeOptions(
+  config: Config,
+  workspace: WorkspaceLayout,
+  token: string,
+  env: NodeJS.ProcessEnv = process.env,
+): SandcastleRuntimeOptions {
+  return {
+    model: config.workerModel,
     token,
     // The toolchain convergence layer binds <workspace>/toolchains/... into
     // the container (ticket 18): installed once, reused by every launch.
     workspace: workspace.root,
-    // The config feeds the snapshot's fail-closed admission (ticket 18):
-    // the allowed roots the profile legitimately reaches (defaults fixed in
-    // config.ts — the ticket-17 proof's roots) and the dangling-link escape.
-    allowedRoots: config.profileAllowedRoots,
-    skipDanglingProfileLinks: config.profileSkipDanglingLinks,
+    // Model authentication is separate from agent resources: the supported
+    // provider env vars present here, or the explicit auth file — never the
+    // operator's personal Pi profile.
+    authEnv: modelAuthEnv(env),
+    ...(config.workerAuthFile === null ? {} : { authFile: config.workerAuthFile }),
     // The worker self-reports blocked with the SAME vocabulary the factory
     // derives with — a non-default config label must reach the prompt too.
     blockedLabel: config.labels.blocked,
-  });
+  };
+}
+
+async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout, model: string): Promise<WorkerRuntime> {
+  const token = await workerToken(config.workerGhAccount);
+  return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
 /** `--runtime fake`: the placeholder that never launches — tests only; the

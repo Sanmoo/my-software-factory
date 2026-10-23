@@ -1,25 +1,27 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, describe } from "node:test";
 
 import { readOutcomeRecord } from "../state/outcome.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
+import { modelAuthEnv } from "../runtime/model-auth.js";
 import { reviewReportPath } from "../runtime/prompt.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import type { WorkRequest } from "../runtime/port.js";
 import { githubWork } from "./work-fixtures.js";
 
 /**
- * The REAL proof (ticket 85): an explicitly enabled, credit-consuming run of
- * the full worker flow in a real container — real Pi, real profile (with the
- * operator's skills), real pi-subagents, real authenticated model — against a
- * DISPOSABLE local git repository. It walks the worker's own path: loading
- * /implement from the profile, implementing a small local spec, validating,
- * committing locally, running /code-review with TWO DISTINCT subagents, and
- * writing the Standards/Spec reports plus the outcome record.
+ * The REAL proof (ticket 85, extended by issue #159): an explicitly enabled,
+ * credit-consuming run of the full worker flow in a real container — the
+ * image-provisioned Pi, skills, delegation extension and reviewer agents, a
+ * real authenticated model, an EMPTY runtime cache and NO personal Pi profile
+ * — against a DISPOSABLE local git repository. It walks the worker's own path:
+ * loading /implement from the image, implementing a small local spec,
+ * validating, committing locally, running /code-review with TWO DISTINCT
+ * subagents, and writing the Standards/Spec reports plus the outcome record.
  *
  * It is NOT part of the deterministic suite and never runs by default:
  *
@@ -41,16 +43,9 @@ import { githubWork } from "./work-fixtures.js";
 
 const ENABLED = process.env.MSF_REAL_PROOF === "1";
 const MODEL = process.env.MSF_REAL_PROOF_MODEL ?? "";
-const PROFILE_DIR = process.env.MSF_REAL_PROOF_PROFILE ?? join(homedir(), ".pi", "agent");
-const ALLOWED_ROOTS = (process.env.MSF_REAL_PROOF_ALLOWED_ROOTS ?? "")
-  .split(":")
-  .map((root) => root.trim())
-  .filter((root) => root !== "");
+const AUTH_FILE = process.env.MSF_REAL_PROOF_AUTH_FILE;
+const AUTH_ENV = modelAuthEnv(process.env);
 const IDLE_TIMEOUT_SECONDS = Number(process.env.MSF_REAL_PROOF_IDLE_TIMEOUT ?? 1800);
-// The operator's real profile may carry stale links (e.g. a removed extension);
-// the proof may skip them the way msf.yaml's profile-skip-dangling-links does —
-// fail-closed remains the production default.
-const SKIP_DANGLING_LINKS = process.env.MSF_REAL_PROOF_SKIP_DANGLING_LINKS === "1";
 
 const SKIP_REASON =
   "the real proof is opt-in and credit-consuming: run `npm run proof:real` (sets MSF_REAL_PROOF=1)";
@@ -115,6 +110,11 @@ No repositório (seu cwd):
 2. Adicione \`calc.test.js\` com testes node:test para \`multiply\`: 2*3=6 e (-1)*5=-5.
 3. Rode \`npm test\` — deve passar.
 
+O ambiente NÃO tem perfil Pi pessoal e o cache de pacotes começa vazio: as skills
+declaradas pela fábrica estão na imagem. Além disso, crie um recurso NÃO declarado
+no repositório (\`.pi/skills/nao-declarada/SKILL.md\` e \`.pi/agents/nao-declarado.md\`)
+e confirme que ele NÃO é carregado.
+
 Siga o procedimento de implementação do seu prompt (as skills do seu perfil), terminando
 com a revisão de dois eixos e os relatórios gravados no work dir.`;
 
@@ -126,7 +126,11 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
         "the real proof runs on the operator's machine, not inside a worker container: its disposable repo and work dir live under the test's temp dir, which a worker does not share with the host, so the nested worker's binds would resolve on the host to empty directories (ADR 0003)",
       );
     }
-    if (!existsSync(PROFILE_DIR)) failIfMissingPrerequisite(`the profile dir does not exist: ${PROFILE_DIR}`);
+    if (AUTH_FILE === undefined && Object.keys(AUTH_ENV).length === 0) {
+      failIfMissingPrerequisite(
+        "no model credentials: set a Pi-supported provider API key or MSF_REAL_PROOF_AUTH_FILE (never a personal Pi profile)",
+      );
+    }
     try {
       dockerInfo();
     } catch {
@@ -160,9 +164,10 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
       // A placeholder: the isolated repo has no remote and the spec forbids
       // gh — no real GitHub credential rides this proof (story 23).
       token: "msf-real-proof-no-github",
-      profileDir: PROFILE_DIR,
-      allowedRoots: ALLOWED_ROOTS,
-      skipDanglingProfileLinks: SKIP_DANGLING_LINKS,
+      authEnv: AUTH_ENV,
+      ...(AUTH_FILE === undefined ? {} : { authFile: AUTH_FILE }),
+      // An empty workspace: no package cache from a previous proof can help
+      // the worker — the resources must come from the image.
       workspace: join(root, "fabrica"),
       idleTimeoutSeconds: IDLE_TIMEOUT_SECONDS,
     });

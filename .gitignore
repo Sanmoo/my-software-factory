@@ -12,3 +12,5 @@
 /dist/
 /docker/guardrail/
 msf.yaml
+
+/revisao/

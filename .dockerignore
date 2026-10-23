@@ -1,0 +1,14 @@
+.git
+.worktrees
+node_modules
+dist
+.sandcastle
+.smoke
+.msf
+.pilot
+revisao
+experiments
+docs
+src
+package-lock.json
+*.test.ts

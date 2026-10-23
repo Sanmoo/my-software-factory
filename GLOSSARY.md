@@ -43,6 +43,12 @@ The agent carrying out a work item on behalf of the operator.
 **Worker model**:
 The configured AI model the worker uses to do its work.
 
+**Factory agent resources**:
+The Pi version, selected upstream skills at an immutable revision, delegation extension with its operating guidance, and reviewer agents declared in `agent-resources.json` and provisioned into the worker image.
+
+**Agent inventory**:
+The image's own record of the agent resources it provisioned; a launch compares it with the installed factory declaration before starting the worker.
+
 **Acting account**:
 The account authenticated by the factory on an issue tracker, receiving claim assignment and authoring the factory's comments there.
 _Avoid_: Current user, when it could mean either the operator or the authenticated account.

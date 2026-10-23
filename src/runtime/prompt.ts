@@ -17,9 +17,9 @@ import type { RepairMaterial, WorkRequest } from "./port.js";
  *   3. self-report blocked (marker + label) and exit when stuck.
  *
  * Every session that changes code (the initial implementation or a feedback
- * round — ticket 85) also follows the implementation procedure: the operator's
- * /implement and /code-review skills, loaded from the profile the container
- * carries. The prompt adapts those skills to Pi (there is no tool named
+ * round — ticket 85) also follows the implementation procedure: the factory's
+ * declared /implement and /code-review skills, provisioned INTO the worker
+ * image (issue #159, ADR 0001). The prompt adapts those skills to Pi (there is no tool named
  * "Skill": loading a SKILL.md and executing its instructions IS using the
  * skill) and fixes the one-way order: pin the round's SHA, implement,
  * validate, commit LOCALLY, review via two parallel subagents, fix, and only
@@ -39,7 +39,13 @@ import type { RepairMaterial, WorkRequest } from "./port.js";
  * agree on the contract without runtime importing sandcastle internals.
  */
 export const WORK_MOUNT = "/msf-work";
-export const PROFILE_MOUNT = "/msf-profile";
+
+/** Image-provisioned skill paths (issue #159): the worker loads exactly these,
+ *  with Pi discovery disabled. */
+export const AGENT_SKILLS_DIR = "/home/agent/.pi/agent/skills";
+export const DELEGATION_GUIDANCE_PATH =
+  "/home/agent/.pi/agent/extensions/node_modules/pi-subagents/skills/pi-subagents/SKILL.md";
+export const REGISTERED_REVIEW_AGENTS = ["code-reviewer", "spec-reviewer"] as const;
 
 /** The completion signal: when the agent prints it, the iteration loop ends. */
 export const COMPLETION_SIGNAL = "<promise>MSF-RESULT</promise>";
@@ -99,16 +105,19 @@ function implementationProcedure(request: WorkRequest): string {
     `addressing the PR comments above), so the FULL implement–review cycle below is mandatory.`,
     `Only a session that produces no code change at all (a purely explanatory answer) skips it.`,
     ``,
-    `Your profile carries the operator's skills, and skills are how procedures reach you:`,
+    `The factory image carries exactly the declared skills — there is no personal Pi profile and`,
+    `no discovery from the host or the target project. Skills are how procedures reach you:`,
     ``,
     `- To use a skill, READ its SKILL.md and EXECUTE its instructions. Reading the file and doing`,
     `  what it says IS using a skill in Pi — there is no tool named "Skill", and merely mentioning`,
     `  \`/implement\` without loading it is not following it.`,
     `- The skills this session must load and obey:`,
-    `  - \`~/.pi/agent/skills/implement/SKILL.md\` — the implementation procedure;`,
-    `  - \`~/.pi/agent/skills/code-review/SKILL.md\` — the two-axis review (Standards + Spec).`,
+    `  - \`${AGENT_SKILLS_DIR}/implement/SKILL.md\` — the implementation procedure;`,
+    `  - \`${AGENT_SKILLS_DIR}/code-review/SKILL.md\` — the two-axis review (Standards + Spec).`,
     `  Where /implement says to call the "tdd" skill at a seam, load`,
-    `  \`~/.pi/agent/skills/tdd/SKILL.md\` and follow it the same way.`,
+    `  \`${AGENT_SKILLS_DIR}/tdd/SKILL.md\` and follow it the same way.`,
+    `  The conditional design guidance is \`${AGENT_SKILLS_DIR}/codebase-design/SKILL.md\`;`,
+    `  the PR-body guidance is \`${AGENT_SKILLS_DIR}/pr/SKILL.md\`.`,
     ``,
     `The order is fixed and one-way — publishing happens ONLY after the review:`,
     ``,
@@ -119,7 +128,10 @@ function implementationProcedure(request: WorkRequest): string {
     `3. VALIDATE: typecheck and single test files as you go; the FULL test suite at the end.`,
     `4. COMMIT locally on the branch: commits exist BEFORE the review — /code-review reviews a`,
     `   committed diff since the starting SHA, and an empty diff fails there.`,
-    `5. REVIEW per /code-review, against the starting SHA of step 1:`,
+    `5. REVIEW per /code-review, against the starting SHA of step 1. Delegation is`,
+    `   operator-authorized for this procedure: before the first subagent call, read the`,
+    `   delegation guidance at \`${DELEGATION_GUIDANCE_PATH}\` and follow it. The`,
+    `   registered reviewer agents are ${REGISTERED_REVIEW_AGENTS.map((agent) => `\`${agent}\``).join(" and ")}.`,
     `   - TWO SEPARATE subagent runs, issued IN PARALLEL (the subagent tool): one for the Standards`,
     `     axis, one for the Spec axis — never one agent doing both, never your own inline review;`,
     `   - set the registered agent explicitly: \`code-reviewer\` for Standards and`,
@@ -127,7 +139,7 @@ function implementationProcedure(request: WorkRequest): string {
     `   - each reviewer's context: the diff \`git diff <starting-sha>...HEAD\`, the commit list, the`,
     `     spec (the issue and, in a feedback round, the applicable PR comments), the repo's`,
     `     documented standards files and the smell baseline the skill defines;`,
-    `   - if an axis CANNOT run — a skill file missing from the profile, the subagent tool failing —`,
+    `   - if an axis CANNOT run — a declared skill missing from the image, the subagent tool failing —`,
     `     that is a mandatory capability being absent: self-report blocked (obligation 3). NEVER`,
     `     silently replace the subagents with your own review and move on.`,
     `6. FIX what the review found: violations of documented standards and missing or incorrect`,

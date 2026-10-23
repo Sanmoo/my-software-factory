@@ -75,12 +75,11 @@ describe("status — derivation on demand + local registry scan", () => {
       concurrency: 2,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
-      profileAllowedRoots: [],
-      profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
+      workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
     };
   }

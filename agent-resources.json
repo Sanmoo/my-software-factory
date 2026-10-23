@@ -1,11 +1,32 @@
 {
+  "schema": "msf-agent-resources/v1",
+  "pi": {
+    "package": "@earendil-works/pi-coding-agent",
+    "version": "1.3.0"
+  },
   "skills": {
     "repository": "https://github.com/mattpocock/skills.git",
     "revision": "49dd158d1076134a641b33efb035946536778336",
-    "license": "See upstream LICENSE and individual skill notices; upstream contents are copied unchanged.",
-    "selected": ["implement", "tdd", "code-review", "pr", "codebase-design"]
+    "license": "MIT (upstream LICENSE; copied unchanged with the selected skills)",
+    "selected": [
+      { "name": "implement", "path": "skills/engineering/implement" },
+      { "name": "tdd", "path": "skills/engineering/tdd" },
+      { "name": "code-review", "path": "skills/engineering/code-review" },
+      { "name": "pr", "path": "skills/engineering/pr" },
+      { "name": "codebase-design", "path": "skills/engineering/codebase-design" }
+    ]
   },
   "extensions": [
-    { "package": "pi-subagents", "version": "0.79.1" }
+    {
+      "package": "pi-subagents",
+      "version": "0.79.1",
+      "license": "MIT (upstream LICENSE; copied with the package)",
+      "entry": "index.js",
+      "guidance": { "name": "pi-subagents", "path": "skills/pi-subagents" }
+    }
+  ],
+  "agents": [
+    { "name": "code-reviewer", "path": "agents/code-reviewer.md" },
+    { "name": "spec-reviewer", "path": "agents/spec-reviewer.md" }
   ]
 }
