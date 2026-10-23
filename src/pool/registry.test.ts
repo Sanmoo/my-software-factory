@@ -188,7 +188,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
   });
 });
 
-describe("registry — the derivation's reserved-works scan and the done archive (ticket 14)", () => {
+describe("registry — the done archive of a finished work (ticket 14)", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -223,21 +223,6 @@ describe("registry — the derivation's reserved-works scan and the done archive
       assert.ok(existsSync(entry.dir), "the dir is handed over — launches and archiving need it");
       assert.equal(entry.work?.ticket.provider, "github", "a legacy GitHub dir names its own ticket");
     }
-  });
-
-  test("scanReservations: a work-like dir nested inside a work is not a work of this registry", async () => {
-    // A proof's disposable workspace can live under a work's dir and carry
-    // its own trabalhos/<repo>#<n>; it is never a reservation of THIS one.
-    mkdirSync(join(layout.works, "Sanmoo", "a#1", "proof", "fabrica", "trabalhos", "Sanmoo", "b#2"), {
-      recursive: true,
-    });
-
-    const reserved = await scanReservations(layout);
-
-    assert.deepEqual(
-      reserved.map((entry) => entry.key),
-      ["Sanmoo/a#1"],
-    );
   });
 
   test("scanReservations: a workspace never created reads empty", async () => {

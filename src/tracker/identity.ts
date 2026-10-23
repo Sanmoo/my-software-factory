@@ -72,6 +72,21 @@ export function githubSource(): TicketSource {
   return { provider: "github", site: GITHUB_SITE };
 }
 
+/**
+ * The ticket sources the composed adapter serves in production. The
+ * orchestration is GitHub-only until the Jira slices land (issue 126): the
+ * configured repos narrow WHAT is read from these sources, never which
+ * sources the factory can address.
+ */
+export function composedTicketSources(): TicketSource[] {
+  return [githubSource()];
+}
+
+/** The comparison key of a ticket source: provider + site, never presentation. */
+export function sourceKey(source: TicketSource): string {
+  return `${source.provider}:${source.site}`;
+}
+
 /** One selection per configured repository: its issues feed its own code host. */
 export function githubSelections(repos: readonly string[]): TicketSelection[] {
   return repos.map((repo) => ({ source: githubSource(), destination: githubRepository(repo) }));

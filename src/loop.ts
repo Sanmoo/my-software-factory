@@ -15,9 +15,11 @@ import {
 import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import {
+  composedTicketSources,
   githubSelections,
   issueRefOf,
   issueRefOfTicket,
+  sourceKey,
   ticketUrl,
   type WorkIdentity,
 } from "./tracker/identity.js";
@@ -575,10 +577,36 @@ export class SweepEngine {
     // WHO is reserved is what the reservation on disk says — a work's origin is
     // never reconstructed from the current selection configuration (issue 126).
     const reservations = await scanReservations(workspace);
-    const identified = reservations.filter(
-      (entry): entry is IdentifiedReservation => entry.work !== null,
-    );
-    const reservationByKey = new Map(identified.map((entry) => [entry.key, entry]));
+    // The guard is about the SOURCES the composed adapter serves, never about
+    // the configured repos: a repo leaving the selection never strands a
+    // reserved Work — done, archive and recovery still apply to it (issue 126,
+    // AC4). A Work from a source the composition does not serve is held where
+    // it is: no adapter is substituted, no tracker migration happens.
+    const served = new Set(composedTicketSources().map(sourceKey));
+    const serveable: IdentifiedReservation[] = [];
+    for (const entry of reservations) {
+      if (entry.work === null) {
+        this.log(
+          `reserved work ${entry.key} has no trustworthy identity (` +
+            `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
+            "held; nothing is invented from the current configuration",
+        );
+        continue;
+      }
+      if (!served.has(sourceKey(entry.work.ticket))) {
+        const source = entry.work.ticket;
+        this.log(
+          `reserved work ${entry.key} comes from ${source.provider} on ${source.site}, which the composed ticket ` +
+            "adapter does not serve — held; no adapter is substituted and no tracker migration happens",
+        );
+        continue;
+      }
+      serveable.push({ ...entry, work: entry.work });
+    }
+    // The same list feeds the survivor reconciliation and the derivation: a
+    // held Work is held on EVERY path, never launched just because a container
+    // still carries it.
+    const reservationByKey = new Map(serveable.map((entry) => [entry.key, entry]));
     const settled = await this.observeSurvivors(reservationByKey);
     this.observeCapacity();
     const suspended = this.liveness.state === "unknown";
@@ -594,34 +622,13 @@ export class SweepEngine {
     // live worker keeps its work reserved, and a settled exit is not decided
     // twice in the same sweep.
     const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
-    // The selection is ONE authority (issue 126): the sources the composed
-    // adapter serves are the sources of the same list the pool is read with.
-    // With GitHub Issues as the only production composition until the Jira
-    // slices land, this is the code host the configured repos live on.
+    // The pool is read from the configured selections — the same repos the
+    // operator names, never a second source of truth (issue 126).
     const selections = githubSelections(config.repos);
-    const served = new Set(
-      selections.map((selection) => `${selection.source.provider}:${selection.source.site}`),
-    );
-    const allReserved: ReservedWorkInput[] = [];
-    for (const entry of reservations) {
-      if (entry.work === null) {
-        this.log(
-          `reserved work ${entry.key} has no trustworthy identity (` +
-            `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
-            "held; nothing is invented from the current configuration",
-        );
-        continue;
-      }
-      const source = entry.work.ticket;
-      if (!served.has(`${source.provider}:${source.site}`)) {
-        this.log(
-          `reserved work ${entry.key} comes from ${source.provider} on ${source.site}, which the composed ticket ` +
-            "adapter does not serve — held; no adapter is substituted and no tracker migration happens",
-        );
-        continue;
-      }
-      allReserved.push({ work: entry.work, dir: entry.dir });
-    }
+    const allReserved: ReservedWorkInput[] = serveable.map((entry) => ({
+      work: entry.work,
+      dir: entry.dir,
+    }));
     const reservedWorks = allReserved.filter((work) => !inFlight.has(workKeyOf(work.work)));
 
     // The repair reconciliation runs BEFORE the derivation (issue 112): a
@@ -2632,11 +2639,12 @@ export class SweepEngine {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch =
         origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
-      const ref = this.noticeRefOf(work);
-      if (ref !== null && (blockedLabelOnIssue || selfReportedNow)) {
-        await this.deliverNotice(helpNotice(ref));
-      } else if (ref !== null && isReviewLaunch && prConfirmed && pr !== null) {
-        await this.deliverNotice(reviewNotice(ref, pr.number));
+      if (blockedLabelOnIssue || selfReportedNow) {
+        const ref = this.noticeRefOf(work);
+        if (ref !== null) await this.deliverNotice(helpNotice(ref));
+      } else if (isReviewLaunch && prConfirmed && pr !== null) {
+        const ref = this.noticeRefOf(work);
+        if (ref !== null) await this.deliverNotice(reviewNotice(ref, pr.number));
       }
     }
     return { next, prConfirmed, ruling: { decision: ruling.decision, because: ruling.because } };

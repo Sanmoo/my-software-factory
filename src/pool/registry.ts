@@ -155,7 +155,7 @@ async function attemptsAndRecord(workDir: string): Promise<{
   return { logs, record };
 }
 
-// ---- the derivation's reserved-works scan + the done archive (ticket 14) ----
+// ---- the done archive (ticket 14) ----
 
 /** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
 export function parseWorkKey(name: string): { repo: string; number: number } | null {
