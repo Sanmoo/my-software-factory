@@ -317,66 +317,69 @@ describe("liveness — the worker identity survives the image reference moving (
 
   test("no running container of this workspace is zero workers — a moved reference hides nothing", async () => {
     // The listing is every running container and is not image-filtered, so its
-    // emptiness is a reliable zero; with no such container an interrupted
-    // attempt is still recovered.
+    // emptiness is a decided zero: no worker can be hidden from it.
     const probe = dockerWorkerProbe({ worksRoot: WORKS, run: fakeDocker({ listing: "" }).run });
     assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
-
-    const withReservedAttempt = dockerWorkerProbe({
-      worksRoot: WORKS,
-      run: fakeDocker({ listing: "" }).run,
-      hasUnsettledAttempts: async () => true,
-    });
-    assert.deepEqual(
-      await probeLiveness(withReservedAttempt),
-      { state: "known", workers: [] },
-      "an empty host hides no worker: the reservation alone never manufactures unknown",
-    );
   });
 
-  test("another factory's containers beside a reserved attempt are a decided absence, not unknown", async () => {
-    // Every row carries its mounts and none of them binds OUR works root: the
+  test("another factory's containers are a decided absence, not unknown", async () => {
+    // The row carries its mounts and none of them binds OUR works root: the
     // absence is decided, so an interrupted attempt stays recoverable instead
     // of stalling the factory behind a permanent unknown.
     const probe = dockerWorkerProbe({
       worksRoot: WORKS,
       run: fakeDocker({ listing: `${SECOND} ${WORKS}-other/Sanmoo/my-tasks#9` }).run,
-      hasUnsettledAttempts: async () => true,
     });
 
     assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
   });
 
-  test("a listing without usable mount sources is unknown while a reserved attempt may own a worker", async () => {
-    const probe = dockerWorkerProbe({
-      worksRoot: WORKS,
-      run: fakeDocker({ listing: SECOND }).run,
-      hasUnsettledAttempts: async () => true,
+  test("a container the listing did not describe is inspected, and its work mount recognised", async () => {
+    // No mount sources were rendered for the row, so the listing alone cannot
+    // say what it binds: `docker inspect` — the authoritative mounts — decides.
+    const shell = fakeDocker({
+      listing: SECOND,
+      inspect: JSON.stringify([container(SECOND, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z")]),
     });
+    const probe = dockerWorkerProbe({ worksRoot: WORKS, run: shell.run });
 
-    const observation = await probeLiveness(probe);
+    const workers = await probeLiveness(probe);
 
-    assert.equal(observation.state, "unknown");
-    assert.match(
-      observation.state === "unknown" ? observation.reason : "",
-      /no usable mount sources.*attempts with no outcome.*liveness unknown/,
+    assert.deepEqual(
+      workers.state === "known" ? workers.workers.map((worker) => worker.key) : workers,
+      ["Sanmoo/my-tasks#7"],
+      "the container the moved reference made unreadable is still a worker of ours",
     );
-
-    const idle = dockerWorkerProbe({
-      worksRoot: WORKS,
-      run: fakeDocker({ listing: SECOND }).run,
-      hasUnsettledAttempts: async () => false,
-    });
-    assert.deepEqual(await probeLiveness(idle), { state: "known", workers: [] });
+    assert.ok(shell.calls.some((args) => args[0] === "inspect"), "the inspect decided the identity");
   });
 
-  test("a truncated mount column is not trusted to conclude absence", async () => {
-    const probe = dockerWorkerProbe({
-      worksRoot: WORKS,
-      run: fakeDocker({ listing: `${SECOND} /home/sanmoo/…,/var/run/docke…` }).run,
-      hasUnsettledAttempts: async () => true,
+  test("a container the listing did not describe and the inspect places elsewhere is a decided absence", async () => {
+    const shell = fakeDocker({
+      listing: SECOND,
+      inspect: JSON.stringify([
+        { Id: SECOND, State: { Running: true, StartedAt: "2026-02-01T11:47:00Z" }, Mounts: [] },
+      ]),
     });
-    assert.equal((await probeLiveness(probe)).state, "unknown");
+
+    assert.deepEqual(
+      await probeLiveness(dockerWorkerProbe({ worksRoot: WORKS, run: shell.run })),
+      { state: "known", workers: [] },
+      "an inspect that shows no work mount is a decided absence, never unknown",
+    );
+  });
+
+  test("a truncated mount column is not read as absence either", async () => {
+    const shell = fakeDocker({
+      listing: `${SECOND} /home/sanmoo/…,/var/run/docke…`,
+      inspect: JSON.stringify([container(SECOND, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z")]),
+    });
+
+    const workers = await probeLiveness(dockerWorkerProbe({ worksRoot: WORKS, run: shell.run }));
+
+    assert.deepEqual(
+      workers.state === "known" ? workers.workers.map((worker) => worker.key) : workers,
+      ["Sanmoo/my-tasks#7"],
+    );
   });
 
   test("Docker failing is unknown, never an empty factory", async () => {
@@ -391,20 +394,21 @@ describe("liveness — the worker identity survives the image reference moving (
     assert.match(observation.state === "unknown" ? observation.reason : "", /daemon down/);
   });
 
-  test("the screening reads mount sources under THIS works root — a look-alike prefix is not a worker", () => {
+  test("the screening places containers under THIS works root and leaves the rest to the inspect", () => {
+    const unreadable = "c".repeat(64);
     const listing = [
       `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7,/var/run/docker.sock`,
       `${SECOND} ${WORKS}-old/Sanmoo/my-tasks#8`,
+      unreadable,
     ].join("\n");
     assert.deepEqual(screenWorkerContainers(listing, WORKS), {
       candidates: [OLD_WORKER],
-      rows: 2,
-      mountsObservable: true,
+      unreadable: [unreadable],
     });
-    assert.equal(
-      screenWorkerContainers(`${OLD_WORKER} /home/sanmoo/…`, WORKS).mountsObservable,
-      false,
-      "a truncated mount column is not observable",
+    assert.deepEqual(
+      screenWorkerContainers(`${OLD_WORKER} /home/sanmoo/…`, WORKS).unreadable,
+      [OLD_WORKER],
+      "a truncated mount column is not read as absence",
     );
   });
 });

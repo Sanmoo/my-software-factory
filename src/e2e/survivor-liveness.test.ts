@@ -485,7 +485,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
   test("status and the cycle agree on Unknown — including an inconclusive container identity", async () => {
     const config = makeConfig(2);
     const probe = failingProbe(
-      "worker-image container abc123 carries no work this workspace can name — " +
+      "container abc123 carries no work this workspace can name — " +
         "its identity is inconclusive, liveness unknown",
     );
     const { tracker, deps, runtime, log } = makeFactory({ config, probe });
@@ -561,32 +561,40 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     );
   });
 
-  test("an unreadable container listing holds the sweep — no launch, no recovery, no block (issue 160)", async () => {
+  test("a container the listing did not describe is recognised before its attempt is presumed interrupted (issue 160)", async () => {
     const config = makeConfig(2);
+    const work = join(layout.works, `${REPO}#60`);
+    const containerId = "e".repeat(64);
     const probe = dockerWorkerProbe({
       worksRoot: layout.works,
-      hasUnsettledAttempts: async () => true,
-      // A running container whose mount sources Docker did not render: the
-      // listing cannot prove that a reserved attempt's worker is gone.
-      run: fakeDocker({ listing: "e".repeat(64) }).run,
+      // The listing rendered no mount source for the container; the inspect —
+      // the authoritative mounts — carries the work mount that makes it ours.
+      run: fakeDocker({
+        listing: containerId,
+        inspect: JSON.stringify([
+          {
+            Id: containerId,
+            State: { Running: true, StartedAt: new Date().toISOString() },
+            Mounts: [{ Source: work, Destination: "/msf-work" }],
+          },
+        ]),
+      }).run,
     });
     const { tracker, deps, runtime, log } = makeFactory({ config, probe });
     bindTracker(tracker);
     const interrupted = seedReserved(60, [1]);
-    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     const sweep = await runOnce(deps);
 
-    assert.equal(sweep.launched.length, 0, "an undecidable listing suspends the launch of other works");
+    assert.equal(sweep.launched.length, 0, "no substitute is launched over the worker");
     assert.equal(runtime.launched.length, 0);
     assert.deepEqual(tracker.claimedOrder, []);
-    assert.ok(!existsSync(join(interrupted, RECOVERY_FILENAME)), "no recovery is spent over a possibly-live worker");
+    assert.ok(!existsSync(join(interrupted, RECOVERY_FILENAME)), "no recovery is spent over a live worker");
     assert.deepEqual(readdirSync(interrupted).sort(), ["log-1.jsonl"], "the attempt's evidence is preserved");
     assert.deepEqual(await labelSet(tracker, 60), [DEFAULT_LABELS.claimed], "no block is invented");
-    assert.deepEqual(await labelSet(tracker, 1), [DEFAULT_LABELS.ready]);
     assert.ok(
-      log.some((line) => line.includes("no usable mount sources") && line.includes("liveness unknown")),
-      "the operator sees why the factory is holding",
+      log.some((line) => line.includes("recognizing surviving worker") && line.includes(`${REPO}#60`)),
+      "the operator sees the worker the listing had left undescribed",
     );
   });
 
