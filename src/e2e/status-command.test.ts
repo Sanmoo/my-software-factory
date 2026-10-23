@@ -194,7 +194,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       ...shown,
       ...(shown.length < archived.length ? [`  … and ${archived.length - shown.length} more`] : []),
       "reconciliation: 2",
-      `  unbacked claim: ${REPO}#14 — a factory mark on an open ticket with no reservation in this workspace (another factory or workspace may hold this claim — confirm before releasing); return it to the pool with: gh issue edit 14 --repo ${REPO} --remove-label agent-claimed --remove-assignee bot-do-samuca`,
+      `  unbacked claim: ${REPO}#14 — a factory mark on an open issue with no reservation in this workspace (another factory or workspace may hold this claim — confirm before releasing); return it to the pool with: gh issue edit 14 --repo ${REPO} --remove-label agent-claimed --remove-assignee bot-do-samuca`,
       `  unmarked reservation: ${REPO}#3 — the work dir exists but the tracker carries no factory mark (no claim, no block, no pool label); the decision is human, nothing was touched`,
       "", // console.log ends the report with a newline
     ].join("\n");
