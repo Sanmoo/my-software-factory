@@ -1,4 +1,7 @@
 // Hand-maintained types for the companion .mjs module: keep them in sync.
+export type SkillRole = "implement" | "tdd" | "review" | "design" | "pr";
+export type AgentRole = "standards" | "spec";
+
 export interface AgentResourcesDeclaration {
   schema: "msf-agent-resources/v1";
   pi: { package: string; version: string };
@@ -6,7 +9,7 @@ export interface AgentResourcesDeclaration {
     repository: string;
     revision: string;
     license: string;
-    selected: Array<{ name: string; path: string }>;
+    selected: Array<{ name: string; path: string; role: SkillRole }>;
   };
   extensions: Array<{
     package: string;
@@ -15,7 +18,7 @@ export interface AgentResourcesDeclaration {
     entry: string;
     guidance: { name: string; path: string };
   }>;
-  agents: Array<{ name: string; path: string }>;
+  agents: Array<{ name: string; path: string; role: AgentRole }>;
 }
 
 export interface AgentInventory {
@@ -46,6 +49,8 @@ export interface AgentInventory {
 export class AgentResourcesError extends Error {}
 
 export const AGENT_RESOURCES_SCHEMA: "msf-agent-resources/v1";
+export const SKILL_ROLES: readonly SkillRole[];
+export const AGENT_ROLES: readonly AgentRole[];
 export const AGENT_INVENTORY_SCHEMA: "msf-agent-inventory/v1";
 
 export function parseAgentResources(text: string, source?: string): AgentResourcesDeclaration;

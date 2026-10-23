@@ -27,7 +27,7 @@ function fixtureDeclaration(): Record<string, unknown> {
       repository: "https://example.invalid/skills.git",
       revision: "0123456789abcdef0123456789abcdef01234567",
       license: "MIT",
-      selected: [{ name: "implement", path: "skills/implement" }],
+      selected: [{ name: "implement", path: "skills/implement", role: "implement" }],
     },
     extensions: [
       {
@@ -38,7 +38,7 @@ function fixtureDeclaration(): Record<string, unknown> {
         guidance: { name: "pi-subagents", path: "skills/pi-subagents" },
       },
     ],
-    agents: [{ name: "code-reviewer", path: "agents/code-reviewer.md" }],
+    agents: [{ name: "code-reviewer", path: "agents/code-reviewer.md", role: "standards" }],
   };
 }
 
@@ -110,7 +110,9 @@ describe("the factory's agent-resource declaration and image inventory", () => {
     dir = mkdtempSync(join(tmpdir(), "msf-declaration-"));
     const path = join(dir, "agent-resources.json");
     const bad = fixtureDeclaration();
-    (bad as { skills: Record<string, unknown> }).skills.selected = [{ name: "implement", path: "skills/implement", typo: true }];
+    (bad as { skills: Record<string, unknown> }).skills.selected = [
+      { name: "implement", path: "skills/implement", role: "implement", typo: true },
+    ];
     writeFileSync(path, JSON.stringify(bad), "utf8");
 
     assert.throws(() => loadAgentResources(path), (error: unknown) => {

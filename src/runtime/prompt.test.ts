@@ -5,6 +5,7 @@ import { AGENT_MARKER } from "../tracker/port.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
+import type { LoadedAgentResources } from "./inventory.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
@@ -375,6 +376,91 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /\/home\/agent\/\.pi\/agent\/skills\/code-review\/SKILL\.md/);
     assert.match(initial, /\/home\/agent\/\.pi\/agent\/skills\/tdd\/SKILL\.md/);
     assert.doesNotMatch(initial, /~\/\.pi\/agent\/skills/);
+  });
+
+  test("every skill path, the guidance path and the reviewer names come from the declaration — no second list (issue #159)", () => {
+    const synthetic: LoadedAgentResources = {
+      raw: "",
+      sha256: "",
+      declaration: {
+        schema: "msf-agent-resources/v1",
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+        skills: {
+          repository: "https://example.invalid/skills.git",
+          revision: "a".repeat(40),
+          license: "MIT",
+          selected: [
+            { name: "implement-x", path: "s/implement", role: "implement" },
+            { name: "tdd-x", path: "s/tdd", role: "tdd" },
+            { name: "review-x", path: "s/review", role: "review" },
+            { name: "design-x", path: "s/design", role: "design" },
+            { name: "pr-x", path: "s/pr", role: "pr" },
+          ],
+        },
+        extensions: [
+          {
+            package: "pi-other",
+            version: "1.0.0",
+            license: "MIT",
+            entry: "index.js",
+            guidance: { name: "guide-x", path: "skills/guide-x" },
+          },
+        ],
+        agents: [
+          { name: "standards-x", path: "agents/standards-x.md", role: "standards" },
+          { name: "spec-x", path: "agents/spec-x.md", role: "spec" },
+        ],
+      },
+    };
+
+    const prompt = buildWorkerPrompt(baseRequest(), {
+      blockedLabel: DEFAULT_LABELS.blocked,
+      agentResources: synthetic,
+    });
+
+    for (const name of ["implement-x", "tdd-x", "review-x", "design-x", "pr-x"]) {
+      assert.ok(prompt.includes(`/home/agent/.pi/agent/skills/${name}/SKILL.md`), `${name} path is derived`);
+    }
+    assert.ok(prompt.includes("/home/agent/.pi/agent/extensions/node_modules/pi-other/skills/guide-x/SKILL.md"));
+    assert.ok(prompt.includes("`standards-x` for Standards") && prompt.includes("`spec-x` for Spec"));
+    for (const stale of ["code-review/SKILL.md", "code-reviewer", "spec-reviewer"]) {
+      assert.ok(!prompt.includes(stale), `the prompt carries no hardcoded "${stale}"`);
+    }
+  });
+
+  test("a declaration that cannot compose the procedure fails the prompt instead of pointing at absent paths", () => {
+    const incomplete: LoadedAgentResources = {
+      raw: "",
+      sha256: "",
+      declaration: {
+        schema: "msf-agent-resources/v1",
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+        skills: {
+          repository: "https://example.invalid/skills.git",
+          revision: "a".repeat(40),
+          license: "MIT",
+          selected: [{ name: "implement", path: "s/implement", role: "implement" }],
+        },
+        extensions: [
+          {
+            package: "pi-subagents",
+            version: "0.79.1",
+            license: "MIT",
+            entry: "index.js",
+            guidance: { name: "pi-subagents", path: "skills/pi-subagents" },
+          },
+        ],
+        agents: [
+          { name: "code-reviewer", path: "agents/code-reviewer.md", role: "standards" },
+          { name: "spec-reviewer", path: "agents/spec-reviewer.md", role: "spec" },
+        ],
+      },
+    };
+
+    assert.throws(
+      () => buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked, agentResources: incomplete }),
+      /declares no skill for role "tdd"/,
+    );
   });
 
   test("the delegation extension's operating guidance is named before the first subagent call (stories 4, 5)", () => {

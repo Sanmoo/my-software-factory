@@ -34,7 +34,13 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 function makeFixture(
-  options: { skills?: boolean; extensionVersion?: string; skillName?: string; brokenReference?: boolean } = {},
+  options: {
+    skills?: boolean;
+    extensionVersion?: string;
+    skillName?: string;
+    brokenReference?: boolean;
+    omitDependency?: string;
+  } = {},
 ): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "msf-provision-fixture-"));
   const skillsRepo = join(dir, "upstream");
@@ -71,7 +77,7 @@ function makeFixture(
       repository: skillsRepo,
       revision: options.skills === false ? "f".repeat(40) : revision,
       license: "MIT fixture",
-      selected: [{ name: skillName, path: `skills/engineering/${skillName}` }],
+      selected: [{ name: skillName, path: `skills/engineering/${skillName}`, role: "implement" }],
     },
     extensions: [
       {
@@ -82,7 +88,7 @@ function makeFixture(
         guidance: { name: "pi-subagents", path: "skills/pi-subagents" },
       },
     ],
-    agents: [{ name: "code-reviewer", path: "agents/code-reviewer.md" }],
+    agents: [{ name: "code-reviewer", path: "agents/code-reviewer.md", role: "standards" }],
   };
   const declarationPath = join(dir, "agent-resources.json");
   writeFileSync(declarationPath, `${JSON.stringify(declaration, null, 2)}\n`, "utf8");
@@ -111,7 +117,7 @@ function makeFixture(
 
 /** The external-boundary simulation: real git on a local repository, a fake
  *  `pi --version`, and an npm that materialises the package tree. */
-function fakeRun(install: { extensionVersion?: string; globalRoot: string }) {
+function fakeRun(install: { extensionVersion?: string; globalRoot: string; omitDependency?: string }) {
   return async (
     command: string,
     args: string[],
@@ -130,7 +136,12 @@ function fakeRun(install: { extensionVersion?: string; globalRoot: string }) {
       mkdirSync(join(packageDir, "skills", "pi-subagents"), { recursive: true });
       writeFileSync(
         join(packageDir, "package.json"),
-        JSON.stringify({ name: "pi-subagents", version, license: "MIT fixture" }),
+        JSON.stringify({
+          name: "pi-subagents",
+          version,
+          license: "MIT fixture",
+          dependencies: { acorn: "^8.18.0" },
+        }),
         "utf8",
       );
       writeFileSync(join(packageDir, "index.js"), "export default function () {}\n", "utf8");
@@ -140,12 +151,14 @@ function fakeRun(install: { extensionVersion?: string; globalRoot: string }) {
         "---\nname: pi-subagents\ndescription: Delegate.\n---\n\nDelegate with the subagent tool.\n",
         "utf8",
       );
-      mkdirSync(join(prefix, "node_modules", "acorn"), { recursive: true });
-      writeFileSync(
-        join(prefix, "node_modules", "acorn", "package.json"),
-        JSON.stringify({ name: "acorn", version: "8.18.0" }),
-        "utf8",
-      );
+      if (install.omitDependency !== "acorn") {
+        mkdirSync(join(prefix, "node_modules", "acorn"), { recursive: true });
+        writeFileSync(
+          join(prefix, "node_modules", "acorn", "package.json"),
+          JSON.stringify({ name: "acorn", version: "8.18.0" }),
+          "utf8",
+        );
+      }
       return { stdout: "installed\n", stderr: "" };
     }
     throw new Error(`unexpected command: ${command}`);
@@ -241,9 +254,9 @@ describe("agent-resource provisioning at image build time", () => {
       mkdirSync(fixture.dest, { recursive: true });
       writeFileSync(join(fixture.dest, "previous.txt"), "previous image content\n", "utf8");
       const bad = JSON.parse(readFileSync(fixture.declarationPath, "utf8")) as {
-        skills: { selected: Array<{ name: string; path: string }> };
+        skills: { selected: Array<{ name: string; path: string; role: string }> };
       };
-      bad.skills.selected = [{ name: "code-review", path: "skills/engineering/code-review" }];
+      bad.skills.selected = [{ name: "code-review", path: "skills/engineering/code-review", role: "review" }];
       writeFileSync(fixture.declarationPath, JSON.stringify(bad), "utf8");
 
       await assert.rejects(provisionAgentResources(options(fixture)), /selected skill "code-review" SKILL\.md is missing/);
@@ -284,6 +297,25 @@ describe("agent-resource provisioning at image build time", () => {
         /Pi is installed as @earendil-works\/pi-coding-agent@1\.2\.9, declared .*@1\.3\.0/,
       );
       assert.ok(!existsSync(fixture.dest));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a declared dependency that did not install fails the build — the closure is validated, not just recorded", async () => {
+    const fixture = makeFixture({ omitDependency: "acorn" });
+    try {
+      mkdirSync(fixture.dest, { recursive: true });
+      writeFileSync(join(fixture.dest, "previous.txt"), "previous image content\n", "utf8");
+
+      await assert.rejects(
+        provisionAgentResources(
+          options(fixture, { run: fakeRun({ globalRoot: fixture.globalRoot, omitDependency: "acorn" }) }),
+        ),
+        /missing declared dependency: acorn/,
+      );
+      assert.equal(readFileSync(join(fixture.dest, "previous.txt"), "utf8"), "previous image content\n");
+      assert.ok(!existsSync(fixture.inventoryPath));
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }

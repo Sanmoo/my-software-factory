@@ -19,6 +19,14 @@ const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
 const IMMUTABLE_REVISION = /^[0-9a-f]{40}$/;
 const RESOURCE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * The roles the factory's implementation procedure composes (issue #159): the
+ * declaration names WHICH skill/agent fills each role, so the prompt derives
+ * its names and paths from this file instead of keeping a second list.
+ */
+export const SKILL_ROLES = ["implement", "tdd", "review", "design", "pr"];
+export const AGENT_ROLES = ["standards", "spec"];
+
 export class AgentResourcesError extends Error {
   constructor(message) {
     super(message);
@@ -62,6 +70,12 @@ function revision(value, where) {
   return rev;
 }
 
+function role(value, allowed, where) {
+  const name = nonEmptyString(value, where);
+  if (!allowed.includes(name)) fail(`${where} must be one of ${allowed.join(", ")}, got "${name}"`);
+  return name;
+}
+
 function resourceName(value, where) {
   const name = nonEmptyString(value, where);
   if (!RESOURCE_NAME.test(name)) fail(`${where} must be lowercase letters, digits and single hyphens, got "${name}"`);
@@ -96,14 +110,18 @@ function parseSkills(value) {
     fail("skills.selected must be a non-empty list of skill entries");
   }
   const seen = new Set();
+  const roles = new Set();
   const parsed = selected.map((entry, index) => {
     const where = `skills.selected[${index}]`;
     const skill = object(entry, where);
-    exactKeys(skill, ["name", "path"], where);
+    exactKeys(skill, ["name", "path", "role"], where);
     const name = resourceName(skill.name, `${where}.name`);
     if (seen.has(name)) fail(`${where}.name duplicates "${name}"`);
     seen.add(name);
-    return { name, path: relativePath(skill.path, `${where}.path`) };
+    const skillRole = role(skill.role, SKILL_ROLES, `${where}.role`);
+    if (roles.has(skillRole)) fail(`${where}.role duplicates "${skillRole}"`);
+    roles.add(skillRole);
+    return { name, path: relativePath(skill.path, `${where}.path`), role: skillRole };
   });
   return {
     repository: nonEmptyString(skills.repository, "skills.repository"),
@@ -145,14 +163,18 @@ function parseAgents(value) {
     fail("agents must be a non-empty list of factory-owned reviewer definitions");
   }
   const seen = new Set();
+  const roles = new Set();
   return value.map((entry, index) => {
     const where = `agents[${index}]`;
     const agent = object(entry, where);
-    exactKeys(agent, ["name", "path"], where);
+    exactKeys(agent, ["name", "path", "role"], where);
     const name = resourceName(agent.name, `${where}.name`);
     if (seen.has(name)) fail(`${where}.name duplicates "${name}"`);
     seen.add(name);
-    return { name, path: relativePath(agent.path, `${where}.path`) };
+    const agentRole = role(agent.role, AGENT_ROLES, `${where}.role`);
+    if (roles.has(agentRole)) fail(`${where}.role duplicates "${agentRole}"`);
+    roles.add(agentRole);
+    return { name, path: relativePath(agent.path, `${where}.path`), role: agentRole };
   });
 }
 
