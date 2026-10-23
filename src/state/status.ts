@@ -7,7 +7,6 @@ import {
   type RegistryView,
 } from "../pool/registry.js";
 import type { TrackerPort } from "../tracker/port.js";
-import { WORKER_IMAGE } from "../worker-image.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -15,9 +14,9 @@ import {
   type UnmarkedReservation,
 } from "./derive.js";
 import {
-  dockerWorkerProbe,
   duplicateWorkers,
   probeLiveness,
+  workspaceLivenessProbe,
   type DuplicateWorkers,
   type LivenessProbe,
   type LiveWorker,
@@ -97,7 +96,7 @@ export async function deriveStatus(
   tracker: TrackerPort,
   config: Config,
   layout: WorkspaceLayout,
-  probe: LivenessProbe = dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: layout.works }),
+  probe: LivenessProbe = workspaceLivenessProbe(layout),
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.

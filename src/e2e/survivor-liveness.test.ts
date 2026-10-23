@@ -16,7 +16,7 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
-import type { LiveWorker, LivenessProbe } from "../state/liveness.js";
+import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
 
@@ -472,7 +472,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
 
     // The cycle, from the SAME facts: the duplicated work is never launched,
     // its two slots are respected and the other work advances.
-    const sweep = await runOnce(deps);
+    await runOnce(deps);
     assert.deepEqual(runtime.launched.map((request) => request.ref.number), [1]);
     assert.ok(!tracker.claimedOrder.includes(`${REPO}#90`), "the duplicated work is never claimed");
     assert.ok(
@@ -524,6 +524,44 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.ok(
       log.some((line) => line.includes("held") && line.includes("presume a worker stopped")),
       "a decision that would presume a stop is held",
+    );
+  });
+
+  test("a worker launched before the image tag moved is a survivor — no substitute, no recovery, no attempt spent (issue 160)", async () => {
+    const config = makeConfig(2);
+    const work = join(layout.works, `${REPO}#61`);
+    const containerId = "d".repeat(64);
+    const probe = dockerWorkerProbe({
+      worksRoot: layout.works,
+      run: async (args) => {
+        if (args[0] === "ps") return `${containerId} ${work},/var/run/docker.sock`;
+        if (args[0] === "inspect") {
+          return JSON.stringify([
+            {
+              Id: containerId,
+              State: { Running: true, StartedAt: new Date().toISOString() },
+              Mounts: [{ Source: work, Destination: "/msf-work" }],
+            },
+          ]);
+        }
+        throw new Error(`unexpected docker command: ${args.join(" ")}`);
+      },
+    });
+    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
+    bindTracker(tracker);
+    const target = seedReserved(61, [1]);
+
+    const sweep = await runOnce(deps);
+
+    assert.equal(sweep.launched.length, 0, "a survivor is never replaced by a launch");
+    assert.equal(runtime.launched.length, 0);
+    assert.deepEqual(tracker.claimedOrder, []);
+    assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
+    assert.deepEqual(readdirSync(target).sort(), ["log-1.jsonl"], "its attempt's evidence is untouched");
+    assert.deepEqual(await labelSet(tracker, 61), [DEFAULT_LABELS.claimed], "its work stays reserved");
+    assert.ok(
+      log.some((line) => line.includes("recognizing surviving worker") && line.includes(`${REPO}#61`)),
+      "the operation names the worker the moved image reference had hidden",
     );
   });
 

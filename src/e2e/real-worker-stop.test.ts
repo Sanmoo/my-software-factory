@@ -154,7 +154,7 @@ function runDriver(mode: "cooperative" | "forced" | "abort", testRoot: string): 
 /** The factory's own probe over the host workspace root: no worker survives. */
 async function workersOf(root: string): Promise<string[]> {
   const worksRoot = join(hostPathOf(root), "fabrica", "trabalhos");
-  const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
+  const workers = await dockerWorkerProbe({ worksRoot })();
   return workers.map((worker) => worker.key);
 }
 
@@ -193,7 +193,6 @@ describe("e2e: the real worker container ends on the requested stop (issue #146)
       } finally {
         try {
           await dockerWorkerForceStop({
-            image: WORKER_IMAGE,
             worksRoot: join(hostPathOf(root), "fabrica", "trabalhos"),
           })(key);
         } catch {

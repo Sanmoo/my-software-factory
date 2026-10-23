@@ -97,7 +97,6 @@ async function main(): Promise<void> {
   // The factory's own read-only liveness probe (ADR 0002): Docker is the
   // authority on which containers carry the work.
   const probe = dockerWorkerProbe({
-    image: WORKER_IMAGE,
     worksRoot: join(workspace, WORKSPACE_SUBPATHS.works),
   });
 
