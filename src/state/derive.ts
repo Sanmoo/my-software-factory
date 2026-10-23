@@ -592,7 +592,7 @@ async function deriveReservedWork(
       return { ref, state: "idle" };
     }
     const unreconciled = await deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
-    // Only an interruption can be a provider failure: the attempt's own stream
+    // Only an interruption can be a model provider failure: the attempt's own
     // decides it (issue 144) — a written outcome or a bare reservation never
     // reads the model provider ledger.
     if (unreconciled.state === "interrupted") {
@@ -667,10 +667,10 @@ async function deriveUnreconciledAttempt(
 }
 
 /**
- * The provider-failure derivation of an INTERRUPTED attempt (issue 144), or
- * null when the attempt's stream carries no provider error. A provider error
+ * The model provider failure derivation of an INTERRUPTED attempt (issue 144),
+ * or null when the attempt's stream carries no model provider error. One
  * retries on its own budget; exhausted, it awaits the operator — a help
- * request a human answer resumes, never a block.
+ * request a human answer resumes.
  */
 async function deriveModelProviderFailure(
   port: TrackerPort,
@@ -693,7 +693,7 @@ async function deriveModelProviderFailure(
   return { ref: work.ref, state: "model-provider-failure", attempt: work.attempt, failure, modelProvider: decision };
 }
 
-/** The interrupted attempt the provider decision reads: its work, dir, number
+/** The interrupted attempt the model provider decision reads: its work, dir, number
  *  and the issue's creation time (the retomada's priority fact). */
 interface InterruptedAttempt {
   ref: IssueRef;

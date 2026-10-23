@@ -1720,8 +1720,8 @@ export class SweepEngine {
         );
       } else {
         // The attempt's own stream decides whether this was the agent's
-        // interruption or a provider failure (issue 144): the latter gets its
-        // own budget and backoff, never the recovery budget.
+        // interruption or a model provider failure (issue 144): the latter
+        // gets its own budget and backoff.
         const failure = await readTurnModelProviderError(dir, attempt);
         if (failure === null) {
           this.log(
@@ -1731,7 +1731,7 @@ export class SweepEngine {
         }
         next = {
           ref,
-          // A provider failure retries on its own budget; an interruption of
+          // A model provider failure retries on its own budget; an interruption of
           // the agent keeps issue 123's recovery. Either way the SAME attempt
           // continues, with the material of the interrupted launch preserved.
           kind: failure === null ? "recover" : "model-provider-retry",
