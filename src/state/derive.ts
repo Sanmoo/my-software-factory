@@ -261,7 +261,7 @@ function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
 }
 
 /** The trigger of an open PR, or null when nothing is confirmed. */
-function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
+export function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
   const reasons: RepairReason[] = [];
   if (facts.mergeState === "conflicting") reasons.push("conflicts");
   const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
@@ -281,14 +281,10 @@ export function repairSignature(ref: IssueRef, trigger: RepairTrigger): string {
   });
 }
 
-/**
- * The premise of a repair round, re-read from the PR's CURRENT facts (issue
- * 149): the same facts the derivation reads, asked again before the round
- * spends work and before the factory asks for help. Only a confirmed
- * impediment is `persists`; only a mergeable PR with a KNOWN required set is
- * `obsolete` (an unknown mergeability, or an undetermined required set, proves
- * nothing); null facts — the read failed — are `unknown`.
- */
+/** The premise of a repair round from the facts read NOW (issue 149): a
+ *  confirmed trigger persists; only a mergeable PR with a known required set
+ *  is obsolete; `null` facts are an unreadable PR — unknown, never an invented
+ *  clean bill. The vocabulary lives in pool/repair.ts. */
 export function repairPremise(facts: PrRepairFacts | null): RepairPremise {
   if (facts === null) return "unknown";
   if (repairTrigger(facts) !== null) return "persists";
@@ -303,7 +299,9 @@ export function repairPremise(facts: PrRepairFacts | null): RepairPremise {
  *  one. */
 function repairRecovered(facts: PrRepairFacts): boolean {
   if (repairPremise(facts) !== "obsolete") return false;
-  return facts.requiredChecks !== null && facts.requiredChecks.every((check) => check.conclusion === "success");
+  // "obsolete" already proved the set is known; bound once for the narrowing.
+  const checks = facts.requiredChecks;
+  return checks !== null && checks.every((check) => check.conclusion === "success");
 }
 
 /**

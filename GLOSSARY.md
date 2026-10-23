@@ -159,12 +159,15 @@ What the agents themselves write under the dirs the session binds (the session t
 **Repair fall**:
 A repair attempt that ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall.
 
+**Repair premise**:
+The PR facts that opened a Repair round: the conflict with the base and the required checks that failed. The round re-reads them before spending work and before asking for help; a premise that cannot be re-read is never taken for a confirmed absence.
+
 **Obsolete premise**:
-The impediment that opened a Repair no longer exists when the round ends (the PR is mergeable and no required check is failing): the round returns with no fall counted and the work stays as delivered.
+A Repair premise that no longer exists when the round is rechecked — the PR is mergeable and its required set is known, with no required check failing: the round returns with no fall counted and the work stays as delivered.
 _Avoid_: Repair fall, when the round was returned because there was nothing left to fix.
 
 **Pending reconciliation**:
-A repair attempt whose publication cannot be verified yet (the remote or the local work could not be read): no new worker and no budget returned until a later sweep gets an answer.
+A repair attempt whose publication cannot be verified yet (the remote, the local work or the round's premise could not be read): no new worker and no budget returned until a later sweep gets an answer.
 
 **Concurrent change**:
 A remote head the repair attempt did not produce (a collaborator's push): the factory never publishes over it, preserves the local work, keeps the round charged and asks the human to reconcile both sides.

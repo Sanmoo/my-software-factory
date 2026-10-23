@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
+import type { TrackerPort, IssueComment, IssueRef, PrRepairFacts, PullRequest } from "./tracker/port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import {
@@ -25,6 +25,7 @@ import {
   deriveReserved,
   repairPremise,
   repairSignature,
+  repairTrigger,
   workKey,
   renderUnbackedClaim,
   renderUnmarkedReservation,
@@ -67,7 +68,6 @@ import {
   type RemoteObservation,
   type RepairAttempt,
   type RepairCycle,
-  type RepairPremise,
   type RepairReconciliation,
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
@@ -1056,10 +1056,8 @@ export class SweepEngine {
         await tracker.reopenPr(ref);
       }
     } else if (kind === "repair") {
-      this.log(
-        `repair round for ${key}: ${launchable.repair?.reasons.join(" + ") ?? "a confirmed impediment"} reactivated the worker — ` +
-          "same branch, same PR, no human comment needed",
-      );
+      // The round is announced only after its facts are re-read below: a round
+      // whose premise is gone is "not opened", never "reactivated" (issue 149).
     } else if (kind === "recover") {
       this.log(
         `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
@@ -1081,7 +1079,7 @@ export class SweepEngine {
     // A repair targets the PR's CURRENT base — never the repo default (story 8)
     // — and is pinned to the head the facts were read on. If the remote moved
     // since, the evidence is stale: skip the round (the next tick re-derives).
-    const repairTrigger = launchable.repair;
+    const derivedTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
     // The launch context of a repair round (issue 112), created once here and
     // filled with the local work below: the confirmed trigger, the unpublished
@@ -1092,38 +1090,54 @@ export class SweepEngine {
     // resumed), never a fresh read, so a collaborator's push to the branch
     // after the fall is never overwritten by local history (stories 10/17).
     const repair: RepairLaunchContext | undefined =
-      repairTrigger === undefined
+      derivedTrigger === undefined
         ? undefined
         : {
-            trigger: repairTrigger,
+            trigger: derivedTrigger,
             resuming,
             localWork: null,
-            pinnedHeadSha: resuming?.observedHeadSha ?? repairTrigger.facts.headSha,
+            pinnedHeadSha: resuming?.observedHeadSha ?? derivedTrigger.facts.headSha,
           };
     let baseBranch = prepared.baseBranch;
     if (repair !== undefined) {
-      baseBranch = repair.trigger.facts.baseBranch;
       // The facts are re-read before the round spends work (issue 149): the
       // impediment that opened it may have been resolved meanwhile — by a
       // human pushing the resolution, by a base advance. Only a confirmed
       // premise buys a session; an obsolete one returns the round unspent,
       // and an unconfirmed one waits for the next derivation instead of
       // paying for stale evidence.
-      const premise = await this.readRepairPremise(ref);
-      if (premise === "obsolete") {
+      const facts = await this.readRepairFacts(ref);
+      if (repairPremise(facts) === "obsolete") {
         this.log(
           `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
             `(the premise is obsolete) — no round is spent`,
         );
         return null;
       }
-      if (premise === "unknown") {
+      const confirmed = facts === null ? null : repairTrigger(facts);
+      if (confirmed === null) {
         this.log(
-          `repair round for ${key} not opened: the PR's facts could not be re-read — ` +
+          `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
             "nothing is spent and the next sweep re-derives",
         );
         return null;
       }
+      // A FRESH round follows the facts as they read now: when the head moved
+      // while the impediment persists, the evidence was recalculated, so the
+      // round opens on the current head and is charged on the new evidence
+      // (issue 149). A resumption keeps its observed head — moving it would
+      // publish the fallen attempt's local history over a concurrent one.
+      if (resuming === null) {
+        if (confirmed.facts.headSha !== repair.pinnedHeadSha) {
+          this.log(
+            `repair round for ${key}: the evidence was recalculated on the current head ` +
+              `${shortSha(confirmed.facts.headSha)} — the round opens there`,
+          );
+        }
+        repair.trigger = confirmed;
+        repair.pinnedHeadSha = confirmed.facts.headSha;
+      }
+      baseBranch = confirmed.facts.baseBranch;
       const observed = await this.observeRemote(ref);
       if (!observed.known) {
         this.log(
@@ -1145,6 +1159,10 @@ export class SweepEngine {
         }
         return null;
       }
+      this.log(
+        `repair round for ${key}: ${repair.trigger.reasons.join(" + ")} reactivated the worker — ` +
+          "same branch, same PR, no human comment needed",
+      );
     }
 
     this.log(
@@ -1315,8 +1333,9 @@ export class SweepEngine {
       // The premise is part of the verdict (issue 149): a remote the attempt
       // did not produce is a concurrent change ONLY while the impediment the
       // round addressed still exists — a human's own resolution is never
-      // taken for a reason to ask for help.
-      const premise = await this.readRepairPremise(work.ref);
+      // taken for a reason to ask for help. The read happens once per
+      // settlement: a settled or attempt-less cycle never reaches this line.
+      const premise = repairPremise(await this.readRepairFacts(work.ref));
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
@@ -1413,11 +1432,11 @@ export class SweepEngine {
     }
   }
 
-  /** The repair premise, re-read from the PR's facts; a failed read is
-   *  "unknown", never an invented clean bill (issue 149). */
-  private async readRepairPremise(ref: IssueRef): Promise<RepairPremise> {
+  /** The PR's repair facts, read now; null when the read is not known —
+   *  never an invented clean bill (issue 149). */
+  private async readRepairFacts(ref: IssueRef): Promise<PrRepairFacts | null> {
     const facts = await this.deps.tracker.readPrRepairFacts(ref);
-    return repairPremise(facts.known ? facts.value : null);
+    return facts.known ? facts.value : null;
   }
 
   /** The remote head now, or the honest uncertainty (an unreadable remote is
