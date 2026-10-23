@@ -139,6 +139,16 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
   const signatureOf = (number: number, headSha: string): string =>
     `${REPO}#${number}|${headSha}|conflicts|`;
 
+  /** The human's change landing BETWEEN the derivation and the launch: the fake
+   *  host applies it at prepareWork, before the round re-reads the facts. */
+  function changeFactsAtPrepare(git: ScenarioGitWork, apply: () => void): void {
+    const prepare = git.prepareWork.bind(git);
+    git.prepareWork = async (ref: IssueRef) => {
+      apply();
+      return prepare(ref);
+    };
+  }
+
   /** Attempt 1: the claim and the PR, written by the ordinary first round. */
   async function seedFirstAttempt(
     tracker: FakeTrackerAdapter,
@@ -938,8 +948,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     // Between the derivation and the launch the operator pushes the resolution:
     // the remote moves and the PR becomes mergeable on the new head.
     const resolved = "7c9d0fe";
-    const prepare = git.prepareWork.bind(git);
-    git.prepareWork = async (ref: IssueRef) => {
+    changeFactsAtPrepare(git, () => {
       tracker.setPrRepairFacts({
         repo: REPO,
         prNumber: pr,
@@ -948,8 +957,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
         requiredChecks: [],
       });
       git.remoteHead = resolved;
-      return prepare(ref);
-    };
+    });
 
     const refused = await runOnce(deps);
     assert.equal(refused.launched.length, 0, "the round is not opened on a vanished impediment");
@@ -1114,8 +1122,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     // Between the derivation and the launch the head moved and still
     // conflicts: the evidence is recalculated and the round opens there.
     const recalculated = "c0ffee";
-    const prepare = git.prepareWork.bind(git);
-    git.prepareWork = async (ref: IssueRef) => {
+    changeFactsAtPrepare(git, () => {
       tracker.setPrRepairFacts({
         repo: REPO,
         prNumber: pr,
@@ -1124,8 +1131,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
         requiredChecks: [],
       });
       git.remoteHead = recalculated;
-      return prepare(ref);
-    };
+    });
 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 1, "the round opens on the current head");
