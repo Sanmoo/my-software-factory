@@ -87,6 +87,9 @@ The finite, per-work and persisted allowance of recoveries for one attempt. Exha
 The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
 _Avoid_: shutdown, for the operator's act (the signal handling is the mechanism, not the term).
 
+**Unconfirmed stop**:
+A requested stop whose end the factory could not prove: a worker that survived the forced stop, or a Docker that stopped answering. The work is held with the reason and is never relaunched over a previous worker; the next invocation asks again, and only a proof that the worker is gone turns it into the requested stop that resumes.
+
 **Failed sweep**:
 A sweep that could not read the tracker or complete its derivation: it acts on nothing, spends no attempt, and the factory repeats it on the next tick. It is not an Interruption of any work.
 

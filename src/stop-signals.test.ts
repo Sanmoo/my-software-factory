@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { COOPERATIVE_STOP_MS, installShutdownSignals } from "./shutdown.js";
+import { COOPERATIVE_STOP_MS, installStopSignals } from "./stop-signals.js";
 
 /**
  * The operator's stop signals (issue #146): the first Ctrl-C or SIGTERM closes
@@ -11,10 +11,10 @@ import { COOPERATIVE_STOP_MS, installShutdownSignals } from "./shutdown.js";
  * the run's window is the lock's window.
  */
 
-describe("the shutdown signals — first request, second escalation, both signals", () => {
-  function withSignals(run: (installed: ReturnType<typeof installShutdownSignals>) => Promise<void>) {
+describe("the stop signals — first request, second escalation, both signals", () => {
+  function withSignals(run: (installed: ReturnType<typeof installStopSignals>) => Promise<void>) {
     return async (): Promise<void> => {
-      const installed = installShutdownSignals();
+      const installed = installStopSignals();
       try {
         await run(installed);
       } finally {
@@ -44,7 +44,7 @@ describe("the shutdown signals — first request, second escalation, both signal
       process.emit("SIGTERM");
       assert.equal(installed.escalated.aborted, true);
 
-      const other = installShutdownSignals();
+      const other = installStopSignals();
       try {
         process.emit("SIGINT");
         process.emit("SIGTERM");

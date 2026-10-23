@@ -130,7 +130,7 @@ async function writeLedger(workDir: string, ledger: RecoveryLedger): Promise<voi
 }
 
 /**
- * One writer per work's ledger: the engine's shutdown and a collection can
+ * One writer per work's ledger: the requested stop and a collection can
  * reach the same artifact concurrently (issue #146 — the stop bookkeeping and
  * the admission it cancels), and two read-modify-write cycles interleaved
  * would lose one of the updates. Each mutation below queues behind the
@@ -230,7 +230,7 @@ export async function consumeRecovery(
  * Persist that the attempt ended by the operator's requested stop (issue
  * #146): the evidence the next invocation reads to resume the SAME attempt
  * instead of charging a recovery. Written BEFORE the worker is asked to stop,
- * so a factory that dies inside the shutdown still leaves the attribution.
+ * so a factory that dies inside the requested stop still leaves the attribution.
  */
 export async function recordStopRequest(
   workDir: string,

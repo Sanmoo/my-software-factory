@@ -8,6 +8,7 @@ import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { dockerWorkerProbe } from "../state/liveness.js";
 import { WORKSPACE_SUBPATHS } from "../layout.js";
+import { COOPERATIVE_STOP_MS } from "../stop-signals.js";
 import type { WorkRequest } from "../runtime/port.js";
 
 /**
@@ -22,6 +23,9 @@ import type { WorkRequest } from "../runtime/port.js";
  *
  * It prints one line to stdout: `MSF_STOP_RESULT=<json>`; diagnostics go to
  * stderr. Exit 0 only when the contract held.
+ *
+ * Every wait here is bounded WELL below the test's own timeout: a hung Docker
+ * must fail this proof by name, never consume the quality gateway's budget.
  */
 
 const MODE = process.argv[2];
@@ -38,6 +42,13 @@ function deterministicAgent(): AgentProvider {
     parseStreamLine: () => [],
   };
 }
+
+/** The container must appear within this bound; a real launch takes seconds. */
+const APPEARANCE_LIMIT_MS = 30_000;
+/** The launch must settle within this bound once the forced stop ran. */
+const SETTLE_LIMIT_MS = 30_000;
+/** The cooperative request's own grace in the abort mode (the factory's is 10 s). */
+const ABORT_GRACE_MS = 20_000;
 
 function log(line: string): void {
   process.stderr.write(`[real-stop] ${line}\n`);
@@ -130,7 +141,7 @@ async function main(): Promise<void> {
   // The worker container is really there: the probe names the work before any
   // stop is requested (otherwise the stop would prove nothing).
   const seen = deferred();
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + APPEARANCE_LIMIT_MS;
   while (Date.now() < deadline) {
     const live = await probe();
     if (live.some((worker) => worker.key === `${request.ref.repo}#${request.ref.number}`)) {
@@ -151,8 +162,6 @@ async function main(): Promise<void> {
   // "cooperative"), or the second-signal escalation straight away (mode
   // "forced"). Mode "abort" never forces: it proves the cooperative request
   // alone ends the real container, through the runtime's own abort.
-  const COOPERATIVE_WINDOW_MS = 10_000;
-  const ABORT_GRACE_MS = 60_000;
   let settledInWindow = false;
   let forced = false;
   log(`requesting the cooperative stop (mode ${MODE})`);
@@ -161,7 +170,7 @@ async function main(): Promise<void> {
     const settledByAbort = await waitForSettle(ABORT_GRACE_MS, () => launchSettled);
     log(`the abort ${settledByAbort ? "settled the launch" : "did not settle the launch"} on its own`);
   } else if (MODE === "cooperative") {
-    settledInWindow = await waitForSettle(COOPERATIVE_WINDOW_MS, () => launchSettled);
+    settledInWindow = await waitForSettle(COOPERATIVE_STOP_MS, () => launchSettled);
     if (settledInWindow) {
       log("the session ended inside the cooperative window");
     } else {
@@ -187,7 +196,7 @@ async function main(): Promise<void> {
       };
       check();
     }),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 120_000)),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), SETTLE_LIMIT_MS)),
   ]);
   const surviving = await probe();
   const result = {

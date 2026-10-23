@@ -20,9 +20,9 @@ export const COOPERATIVE_STOP_MS = 10_000;
 /**
  * The stop as the loop receives it: `requested` is aborted by the first
  * signal, `escalated` by the second. Both keep their listeners until
- * {@link ShutdownSignals.dispose} runs — the same window the run lock covers.
+ * {@link StopSignals.dispose} runs — the same window the run lock covers.
  */
-export interface ShutdownSignals {
+export interface StopSignals {
   /** The first Ctrl-C/SIGTERM: close admissions, request the cooperative stop. */
   readonly requested: AbortSignal;
   /** The second Ctrl-C/SIGTERM: force the remaining workers now. */
@@ -36,7 +36,7 @@ export interface ShutdownSignals {
  * same guarantees: a process manager stops the factory exactly as Ctrl-C does.
  * The second signal of either kind escalates.
  */
-export function installShutdownSignals(target: NodeJS.Process = process): ShutdownSignals {
+export function installStopSignals(target: NodeJS.Process = process): StopSignals {
   const requested = new AbortController();
   const escalated = new AbortController();
   let signals = 0;

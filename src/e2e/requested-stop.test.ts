@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runForever, runOnce, type LoopDeps, type StopOptions } from "../loop.js";
-import { installShutdownSignals } from "../shutdown.js";
+import { installStopSignals } from "../stop-signals.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { deferred } from "../runtime/deferred.js";
@@ -20,6 +20,7 @@ import {
   type RecoveryBudget,
 } from "../config.js";
 import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
+import { workKey } from "../state/derive.js";
 import { waitFor } from "./cli-harness.js";
 
 /**
@@ -34,9 +35,6 @@ import { waitFor } from "./cli-harness.js";
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
-
-/** "<repo>#<number>" — the same key the factory and the probe use. */
-const workKeyOf = (ref: IssueRef): string => `${ref.repo}#${ref.number}`;
 
 class FakeGitWork implements GitWork {
   constructor(private readonly beforePrepare?: () => Promise<void>) {}
@@ -136,7 +134,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     return tracker;
   }
 
-  const workKey = "Sanmoo/my-tasks#1";
+  const WORK_KEY = "Sanmoo/my-tasks#1";
 
   function workDirOf(): string {
     return workDir(layout, REPO, 1);
@@ -157,8 +155,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
     assert.deepEqual(result.launched, [], "a stop before the first admission launches nothing");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "with no worker, nothing is held");
-    assert.equal(result.shutdown?.unreadBecause, null, "and the probe answered, so the stop is confirmed");
+    assert.deepEqual(result.stop?.unconfirmed, [], "with no worker, nothing is held");
+    assert.equal(result.stop?.unreadBecause, null, "and the probe answered, so the stop is confirmed");
     assert.equal(existsSync(workDirOf()), false, "no reservation was created");
     const issue = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.ready), "the work stays in the pool");
@@ -180,7 +178,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       await waitFor(`cycle ${cycle + 1}: the worker to launch`, () => runtime.launched.length === cycle + 1);
       stop.abort();
       const result = await running;
-      assert.deepEqual(result.shutdown?.unconfirmed, [], `cycle ${cycle + 1}: the stop was confirmed`);
+      assert.deepEqual(result.stop?.unconfirmed, [], `cycle ${cycle + 1}: the stop was confirmed`);
       const ledger = await ledgerOf();
       assert.equal(ledger.lastStop?.kind, "stop-requested", `cycle ${cycle + 1}: the stop is persisted`);
       assert.equal(ledger.consumed, 0, `cycle ${cycle + 1}: no recovery was spent`);
@@ -254,9 +252,9 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     stop.abort();
     const result = await running;
 
-    assert.deepEqual(runtime.stopRequests, [workKey], "the cooperative request reached the worker");
-    assert.deepEqual(result.shutdown?.forced, [workKey], "the deadline forced the remaining worker");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "the forced end was confirmed");
+    assert.deepEqual(runtime.stopRequests, [WORK_KEY], "the cooperative request reached the worker");
+    assert.deepEqual(result.stop?.forced, [WORK_KEY], "the deadline forced the remaining worker");
+    assert.deepEqual(result.stop?.unconfirmed, [], "the forced end was confirmed");
     assert.ok(Date.now() - started < 10_000, "the window bounds the cooperative phase");
     assert.equal((await ledgerOf()).lastStop?.kind, "stop-requested");
   });
@@ -293,8 +291,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
 
     stop.abort();
     const result = await running;
-    assert.deepEqual(result.shutdown?.forced, [], "no worker existed to force");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "and none to confirm");
+    assert.deepEqual(result.stop?.forced, [], "no worker existed to force");
+    assert.deepEqual(result.stop?.unconfirmed, [], "and none to confirm");
     assert.ok(existsSync(join(workDirOf(), "log-1.jsonl")), "the attempt's history survives the stop");
     const ledger = await ledgerOf();
     assert.equal(ledger.consumed, 0, "the cancelled relaunch's grant was returned");
@@ -364,7 +362,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     release();
     const result = await running;
 
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "both ends were confirmed");
+    assert.deepEqual(result.stop?.unconfirmed, [], "both ends were confirmed");
     const finished = await tracker.readPrFeedback({ repo: REPO, number: 1 });
     assert.ok(finished.known && finished.value.pr !== null, "the finished worker's real PR was registered");
     const finishedLedger = await readRecoveryLedger(workDir(layout, REPO, 1));
@@ -394,11 +392,11 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const elapsed = Date.now() - started;
 
     assert.deepEqual(
-      result.shutdown?.forced,
+      result.stop?.forced,
       ["Sanmoo/my-tasks#2"],
       "only the worker that held activity past the shared deadline was forced",
     );
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "both ends were confirmed");
+    assert.deepEqual(result.stop?.unconfirmed, [], "both ends were confirmed");
     assert.ok(
       elapsed < 350,
       `the 200 ms window covered the whole run, not each worker (took ${elapsed} ms)`,
@@ -427,8 +425,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     escalated.abort();
     const result = await running;
 
-    assert.deepEqual(result.shutdown?.forced, [workKey], "the second signal forced the worker");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "the end was still confirmed");
+    assert.deepEqual(result.stop?.forced, [WORK_KEY], "the second signal forced the worker");
+    assert.deepEqual(result.stop?.unconfirmed, [], "the end was still confirmed");
     assert.ok(Date.now() - started < 10_000, "the escalation does not wait the cooperative window");
   });
 
@@ -465,8 +463,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     stop.abort();
     const result = await running;
 
-    assert.equal(result.shutdown?.unconfirmed.length, 1, "the factory does not call the stop safe");
-    assert.match(result.shutdown?.unconfirmed[0]?.because ?? "", /still alive/);
+    assert.equal(result.stop?.unconfirmed.length, 1, "the factory does not call the stop safe");
+    assert.match(result.stop?.unconfirmed[0]?.because ?? "", /still alive/);
     const ledger = await ledgerOf();
     assert.equal(ledger.lastStop?.kind, "stop-unconfirmed");
     assert.equal(ledger.lastStop?.attempt, 1);
@@ -483,7 +481,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.ok(
       logs.some(
         (line) =>
-          line.includes(workKey) &&
+          line.includes(WORK_KEY) &&
           (line.includes("NOT relaunching") || line.includes("recognizing surviving worker")),
       ),
       `the operator gets the diagnostic: ${logs.join("\n")}`,
@@ -516,7 +514,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       runtime,
       git: new FakeGitWork(),
       workspace: layout,
-      probe: async () => (alive ? [{ key: workKey, containerId: "container-1", ageMs: 1_000 }] : []),
+      probe: async () => (alive ? [{ key: WORK_KEY, containerId: "container-1", ageMs: 1_000 }] : []),
       log: (line) => logs.push(line),
     };
 
@@ -551,12 +549,12 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
     mkdirSync(workDirOf(), { recursive: true });
     writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
-    const containers = new Set([workKey]);
+    const containers = new Set([WORK_KEY]);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
       // The real forced stop removes the container; the probe proves it.
-      containers.delete(workKeyOf(ref));
+      containers.delete(workKey(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
@@ -573,8 +571,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     stop.abort();
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
-    assert.deepEqual(result.shutdown?.forced, [workKey], "the surviving worker is ended, not left behind");
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "and its end is confirmed");
+    assert.deepEqual(result.stop?.forced, [WORK_KEY], "the surviving worker is ended, not left behind");
+    assert.deepEqual(result.stop?.unconfirmed, [], "and its end is confirmed");
     const ledger = await ledgerOf();
     assert.equal(ledger.lastStop?.kind, "stop-requested", "the stop is recorded on the survivor's attempt");
     assert.equal(ledger.lastStop?.attempt, 1);
@@ -601,7 +599,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       runtime,
       git: new FakeGitWork(),
       workspace: layout,
-      probe: async () => [{ key: workKey, containerId: "container-1", ageMs: 1_000 }],
+      probe: async () => [{ key: WORK_KEY, containerId: "container-1", ageMs: 1_000 }],
       log: () => {},
     };
 
@@ -609,8 +607,8 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     stop.abort();
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
-    assert.deepEqual(result.shutdown?.unconfirmed, [
-      { key: workKey, because: "a worker of this work is still alive" },
+    assert.deepEqual(result.stop?.unconfirmed, [
+      { key: WORK_KEY, because: "a worker of this work is still alive" },
     ], "the factory does not call a stop safe over a worker it could not end");
     const ledger = await ledgerOf();
     assert.equal(ledger.lastStop?.kind, "stop-unconfirmed");
@@ -638,7 +636,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       workspace: layout,
       probe: async () => {
         if (!dockerAnswers) throw new Error("Cannot connect to the Docker daemon");
-        return [{ key: workKey, containerId: "container-1", ageMs: 1_000 }];
+        return [{ key: WORK_KEY, containerId: "container-1", ageMs: 1_000 }];
       },
       log: (line) => logs.push(line),
     };
@@ -656,7 +654,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       const report = await running;
       assert.deepEqual(
         report?.unconfirmed,
-        [{ key: workKey, because: "the worker liveness could not be read (Cannot connect to the Docker daemon)" }],
+        [{ key: WORK_KEY, because: "the worker liveness could not be read (Cannot connect to the Docker daemon)" }],
         "a worker known to be alive is never declared stopped because the probe went silent",
       );
       const ledger = await ledgerOf();
@@ -675,11 +673,11 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     // attempt log — the registry dir is all the evidence there is.
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);
     mkdirSync(workDirOf(), { recursive: true });
-    const containers = new Set([workKey]);
+    const containers = new Set([WORK_KEY]);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
-      containers.delete(workKeyOf(ref));
+      containers.delete(workKey(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
@@ -726,12 +724,12 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const result = await runOnce(deps, { signal: stop.signal, cooperativeMs: 100 });
 
     assert.equal(
-      result.shutdown?.unreadBecause,
+      result.stop?.unreadBecause,
       "Cannot connect to the Docker daemon",
       "the factory never calls a stop safe while it cannot see the workers",
     );
-    assert.deepEqual(result.shutdown?.unconfirmed, [], "nothing was known to be alive — nothing is named");
-    assert.deepEqual(result.shutdown?.forced, []);
+    assert.deepEqual(result.stop?.unconfirmed, [], "nothing was known to be alive — nothing is named");
+    assert.deepEqual(result.stop?.forced, []);
   });
 
   test("a confirmed Outcome during the stop prevails: the work is not resumed as if interrupted", async () => {
@@ -839,7 +837,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
         await runtime.whenStopRequested(request.ref);
       };
       const deps: LoopDeps = { config, tracker, runtime, git: new FakeGitWork(), workspace: layout, log: () => {} };
-      const installed = installShutdownSignals();
+      const installed = installStopSignals();
       const stopOptions: StopOptions = {
         signal: installed.requested,
         escalate: installed.escalated,
@@ -851,7 +849,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
         process.emit(signal);
         const report = await running;
         assert.deepEqual(report?.unconfirmed, [], `${signal}: the stop was confirmed`);
-        assert.deepEqual(runtime.stopRequests, [workKey], `${signal}: the worker was asked to stop`);
+        assert.deepEqual(runtime.stopRequests, [WORK_KEY], `${signal}: the worker was asked to stop`);
       } finally {
         installed.dispose();
         runtime.forceStop({ repo: REPO, number: 1 }).catch(() => {});
