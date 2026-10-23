@@ -104,8 +104,11 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // The state is the contract that makes a resumed effect safe: the verdicts
     // of the host's reconciliation, the attempt and the session this call
     // belongs to. Absent or unreadable, nothing can be authorized — a resumed
-    // session must never run unguarded (issue 119) — so every call the
-    // classifier does not prove local is refused until the state is readable.
+    // session must never run unguarded (issue 119) — so every bash call the
+    // classifier does not prove local, and every delegation, is refused until
+    // the state is readable. The file tools stay allowed: they edit the clone
+    // (the branch is that record) and they are how a worker writes its outcome
+    // record, including the blocked self-report this refusal asks for.
     if (state === null) return refuseWithoutState(event, workMount);
     if (event.toolName !== "bash") {
       // Delegations are not recoverable state (issue 119, out of scope): an
