@@ -59,23 +59,25 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
 };
 
 /**
- * The provider-failure budget (issue 144): an attempt whose stream ended in a
- * provider error (`stopReason: error` + the provider's `errorMessage`) is not
- * an interruption of the agent, so it retries on this dedicated schedule
+ * The model provider's failure budget (issue 144): the worker model's provider
+ * is the inference service, never the ticket provider (GLOSSARY: Model
+ * provider). An attempt whose stream ended in a provider error
+ * (`stopReason: error` + the provider's `errorMessage`) is not an interruption
+ * of the agent, so it retries on this dedicated schedule
  * instead of spending the interruption budget of issue 123. The waits are
  * deliberately longer than the recovery backoff: they must cross a short
  * upstream outage, and every retry also carries the session's own internal
  * retries. Exhausting it parks the work "awaiting provider" and asks the
  * operator for help — never a block.
  */
-export interface ProviderBudget {
+export interface ModelProviderBudget {
   /** Retries allowed for one attempt after provider failures. */
   maxRetries: number;
   /** Wait before each retry, by index; the last value repeats. */
   waitsMs: readonly number[];
 }
 
-export const DEFAULT_PROVIDER_BUDGET: ProviderBudget = {
+export const DEFAULT_MODEL_PROVIDER_BUDGET: ModelProviderBudget = {
   maxRetries: 4,
   waitsMs: [15_000, 30_000, 60_000, 120_000],
 };
@@ -123,8 +125,8 @@ export interface Config {
   profileSkipDanglingLinks: boolean;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
-  /** The provider-failure budget: its own retries and backoff (issue 144). */
-  provider: ProviderBudget;
+  /** The model provider's failure budget: its own retries and backoff (issue 144). */
+  modelProvider: ModelProviderBudget;
   /** How the operational cycle reads Docker's silence (issue 118). */
   liveness: LivenessPolicy;
   notifications: boolean;
@@ -174,7 +176,7 @@ export function loadConfig(filePath: string): Config {
   const profileAllowedRoots = optionalProfileAllowedRoots(doc);
   const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
   const recovery = optionalRecovery(doc);
-  const provider = optionalProvider(doc);
+  const modelProvider = optionalModelProvider(doc);
   const liveness = optionalLiveness(doc);
   const notifications = optionalNotifications(doc);
 
@@ -188,7 +190,7 @@ export function loadConfig(filePath: string): Config {
     profileAllowedRoots,
     profileSkipDanglingLinks,
     recovery,
-    provider,
+    modelProvider,
     liveness,
     notifications,
     configPath: absolute,
@@ -300,20 +302,20 @@ function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
   return { maxRecoveries, waitsMs };
 }
 
-function optionalProvider(doc: Record<string, unknown>): ProviderBudget {
-  const value = doc["provider"];
+function optionalModelProvider(doc: Record<string, unknown>): ModelProviderBudget {
+  const value = doc["model-provider"];
   if (value === undefined)
-    return { maxRetries: DEFAULT_PROVIDER_BUDGET.maxRetries, waitsMs: [...DEFAULT_PROVIDER_BUDGET.waitsMs] };
+    return { maxRetries: DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries, waitsMs: [...DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs] };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new ConfigError(`config field "provider" must be a mapping when given`);
+    throw new ConfigError(`config field "model-provider" must be a mapping when given`);
   }
   const given = value as Record<string, unknown>;
 
   const max = given["max-retries"];
   if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
-    throw new ConfigError(`config field "provider.max-retries" must be a non-negative integer when given`);
+    throw new ConfigError(`config field "model-provider.max-retries" must be a non-negative integer when given`);
   }
-  const maxRetries = (max as number | undefined) ?? DEFAULT_PROVIDER_BUDGET.maxRetries;
+  const maxRetries = (max as number | undefined) ?? DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries;
 
   const waits = given["waits-ms"];
   if (
@@ -323,10 +325,10 @@ function optionalProvider(doc: Record<string, unknown>): ProviderBudget {
       waits.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0))
   ) {
     throw new ConfigError(
-      `config field "provider.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
+      `config field "model-provider.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
     );
   }
-  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_PROVIDER_BUDGET.waitsMs];
+  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_MODEL_PROVIDER_BUDGET.waitsMs];
 
   return { maxRetries, waitsMs };
 }

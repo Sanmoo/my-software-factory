@@ -129,14 +129,14 @@ as you want; each round ends with the worker commenting what it addressed).
 You end the factory with Ctrl-C (exit 0). Restarting loses nothing: the next
 boot re-derives every reserved work from disk + tracker alone (a crashed
 round is an interruption: the SAME attempt is recovered after the configured
-backoff; a turn that ended in the provider's own error retries on its own
-`provider` budget and backoff, never spending the interruption's, and when
-that budget is exhausted the work awaits the provider — a help request on the
-issue, not a block; a written failure still releases the work to the pool, its
-2nd consecutive one blocks it, and an exhausted interruption budget pauses it
-and asks for help; a PR waiting for you stays parked; a merge you already did
-becomes done → archive). A repair fall resumes on the same branch and PR (see
-GLOSSARY.md).
+backoff; a written failure still releases the work to the pool, its 2nd
+consecutive one blocks it, and an exhausted interruption budget pauses it and
+asks for help; a PR waiting for you stays parked; a merge you already did
+becomes done → archive). A model provider outage retries on its own
+`model-provider` budget; exhausted, the work is **awaiting model provider**
+(GLOSSARY) — answer on the issue to resume, or raise
+`model-provider.max-retries`; it is never a block. A repair fall resumes on the
+same branch and PR (see GLOSSARY.md).
 
 A surviving worker keeps its work and its slot; when it ends, the factory
 reconciles the result on its own. If Docker stops answering, launches pause and
@@ -160,9 +160,9 @@ Derives on demand from the tracker, the workspace disk and a read-only Docker
 probe: live workers (**running**), the attempts interrupted with no worker
 alive (**orphaned**), the reservations, the **recovery** ledger (was the last
 stop an interruption, absorbed by its budget, or a failure that consumed the
-attempt), the **provider** ledger (the last attempt ended by a provider failure,
-its retries and the provider's message — retrying, or **awaiting provider** when
-the budget is exhausted), the **repair** cycles, last outcomes, the pool,
+attempt), the **model provider** ledger (the last attempt ended by a model
+provider failure, its retries and the provider's message — retrying, or
+**awaiting model provider** when the budget is exhausted), the **repair** cycles, last outcomes, the pool,
 archived dones — and the two reconciliation leftovers when tracker and workspace
 disagree:
 

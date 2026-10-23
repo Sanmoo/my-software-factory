@@ -4,20 +4,22 @@ import { join } from "node:path";
 import { eventLogName } from "./attempt-logs.js";
 
 /**
- * The provider failure that ended an attempt's turn (issue 144), read from the
- * attempt's own stream log — never from generic stderr parsing.
+ * The model provider failure that ended an attempt's turn (issue 144), read
+ * from the attempt's own stream log — never from generic stderr parsing.
  *
  * The runtime records pi's stdout verbatim in the attempt's event log
- * (`agent-raw` lines). An assistant message that ended in a provider failure
- * carries `stopReason: "error"` and the provider's `errorMessage`; a turn
- * pi retried and survived leaves earlier errors behind it. Only the LAST
- * assistant message of the log counts: it is the turn's actual ending, and an
- * error the session outlived never makes the attempt a provider failure. A
- * turn ended by anything else — an abort (the idle limit), a completed turn —
- * carries no provider error.
+ * (`agent-raw` lines). An assistant message that ended in a model provider
+ * failure carries `stopReason: "error"` and the provider's `errorMessage`; a
+ * turn pi retried and survived leaves earlier errors behind it. Only the LAST
+ * assistant message of the current session counts: it is the turn's actual
+ * ending, so an error the session outlived (a later assistant message) never
+ * makes the attempt a model provider failure; a session killed right after an
+ * error is read by that error — the last fact its stream carries. A turn ended
+ * by anything else — an abort (the idle limit), a completed turn — carries no
+ * model provider error.
  */
-export interface ProviderFailure {
-  /** The provider's own message, verbatim: the operator reads the incident. */
+export interface ModelProviderFailure {
+  /** The model provider's own message, verbatim: the operator reads the incident. */
   message: string;
   /**
    * Identity of the failing turn: the assistant message's own timestamp, or
@@ -28,11 +30,11 @@ export interface ProviderFailure {
   at: string;
 }
 
-/** The last provider error of an attempt's turn, or null when the turn ended otherwise. */
-export async function readTurnProviderError(
+/** The last model provider error of an attempt's turn, or null when the turn ended otherwise. */
+export async function readTurnModelProviderError(
   workDir: string,
   attempt: number,
-): Promise<ProviderFailure | null> {
+): Promise<ModelProviderFailure | null> {
   const path = join(workDir, eventLogName(attempt));
   let raw: string;
   try {

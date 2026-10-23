@@ -6,13 +6,13 @@ import {
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
-import { awaitingProvider } from "../pool/provider.js";
+import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
-import type { ProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
+import type { ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
 import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
-import type { ProviderBudget, RecoveryBudget } from "../config.js";
+import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -37,7 +37,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   // A work whose attempt ended by a provider failure is NOT an interruption of
   // the agent (issue 144): the provider section owns its state, so it is not
   // repeated under the liveness/interruption wording.
-  const providerKeys = new Set(view.registry.provider.map((entry) => entry.key));
+  const modelProviderKeys = new Set(view.registry.modelProvider.map((entry) => entry.key));
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
   lines.push(
@@ -64,7 +64,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive)",
       liveness.state === "known"
         ? liveness.orphaned
-            .filter((entry) => !providerKeys.has(entry.key))
+            .filter((entry) => !modelProviderKeys.has(entry.key))
             .map(renderOrphaned)
         : null,
       cap,
@@ -78,7 +78,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       ...section(
         "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell)",
         view.registry.attemptsWithoutOwnOutcome
-          .filter((entry) => !providerKeys.has(entry.key))
+          .filter((entry) => !modelProviderKeys.has(entry.key))
           .map((entry) => renderInterrupted(entry.key, entry.attempt, entry.recordedAttempt)),
         cap,
       ),
@@ -106,8 +106,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   // awaiting the operator's help. It is never an interruption of the agent.
   lines.push(
     ...section(
-      "provider (the last attempt ended by a provider failure — not an interruption of the agent)",
-      view.registry.provider.map((entry) => renderProvider(entry, view.providerBudget)),
+      "model provider (the last attempt ended by a model provider failure — not an interruption of the agent)",
+      view.registry.modelProvider.map((entry) => renderModelProvider(entry, view.modelProviderBudget)),
       cap,
     ),
   );
@@ -198,20 +198,20 @@ function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBud
 }
 
 /**
- * One work's provider-failure budget: the retries spent, the provider's own
- * last message and whether the work is retrying or awaiting the operator.
+ * One work's model provider failure budget: the retries spent, the provider's
+ * own last message and whether the work is retrying or awaiting the operator.
  * Awaiting is a help request — the work is not blocked.
  */
-function renderProvider(entry: ProviderViewEntry, budget: ProviderBudget): string {
+function renderModelProvider(entry: ModelProviderViewEntry, budget: ModelProviderBudget): string {
   const last = entry.ledger.last;
   const spend = `${entry.ledger.consumed}/${budget.maxRetries} retries (waits ${renderWaits(budget.waitsMs)})`;
   if (last === null) return `${entry.key} (attempt ${entry.attempt}: ${spend}; no failure settled yet)`;
-  const state = awaitingProvider(entry.ledger, entry.attempt, budget)
-    ? "awaiting provider — a help request, not a block"
-    : "retrying after the provider backoff";
+  const state = awaitingModelProvider(entry.ledger, entry.attempt, budget)
+    ? "awaiting model provider — a help request, not a block"
+    : "retrying after the model provider backoff";
   return (
     `${entry.key} (attempt ${entry.attempt}: ${spend}; ` +
-    `last provider error: ${oneLine(last.message)} — ${state})`
+    `last model provider error: ${oneLine(last.message)} — ${state})`
   );
 }
 

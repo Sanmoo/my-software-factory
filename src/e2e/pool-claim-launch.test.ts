@@ -13,7 +13,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 
@@ -106,7 +106,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
-      provider: { ...DEFAULT_PROVIDER_BUDGET },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),

@@ -14,7 +14,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { readRepairCycle } from "../pool/repair.js";
@@ -105,7 +105,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
-      provider: { ...DEFAULT_PROVIDER_BUDGET },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),

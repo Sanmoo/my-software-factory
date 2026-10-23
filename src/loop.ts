@@ -43,7 +43,7 @@ import {
   isRecordedFailure,
   ownWrittenOutcome,
   interruptionPausedCommentBody,
-  providerAwaitingCommentBody,
+  modelProviderAwaitingCommentBody,
   type OutcomeRecord,
   type OutcomeRuling,
 } from "./state/outcome.js";
@@ -73,7 +73,13 @@ import {
 } from "./pool/repair.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import { consumeRecovery, readRecoveryLedger, recordFailure, recordInterruptionStop, type RecoveryDecision } from "./pool/recovery.js";
-import { settleProviderFailure, type ProviderDecision } from "./pool/provider.js";
+import {
+  isModelProviderFailureSettled,
+  modelProviderDecision,
+  readModelProviderLedger,
+  settleModelProviderFailure,
+  type ModelProviderDecision,
+} from "./pool/model-provider.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -95,7 +101,7 @@ import {
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
 import { appendAttemptEvent } from "./runtime/attempt-logs.js";
-import { readTurnProviderError, type ProviderFailure } from "./runtime/provider-error.js";
+import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
 import { mkdirSync } from "node:fs";
@@ -446,7 +452,7 @@ export class SweepEngine {
       config.workerGhAccount,
       workspace,
       config.recovery,
-      config.provider,
+      config.modelProvider,
       inFlight,
     );
 
@@ -536,9 +542,9 @@ export class SweepEngine {
           // A provider outage is not an interruption of the agent (issue 144):
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
-          if (decision.provider.decision === "await-provider") {
+          if (decision.modelProvider.decision === "await-provider") {
             const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-            await this.providerFailureAction(decision.ref, dir, decision.attempt, decision.failure);
+            await this.modelProviderFailureAction(decision.ref, dir, decision.attempt, decision.failure);
           } else {
             parked.push({
               ref: decision.ref,
@@ -1090,7 +1096,7 @@ export class SweepEngine {
       await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
     } else if (kind === "provider-retry") {
       this.log(
-        `provider retry for ${key}: attempt ${launchable.attempt} ended by a provider failure — ` +
+        `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
           "the same attempt continues (no new attempt, branch preserved)",
       );
       // The same idempotent re-assert as a recovery: a claim swap interrupted
@@ -1271,22 +1277,22 @@ export class SweepEngine {
         return null;
       }
     }
-    // The provider retry is settled and persisted before the wait (issue 144):
+    // The model provider retry is settled and persisted before the wait (issue 144):
     // a death during the backoff continues the provider count instead of
     // renewing it, and the recovery budget of issue 123 is never touched.
     if (kind === "provider-retry") {
-      const failure = await readTurnProviderError(dir, facts.attempt);
+      const failure = await readTurnModelProviderError(dir, facts.attempt);
       if (failure === null) {
         this.log(
-          `provider retry for ${key} skipped: the attempt's stream no longer shows a provider error — nothing is launched`,
+          `model provider retry for ${key} skipped: the attempt's stream no longer shows a provider error — nothing is launched`,
         );
         return null;
       }
-      const decision = await this.providerFailureAction(ref, dir, facts.attempt, failure);
+      const decision = await this.modelProviderFailureAction(ref, dir, facts.attempt, failure);
       if (decision.decision === "await-provider") return null;
       await this.wait(decision.waitMs);
       if (this.stopping) {
-        this.log(`the provider retry of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
+        this.log(`the model provider retry of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
         return null;
       }
     }
@@ -1338,49 +1344,60 @@ export class SweepEngine {
   }
 
   /**
-   * Settle one provider failure and apply its decision (issue 144): the
+   * Settle one model provider failure and apply its decision (issue 144): the
    * attempt's own log records the failure and each granted retry, the ledger
    * persists the count, and an exhausted budget comments the help request on
    * the issue — keeping the claim, never the blocked label. Idempotent: the
    * same failure settled twice records once and comments once.
    */
-  private async providerFailureAction(
+  private async modelProviderFailureAction(
     ref: IssueRef,
     dir: string,
     attempt: number,
-    failure: ProviderFailure,
-  ): Promise<ProviderDecision> {
+    failure: ModelProviderFailure,
+  ): Promise<ModelProviderDecision> {
     const { config, tracker, workspace } = this.deps;
-    const settlement = await settleProviderFailure(dir, config.provider, attempt, failure);
-    if (settlement.recorded) {
+    const ledger = await readModelProviderLedger(dir);
+    const settled = isModelProviderFailureSettled(ledger, attempt, failure);
+    const decision = modelProviderDecision(ledger, config.modelProvider, attempt, failure);
+
+    // The attempt's own log carries the event BEFORE the ledger is written: a
+    // death between the two leaves the evidence (at worst a repeated line),
+    // never a silent loss of the failure or of the retry it granted.
+    if (!settled) {
       appendAttemptEvent(dir, attempt, {
         event: "provider-failure",
         message: failure.message,
         failureAt: failure.at,
       });
-      if (settlement.decision === "retry") {
-        appendAttemptEvent(dir, attempt, {
-          event: "provider-retry",
-          retry: settlement.consumed,
-          maxRetries: config.provider.maxRetries,
-          waitMs: settlement.waitMs,
-        });
-      }
+    }
+    const alreadyGranted = settled && ledger.last?.granted === true;
+    if (decision.decision === "retry" && !alreadyGranted) {
+      appendAttemptEvent(dir, attempt, {
+        event: "provider-retry",
+        retry: decision.consumed,
+        maxRetries: config.modelProvider.maxRetries,
+        waitMs: decision.waitMs,
+      });
     }
 
+    const settlement = await settleModelProviderFailure(dir, config.modelProvider, attempt, failure);
     if (settlement.decision === "await-provider") {
       if (settlement.recorded) {
-        const comment = await providerAwaitingCommentBody({
+        // Keep the work reserved before asking: re-asserting the (already held)
+        // claim is idempotent and is what the operator's answer resumes.
+        await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+        const comment = await modelProviderAwaitingCommentBody({
           attempt,
           failure,
-          budget: config.provider,
+          budget: config.modelProvider,
           workDir: dir,
           workspace,
         });
         await tracker.comment(ref, comment);
         await this.deliverNotice(helpNotice(ref));
         this.log(
-          `awaiting provider for ${workKey(ref)}: attempt ${attempt} ended by a provider failure ` +
+          `awaiting model provider for ${workKey(ref)}: attempt ${attempt} ended by a model provider failure ` +
             `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
         );
       }
@@ -1389,8 +1406,8 @@ export class SweepEngine {
 
     if (settlement.recorded) {
       this.log(
-        `provider failure on attempt ${attempt} of ${workKey(ref)}: ${failure.message} — ` +
-          `retry ${settlement.consumed}/${config.provider.maxRetries} after ${settlement.waitMs}ms ` +
+        `model provider failure on attempt ${attempt} of ${workKey(ref)}: ${failure.message} — ` +
+          `retry ${settlement.consumed}/${config.modelProvider.maxRetries} after ${settlement.waitMs}ms ` +
           "(the recovery budget is untouched)",
       );
     }
@@ -1693,7 +1710,7 @@ export class SweepEngine {
         // The attempt's own stream decides whether this was the agent's
         // interruption or a provider failure (issue 144): the latter gets its
         // own budget and backoff, never the recovery budget.
-        const failure = await readTurnProviderError(dir, attempt);
+        const failure = await readTurnModelProviderError(dir, attempt);
         if (failure !== null) {
           next = {
             ref,

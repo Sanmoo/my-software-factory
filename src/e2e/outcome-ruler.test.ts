@@ -16,7 +16,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
-  DEFAULT_PROVIDER_BUDGET,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
@@ -104,7 +104,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
-      provider: { ...DEFAULT_PROVIDER_BUDGET },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
