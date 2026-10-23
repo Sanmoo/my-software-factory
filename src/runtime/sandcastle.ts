@@ -24,7 +24,7 @@ import {
   type ActivityWatch,
 } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
-import { sandcastleLogName, appendAttemptEvent } from "./attempt-logs.js";
+import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 const execFile = promisify(execFileCallback);

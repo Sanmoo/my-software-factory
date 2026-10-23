@@ -8,16 +8,17 @@ import { appendAttemptEvent } from "./attempt-logs.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 
 /**
- * The provider failure of a turn (issue 144), read from the attempt's stream
- * log. The shapes below are the real pi stdout lines (verbatim `agent-raw`
- * entries): `stopReason: "error"` with the provider's `errorMessage`, and the
- * surrounding `message_start` / `turn_end` / `agent_end` repeats.
+ * The model provider failure of a turn (issue 144), read from the attempt's
+ * stream log. The shapes below are the real pi stdout lines (verbatim
+ * `agent-raw` entries): `stopReason: "error"` with the model provider's
+ * `errorMessage`, and the surrounding `message_start` / `turn_end` /
+ * `agent_end` repeats.
  */
 
 const AT = 1_792_571_444_513;
 const AT_ISO = new Date(AT).toISOString();
 
-describe("the provider failure of a turn, read from the attempt's stream log", () => {
+describe("the model provider failure of a turn, read from the attempt's stream log", () => {
   let dir: string;
 
   beforeEach(() => {
