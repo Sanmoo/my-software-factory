@@ -5,7 +5,7 @@ import { activePullRequest, readPrAssociations } from "../pool/pr-association.js
 import { workKeyOf } from "../pool/work-key.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -503,6 +503,14 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       destination: githubRepository(REPO),
     });
     mkdirSync(join(layout.works, bareKey), { recursive: true });
+    // A record that cannot be trusted is reported, never treated as absent.
+    const unreadableKey = workKeyOf({
+      ticket: jiraTicket({ site: "gamma.atlassian.net", stableId: "10003", key: "ABC-3" }),
+      destination: githubRepository(REPO),
+    });
+    const unreadableDir = join(layout.works, unreadableKey);
+    mkdirSync(unreadableDir, { recursive: true });
+    writeFileSync(join(unreadableDir, "reserva.json"), "{not json", "utf8");
 
     const logs: string[] = [];
     const sweep = await runOnce({ ...deps, log: (message) => logs.push(message) });
@@ -511,8 +519,10 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(tracker.claimedOrder.length, 0, "no claim is written to another tracker");
     assert.ok(logs.some((line) => line.includes("the composed ticket adapter does not serve")));
     assert.ok(logs.some((line) => line.includes("no trustworthy identity")));
+    assert.ok(logs.some((line) => line.includes("reserva.json is not valid JSON")));
     assert.ok(existsSync(reserved.dir), "the readable reservation is preserved where it is");
     assert.ok(existsSync(join(layout.works, bareKey)), "the unknown reservation is preserved where it is");
+    assert.ok(existsSync(unreadableDir), "the unreadable reservation is preserved where it is");
   });
 
   test("ticket facts and PR facts travel through their own expanded ports", async () => {
