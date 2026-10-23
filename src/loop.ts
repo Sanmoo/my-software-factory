@@ -1832,14 +1832,7 @@ export class SweepEngine {
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(
-      tickets,
-      pullRequests,
-      git,
-      launchable,
-      launchable.issueReplies,
-      repair,
-    );
+    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair);
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
     // and the registry dir) stays for the next run's reconciliation; the
@@ -2185,7 +2178,7 @@ export class SweepEngine {
           workspace,
         });
         await tickets.commentOnTicket(work.ticket, comment);
-        const ref = issueRefOfTicket(work.ticket);
+        const ref = this.noticeRefOf(work);
         if (ref !== null) await this.deliverNotice(helpNotice(ref));
         await markModelProviderHelpRequested(dir, attempt, failure);
         this.log(
@@ -2891,7 +2884,7 @@ async function launchMaterial(
   launchable: Launchable,
   repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {
-  const { work, dir } = launchable;
+  const { work, dir, issueReplies } = launchable;
   const issue = await tickets.readTicket(work.ticket);
   const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, launchable.pr));
   const diff = await git.diffWorkFor(work);
