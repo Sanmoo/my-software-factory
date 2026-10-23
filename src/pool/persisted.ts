@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describeError } from "../log.js";
+import { describeError } from "../format.js";
 
 /**
  * Reading a persisted JSON record of a work dir. `absent` is the honest empty

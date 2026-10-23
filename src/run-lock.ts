@@ -3,7 +3,7 @@ import { chmod, mkdir, open, realpath, type FileHandle } from "node:fs/promises"
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
-import { describeError } from "./log.js";
+import { describeError } from "./format.js";
 
 /**
  * Local exclusivity of `msf run`, one owner per real configuration path
