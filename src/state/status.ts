@@ -84,7 +84,7 @@ export interface StatusView {
   liveness: Liveness;
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
-  /** The configured provider-failure budget (issue 144). */
+  /** The configured model provider budget (issue 144). */
   modelProviderBudget: ModelProviderBudget;
 }
 
