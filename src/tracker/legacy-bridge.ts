@@ -28,9 +28,10 @@ import {
 
 /**
  * TRANSITIONAL bridge (issue 124): the old `TrackerPort` shape over the
- * expanded ticket/PR contracts. Existing consumers keep speaking issues until
- * they migrate; remove this bridge once they do. The bridge never adds a fact
- * of its own — every operation is one call into the expanded port.
+ * expanded ticket/PR contracts. The migrated orchestration no longer uses it;
+ * it remains the declared compatibility surface until #127 removes it, and
+ * the contract regression still exercises it. It never adds a fact of its
+ * own — every operation is one call into the expanded port.
  */
 export function legacyTrackerPort(
   tickets: TicketTracker,
