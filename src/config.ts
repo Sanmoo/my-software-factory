@@ -61,8 +61,8 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
 /**
  * The model provider's failure budget (issue 144): the worker model's provider
  * is the inference service, never the ticket provider (GLOSSARY: Model
- * provider). An attempt whose stream ended in a provider error
- * (`stopReason: error` + the provider's `errorMessage`) is not an interruption
+ * provider). An attempt whose stream ended in a model provider error
+ * (`stopReason: error` + the model provider's `errorMessage`) is not an interruption
  * of the agent, so it retries on this dedicated schedule
  * instead of spending the interruption budget of issue 123. The waits are
  * deliberately longer than the recovery backoff: they must cross a short
@@ -71,7 +71,7 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
  * the operator for help — never a block.
  */
 export interface ModelProviderBudget {
-  /** Retries allowed for one attempt after provider failures. */
+  /** Retries allowed for one attempt after model provider failures. */
   maxRetries: number;
   /** Wait before each retry, by index; the last value repeats. */
   waitsMs: readonly number[];

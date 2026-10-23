@@ -396,9 +396,10 @@ export type ReservedDerivation =
    *  a failure: the same attempt is recovered within the persisted budget, or
    *  the exhausted budget pauses the work and asks the operator for help. */
   | { ref: IssueRef; state: "interrupted"; attempt: number; recovery: RecoveryDecision }
-  /** A PROVIDER FAILURE (issue 144): the attempt's stream ended in a provider
-   *  error, so it retries on its own budget instead of the interruption's — or
-   *  awaits the operator when that budget is exhausted (never a block). */
+  /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
+   *  model provider error, so it retries on its own budget instead of the
+   *  interruption's — or awaits the operator when that budget is exhausted
+   *  (never a block). */
   | {
       ref: IssueRef;
       state: "model-provider-failure";
@@ -593,8 +594,8 @@ async function deriveReservedWork(
     }
     const unreconciled = await deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
     // Only an interruption can be a model provider failure: the attempt's own
-    // decides it (issue 144) — a written outcome or a bare reservation never
-    // reads the model provider ledger.
+    // stream decides it (issue 144) — a written outcome or a bare reservation
+    // never reads the model provider ledger.
     if (unreconciled.state === "interrupted") {
       const providerFailure = await deriveModelProviderFailure(
         port,
@@ -704,7 +705,7 @@ interface InterruptedAttempt {
 
 /** The retomada: a human answer after the marker resumes the work on its
  *  existing branch and PR — shared by the blocked channel and the model
- *  provider awaiting (issue 144), so their shape cannot drift apart. */
+ *  model provider awaiting (issue 144), so their shape cannot drift apart. */
 async function resumableState(
   port: TrackerPort,
   ref: IssueRef,

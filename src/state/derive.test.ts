@@ -550,7 +550,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.recovery.decision, "recover");
     });
 
-    /** The attempt's stream line of a provider failure, as the runtime records it. */
+    /** The attempt's stream line of a model provider failure, as the runtime records it. */
     function providerErrorLog(path: string, attempt: number, at = 1_700_000_000_000): void {
       appendAttemptEvent(path, attempt, {
         event: "agent-raw",
@@ -603,7 +603,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(waiting.state, "model-provider-failure");
       assert.equal(waiting.state === "model-provider-failure" && waiting.modelProvider.decision, "awaiting-model-provider");
 
-      adapter.addComment({ repo: REPO, number: 27 }, "operator", "the provider is back — go on");
+      adapter.addComment({ repo: REPO, number: 27 }, "operator", "the model provider is back — go on");
       const resumed = await deriveFrom(path, 27);
       assert.equal(resumed.state, "resumable", "the help request is a channel: the human's answer resumes the work");
     });

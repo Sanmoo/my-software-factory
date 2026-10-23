@@ -15,8 +15,8 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
-  DEFAULT_RECOVERY_BUDGET,
   DEFAULT_MODEL_PROVIDER_BUDGET,
+  DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
 
