@@ -8,7 +8,10 @@ import type { DockerRunner } from "./liveness.js";
 export interface FakeDockerReplies {
   listing: string;
   inspect?: string;
+  /** Fails every command — the daemon is unreachable. */
   failure?: Error;
+  /** Fails only `docker inspect` — a container that left after the listing. */
+  inspectFailure?: Error;
 }
 
 export interface FakeDocker {
@@ -38,7 +41,10 @@ export function fakeDocker(replies: FakeDockerReplies): FakeDocker {
     calls.push([...args]);
     if (replies.failure !== undefined) throw replies.failure;
     if (args[0] === "ps") return replies.listing;
-    if (args[0] === "inspect" && replies.inspect !== undefined) return replies.inspect;
+    if (args[0] === "inspect") {
+      if (replies.inspectFailure !== undefined) throw replies.inspectFailure;
+      if (replies.inspect !== undefined) return replies.inspect;
+    }
     throw new Error(`unexpected docker command: ${args.join(" ")}`);
   };
   return { run, calls };
