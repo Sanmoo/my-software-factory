@@ -94,7 +94,7 @@ import {
   settleModelProviderFailure,
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
-import { COOPERATIVE_STOP_MS } from "./shutdown.js";
+import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
 import { Slots } from "./pool/slots.js";
 import {
@@ -210,7 +210,7 @@ export interface SweepResult {
   launched: SessionResult[];
   collected: CollectedWork[];
   /** What the operator's stop left behind (issue #146); null when none was requested. */
-  shutdown: ShutdownReport | null;
+  stop: StopReport | null;
 }
 
 /**
@@ -232,7 +232,7 @@ export interface StopOptions {
  * the works the deadline/second signal forced, and the works whose worker the
  * factory could NOT confirm gone (those are held on the next run).
  */
-export interface ShutdownReport {
+export interface StopReport {
   forced: string[];
   unconfirmed: Array<{ key: string; because: string }>;
   /** Why the liveness probe could not answer: the factory cannot say that no
@@ -242,7 +242,7 @@ export interface ShutdownReport {
 
 /** The one verdict of a stop: safe only when every worker's end was confirmed
  *  and the factory could see the workspace while it concluded. */
-export function stopConfirmed(report: ShutdownReport): boolean {
+export function stopConfirmed(report: StopReport): boolean {
   return report.unconfirmed.length === 0 && report.unreadBecause === null;
 }
 
@@ -440,9 +440,9 @@ export class SweepEngine {
   private readonly pending = new Set<Promise<void>>();
   private stopping = false;
   /** The requested stop in progress (issue #146); null before any request. */
-  private shutdownRun: Promise<ShutdownReport> | null = null;
+  private requestedStopRun: Promise<StopReport> | null = null;
   /** Resolves the moment a requested stop begins — the boundary's wake. */
-  private readonly shutdownBegan = deferred();
+  private readonly requestedStopBegan = deferred();
   /** The launches that may still be carrying a worker, by work key. */
   private readonly inFlight = new Map<string, InFlightLaunch>();
   /** Waiters of the backoff wait — the requested stop ends the wait at once. */
@@ -503,15 +503,14 @@ export class SweepEngine {
     if (stop.signal?.aborted === true) {
       // A stop requested before the engine existed (a signal during the
       // startup) never fires the listener: it closes admission right here.
-      void this.beginShutdown();
+      void this.beginRequestedStop();
     } else {
-      stop.signal?.addEventListener("abort", () => void this.beginShutdown(), { once: true });
+      stop.signal?.addEventListener("abort", () => void this.beginRequestedStop(), { once: true });
     }
     if (stop.escalate?.aborted === true) this.escalate();
     else stop.escalate?.addEventListener("abort", () => this.escalate(), { once: true });
   }
 
-  /** The run already has a requested stop in progress. */
   get isStopping(): boolean {
     return this.stopping;
   }
@@ -1141,18 +1140,18 @@ export class SweepEngine {
    * cooperative window (or the escalation) before forcing what remains. The
    * returned report says what was forced and what could not be confirmed.
    */
-  beginShutdown(): Promise<ShutdownReport> {
-    if (this.shutdownRun !== null) return this.shutdownRun;
+  beginRequestedStop(): Promise<StopReport> {
+    if (this.requestedStopRun !== null) return this.requestedStopRun;
     this.stopping = true;
     // A backoff waiting to relaunch is a pending admission: it ends with the
     // admission, never after it.
     for (const fire of this.stopWaiters.splice(0)) fire();
-    this.shutdownBegan.resolve();
-    this.shutdownRun = this.runShutdown();
-    return this.shutdownRun;
+    this.requestedStopBegan.resolve();
+    this.requestedStopRun = this.runRequestedStop();
+    return this.requestedStopRun;
   }
 
-  private async runShutdown(): Promise<ShutdownReport> {
+  private async runRequestedStop(): Promise<StopReport> {
     const entries = [...this.inFlight.values()];
     this.log(
       `stop requested: no new worker is admitted; asking ${entries.length} in-flight launch(es) to stop ` +
@@ -1169,7 +1168,7 @@ export class SweepEngine {
     }
 
     // The evidence of the requested stop is persisted BEFORE any worker is
-    // asked to end: a factory that dies inside the shutdown still lets the
+    // asked to end: a factory that dies inside the requested stop still lets the
     // next invocation resume the attempt without charging it. A recovery
     // granted but never launched is returned — the stop cancelled it.
     for (const entry of entries) {
@@ -1268,7 +1267,7 @@ export class SweepEngine {
     return byKey(workers.keys());
   }
 
-  /** Persist the operator's stop on a work the shutdown ends: the next
+  /** Persist the operator's stop on a work the stop ends: the next
    *  invocation resumes that attempt rather than charging it a recovery. A work
    *  with no registry dir has nothing to resume. */
   private async recordStopOf(key: string): Promise<void> {
@@ -1291,20 +1290,23 @@ export class SweepEngine {
     return (await readLastAttempt(dir)) ?? 1;
   }
 
-  /** True when every in-flight launch settled inside the cooperative window. */
-  private async awaitCooperativeWindow(): Promise<boolean> {
-    const settled = this.waitPending().then(() => true);
+  /**
+   * Wait out the cooperative phase: until every launch of this engine settled,
+   * the window ran out, or the second signal escalated it — whichever is first.
+   * Callers only need the wait to be over; why it ended is the deadline's or the
+   * escalation's own fact, not a value to branch on.
+   */
+  private async awaitCooperativeWindow(): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), this.cooperativeMs);
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.cooperativeMs);
     });
-    const escalation = new Promise<boolean>((resolve) => {
-      if (this.escalations > 0) resolve(false);
-      else this.escalationWaiters.push(() => resolve(false));
+    const escalation = new Promise<void>((resolve) => {
+      if (this.escalations > 0) resolve();
+      else this.escalationWaiters.push(resolve);
     });
-    const result = await Promise.race([settled, deadline, escalation]);
+    await Promise.race([this.waitPending(), deadline, escalation]);
     if (timer !== undefined) clearTimeout(timer);
-    return result;
   }
 
   /** Wait until no launch of this engine is pending, failures included. */
@@ -1357,7 +1359,7 @@ export class SweepEngine {
    * A stop cancelled this admission before any worker existed: the granted
    * recovery is returned and the requested stop is (re)recorded, so the next
    * invocation resumes the attempt for free. The grant's own event index makes
-   * it idempotent — the engine's shutdown and the admission may both reach it,
+   * it idempotent — the requested stop and the admission may both reach it,
    * and neither can return an earlier, legitimate recovery. Returns whether a
    * grant was actually returned.
    */
@@ -1388,16 +1390,16 @@ export class SweepEngine {
 
   /** The boundary of `run --once`: the launch settling, or the requested stop
    *  and its confirmation. */
-  async settle(): Promise<ShutdownReport | null> {
-    if (this.shutdownRun !== null) return this.shutdownRun;
+  async settle(): Promise<StopReport | null> {
+    if (this.requestedStopRun !== null) return this.requestedStopRun;
     // The boundary waits for the launches — OR for the requested stop, which
     // may legitimately finish without every launch promise settling (an
     // unconfirmed end; the report carries the uncertainty).
-    await Promise.race([this.awaitAllLaunched(), this.shutdownBegan.promise]);
-    return this.shutdownRun === null ? null : this.shutdownRun;
+    await Promise.race([this.awaitAllLaunched(), this.requestedStopBegan.promise]);
+    return this.requestedStopRun === null ? null : this.requestedStopRun;
   }
 
-  /** The --once/shutdown boundary: wait for every launched worker,
+  /** The --once boundary: wait for every launched worker,
    * transitively — each collection replenishes the slot within the same
    * cycle. Once the requested stop began, no replenishment takes the freed
    * slot. */
@@ -1748,7 +1750,7 @@ export class SweepEngine {
     }
 
     // A launch means this attempt is being carried NOW: a stop record left on
-    // it by a previous shutdown has done its job (or the record is stale on a
+    // it by a previous requested stop has done its job (or the record is stale on a
     // fresh claim of the same number), so it never excuses a later, unexpected
     // interruption of this attempt.
     await consumeStopRequest(dir, facts.attempt);
@@ -1773,7 +1775,7 @@ export class SweepEngine {
 
   /** The backoff before a recovery relaunch (the injected seam or a real timer).
    *  The requested stop ends the wait at once: a pending admission never delays
-   *  the shutdown. */
+   *  the requested stop. */
   private async wait(ms: number): Promise<void> {
     if (ms <= 0 || this.stopping) return;
     const stopped = new Promise<void>((resolve) => this.stopWaiters.push(resolve));
@@ -2265,7 +2267,7 @@ export class SweepEngine {
         );
       } else if (this.stopping) {
         // The operator's requested stop (issue #146): the attempt is left for
-        // the next invocation to resume, never relaunched inside a shutdown.
+        // the next invocation to resume, never relaunched inside a requested stop.
         this.log(
           `collected ${key}: attempt ${attempt} ended without an outcome record while the factory stops — ` +
             "no recovery is spent and the next run resumes the same attempt",
@@ -2454,14 +2456,14 @@ export async function runOnce(deps: LoopDeps, stop: StopOptions = {}): Promise<S
   const engine = new SweepEngine(deps, stop);
   const reserved = await engine.deriveAndAct();
   engine.fillSlots();
-  const shutdown = await engine.settle();
+  const report = await engine.settle();
   return {
     pool: engine.lastPool,
     reserved,
     reconciliation: engine.lastReconciliation,
     launched: engine.launched,
     collected: engine.collected,
-    shutdown,
+    stop: report,
   };
 }
 
@@ -2503,7 +2505,7 @@ async function sweepOrLog(
 export async function runForever(
   deps: LoopDeps,
   options: StopOptions & { tickMs?: number } = {},
-): Promise<ShutdownReport | null> {
+): Promise<StopReport | null> {
   const engine = new SweepEngine(deps, options);
   const log = operationalLog(deps.log);
   const tickMs = options.tickMs ?? TICK_MS;
@@ -2511,7 +2513,7 @@ export async function runForever(
 
   // The engine listens to the requested stop from its construction, so a stop
   // landing during a derivation closes admissions without this loop polling
-  // for it, and the pre-aborted case is already in shutdown.
+  // for it, and the pre-aborted case is already in the requested stop.
   if (await sweepOrLog(engine, log) && !engine.isStopping) {
     for (const run of engine.fillSlots()) logLaunchFailure(log, run);
   }
@@ -2522,7 +2524,7 @@ export async function runForever(
       // No new launch from here on; the run retains ownership until every
       // started worker ended and the stop is confirmed (or reported as
       // unconfirmed, never presumed).
-      const report = await engine.beginShutdown();
+      const report = await engine.beginRequestedStop();
       log(
         stopConfirmed(report)
           ? "factory ended cleanly (the operator's requested stop was confirmed)"

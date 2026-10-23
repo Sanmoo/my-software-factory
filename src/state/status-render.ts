@@ -183,8 +183,10 @@ function renderInterrupted(key: string, attempt: number, recordedAttempt: number
 
 /**
  * One work's interruption budget: what it cost and what ended the last stop.
- * An interruption names the recoveries spent and the configured backoff; a
- * failure names only the outcome class that consumed the attempt.
+ * An interruption names the recoveries spent and the configured backoff; the
+ * operator's requested stop says it cost nothing; an unconfirmed one carries
+ * the reason the work is held; a failure names only the outcome class that
+ * consumed the attempt.
  */
 function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBudget): string {
   const spend = `${ledger.consumed}/${budget.maxRecoveries} recoveries (waits ${renderWaits(budget.waitsMs)})`;

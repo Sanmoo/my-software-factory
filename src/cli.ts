@@ -8,8 +8,8 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
-import { runForever, runOnce, stopConfirmed, type LoopDeps, type ShutdownReport } from "./loop.js";
-import { installShutdownSignals, type ShutdownSignals } from "./shutdown.js";
+import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
+import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
@@ -155,8 +155,8 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   // resource active (issue #146): config, run lock, workspace and reservation
   // all live inside the handler's window, for the continuous run and for
   // `run --once` alike.
-  const stop = installShutdownSignals();
-  let report: ShutdownReport | null = null;
+  const stop = installStopSignals();
+  let report: StopReport | null = null;
   try {
     // Strict argument parsing has already completed; config is next, before
     // workspace writes or the keyring boot check.
@@ -198,8 +198,8 @@ async function executeRun(
   config: Config,
   once: boolean,
   runtimeName: string,
-  stop: ShutdownSignals,
-): Promise<ShutdownReport | null> {
+  stop: StopSignals,
+): Promise<StopReport | null> {
   const workspace = ensureWorkspace(config.workspace);
   const deps: LoopDeps = await wireRunDeps(config, workspace, {
     ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),
@@ -207,15 +207,15 @@ async function executeRun(
   const stopOptions = { signal: stop.requested, escalate: stop.escalated };
   if (once) {
     const result = await runOnce(deps, stopOptions);
-    if (result.shutdown !== null) {
+    if (result.stop !== null) {
       console.log(
         utcStamp(
-          stopConfirmed(result.shutdown)
+          stopConfirmed(result.stop)
             ? "sweep stopped by the operator: the stop of every worker was confirmed, exit 0"
             : "sweep stopped by the operator: the stop could not be confirmed, exit 1",
         ),
       );
-      return result.shutdown;
+      return result.stop;
     }
     console.log(
       utcStamp(

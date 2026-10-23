@@ -26,7 +26,13 @@ import { WORKER_IMAGE } from "../worker-image.js";
  * driver and the daemon agree on every path.
  */
 
-const MODE_TIMEOUT_MS = 4 * 60_000;
+/**
+ * One mode's ceiling: comfortably above the driver's own bounds (30 s to see the
+ * container, 30 s to settle, 20 s of cooperative grace) and far below the
+ * gateway's 240 s, so a hang fails THIS check by name instead of exhausting the
+ * budget as an unidentified timeout.
+ */
+const MODE_TIMEOUT_MS = 90_000;
 
 /** The docker/image prerequisite: a focused run skips with the reason, the
  *  gateway (MSF_REQUIRE_DOCKER=1) fails — never a silent pass. */
