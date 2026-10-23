@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -105,7 +106,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes });
     const git = new FakeGitWork();
-    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} };
     return { tracker, runtime, git, deps };
   }
 

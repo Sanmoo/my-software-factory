@@ -1,3 +1,4 @@
+import { issueRefOf } from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -96,7 +97,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
-    assert.deepEqual(view.pool.map((e) => e.ref.number), [1]);
+    assert.deepEqual(view.pool.map((e) => issueRefOf(e.work.ticket).number), [1]);
     assert.deepEqual(
       known(view),
       { state: "known", running: [], duplicates: [], orphaned: [] },
@@ -696,7 +697,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
     assert.equal(view.unbackedClaims.length, 1);
-    assert.match(view.unbackedClaims[0]!.command, /gh issue edit 10 --repo Sanmoo\/my-tasks/);
+    assert.match(view.unbackedClaims[0]!.command!, /gh issue edit 10 --repo Sanmoo\/my-tasks/);
 
     const text = renderStatus(view);
     assert.match(text, /unbacked claim: Sanmoo\/my-tasks#10/);

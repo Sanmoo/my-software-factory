@@ -1,3 +1,5 @@
+import { issueRefOf } from "../tracker/identity.js";
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -116,7 +118,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes });
     const git = new RepairGitWork();
-    const deps: LoopDeps = { config, tracker, runtime, git, workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} };
     return { tracker, runtime, git, deps };
   }
 
@@ -427,7 +429,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     await failOn("head-3"); // still failing: the cap is exhausted
     const third = await runOnce(deps);
     assert.equal(third.launched.length, 0, "the third round is not launched");
-    const blocked = third.reserved.find((decision) => decision.ref.number === 8);
+    const blocked = third.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 8);
     assert.ok(blocked && blocked.state === "repair-blocked", "the derivation blocks it");
     const issue = await tracker.readIssue({ repo: REPO, number: 8 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the work is blocked");
@@ -585,7 +587,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      recovered.reserved.some((decision) => decision.ref.number === 10 && decision.state === "repair-recovered"),
+      recovered.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 10 && decision.state === "repair-recovered"),
       "the derivation reports the confirmed recovery",
     );
     assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).usedRounds, 0, "the cap resets");
@@ -631,7 +633,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      recovered.reserved.some((decision) => decision.ref.number === 20 && decision.state === "repair-recovered"),
+      recovered.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 20 && decision.state === "repair-recovered"),
       "no required checks declared is a confirmed recovery, never unknown",
     );
     assert.equal((await readRepairCycle(workDir(layout, REPO, 20))).usedRounds, 0, "the round is returned");

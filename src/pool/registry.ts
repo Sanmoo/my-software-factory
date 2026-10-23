@@ -5,6 +5,7 @@ import { join, relative, sep, basename } from "node:path";
 import {
   SESSIONS_SUBDIR,
   workDir,
+  workDirOfKey,
   workspaceLayout,
   type WorkspaceLayout,
 } from "../layout.js";
@@ -25,9 +26,10 @@ import {
 import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
-import { issueRefOfTicket } from "../tracker/identity.js";
+import { issueRefOfTicket, workOfIssueRef, type WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import type { IssueRef } from "../tracker/port.js";
+import { workKeyOf } from "./work-key.js";
 import { scanReservations, workDirCandidates } from "./reservation.js";
 
 /**
@@ -208,15 +210,28 @@ export async function archiveDoneWork(
   layout: WorkspaceLayout,
   ref: IssueRef,
 ): Promise<string | null> {
-  const src = workDir(layout, ref.repo, ref.number);
+  return archiveDoneWorkFor(layout, workOfIssueRef(ref));
+}
+
+/**
+ * Done-only disk duty addressed by the explicit Work identity (issue 126):
+ * MOVE the Work's artifacts out of trabalhos/<work key> into
+ * arquivo/<work key>-<date>/ — nothing is deleted, the audit trail stays
+ * forever. Returns the archive path, or null when there was nothing to move.
+ * A same-day re-archive gets a fresh name — never overwritten.
+ */
+export async function archiveDoneWorkFor(
+  layout: WorkspaceLayout,
+  work: WorkIdentity,
+): Promise<string | null> {
+  const key = workKeyOf(work);
+  const src = workDirOfKey(layout, key);
   if (!existsSync(src)) return null;
 
   const date = new Date().toISOString().slice(0, 10);
-  // The same nesting shape as workDir(): the repo's slash nests the dir —
-  // arquivo/Sanmoo/a#1-<date>, a mirror of trabalhos/Sanmoo/a#1.
-  let dest = join(layout.archive, `${ref.repo}#${ref.number}-${date}`);
+  let dest = join(layout.archive, `${key}-${date}`);
   for (let suffix = 2; existsSync(dest); suffix += 1) {
-    dest = join(layout.archive, `${ref.repo}#${ref.number}-${date}-${suffix}`);
+    dest = join(layout.archive, `${key}-${date}-${suffix}`);
   }
   mkdirSync(dest, { recursive: true });
   await rename(src, dest);

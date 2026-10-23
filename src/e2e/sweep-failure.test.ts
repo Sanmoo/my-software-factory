@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -143,9 +144,10 @@ describe("e2e: a failed sweep never kills the continuous factory (issue 158)", (
       reservation,
       deps: {
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
-        git: new FakeGitWork(),
+        git: expandedGitWorkOf(new FakeGitWork()),
         workspace: layout,
         log: (message) => logs?.push(message),
         wait: async () => {},

@@ -1,3 +1,4 @@
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -117,9 +118,10 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     const log: string[] = [];
     const deps: LoopDeps = {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git,
+      git: expandedGitWorkOf(git),
       workspace: layout,
       notifier,
       log: (message) => log.push(message),
@@ -137,9 +139,10 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
   ): LoopDeps {
     return {
       config,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git: new FakeGitWork(),
+      git: expandedGitWorkOf(new FakeGitWork()),
       workspace: layout,
       notifier,
       log: (message) => log.push(message),

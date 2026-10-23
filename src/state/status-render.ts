@@ -1,8 +1,8 @@
 import {
   renderUnbackedClaim,
   renderUnmarkedReservation,
-  workKey,
 } from "./derive.js";
+import { workKeyOf } from "../pool/work-key.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
@@ -152,7 +152,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  lines.push(...section("pool (eligible)", view.pool.map((entry) => workKey(entry.ref)), cap));
+  lines.push(...section("pool (eligible)", view.pool.map((entry) => workKeyOf(entry.work)), cap));
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 

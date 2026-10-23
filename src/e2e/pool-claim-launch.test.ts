@@ -1,3 +1,5 @@
+import { issueRefOf } from "../tracker/identity.js";
+import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -126,7 +128,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       tracker,
       runtime,
       git,
-      deps: { config, tracker, runtime, git, workspace: layout, log: () => {} },
+      deps: { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} },
     };
   }
 
@@ -338,14 +340,15 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       const secondRuntime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
       const secondSweep = await runOnce({
         config,
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime: secondRuntime,
-        git: new FakeGitWork(),
+        git: expandedGitWorkOf(new FakeGitWork()),
         workspace: layout,
         log: () => {},
         wait: async () => {},
       });
-      const interrupted = secondSweep.reserved.find((decision) => decision.ref.number === 1);
+      const interrupted = secondSweep.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 1);
       assert.ok(
         interrupted && interrupted.state === "interrupted",
         "the stateless second sweep reads the claim with no attempt evidence as an interruption",

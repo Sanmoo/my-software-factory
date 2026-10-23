@@ -1,7 +1,8 @@
 import type { Config } from "./config.js";
-import type { TrackerPort, IssueComment, IssueRef, PullRequest } from "./tracker/port.js";
+import type { IssueComment, IssueRef } from "./tracker/port.js";
+import type { PullRequestRecord, PullRequestTracker, TicketTracker, WorkPullRequest } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
-import type { GitWork, LocalWorkFacts } from "./git/port.js";
+import type { ExpandedGitWork, LocalWorkFacts } from "./git/port.js";
 import {
   helpNotice,
   reviewNotice,
@@ -11,15 +12,18 @@ import {
   type Notification,
   type Notifier,
 } from "./notify/port.js";
-import { SESSIONS_SUBDIR, workDir, workDirOfKey, type WorkspaceLayout } from "./layout.js";
+import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
+import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import {
-  githubRepository,
-  pullRequestIdentity,
+  githubSelections,
+  issueRefOf,
+  issueRefOfTicket,
   ticketUrl,
   workOfIssueRef,
+  type WorkIdentity,
 } from "./tracker/identity.js";
-import { reservationRecordOf, reserveWork } from "./pool/reservation.js";
-import { recordPrAssociation } from "./pool/pr-association.js";
+import { reservationRecordOf, reserveWork, scanReservations, type ReservationEntry } from "./pool/reservation.js";
+import { activePullRequestOf, recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
   deriveReserved,
@@ -35,6 +39,7 @@ import {
   type PoolEntry,
   type RepairTrigger,
   type ReservedDerivation,
+  type ReservedWorkInput,
 } from "./state/derive.js";
 import {
   readOutcomeRecord,
@@ -50,12 +55,10 @@ import {
 } from "./state/outcome.js";
 import {
   readLaunchFacts,
-  scanReservedWorks,
-  archiveDoneWork,
+  archiveDoneWorkFor,
   readAttemptLedger,
   readLastAttempt,
   parseWorkKey,
-  type ReservedWorkEntry,
 } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
@@ -85,6 +88,7 @@ import {
   refundRecovery,
   type RecoveryDecision,
 } from "./pool/recovery.js";
+import { workKeyOf } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
@@ -149,10 +153,13 @@ const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeo
 
 export interface LoopDeps {
   config: Config;
-  tracker: TrackerPort;
+  /** Ticket facts and mutations: claims, labels, comments, blockers, closure. */
+  tickets: TicketTracker;
+  /** PR/code-host facts: linkage, feedback, checks, the branch. */
+  pullRequests: PullRequestTracker;
   runtime: WorkerRuntime;
   /** The git host side: one clone per target repo, work branch per work (ticket 15). */
-  git: GitWork;
+  git: ExpandedGitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
@@ -179,7 +186,7 @@ export interface AppliedRuling {
 }
 
 export interface CollectedWork {
-  ref: IssueRef;
+  work: WorkIdentity;
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
@@ -252,7 +259,8 @@ export function stopConfirmed(report: StopReport): boolean {
 
 /** What the engine tracks of one launch while it may still be carrying a worker. */
 interface InFlightLaunch {
-  ref: IssueRef;
+  /** The Work as the reservation names it — its origin is never re-derived. */
+  work: WorkIdentity;
   /** The work's registry dir — where the stop evidence is persisted. */
   dir: string;
   /** The attempt the launch is on, known as soon as the registry answers. */
@@ -319,9 +327,9 @@ function operationalState(
   inFlight: ReadonlySet<string>,
 ): Map<string, OperationalClass> {
   const state = new Map<string, OperationalClass>();
-  for (const entry of pool) state.set(workKey(entry.ref), "eligible");
+  for (const entry of pool) state.set(workKeyOf(entry.work), "eligible");
   for (const decision of reserved) {
-    const key = workKey(decision.ref);
+    const key = workKeyOf(decision.work);
     const operationalClass = RESERVED_OPERATIONAL_CLASS[decision.state];
     if (operationalClass !== null && !state.has(key)) state.set(key, operationalClass);
   }
@@ -354,10 +362,10 @@ function needsOccurrenceNotice(ruling: OutcomeRuling): boolean {
 /** A recovery (no human age) goes first; the rest by creation age, then key. */
 function byParkedPriority(a: Launchable, b: Launchable): number {
   if (a.createdAt === null || b.createdAt === null) {
-    if (a.createdAt === b.createdAt) return workKey(a.ref).localeCompare(workKey(b.ref));
+    if (a.createdAt === b.createdAt) return workKeyOf(a.work).localeCompare(workKeyOf(b.work));
     return a.createdAt === null ? -1 : 1;
   }
-  return a.createdAt.localeCompare(b.createdAt) || workKey(a.ref).localeCompare(workKey(b.ref));
+  return a.createdAt.localeCompare(b.createdAt) || workKeyOf(a.work).localeCompare(workKeyOf(b.work));
 }
 
 /** The no-worker view of {@link SweepEngine.carriedKeys} (liveness unknown). */
@@ -424,7 +432,10 @@ function renderPoolSummary(
 type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 interface Launchable {
-  ref: IssueRef;
+  /** The Work as the reservation remembers it — never re-derived from config. */
+  work: WorkIdentity;
+  /** The Work's registry dir (its identity anchor). */
+  dir: string;
   kind: LaunchKind;
   /** The ticket's title when the pool supplied it — presentation of the reservation. */
   title?: string;
@@ -433,7 +444,7 @@ interface Launchable {
    *  the parked rounds. */
   createdAt: string | null;
   /** The work's linked PR when the derivation saw one (the retomada reopens a closed one). */
-  pr: PullRequest | null;
+  pr: PullRequestRecord | null;
   /** Human issue replies after the last agent marker, only for a retomada. */
   issueReplies?: IssueComment[];
   /** The confirmed impediments, only for a repair round. */
@@ -551,13 +562,20 @@ export class SweepEngine {
    * cached pool (by age) are what the launches draw from.
    */
   async deriveAndAct(): Promise<ReservedDerivation[]> {
-    const { config, tracker, workspace } = this.deps;
+    const { config, workspace } = this.deps;
 
     // The liveness facts come FIRST (issue 118): a decision that could
     // substitute a worker or end its resources reads them, and the survivor
     // ledger keeps the executions that outlived a previous factory process.
     await this.observeLiveness();
-    const settled = await this.observeSurvivors();
+    // WHO is reserved is what the reservation on disk says — a work's origin is
+    // never reconstructed from the current selection configuration (issue 126).
+    const reservations = await scanReservations(workspace);
+    const reservationByKey = new Map(
+      reservations.filter((entry): entry is ReservationEntry & { work: WorkIdentity } => entry.work !== null)
+        .map((entry) => [entry.key, entry]),
+    );
+    const settled = await this.observeSurvivors(reservationByKey);
     this.observeCapacity();
     const suspended = this.liveness.state === "unknown";
     const surviving = [...this.carriedKeys];
@@ -572,23 +590,32 @@ export class SweepEngine {
     // live worker keeps its work reserved, and a settled exit is not decided
     // twice in the same sweep.
     const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
-    const reservedDirs = await scanReservedWorks(workspace);
-    const reservedWorks = reservedDirs.filter((work) => !inFlight.has(workKey(work.ref)));
+    for (const entry of reservations) {
+      if (entry.work !== null) continue;
+      this.log(
+        `reserved work ${entry.key} has no trustworthy identity (` +
+          `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
+          "held; nothing is invented from the current configuration",
+      );
+    }
+    const allReserved = [...reservationByKey.values()].map((entry) => ({ work: entry.work, dir: entry.dir }));
+    const reservedWorks = allReserved.filter((work) => !inFlight.has(workKeyOf(work.work)));
 
     // The repair reconciliation runs BEFORE the derivation (issue 112): a
     // repair attempt that fell is settled against the remote first, so the
     // derivation reads the verdict (resume, block, or uncertainty) instead of
     // a charged round that never published. Unknown liveness holds it too
     // (issue 118): a worker may still be writing the branch its verdict reads.
-    if (!suspended) await this.reconcileRepairAttempts(reservedDirs, inFlight);
+    if (!suspended) await this.reconcileRepairAttempts(allReserved, inFlight);
 
     // A stop whose confirmation failed on the previous invocation is settled
     // BEFORE the derivation (issue #146): the work only resumes once the
     // previous worker is known to be gone.
-    await this.reconcileUnconfirmedStops(reservedDirs, inFlight);
+    await this.reconcileUnconfirmedStops(allReserved, inFlight);
 
     const derived = await deriveReserved(
-      tracker,
+      this.deps.tickets,
+      this.deps.pullRequests,
       reservedWorks,
       config.labels,
       config.workerGhAccount,
@@ -606,53 +633,54 @@ export class SweepEngine {
       // decision that would archive/clean, spend the attempt or its recovery
       // budget must wait for a reliable answer — never presume a stop.
       if (suspended && HOLDS_WHILE_LIVENESS_UNKNOWN.has(decision.state)) {
-        heldWhileUnknown.push(workKey(decision.ref));
+        heldWhileUnknown.push(workKeyOf(decision.work));
         continue;
       }
+      const key = workKeyOf(decision.work);
       switch (decision.state) {
         case "done": {
-          this.log(`derived ${workKey(decision.ref)}: issue closed — done; archiving artifacts, cleaning branches`);
-          await this.finishWork(decision.ref);
-          this.announce(decision.ref, null);
+          this.log(`derived ${key}: issue closed — done; archiving artifacts, cleaning branches`);
+          await this.finishWork(decision.work);
+          this.announce(decision.work, null);
           break;
         }
         case "done-fallback": {
           this.log(
-            `derived ${workKey(decision.ref)}: PR merged without closing the issue — ` +
+            `derived ${key}: PR merged without closing the issue — ` +
               "the factory closes it (fallback of the linkage), then archives",
           );
-          await this.completeMergedWork(decision.ref, decision.comment);
-          this.announce(decision.ref, null);
+          await this.completeMergedWork(decision.work, decision.comment);
+          this.announce(decision.work, null);
           break;
         }
         case "rejected": {
           this.log(
-            `derived ${workKey(decision.ref)}: PR closed without merge — rejected, ` +
+            `derived ${key}: PR closed without merge — rejected, ` +
               "blocked with a comment pointing at the PR",
           );
-          await this.applyBlockWithComment(decision.ref, decision.comment);
-          this.announce(decision.ref, "reserved");
+          await this.applyBlockWithComment(decision.work, decision.comment);
+          this.announce(decision.work, "reserved");
           break;
         }
         case "fall": {
           // A WRITTEN failure the factory died before ruling: it consumes the
           // attempt and the ruler applies as at collection (issue 123).
-          const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
+          const dir = decision.dir;
           await this.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
           if (decision.decision === "release") {
             this.log(
-              `derived ${workKey(decision.ref)}: unreconciled failure (the factory died before ruling it) — ` +
+              `derived ${key}: unreconciled failure (the factory died before ruling it) — ` +
                 "release (claimed→ready back; the branch stays)",
             );
-            await this.applyRelease(decision.ref);
-            this.announce(decision.ref, "eligible");
+            await this.applyRelease(decision.work);
+            this.announce(decision.work, "eligible");
           } else {
             this.log(
-              `derived ${workKey(decision.ref)}: 2nd consecutive fall, unreconciled — ` +
+              `derived ${key}: 2nd consecutive fall, unreconciled — ` +
                 "blocked with the attempt's diagnosis on the issue",
             );
-            await this.applyBlockWithComment(decision.ref, decision.comment);
-            this.announce(decision.ref, "reserved");
+            await this.applyBlockWithComment(decision.work, decision.comment);
+            this.announce(decision.work, "reserved");
           }
           break;
         }
@@ -660,16 +688,16 @@ export class SweepEngine {
           // The same attempt continues within its budget; an exhausted budget
           // pauses it and asks the operator for help (issue 123).
           if (decision.recovery.decision === "pause-help") {
-            const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-            await this.pauseInterrupted(decision.ref, dir, decision.attempt, decision.recovery);
+            await this.pauseInterrupted(decision.work, decision.dir, decision.attempt, decision.recovery);
           } else {
             this.log(
-              `derived ${workKey(decision.ref)}: attempt ${decision.attempt} was interrupted (no outcome record) — ` +
+              `derived ${key}: attempt ${decision.attempt} was interrupted (no outcome record) — ` +
                 `recovery ${decision.recovery.consumed}/${config.recovery.maxRecoveries} will continue it after ` +
                 `${decision.recovery.waitMs}ms`,
             );
             parked.push({
-              ref: decision.ref,
+              work: decision.work,
+              dir: decision.dir,
               kind: "recover",
               // A recovery waits for nothing human: it sorts before the parked
               // feedback rounds, which carry their own creation time.
@@ -685,11 +713,16 @@ export class SweepEngine {
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
           if (decision.modelProvider.decision === "awaiting-model-provider") {
-            const dir = workDir(workspace, decision.ref.repo, decision.ref.number);
-            await this.applyModelProviderFailure(decision.ref, dir, decision.attempt, decision.failure);
+            await this.applyModelProviderFailure(
+              decision.work,
+              decision.dir,
+              decision.attempt,
+              decision.failure,
+            );
           } else {
             parked.push({
-              ref: decision.ref,
+              work: decision.work,
+              dir: decision.dir,
               kind: "model-provider-retry",
               // A retry waits for nothing human: like a recovery, it sorts
               // before the parked feedback rounds.
@@ -704,11 +737,12 @@ export class SweepEngine {
           // The operator's requested stop (issue #146): the same attempt
           // resumes on this invocation, without spending the budget.
           this.log(
-            `derived ${workKey(decision.ref)}: attempt ${decision.attempt} ended by the operator's ` +
+            `derived ${key}: attempt ${decision.attempt} ended by the operator's ` +
               "requested stop — resuming it now (no recovery is spent)",
           );
           parked.push({
-            ref: decision.ref,
+            work: decision.work,
+            dir: decision.dir,
             kind: "recover",
             createdAt: null,
             pr: null,
@@ -720,7 +754,7 @@ export class SweepEngine {
         case "stop-unconfirmed": {
           // Nothing is launched: a previous worker may still carry the work.
           // The diagnostic was said by the reconciliation above.
-          this.announce(decision.ref, "reserved");
+          this.announce(decision.work, "reserved");
           break;
         }
         case "continuity-paused": {
@@ -729,14 +763,14 @@ export class SweepEngine {
           // a pause whose block and help request never landed (a death in
           // between) is announced now, exactly once. Other works keep going.
           this.log(
-            `derived ${workKey(decision.ref)}: attempt ${decision.attempt} is paused for help ` +
+            `derived ${workKeyOf(decision.work)}: attempt ${decision.attempt} is paused for help ` +
               `(${decision.pause.reason}) — no recovery is spent and nothing is relaunched`,
           );
-          this.announce(decision.ref, "reserved");
+          this.announce(decision.work, "reserved");
           if (decision.pause.announced !== true) {
             await this.pauseForContinuity(
-              decision.ref,
-              workDir(workspace, decision.ref.repo, decision.ref.number),
+              decision.work,
+              decision.dir,
               decision.pause,
               decision.attempt,
             );
@@ -746,7 +780,8 @@ export class SweepEngine {
         case "feedback":
         case "resumable": {
           const launchable: Launchable = {
-            ref: decision.ref,
+            work: decision.work,
+            dir: decision.dir,
             kind: decision.state === "feedback" ? "feedback" : "resume",
             createdAt: decision.createdAt,
             pr: decision.pr,
@@ -757,7 +792,8 @@ export class SweepEngine {
         }
         case "repair": {
           parked.push({
-            ref: decision.ref,
+            work: decision.work,
+            dir: decision.dir,
             kind: "repair",
             createdAt: decision.createdAt,
             pr: decision.pr,
@@ -768,27 +804,27 @@ export class SweepEngine {
         }
         case "repair-fall-blocked": {
           this.log(
-            `derived ${workKey(decision.ref)}: repair attempt ${decision.attempt} fell without publishing — ` +
+            `derived ${key}: repair attempt ${decision.attempt} fell without publishing — ` +
               "blocked with the attempt's diagnosis on the issue (the open PR does not hide the fall)",
           );
-          await this.applyBlockWithComment(decision.ref, decision.comment);
-          this.announce(decision.ref, "reserved");
+          await this.applyBlockWithComment(decision.work, decision.comment);
+          this.announce(decision.work, "reserved");
           break;
         }
         case "repair-recovered": {
           this.log(
-            `derived ${workKey(decision.ref)}: PR recovered — no conflicts and all required checks approved; repair budget reset`,
+            `derived ${key}: PR recovered — no conflicts and all required checks approved; repair budget reset`,
           );
-          await writeRepairCycle(workDir(workspace, decision.ref.repo, decision.ref.number), EMPTY_REPAIR_CYCLE);
+          await writeRepairCycle(decision.dir, EMPTY_REPAIR_CYCLE);
           break;
         }
         case "repair-blocked": {
           this.log(
-            `derived ${workKey(decision.ref)}: ${decision.usedRounds} automatic repair rounds without recovery — ` +
+            `derived ${key}: ${decision.usedRounds} automatic repair rounds without recovery — ` +
               "blocked with the reason on the issue",
           );
-          await this.applyBlockWithComment(decision.ref, decision.comment);
-          this.announce(decision.ref, "reserved");
+          await this.applyBlockWithComment(decision.work, decision.comment);
+          this.announce(decision.work, "reserved");
           break;
         }
         default:
@@ -814,10 +850,10 @@ export class SweepEngine {
     // draws from it; a cache drained empty waits for the next tick) and the
     // leftovers the reconciliation reports. No action: the report touches
     // nothing, and the sweep continues normally.
-    const reservationKeys = new Set(reservedDirs.map((work) => workKey(work.ref)));
+    const reservationKeys = new Set(reservations.map((entry) => entry.key));
     const state = await deriveTrackerState(
-      tracker,
-      config.repos,
+      this.deps.tickets,
+      githubSelections(config.repos),
       config.labels,
       reservationKeys,
       inFlight,
@@ -887,8 +923,8 @@ export class SweepEngine {
   }
 
   /** Record the class an action/event lands a work in (`null` = it leaves). */
-  private announce(ref: IssueRef, resulting: OperationalClass | null): void {
-    this.announced.set(workKey(ref), resulting);
+  private announce(work: WorkIdentity, resulting: OperationalClass | null): void {
+    this.announced.set(workKeyOf(work), resulting);
   }
 
   // ---- liveness and the surviving workers (issue 118) ----
@@ -955,29 +991,39 @@ export class SweepEngine {
    * here launches, attaches, kills or numbers an attempt — recognition is
    * observation.
    */
-  private async observeSurvivors(): Promise<Set<string>> {
+  private async observeSurvivors(
+    reservations: ReadonlyMap<string, ReservationEntry & { work: WorkIdentity }>,
+  ): Promise<Set<string>> {
     const settled = new Set<string>();
     if (this.liveness.state !== "known") return settled;
     const workers = this.liveness.workers;
     const local = new Set(this.slots.workKeys);
 
     // Exit: a survivor a reliable probe no longer lists has ended.
-    for (const key of [...this.survivors.keys()]) {
+    for (const [key, record] of [...this.survivors.entries()]) {
       if (this.carriedKeys.has(key)) continue;
       this.survivors.delete(key);
       settled.add(key);
-      await this.reconcileSurvivorExit(key);
+      await this.reconcileSurvivorExit(key, record);
     }
 
     // Recognition: a work carried by a container this process did not launch.
     for (const key of survivorWorkKeys(workers, local)) {
       if (this.survivors.has(key)) continue;
-      const parsed = parseWorkKey(key);
-      if (parsed === null) continue;
-      const dir = workDirOfKey(this.deps.workspace, key);
-      const attempt = await this.lastAttemptOf(key);
+      const reserved = reservations.get(key);
+      const work = reserved?.work ?? legacyWorkOfKey(key);
+      if (work === null) {
+        this.log(
+          `a live container carries ${key}, but its Work identity cannot be trusted — ` +
+            "it occupies a slot and no substitute is launched; the reservation needs a human",
+        );
+        continue;
+      }
+      const dir = reserved?.dir ?? workDirOfKey(this.deps.workspace, key);
+      const attempt = await readLastAttempt(dir);
       this.survivors.set(key, {
         key,
+        work,
         dir,
         activityStamp: null,
         lastActivityAt: this.now(),
@@ -992,7 +1038,7 @@ export class SweepEngine {
 
     for (const key of [...this.survivors.keys()]) await this.watchSurvivorActivity(key);
 
-    this.announceDuplicates();
+    await this.announceDuplicates();
     return settled;
   }
 
@@ -1014,8 +1060,8 @@ export class SweepEngine {
         "the factory keeps its slot and launches no substitute; it does not end a worker it did not launch " +
         "(a human decision is needed)",
     );
-    const parsed = parseWorkKey(key);
-    if (parsed !== null) await this.deliverNotice(interventionNotice(parsed));
+    const ref = issueRefOfTicket(record.work.ticket);
+    if (ref !== null) await this.deliverNotice(interventionNotice(ref));
   }
 
   /**
@@ -1045,10 +1091,8 @@ export class SweepEngine {
    * the attempt's own artifacts and the current tracker — never the in-memory
    * launch this process never had, and never an older attempt's outcome.
    */
-  private async reconcileSurvivorExit(key: string): Promise<void> {
-    const parsed = parseWorkKey(key);
-    if (parsed === null) return;
-    const dir = workDir(this.deps.workspace, parsed.repo, parsed.number);
+  private async reconcileSurvivorExit(key: string, record: SurvivorRecord): Promise<void> {
+    const { work, dir } = record;
     const attempt = await readLastAttempt(dir);
     if (attempt === null) {
       this.log(
@@ -1063,7 +1107,8 @@ export class SweepEngine {
     const cycle = await readRepairCycle(dir);
     const repairing = cycle.attempt !== null && cycle.attempt.attempt === attempt;
     const ended: Launchable = {
-      ref: parsed,
+      work,
+      dir,
       kind: repairing ? "repair" : "claim",
       createdAt: null,
       pr: null,
@@ -1125,7 +1170,7 @@ export class SweepEngine {
       if (this.stopping) break;
       const launchable = this.takeNextLaunchable();
       if (launchable === undefined) break;
-      if (!this.slots.tryAcquire(workKey(launchable.ref))) continue; // already in flight
+      if (!this.slots.tryAcquire(workKeyOf(launchable.work))) continue; // already in flight
       const run = this.launchAndCollect(launchable);
       this.pending.add(run);
       // Bookkeeping only: the rejection belongs to the caller (runOnce awaits
@@ -1148,13 +1193,21 @@ export class SweepEngine {
     for (;;) {
       const parked = this.parkedQueue.shift();
       if (parked !== undefined) {
-        if (this.carriedKeys.has(workKey(parked.ref))) continue;
+        if (this.carriedKeys.has(workKeyOf(parked.work))) continue;
         return parked;
       }
       const entry = this.cache.shift();
       if (entry === undefined) return undefined;
-      if (this.carriedKeys.has(workKey(entry.ref))) continue;
-      return { ref: entry.ref, kind: "claim", createdAt: entry.createdAt, pr: null, title: entry.title };
+      const key = workKeyOf(entry.work);
+      if (this.carriedKeys.has(key)) continue;
+      return {
+        work: entry.work,
+        dir: workDirOfKey(this.deps.workspace, key),
+        kind: "claim",
+        createdAt: entry.createdAt,
+        pr: null,
+        title: entry.title,
+      };
     }
   }
 
@@ -1224,19 +1277,25 @@ export class SweepEngine {
       entry.attempt = attempt;
       if (await this.settleStoppedAdmission(entry, attempt)) {
         this.log(
-          `the recovery granted to ${workKey(entry.ref)} is returned: the requested stop cancelled its relaunch`,
+          `the recovery granted to ${workKeyOf(entry.work)} is returned: the requested stop cancelled its relaunch`,
         );
       }
     }
 
-    for (const entry of entries) this.deps.runtime.requestStop(entry.ref);
+    // The runtime's stop request still speaks the worker's IssueRef (issue
+    // 126 leaves the worker context for #127): an admission whose ticket that
+    // shape cannot express never launched a worker, so it has none to ask.
+    for (const entry of entries) {
+      const ref = issueRefOfTicket(entry.work.ticket);
+      if (ref !== null) this.deps.runtime.requestStop(ref);
+    }
 
     // Whatever still carries a work is forced now. The evidence of the stop
     // lands on a survivor's attempt BEFORE it is ended, exactly as for the
     // launches below: the next invocation resumes it instead of charging it.
     await this.awaitCooperativeWindow();
     const doomed = await this.stopCandidates(entries);
-    const own = new Set(entries.map((entry) => workKey(entry.ref)));
+    const own = new Set(entries.map((entry) => workKeyOf(entry.work)));
     for (const key of doomed) if (!own.has(key)) await this.recordStopOf(key);
 
     const forced: string[] = [];
@@ -1284,7 +1343,7 @@ export class SweepEngine {
   ): Promise<{ workers: Map<string, number | null>; observation: LivenessObservation }> {
     const workers = new Map<string, number | null>();
     for (const entry of entries) {
-      if (entry.launched) workers.set(workKey(entry.ref), entry.attempt);
+      if (entry.launched) workers.set(workKeyOf(entry.work), entry.attempt);
     }
     for (const key of this.survivors.keys()) if (!workers.has(key)) workers.set(key, null);
     await this.observeLiveness();
@@ -1307,7 +1366,7 @@ export class SweepEngine {
     const live =
       observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : EMPTY_KEYS;
     for (const entry of entries) {
-      const key = workKey(entry.ref);
+      const key = workKeyOf(entry.work);
       if (this.inFlight.has(key) || live.has(key)) continue;
       workers.delete(key);
     }
@@ -1332,7 +1391,7 @@ export class SweepEngine {
   private async lastAttemptOf(key: string): Promise<number | null> {
     const parsed = parseWorkKey(key);
     if (parsed === null) return null;
-    const dir = workDir(this.deps.workspace, parsed.repo, parsed.number);
+    const dir = workDirOfKey(this.deps.workspace, key);
     if (!existsSync(dir)) return null;
     return (await readLastAttempt(dir)) ?? 1;
   }
@@ -1482,7 +1541,7 @@ export class SweepEngine {
    *  slot would never retry the work (issue 98). The rejection belongs to the
    *  caller (runOnce awaits it, runForever logs it as a failed launch). */
   private async launchAndCollect(launchable: Launchable): Promise<void> {
-    const key = workKey(launchable.ref);
+    const key = workKeyOf(launchable.work);
     try {
       // An interruption inside the session returns the SAME attempt as a
       // recovery to launch next, in the same held slot (issue 123).
@@ -1501,10 +1560,10 @@ export class SweepEngine {
   /** Claim (or resume), prepare, launch and collect one work; replenish in
    * the same cycle. The reservation lands BEFORE any launch. */
   private async launchOnce(launchable: Launchable): Promise<Launchable | null> {
-    const key = workKey(launchable.ref);
+    const key = workKeyOf(launchable.work);
     const entry: InFlightLaunch = {
-      ref: launchable.ref,
-      dir: workDir(this.deps.workspace, launchable.ref.repo, launchable.ref.number),
+      work: launchable.work,
+      dir: launchable.dir,
       // A recovery continues a known attempt even before the registry answers.
       attempt: launchable.kind === "recover" ? (launchable.attempt ?? null) : null,
       ...(launchable.kind === "recover" && launchable.attempt !== undefined
@@ -1522,9 +1581,20 @@ export class SweepEngine {
   }
 
   private async launchInner(launchable: Launchable, entry: InFlightLaunch): Promise<Launchable | null> {
-    const { config, tracker, runtime, git, workspace } = this.deps;
-    const { ref, kind } = launchable;
-    const key = workKey(ref);
+    const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
+    const { work, kind, dir } = launchable;
+    const key = workKeyOf(work);
+    // The worker context still speaks the legacy IssueRef (issue 126 leaves it
+    // for #127): a ticket it cannot express is not launched rather than given
+    // a fabricated number.
+    const ref = issueRefOfTicket(work.ticket);
+    if (ref === null) {
+      this.log(
+        `launch of ${key} deferred: the worker context has not migrated to a ${work.ticket.provider} ticket yet — ` +
+          "nothing is claimed, reserved or launched",
+      );
+      return null;
+    }
 
     // The requested stop closes admissions the instant it arrives (issue
     // #146): a launch that has not written to the tracker yet leaves nothing
@@ -1541,8 +1611,7 @@ export class SweepEngine {
       // the record is the Work's own facts (issue 125). An unknown or
       // unwritable record is reported and never blocks the claim — nor is it
       // overwritten.
-      const work = workOfIssueRef(ref);
-      mkdirSync(workDir(workspace, ref.repo, ref.number), { recursive: true });
+      mkdirSync(dir, { recursive: true });
       const url = ticketUrl(work.ticket);
       const presentation = {
         ...(launchable.title === undefined ? {} : { title: launchable.title }),
@@ -1559,13 +1628,13 @@ export class SweepEngine {
       } catch (error) {
         this.log(`reservation of ${key} could not be persisted (${describeError(error)}) — launching on the dir key`);
       }
-      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+      await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
     } else if (kind === "resume") {
       this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
-      await tracker.resumeClaim(ref, config.labels);
+      await tickets.resumeTicketClaim(work.ticket, config.labels);
       // The rejection's retomada: the SAME PR is reopened, never a new one.
       if (launchable.pr !== null && launchable.pr.state === "closed") {
-        await tracker.reopenPr(ref);
+        await pullRequests.reopenPullRequest({ work, pullRequest: launchable.pr.identity });
       }
     } else if (kind === "recover" || kind === "model-provider-retry") {
       this.log(
@@ -1581,16 +1650,16 @@ export class SweepEngine {
       // The claim swap itself may have been interrupted (issue 98) — or the
       // outage of issue 144 killed it: re-asserting the idempotent claim heals
       // it without releasing the work to the pool.
-      await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+      await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
     } else if (kind === "feedback") {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
     }
     // Every launch kind holds the claim, so the work is reserved from here.
-    this.announce(ref, "reserved");
+    this.announce(work, "reserved");
 
     // Git host (ticket 15): clone once + delta fetch + work branch born from
     // the default the clone reveals; relaunches reuse the branch untouched.
-    const prepared = await this.serializePrepare(ref.repo, () => git.prepareWork(ref));
+    const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
 
     // A repair targets the PR's CURRENT base — never the repo default (story 8)
     // — and is pinned to the head the facts were read on. If the remote moved
@@ -1623,7 +1692,9 @@ export class SweepEngine {
       // and an unconfirmed one waits for the next derivation instead of
       // paying for stale evidence. The round is announced below, after this
       // decision: a returned round is never also "reactivated".
-      const reading = readRepairPremise(await tracker.readPrRepairFacts(ref));
+      const reading = readRepairPremise(
+        await pullRequests.readPullRequestRepairFacts(this.launchPullRequest(launchable)),
+      );
       if (reading.premise !== "persisting") {
         this.log(
           reading.premise === "obsolete"
@@ -1651,7 +1722,7 @@ export class SweepEngine {
         repair.pinnedHeadSha = confirmed.facts.headSha;
       }
       baseBranch = confirmed.facts.baseBranch;
-      const observed = await this.observeRemote(ref);
+      const observed = await this.observeRemote(work);
       if (!observed.known) {
         this.log(
           `repair round for ${key} skipped: the remote head could not be read — ` +
@@ -1668,7 +1739,7 @@ export class SweepEngine {
           // Somebody moved the branch after the fall: the local work must not
           // be published over it. The attempt is settled as a concurrent
           // change, and the next derivation asks the human for a reconciliation.
-          await this.markConcurrentChange(ref, resuming, observed.headSha);
+          await this.markConcurrentChange(work, resuming, observed.headSha);
         }
         return null;
       }
@@ -1697,7 +1768,6 @@ export class SweepEngine {
     // The registry numbers the attempt and remembers the previous WRITTEN
     // failure — both are disk facts of this work, not process state (ticket
     // 13; an interruption never counts as a fall, issue 123).
-    const dir = workDir(workspace, ref.repo, ref.number);
     const continuesAttempt = kind === "recover" || kind === "model-provider-retry";
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     entry.attempt = facts.attempt;
@@ -1717,18 +1787,18 @@ export class SweepEngine {
     // inspected, an unfinished operation is continued — the resumption never
     // restarts the work blind (issue 112).
     if (repair !== undefined) {
-      repair.localWork = await this.inspectLocalWork(ref);
+      repair.localWork = await this.inspectLocalWork(work);
       // The round is charged BEFORE the session (issue 107) and the attempt's
       // facts are recorded with it (issue 112): the observed head, the evidence
       // and the commit the branch already holds. A death mid-round refunds the
       // round — but only once publication is provably absent (the sweep's
       // reconciliation), never by presumption.
-      await this.recordRepairRound(dir, ref, repair.trigger, facts.attempt, repair.localWork);
+      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
     }
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(tracker, git, ref, launchable.issueReplies, repair);
+    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair);
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
     // and the registry dir) stays for the next run's reconciliation; the
@@ -1745,10 +1815,13 @@ export class SweepEngine {
     const continuityDeps = {
       workDir: dir,
       sessionsDir: join(dir, SESSIONS_SUBDIR),
+      // The continuity machinery (issue 119) still speaks the worker's legacy
+      // shape — the session link's `work` and the effect reads of the port.
+      // The conversion happens here, once, at that boundary (#127 migrates it).
       ref,
       attempt: facts.attempt,
       git,
-      tracker,
+      tracker: legacyTrackerPort(tickets, pullRequests),
     };
     if (kind === "resume") {
       const pause = readPause(dir);
@@ -1805,7 +1878,7 @@ export class SweepEngine {
       if (decision.decision === "recover") entry.recoveryIndex = decision.consumed - 1;
       if (decision.decision === "pause-help") {
         this.log(`recovery of ${key} paused: ${decision.reason} — the work is blocked and asks for help`);
-        await this.pauseInterrupted(ref, dir, facts.attempt, decision);
+        await this.pauseInterrupted(work, dir, facts.attempt, decision);
         return null;
       }
       this.log(
@@ -1837,7 +1910,7 @@ export class SweepEngine {
         );
         return null;
       }
-      const decision = await this.applyModelProviderFailure(ref, dir, facts.attempt, failure);
+      const decision = await this.applyModelProviderFailure(work, dir, facts.attempt, failure);
       if (decision.decision === "awaiting-model-provider") return null;
       await this.wait(decision.waitMs);
       if (this.stopping) {
@@ -1927,13 +2000,16 @@ export class SweepEngine {
    * once per pause, never on every cycle.
    */
   private async pauseForContinuity(
-    ref: IssueRef,
+    work: WorkIdentity,
     dir: string,
     pending: PauseRecord,
     attempt: number,
     note?: string,
   ): Promise<void> {
-    const { tracker, config, workspace } = this.deps;
+    const { tickets, config, workspace } = this.deps;
+    // The persisted pause (issue 119) still names the worker's legacy shape:
+    // the conversion happens here, once, at that boundary (#127 migrates it).
+    const ref = issueRefOf(work.ticket);
     // By now the factory knows which work and attempt it is pausing, whatever
     // the record could say: an unreadable record's unknown work/attempt is
     // replaced here, so the persisted pause and the operator's comment name the
@@ -1950,24 +2026,24 @@ export class SweepEngine {
     // unannounced until the block and the request really landed: a death in
     // between leaves the fact that the operator was never told.
     writePause(dir, { ...pause, announced: false });
-    this.announce(ref, "reserved");
+    this.announce(work, "reserved");
     if (alreadyAnnounced) {
       // The same pause was already announced: re-assert the blocked label
       // without repeating the request (a failed retomada swapped it), so the
       // work stays out of every launch and the human sees one request.
-      await tracker.blockClaim(ref, config.labels);
+      await tickets.blockTicketClaim(work.ticket, config.labels);
       writePause(dir, { ...pause, announced: true });
       this.log(
-        `continuity of ${workKey(ref)} still paused (${pause.reason}) — no new help request, no recovery spent`,
+        `continuity of ${workKeyOf(work)} still paused (${pause.reason}) — no new help request, no recovery spent`,
       );
       return;
     }
     this.log(
-      `continuity of ${workKey(ref)} paused (${pause.reason}): ${pause.detail} — ` +
+      `continuity of ${workKeyOf(work)} paused (${pause.reason}): ${pause.detail} — ` +
         "the work waits for the operator; files and evidence are preserved",
     );
     await this.applyBlockWithComment(
-      ref,
+      work,
       await continuityPausedCommentBody({
         attempt: pause.attempt,
         reason: pause.reason,
@@ -1984,7 +2060,7 @@ export class SweepEngine {
   /** The exhausted recovery budget: block the work and ask the operator for
    *  help, naming the configured value and backoff — no attempt was consumed. */
   private async pauseInterrupted(
-    ref: IssueRef,
+    work: WorkIdentity,
     dir: string,
     attempt: number,
     decision: Extract<RecoveryDecision, { decision: "pause-help" }>,
@@ -2001,11 +2077,11 @@ export class SweepEngine {
       workspace,
     });
     this.log(
-      `the interrupted attempt ${attempt} of ${workKey(ref)} is paused (${decision.reason}) — ` +
+      `the interrupted attempt ${attempt} of ${workKeyOf(work)} is paused (${decision.reason}) — ` +
         "blocked with the evidence; a human decision is needed",
     );
-    await this.applyBlockWithComment(ref, comment);
-    this.announce(ref, "reserved");
+    await this.applyBlockWithComment(work, comment);
+    this.announce(work, "reserved");
   }
 
   /**
@@ -2017,12 +2093,12 @@ export class SweepEngine {
    * a death between the ledger and the comment never loses it.
    */
   private async applyModelProviderFailure(
-    ref: IssueRef,
+    work: WorkIdentity,
     dir: string,
     attempt: number,
     failure: ModelProviderFailure,
   ): Promise<ModelProviderDecision> {
-    const { config, tracker, workspace } = this.deps;
+    const { config, tickets, workspace } = this.deps;
     const ledger = await readModelProviderLedger(dir);
     const decision = modelProviderDecision(ledger, config.modelProvider, attempt, failure);
 
@@ -2059,7 +2135,7 @@ export class SweepEngine {
       if (helpPending) {
         // Keep the work reserved before asking: re-asserting the (already held)
         // claim is idempotent and is what the operator's answer resumes.
-        await tracker.claim(ref, config.workerGhAccount, config.labels.ready);
+        await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
         const comment = await modelProviderAwaitingCommentBody({
           attempt,
           failure,
@@ -2067,11 +2143,12 @@ export class SweepEngine {
           workDir: dir,
           workspace,
         });
-        await tracker.comment(ref, comment);
-        await this.deliverNotice(helpNotice(ref));
+        await tickets.commentOnTicket(work.ticket, comment);
+        const ref = issueRefOfTicket(work.ticket);
+        if (ref !== null) await this.deliverNotice(helpNotice(ref));
         await markModelProviderHelpRequested(dir, attempt, failure);
         this.log(
-          `awaiting model provider for ${workKey(ref)}: attempt ${attempt} ended by a model provider failure ` +
+          `awaiting model provider for ${workKeyOf(work)}: attempt ${attempt} ended by a model provider failure ` +
             `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
         );
       }
@@ -2080,7 +2157,7 @@ export class SweepEngine {
 
     if (settlement.recorded) {
       this.log(
-        `model provider failure on attempt ${attempt} of ${workKey(ref)}: ${failure.message} — ` +
+        `model provider failure on attempt ${attempt} of ${workKeyOf(work)}: ${failure.message} — ` +
           `retry ${settlement.consumed}/${config.modelProvider.maxRetries} after ${settlement.waitMs}ms ` +
           "(the recovery budget is untouched)",
       );
@@ -2097,11 +2174,11 @@ export class SweepEngine {
    * worker and no budget return until a later sweep gets an answer.
    */
   private async reconcileRepairAttempts(
-    works: readonly ReservedWorkEntry[],
+    works: readonly ReservedWorkInput[],
     inFlight: ReadonlySet<string>,
   ): Promise<void> {
     for (const work of works) {
-      const key = workKey(work.ref);
+      const key = workKeyOf(work.work);
       // A live worker owns its attempt: settling it mid-flight would read a
       // half-written branch as a verdict.
       if (inFlight.has(key)) continue;
@@ -2119,7 +2196,7 @@ export class SweepEngine {
       let localWork: LocalWorkFacts | null;
       if (stored.attempt !== null) {
         cycle = stored;
-        localWork = await this.inspectLocalWork(work.ref);
+        localWork = await this.inspectLocalWork(work.work);
       } else {
         const adopted = await this.adoptLegacyCycle(work, stored);
         if (adopted === null) continue;
@@ -2127,13 +2204,18 @@ export class SweepEngine {
         localWork = adopted.attempt?.localWork ?? null;
       }
 
-      const remote = await this.observeRemote(work.ref);
+      const remote = await this.observeRemote(work.work);
       // The premise is part of the verdict (issue 149): a remote the attempt
       // did not produce is a concurrent change ONLY while the impediment the
       // round addressed still exists — a human's own resolution is never
       // taken for a reason to ask for help. The read happens once per
       // settlement: a settled or attempt-less cycle never reaches this line.
-      const premise = readRepairPremise(await this.deps.tracker.readPrRepairFacts(work.ref)).premise;
+      const premise = readRepairPremise(
+        await this.deps.pullRequests.readPullRequestRepairFacts({
+          work: work.work,
+          pullRequest: activePullRequestOf(work.dir),
+        }),
+      ).premise;
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
@@ -2149,17 +2231,17 @@ export class SweepEngine {
    * loud, and no worker is launched on top of it.
    */
   private async reconcileUnconfirmedStops(
-    works: readonly ReservedWorkEntry[],
+    works: readonly ReservedWorkInput[],
     inFlight: ReadonlySet<string>,
   ): Promise<void> {
-    const held: Array<{ dir: string; ref: IssueRef; attempt: number; because: string }> = [];
+    const held: Array<{ dir: string; work: WorkIdentity; attempt: number; because: string }> = [];
     for (const work of works) {
-      const key = workKey(work.ref);
+      const key = workKeyOf(work.work);
       if (inFlight.has(key)) continue;
       const ledger = await readRecoveryLedger(work.dir);
       const stop = ledger.lastStop;
       if (stop === null || stop.kind !== "stop-unconfirmed") continue;
-      held.push({ dir: work.dir, ref: work.ref, attempt: stop.attempt, because: stop.because });
+      held.push({ dir: work.dir, work: work.work, attempt: stop.attempt, because: stop.because });
     }
     if (held.length === 0) {
       this.reportedStopHolds.clear();
@@ -2167,7 +2249,7 @@ export class SweepEngine {
     }
 
     for (const entry of held) {
-      const key = workKey(entry.ref);
+      const key = workKeyOf(entry.work);
       const because = this.stopHoldReason(this.liveness, key);
       if (because !== null) {
         this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
@@ -2195,7 +2277,7 @@ export class SweepEngine {
   /** The cycle a legacy reparo.json implies (issue 112): the budget was charged
    *  and the registry shows an attempt after the last recorded outcome — the
    *  attempt whose observed head only the evidence signature names. */
-  private async adoptLegacyCycle(work: ReservedWorkEntry, cycle: RepairCycle): Promise<RepairCycle | null> {
+  private async adoptLegacyCycle(work: ReservedWorkInput, cycle: RepairCycle): Promise<RepairCycle | null> {
     const ledger = await readAttemptLedger(work.dir);
     const candidate = legacyRepairAttempt({
       cycle,
@@ -2203,7 +2285,7 @@ export class SweepEngine {
       recordedAttempt: ledger.recordedAttempt,
     });
     if (candidate === null) return null;
-    const localWork = await this.inspectLocalWork(work.ref);
+    const localWork = await this.inspectLocalWork(work.work);
     return { ...cycle, attempt: { ...candidate, localWork } };
   }
 
@@ -2255,27 +2337,27 @@ export class SweepEngine {
   /** Record that the remote moved to a head the attempt did not produce: the
    *  derivation then blocks the work with the help request (issue 112). */
   private async markConcurrentChange(
-    ref: IssueRef,
+    work: WorkIdentity,
     attempt: RepairAttempt,
     remoteHeadSha: string | null,
   ): Promise<void> {
-    const dir = workDir(this.deps.workspace, ref.repo, ref.number);
+    const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
     const cycle = await readRepairCycle(dir);
     await writeRepairCycle(dir, {
       ...cycle,
       attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
     });
     this.log(
-      `repair attempt ${attempt.attempt} of ${workKey(ref)}: the remote branch ` +
+      `repair attempt ${attempt.attempt} of ${workKeyOf(work)}: the remote branch ` +
         `${describeRemoteChange(remoteHeadSha)} while the attempt's observed head was ` +
         `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
     );
   }
 
   /** The local work of a work, or null when git cannot answer — never "nothing there". */
-  private async inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts | null> {
+  private async inspectLocalWork(work: WorkIdentity): Promise<LocalWorkFacts | null> {
     try {
-      return await this.deps.git.inspectLocalWork(ref);
+      return await this.deps.git.inspectLocalWorkFor(work);
     } catch {
       return null;
     }
@@ -2283,9 +2365,9 @@ export class SweepEngine {
 
   /** The remote head now, or the honest uncertainty (an unreadable remote is
    *  not an empty branch). */
-  private async observeRemote(ref: IssueRef): Promise<RemoteObservation> {
+  private async observeRemote(work: WorkIdentity): Promise<RemoteObservation> {
     try {
-      return { known: true, headSha: await this.deps.git.observeRemoteHead(ref) };
+      return { known: true, headSha: await this.deps.git.observeRemoteHeadFor(work) };
     } catch {
       return { known: false };
     }
@@ -2297,13 +2379,13 @@ export class SweepEngine {
    *  attributable once the remote answers (issue 112). */
   private async recordRepairRound(
     dir: string,
-    ref: IssueRef,
+    work: WorkIdentity,
     trigger: RepairTrigger,
     attempt: number,
     localWork: LocalWorkFacts | null,
   ): Promise<void> {
     const cycle = await readRepairCycle(dir);
-    const signature = repairSignature(ref, trigger);
+    const signature = repairSignature(work, trigger);
     await writeRepairCycle(dir, {
       usedRounds: cycle.usedRounds + 1,
       lastEvidence: signature,
@@ -2337,12 +2419,21 @@ export class SweepEngine {
       origin: "collected",
     });
     this.collected.push({
-      ref: launchable.ref,
+      work: launchable.work,
       result,
       prConfirmed: outcome.prConfirmed,
       ruling: outcome.ruling,
     });
     return outcome.next;
+  }
+
+  /** The PR read target of one launch: the association the derivation saw, or
+   *  the code host's own linkage when none is known. */
+  private launchPullRequest(launchable: Launchable): WorkPullRequest {
+    return {
+      work: launchable.work,
+      pullRequest: launchable.pr?.identity ?? activePullRequestOf(launchable.dir),
+    };
   }
 
   /**
@@ -2357,14 +2448,14 @@ export class SweepEngine {
    */
   private async applyEnd(launchable: Launchable, end: AttemptEnd): Promise<RulingApplied> {
     const { dir, attempt, consecutiveFall, origin } = end;
-    const { config, tracker, workspace } = this.deps;
-    const ref = launchable.ref;
-    const key = workKey(ref);
+    const { config, tickets, pullRequests, workspace } = this.deps;
+    const { work } = launchable;
+    const key = workKeyOf(work);
 
-    const feedback = await tracker.readPrFeedback(ref);
+    const feedback = await pullRequests.readPullRequestFeedback(this.launchPullRequest(launchable));
     const pr = feedback.known ? feedback.value.pr : null;
     const prConfirmed = pr !== null && pr.state === "open";
-    const issue = await tracker.readIssue(ref);
+    const issue = await tickets.readTicket(work.ticket);
     const blockedLabelOnIssue = issue.known && issue.value.labels.includes(config.labels.blocked);
     const record = await readOutcomeRecord(dir);
     const ruling = await classifyOutcome({
@@ -2389,11 +2480,7 @@ export class SweepEngine {
     // its own. Persistence never changes the ruling above.
     if (pr !== null) {
       try {
-        recordPrAssociation(dir, {
-          work: workOfIssueRef(ref),
-          pullRequest: pullRequestIdentity(githubRepository(ref.repo), pr.number),
-          attempt,
-        });
+        recordPrAssociation(dir, { work, pullRequest: pr.identity, attempt });
       } catch (error) {
         this.log(
           `PR association of ${key} was not persisted (${describeError(error)}) — ` +
@@ -2420,10 +2507,10 @@ export class SweepEngine {
           `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
             "(fallback of the linkage), then archives",
         );
-        await this.completeMergedWork(ref, fallbackDoneComment());
+        await this.completeMergedWork(work, fallbackDoneComment());
       } else {
         this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
-        await this.finishWork(ref);
+        await this.finishWork(work);
       }
       resulting = null;
     } else if (ruling.decision === "reserve") {
@@ -2458,7 +2545,8 @@ export class SweepEngine {
             "stop owns that end — it resumes now, spending no recovery",
         );
         next = {
-          ref,
+          work,
+          dir,
           kind: "recover",
           createdAt: null,
           pr,
@@ -2477,7 +2565,8 @@ export class SweepEngine {
           );
         }
         next = {
-          ref,
+          work,
+          dir,
           // A model provider failure retries on its own budget; an interruption of
           // the agent keeps issue 123's recovery. Either way the SAME attempt
           // continues, with the material of the interrupted launch preserved.
@@ -2494,17 +2583,17 @@ export class SweepEngine {
         `${origin} ${key}: fall without PR — release (claimed→ready back; ` +
           "the branch stays, the next sweep picks it up)",
       );
-      await this.applyRelease(ref);
+      await this.applyRelease(work);
       resulting = "eligible";
     } else {
       await this.settleFailure(dir, attempt, record);
       this.log(
         `${origin} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
       );
-      await this.applyBlockWithComment(ref, ruling.comment);
+      await this.applyBlockWithComment(work, ruling.comment);
       resulting = "reserved";
     }
-    this.announce(ref, resulting);
+    this.announce(work, resulting);
 
     // One notice per new occurrence: an applied block already notified help
     // (applyBlockWithComment), so here only the label/self-report of a work
@@ -2517,9 +2606,10 @@ export class SweepEngine {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch =
         origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
-      if (blockedLabelOnIssue || selfReportedNow) {
+      const ref = issueRefOfTicket(work.ticket);
+      if (ref !== null && (blockedLabelOnIssue || selfReportedNow)) {
         await this.deliverNotice(helpNotice(ref));
-      } else if (isReviewLaunch && prConfirmed && pr !== null) {
+      } else if (ref !== null && isReviewLaunch && prConfirmed && pr !== null) {
         await this.deliverNotice(reviewNotice(ref, pr.number));
       }
     }
@@ -2541,9 +2631,9 @@ export class SweepEngine {
    *  the assignee of the worker account released — the work re-enters the
    *  pool, the branch stays. One write pair, one helper: the derivation's
    *  unreconciled release and the collection's ruled release share it. */
-  private async applyRelease(ref: IssueRef): Promise<void> {
-    const { tracker, config } = this.deps;
-    await tracker.releaseClaim(ref, config.workerGhAccount, config.labels.ready);
+  private async applyRelease(work: WorkIdentity): Promise<void> {
+    const { tickets, config } = this.deps;
+    await tickets.releaseTicketClaim(work.ticket, config.workerGhAccount, config.labels.ready);
   }
 
   /** The block transition every 2nd fall and every rejection shares: the
@@ -2551,29 +2641,30 @@ export class SweepEngine {
    *  state) and the diagnosis is commented on the issue — the human must
    * SEE why it fell before deciding to resume. Applying a block IS the
    * new occurrence, so the help notice is delivered here, once. */
-  private async applyBlockWithComment(ref: IssueRef, comment: string): Promise<void> {
-    const { tracker, config } = this.deps;
-    await tracker.blockClaim(ref, config.labels);
-    await tracker.comment(ref, comment);
-    await this.deliverNotice(helpNotice(ref));
+  private async applyBlockWithComment(work: WorkIdentity, comment: string): Promise<void> {
+    const { tickets, config } = this.deps;
+    await tickets.blockTicketClaim(work.ticket, config.labels);
+    await tickets.commentOnTicket(work.ticket, comment);
+    const ref = issueRefOfTicket(work.ticket);
+    if (ref !== null) await this.deliverNotice(helpNotice(ref));
   }
 
   /** The done duties on real disk and real git: archive the work's artifacts
    * (trabalhos/ → arquivo/, nothing deleted) and clean the branches. */
-  private async finishWork(ref: IssueRef): Promise<void> {
-    await archiveDoneWork(this.deps.workspace, ref);
-    await this.deps.git.cleanupDoneWork(ref);
+  private async finishWork(work: WorkIdentity): Promise<void> {
+    await archiveDoneWorkFor(this.deps.workspace, work);
+    await this.deps.git.cleanupDoneWorkFor(work);
   }
 
   /** The delivery a merge without closure implies: close the issue with the
    *  short fallback comment, then archive and clean — done must always be
    *  reflected on the tracker (ticket 04 Q11). Shared by the derivation's
    *  done-fallback and by a merge that landed mid-round (issue 149). */
-  private async completeMergedWork(ref: IssueRef, comment: string): Promise<void> {
-    const { tracker } = this.deps;
-    await tracker.markDone(ref);
-    await tracker.comment(ref, comment);
-    await this.finishWork(ref);
+  private async completeMergedWork(work: WorkIdentity, comment: string): Promise<void> {
+    const { tickets } = this.deps;
+    await tickets.markTicketDone(work.ticket);
+    await tickets.commentOnTicket(work.ticket, comment);
+    await this.finishWork(work);
   }
 
   /** Best-effort delivery of one occurrence notice; a failure only logs. A
@@ -2595,9 +2686,9 @@ export class SweepEngine {
   /** A collected work never stays launchable in this process's memory — nor
    *  does a survivor's pending recovery for it. */
   private discardFromCacheAndParked(key: string): void {
-    this.cache = this.cache.filter((entry) => workKey(entry.ref) !== key);
-    this.parkedQueue = this.parkedQueue.filter((entry) => workKey(entry.ref) !== key);
-    this.survivorRecoveries = this.survivorRecoveries.filter((entry) => workKey(entry.ref) !== key);
+    this.cache = this.cache.filter((entry) => workKeyOf(entry.work) !== key);
+    this.parkedQueue = this.parkedQueue.filter((entry) => workKeyOf(entry.work) !== key);
+    this.survivorRecoveries = this.survivorRecoveries.filter((entry) => workKeyOf(entry.work) !== key);
   }
 
   private serializePrepare<T>(repo: string, prepare: () => Promise<T>): Promise<T> {
@@ -2615,6 +2706,13 @@ export class SweepEngine {
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";
+
+/** The legacy GitHub key of a surviving container that has no readable
+ * reservation: the transitional bridge only (a non-GitHub key yields null). */
+function legacyWorkOfKey(key: string): WorkIdentity | null {
+  const parsed = parseWorkKey(key);
+  return parsed === null ? null : workOfIssueRef(parsed);
+}
 
 const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
@@ -2738,15 +2836,19 @@ interface RepairLaunchContext {
  * known, never a lie.
  */
 async function launchMaterial(
-  tracker: TrackerPort,
-  git: GitWork,
-  ref: IssueRef,
-  issueReplies?: IssueComment[],
+  tickets: TicketTracker,
+  pullRequests: PullRequestTracker,
+  git: ExpandedGitWork,
+  launchable: Launchable,
   repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {
-  const issue = await tracker.readIssue(ref);
-  const feedback = await tracker.readPrFeedback(ref);
-  const diff = await git.diffWork(ref);
+  const { work, issueReplies } = launchable;
+  const issue = await tickets.readTicket(work.ticket);
+  const feedback = await pullRequests.readPullRequestFeedback({
+    work,
+    pullRequest: launchable.pr?.identity ?? activePullRequestOf(launchable.dir),
+  });
+  const diff = await git.diffWorkFor(work);
 
   const pr =
     feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open"

@@ -76,7 +76,8 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
   function wiredDeps(tracker: FakeTrackerAdapter, runtime: FakeWorkerRuntime) {
     return wireRunDeps(loadConfigFrom(dir), layout, {
       seams: {
-        tracker,
+        tickets: tracker,
+        pullRequests: tracker,
         runtime,
         // The REAL git host code, offline: the clone URL points at the
         // local bare fixture — the same class the live run exercises.
