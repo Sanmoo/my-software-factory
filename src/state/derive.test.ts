@@ -13,9 +13,11 @@ import {
   renderUnbackedClaim,
   renderUnmarkedReservation,
 } from "./derive.js";
-import { DEFAULT_LABELS, DEFAULT_RECOVERY_BUDGET } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
+import { appendAttemptEvent } from "../runtime/attempt-logs.js";
+import { settleProviderFailure } from "../pool/provider.js";
 
 /** The pool-only view over the single derivation, for the tests of the pool's rules. */
 const derivePool = async (
@@ -357,6 +359,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       "bot",
       layout,
       DEFAULT_RECOVERY_BUDGET,
+      DEFAULT_PROVIDER_BUDGET,
     );
     assert.ok(derived, "the work was derived");
     return derived;
@@ -510,6 +513,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
         "bot",
         layout,
         DEFAULT_RECOVERY_BUDGET,
+        DEFAULT_PROVIDER_BUDGET,
         inFlight,
       );
       assert.ok(derived);
@@ -544,6 +548,64 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.state, "interrupted");
       assert.equal(derived.attempt, 1, "the interrupted attempt keeps its number");
       assert.equal(derived.recovery.decision, "recover");
+    });
+
+    /** The attempt's stream line of a provider failure, as the runtime records it. */
+    function providerErrorLog(path: string, attempt: number, at = 1_700_000_000_000): void {
+      appendAttemptEvent(path, attempt, {
+        event: "agent-raw",
+        iteration: 1,
+        line: JSON.stringify({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            provider: "opencode-go",
+            model: "fake/model",
+            stopReason: "error",
+            errorMessage: "429: upstream unavailable",
+            timestamp: at,
+          },
+        }),
+      });
+    }
+
+    test("claimed, no PR, the stream carries a provider error → provider-failure on its own budget (issue 144)", async () => {
+      seedIssue(adapter, { repo: REPO, number: 26, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(26);
+      providerErrorLog(path, 1);
+
+      const derived = await deriveFrom(path, 26);
+
+      assert.equal(derived.state, "provider-failure", "a provider error is not an interruption of the agent");
+      assert.equal(derived.attempt, 1);
+      if (derived.state !== "provider-failure") assert.fail("expected a provider-failure derivation");
+      assert.equal(derived.failure.message, "429: upstream unavailable");
+      assert.equal(derived.provider.decision, "retry");
+      assert.equal(derived.provider.decision === "retry" && derived.provider.waitMs, 15_000, "the provider's own backoff");
+    });
+
+    test("claimed, no PR, the provider budget exhausted → awaiting provider; a human answer resumes it (issue 144)", async () => {
+      seedIssue(adapter, { repo: REPO, number: 27, labels: [DEFAULT_LABELS.claimed] });
+      const path = workDirFor(27);
+      providerErrorLog(path, 1, 1_700_000_000_777);
+      for (let index = 0; index < DEFAULT_PROVIDER_BUDGET.maxRetries; index += 1) {
+        await settleProviderFailure(path, DEFAULT_PROVIDER_BUDGET, 1, {
+          message: "429: upstream unavailable",
+          at: `2026-01-01T00:00:0${index}.000Z`,
+        });
+      }
+      await settleProviderFailure(path, DEFAULT_PROVIDER_BUDGET, 1, {
+        message: "429: upstream unavailable",
+        at: "2026-01-01T00:00:09.000Z",
+      });
+
+      const waiting = await deriveFrom(path, 27);
+      assert.equal(waiting.state, "provider-failure");
+      assert.equal(waiting.state === "provider-failure" && waiting.provider.decision, "await-provider");
+
+      adapter.addComment({ repo: REPO, number: 27 }, "operator", "the provider is back — go on");
+      const resumed = await deriveFrom(path, 27);
+      assert.equal(resumed.state, "resumable", "the help request is a channel: the human's answer resumes the work");
     });
 
     test("claimed, no PR, TWO interrupted attempts do not block: the last attempt is recovered", async () => {

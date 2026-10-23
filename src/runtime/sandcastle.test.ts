@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { pi, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
+import { pi, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import type { DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
@@ -25,6 +25,7 @@ import {
   unixSocketPath,
   workerShapedDockerRun,
 } from "./sandcastle.js";
+import { readTurnProviderError } from "./provider-error.js";
 import type { WorkRequest } from "./port.js";
 
 /**
@@ -465,6 +466,47 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
 
     assert.ok(readLines(join(request.workDir, "log-2.jsonl"))[0]?.includes("session-start"));
     assert.ok(existsSync(join(request.workDir, "sessao")));
+  });
+
+  test("a provider error in the stream is readable from the attempt's own log (issue 144)", async () => {
+    const at = 1_792_571_444_513;
+    const emitting = new SandcastleRuntime({
+      model: MODEL,
+      token: "t",
+      profileDir,
+      workspace: root,
+      dockerSocket,
+      preflight: async () => {},
+      runSandcastle: async (options) => {
+        const logging = options.logging as { onAgentStreamEvent?: (event: AgentStreamEvent) => void };
+        logging.onAgentStreamEvent?.({
+          type: "raw",
+          iteration: 1,
+          timestamp: new Date(),
+          line: JSON.stringify({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              provider: "opencode-go",
+              model: "deepseek-v4.1-flash",
+              stopReason: "error",
+              errorMessage: '429: {"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}',
+              timestamp: at,
+            },
+          }),
+        });
+        return { iterations: [], stdout: "", commits: [], branch: request.branch };
+      },
+      dockerProvider: () => dummySandbox(),
+    });
+
+    const result = await emitting.launch(request);
+
+    assert.equal(result.outcome, "abrupt-death");
+    assert.deepEqual(await readTurnProviderError(request.workDir, 1), {
+      message: '429: {"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}',
+      at: new Date(at).toISOString(),
+    });
   });
 
   test("a preflight failure throws before any footprint — infra is not a work fall", async () => {

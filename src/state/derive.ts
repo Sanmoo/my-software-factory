@@ -1,4 +1,4 @@
-import type { Labels, RecoveryBudget } from "../config.js";
+import type { Labels, ProviderBudget, RecoveryBudget } from "../config.js";
 import type {
   IssueComment,
   IssueRef,
@@ -24,6 +24,12 @@ import {
 } from "./outcome.js";
 import { readAttemptLedger } from "../pool/registry.js";
 import { peekRecovery, readRecoveryLedger, type RecoveryDecision } from "../pool/recovery.js";
+import {
+  providerDecision,
+  readProviderLedger,
+  type ProviderDecision,
+} from "../pool/provider.js";
+import { readTurnProviderError, type ProviderFailure } from "../runtime/provider-error.js";
 import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
@@ -390,6 +396,16 @@ export type ReservedDerivation =
    *  a failure: the same attempt is recovered within the persisted budget, or
    *  the exhausted budget pauses the work and asks the operator for help. */
   | { ref: IssueRef; state: "interrupted"; attempt: number; recovery: RecoveryDecision }
+  /** A PROVIDER FAILURE (issue 144): the attempt's stream ended in a provider
+   *  error, so it retries on its own budget instead of the interruption's — or
+   *  awaits the operator when that budget is exhausted (never a block). */
+  | {
+      ref: IssueRef;
+      state: "provider-failure";
+      attempt: number;
+      failure: ProviderFailure;
+      provider: ProviderDecision;
+    }
   /** Never acted on: the issue is gone, or closed as not-planned (not done). */
   | { ref: IssueRef; state: "unknown"; because: "issue-not-found" | "not-planned" };
 
@@ -406,11 +422,12 @@ export async function deriveReserved(
   workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
+  provider: ProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation[]> {
   return Promise.all(
     reserved.map((work) =>
-      deriveReservedWork(port, work, labels, workerAccount, workspace, recovery, inFlight),
+      deriveReservedWork(port, work, labels, workerAccount, workspace, recovery, provider, inFlight),
     ),
   );
 }
@@ -422,6 +439,7 @@ async function deriveReservedWork(
   _workerAccount: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
+  provider: ProviderBudget,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
   const { ref } = work;
@@ -454,9 +472,7 @@ async function deriveReservedWork(
       if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
         return { ref, state: "idle" };
       }
-      const feedback = await port.readPrFeedback(ref);
-      const pr = feedback.known ? feedback.value.pr : null;
-      return { ref, state: "resumable", pr, createdAt: issue.value.createdAt, issueReplies };
+      return resumableState(port, ref, issue.value.createdAt, issueReplies);
     }
     return { ref, state: "idle" };
   }
@@ -575,6 +591,8 @@ async function deriveReservedWork(
     if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
       return { ref, state: "idle" };
     }
+    const providerFailure = await deriveProviderFailure(port, ref, work.dir, issue.value.createdAt, provider);
+    if (providerFailure !== null) return providerFailure;
     return deriveUnreconciledAttempt(ref, work.dir, workspace, recovery, inFlight);
   }
   return { ref, state: "idle" };
@@ -631,6 +649,56 @@ async function deriveUnreconciledAttempt(
     attempt: ledger.lastAttempt,
     recovery: await peekRecovery(dir, recovery, ledger.lastAttempt),
   };
+}
+
+/**
+ * The provider-failure derivation of a claimed work whose current attempt wrote
+ * no outcome record (issue 144), or null when the attempt's stream carries no
+ * provider error — an ordinary interruption, a written outcome, or a settled
+ * attempt. A provider error retries on its own budget; exhausted, it awaits the
+ * operator — a help request a human answer resumes, never a block.
+ */
+async function deriveProviderFailure(
+  port: TrackerPort,
+  ref: IssueRef,
+  dir: string,
+  createdAt: string,
+  provider: ProviderBudget,
+): Promise<ReservedDerivation | null> {
+  const ledger = await readAttemptLedger(dir);
+  if (ledger.lastAttempt === 0) return null;
+  const record = await readOutcomeRecord(dir);
+  if (ownWrittenOutcome(record, ledger.lastAttempt) !== null) return null;
+  if (selfReportedBlocked(record, ledger.lastAttempt)) return null;
+
+  const failure = await readTurnProviderError(dir, ledger.lastAttempt);
+  if (failure === null) return null;
+
+  const providerLedger = await readProviderLedger(dir);
+  const decision = providerDecision(providerLedger, provider, ledger.lastAttempt, failure);
+  if (decision.decision === "await-provider") {
+    // The provider budget is exhausted: the work waits for the operator — a
+    // help request, never a block. A human answer after the marker resumes it,
+    // the same channel a blocked work listens to.
+    const comments = await port.readComments(ref);
+    const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
+    if (issueReplies.length > 0) return resumableState(port, ref, createdAt, issueReplies);
+  }
+  return { ref, state: "provider-failure", attempt: ledger.lastAttempt, failure, provider: decision };
+}
+
+/** The retomada: a human answer after the marker resumes the work on its
+ *  existing branch and PR — shared by the blocked channel and the provider
+ *  awaiting (issue 144), so their shape cannot drift apart. */
+async function resumableState(
+  port: TrackerPort,
+  ref: IssueRef,
+  createdAt: string,
+  issueReplies: IssueComment[],
+): Promise<ReservedDerivation> {
+  const feedback = await port.readPrFeedback(ref);
+  const pr = feedback.known ? feedback.value.pr : null;
+  return { ref, state: "resumable", pr, createdAt, issueReplies };
 }
 
 /**

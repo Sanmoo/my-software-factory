@@ -9,6 +9,7 @@ import {
   DEFAULT_CONCURRENCY,
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
 } from "./config.js";
 
@@ -249,6 +250,69 @@ describe("config", () => {
         ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `recovery:\n  waits-ms: ${bad}`].join("\n"),
       );
       assert.throws(() => loadConfig(path), /recovery\.waits-ms/, `rejected: ${bad}`);
+    }
+  });
+
+  // ---- the provider-failure budget (issue 144) ----
+
+  test("the provider budget defaults to 4 retries at 15/30/60/120 s — a dedicated outage backoff", () => {
+    const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.provider, DEFAULT_PROVIDER_BUDGET);
+    assert.deepEqual(config.provider, {
+      maxRetries: 4,
+      waitsMs: [15_000, 30_000, 60_000, 120_000],
+    });
+  });
+
+  test("the provider budget is configurable — the value and the backoff are the operator's", () => {
+    const path = writeYaml(
+      dir,
+      [
+        "worker-gh-account: bot",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: [Sanmoo/a]",
+        "provider:",
+        "  max-retries: 2",
+        "  waits-ms: [500, 2000]",
+      ].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.provider, { maxRetries: 2, waitsMs: [500, 2000] });
+  });
+
+  test("a partially given provider mapping keeps the default for the missing key", () => {
+    const path = writeYaml(
+      dir,
+      ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "provider:", "  max-retries: 0"].join("\n"),
+    );
+
+    const config = loadConfig(path);
+
+    assert.deepEqual(config.provider, { maxRetries: 0, waitsMs: DEFAULT_PROVIDER_BUDGET.waitsMs });
+  });
+
+  test("provider.max-retries must be a non-negative integer when given", () => {
+    for (const bad of ["-1", "1.5", '"three"']) {
+      const path = writeYaml(
+        dir,
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `provider:\n  max-retries: ${bad}`].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /provider\.max-retries/, `rejected: ${bad}`);
+    }
+  });
+
+  test("provider.waits-ms must be a non-empty list of non-negative milliseconds when given", () => {
+    for (const bad of ["[]", "[1, -2]", "[1, nope]", "3"]) {
+      const path = writeYaml(
+        dir,
+        ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", `provider:\n  waits-ms: ${bad}`].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /provider\.waits-ms/, `rejected: ${bad}`);
     }
   });
 

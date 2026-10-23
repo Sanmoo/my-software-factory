@@ -16,6 +16,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_PROVIDER_BUDGET,
   type Config,
 } from "../config.js";
 import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../pool/repair.js";
@@ -108,6 +109,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),
@@ -1245,6 +1247,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(root, "msf.yaml"),

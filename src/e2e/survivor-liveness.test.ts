@@ -5,7 +5,7 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { runForever, runOnce, type LoopDeps } from "../loop.js";
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
@@ -113,6 +113,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       profileAllowedRoots: [],
       profileSkipDanglingLinks: false,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
+      provider: { ...DEFAULT_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       configPath: join(dir, "msf.yaml"),

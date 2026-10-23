@@ -59,6 +59,28 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
 };
 
 /**
+ * The provider-failure budget (issue 144): an attempt whose stream ended in a
+ * provider error (`stopReason: error` + the provider's `errorMessage`) is not
+ * an interruption of the agent, so it retries on this dedicated schedule
+ * instead of spending the interruption budget of issue 123. The waits are
+ * deliberately longer than the recovery backoff: they must cross a short
+ * upstream outage, and every retry also carries the session's own internal
+ * retries. Exhausting it parks the work "awaiting provider" and asks the
+ * operator for help — never a block.
+ */
+export interface ProviderBudget {
+  /** Retries allowed for one attempt after provider failures. */
+  maxRetries: number;
+  /** Wait before each retry, by index; the last value repeats. */
+  waitsMs: readonly number[];
+}
+
+export const DEFAULT_PROVIDER_BUDGET: ProviderBudget = {
+  maxRetries: 4,
+  waitsMs: [15_000, 30_000, 60_000, 120_000],
+};
+
+/**
  * The liveness observation of the factory (issue 118): while Docker does not
  * answer, the factory cannot tell a live worker from a dead one, so it stops
  * launching instead of guessing. The warning threshold is how long the
@@ -101,6 +123,8 @@ export interface Config {
   profileSkipDanglingLinks: boolean;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
+  /** The provider-failure budget: its own retries and backoff (issue 144). */
+  provider: ProviderBudget;
   /** How the operational cycle reads Docker's silence (issue 118). */
   liveness: LivenessPolicy;
   notifications: boolean;
@@ -150,6 +174,7 @@ export function loadConfig(filePath: string): Config {
   const profileAllowedRoots = optionalProfileAllowedRoots(doc);
   const profileSkipDanglingLinks = optionalProfileSkipDanglingLinks(doc);
   const recovery = optionalRecovery(doc);
+  const provider = optionalProvider(doc);
   const liveness = optionalLiveness(doc);
   const notifications = optionalNotifications(doc);
 
@@ -163,6 +188,7 @@ export function loadConfig(filePath: string): Config {
     profileAllowedRoots,
     profileSkipDanglingLinks,
     recovery,
+    provider,
     liveness,
     notifications,
     configPath: absolute,
@@ -272,6 +298,37 @@ function optionalRecovery(doc: Record<string, unknown>): RecoveryBudget {
   const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_RECOVERY_BUDGET.waitsMs];
 
   return { maxRecoveries, waitsMs };
+}
+
+function optionalProvider(doc: Record<string, unknown>): ProviderBudget {
+  const value = doc["provider"];
+  if (value === undefined)
+    return { maxRetries: DEFAULT_PROVIDER_BUDGET.maxRetries, waitsMs: [...DEFAULT_PROVIDER_BUDGET.waitsMs] };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(`config field "provider" must be a mapping when given`);
+  }
+  const given = value as Record<string, unknown>;
+
+  const max = given["max-retries"];
+  if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 0)) {
+    throw new ConfigError(`config field "provider.max-retries" must be a non-negative integer when given`);
+  }
+  const maxRetries = (max as number | undefined) ?? DEFAULT_PROVIDER_BUDGET.maxRetries;
+
+  const waits = given["waits-ms"];
+  if (
+    waits !== undefined &&
+    (!Array.isArray(waits) ||
+      waits.length === 0 ||
+      waits.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0))
+  ) {
+    throw new ConfigError(
+      `config field "provider.waits-ms" must be a non-empty list of non-negative milliseconds when given`,
+    );
+  }
+  const waitsMs = (waits as number[] | undefined) ?? [...DEFAULT_PROVIDER_BUDGET.waitsMs];
+
+  return { maxRetries, waitsMs };
 }
 
 function optionalNotifications(doc: Record<string, unknown>): boolean {

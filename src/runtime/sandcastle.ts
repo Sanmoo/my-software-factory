@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -24,7 +24,7 @@ import {
   type ActivityWatch,
 } from "./activity.js";
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
-import { eventLogName, sandcastleLogName } from "./attempt-logs.js";
+import { sandcastleLogName, appendAttemptEvent } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 const execFile = promisify(execFileCallback);
@@ -383,9 +383,8 @@ export class SandcastleRuntime implements WorkerRuntime {
       idleMs,
       pollMs: this.activityPollMs,
       onIdle: (measured) => {
-        this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
+        appendAttemptEvent(request.workDir, request.attempt, {
           event: "activity-idle",
-          attempt: request.attempt,
           idleMs: Math.round(measured),
         });
         controller.abort(
@@ -535,11 +534,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   private event(request: WorkRequest, event: string, extra: Record<string, unknown> = {}): void {
-    this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
-      event,
-      attempt: request.attempt,
-      ...extra,
-    });
+    appendAttemptEvent(request.workDir, request.attempt, { event, ...extra });
   }
 
   private agentEvent(request: WorkRequest, event: AgentStreamEvent): void {
@@ -549,15 +544,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         : event.type === "toolCall"
           ? { event: "agent-tool", tool: event.name, args: event.formattedArgs }
           : { event: "agent-raw", line: event.line };
-    this.appendLine(join(request.workDir, eventLogName(request.attempt)), {
-      attempt: request.attempt,
-      iteration: event.iteration,
-      ...payload,
-    });
-  }
-
-  private appendLine(path: string, value: Record<string, unknown>): void {
-    appendFileSync(path, `${JSON.stringify(value)}\n`, "utf8");
+    appendAttemptEvent(request.workDir, request.attempt, { iteration: event.iteration, ...payload });
   }
 }
 
