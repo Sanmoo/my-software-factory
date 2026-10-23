@@ -52,12 +52,11 @@ node dist/cli.js status      # the trail, read-only
 ```
 
 The worker model is required in `msf.yaml`; invocations do not select it.
-Model credentials come from Pi's supported provider API-key variables in the
-factory's environment or from `worker-auth-file` — never from a personal
-profile. `npm run build:image` provisions every declared skill, extension and
-reviewer agent into the image. The operator's exact script — build, credentials,
-clean-host verification and the real proof — lives in the
-[RUNBOOK](docs/RUNBOOK.md) (ticket 18).
+`npm run build:image` provisions every declared skill, extension and reviewer
+agent into the image; the worker needs no Pi on the host and no personal
+profile. The operator's exact script — build, model credentials, clean-host
+verification and the real proof — lives in the [RUNBOOK](docs/RUNBOOK.md)
+(ticket 18).
 
 ## Design
 

@@ -56,6 +56,8 @@ the image tag — a failed build leaves the previous valid image in place.
 
 - **Update a resource**: change `agent-resources.json` in a reviewed commit,
   then `npm run build:image`. Never edit files inside a running image.
+- **Upgrading from the profile snapshot**: `profile-allowed-roots` and
+  `profile-skip-dangling-links` no longer exist — delete them from `msf.yaml`.
 - **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`
   shows what the image actually contains. A launch whose image differs from
   the checkout's declaration fails at boot with the differences and the
