@@ -28,7 +28,7 @@ import {
  * never removed (a replaced PR stays inspectable).
  */
 
-/** Disk name stays PT-BR with the rest of the registry. */
+/** The association's own file, carried beside the reservation it belongs to. */
 export const PR_ASSOCIATIONS_FILENAME = "associacoes-pr.json";
 
 /** The PR the Work currently has; replaced ones stay as history. */

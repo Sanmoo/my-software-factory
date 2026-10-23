@@ -336,15 +336,15 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   return { attemptsWithoutOwnOutcome, reservedWithoutAttempt, lastOutcome, repair, recovery, archived };
 }
 
-/** This status view's work dirs: a legacy "<repo>#<n>" name, dated copies
- *  included, read through the same depth-bounded traversal the expanded
- *  registry uses. It stays GitHub-only; pool/reservation.ts scanReservations is
- *  the reader that also names reservations of other sources. */
-const LEGACY_WORK_DIR_NAME = /#\d+(-.*)?$/;
-
+/** This status view reads the dirs that carry a legacy "<repo>#<n>" name,
+ *  dated archive copies included. It stays GitHub-only: the expanded registry
+ *  (pool/reservation.ts scanReservations) is the reader that also names
+ *  reservations of other sources, and both traverse through the same
+ *  depth-bounded workDirCandidates. */
 async function workDirs(root: string): Promise<string[]> {
-  const candidates = await workDirCandidates(root, (name) => LEGACY_WORK_DIR_NAME.test(name));
-  return candidates.filter((dir) => LEGACY_WORK_DIR_NAME.test(basename(dir))).sort();
+  const isStatusWorkDir = (name: string): boolean => /#\d+(-.*)?$/.test(name);
+  const candidates = await workDirCandidates(root, isStatusWorkDir);
+  return candidates.filter((dir) => isStatusWorkDir(basename(dir))).sort();
 }
 
 /** The work key of a registry dir: its path relative to the registry root

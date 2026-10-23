@@ -15,8 +15,6 @@ import {
 import { readPersistedRecord, writePersistedRecord, type PersistedFacts, type PersistedFile } from "./persisted.js";
 import {
   anchorOfKey,
-  anchorOfWork,
-  keyOfAnchor,
   workOfAnchor,
   workKeyOf,
   type WorkAnchor,
@@ -129,7 +127,7 @@ export function reserveWork(
   const existing = readPersistedRecord(dir, RESERVATION_FILE);
   if (existing.state === "persisted") {
     const existingWork = workIdentity(existing.record.ticket, existing.record.destination);
-    if (keyOfAnchor(anchorOfWork(existingWork)) !== keyOfAnchor(anchorOfWork(work))) {
+    if (workKeyOf(existingWork) !== key) {
       return {
         key,
         dir,
@@ -173,7 +171,7 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
 
     if (reservation.state === "persisted") {
       const persistedWork = workIdentity(reservation.record.ticket, reservation.record.destination);
-      if (keyOfAnchor(anchorOfWork(persistedWork)) === keyOfAnchor(anchor)) {
+      if (workKeyOf(persistedWork) === key) {
         entries.push({ key, dir, anchor, work: persistedWork, reservation });
       } else {
         // The record and the dir disagree: keep the Work visible by its key,
@@ -203,15 +201,15 @@ function worksRoot(workspace: WorkspaceLayout | string): string {
 
 /**
  * The candidate work dirs of a registry root, at the layout's own depth only:
- * `<root>/<name>` and `<root>/<owner>/<name>`. A top-level dir that is a whole
- * Work of its own is never descended into — a proof's disposable workspace or
- * a session artifact inside it can carry a work-like name, and it is never a
- * reservation of THIS workspace. The caller decides what a whole Work's dir
- * name looks like.
+ * `<root>/<name>` and `<root>/<owner>/<name>`. A top-level dir named like a
+ * whole Work (`isWholeWorkDirName`) is never descended into — a proof's
+ * disposable workspace or a session artifact inside it can carry a work-like
+ * name, and it is never a reservation of THIS workspace. Each caller decides
+ * which of the candidates its own key shape actually names.
  */
 export async function workDirCandidates(
   root: string,
-  isWholeWork: (name: string) => boolean,
+  isWholeWorkDirName: (name: string) => boolean,
 ): Promise<string[]> {
   if (!existsSync(root)) return [];
   const dirs: string[] = [];
@@ -219,7 +217,7 @@ export async function workDirCandidates(
     if (!top.isDirectory()) continue;
     const topDir = join(root, top.name);
     dirs.push(topDir);
-    if (isWholeWork(top.name)) continue;
+    if (isWholeWorkDirName(top.name)) continue;
     for (const nested of await readdir(topDir, { withFileTypes: true })) {
       if (nested.isDirectory()) dirs.push(join(topDir, nested.name));
     }

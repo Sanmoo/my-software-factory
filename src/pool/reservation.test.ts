@@ -149,11 +149,25 @@ describe("reservation record — the Work's persisted source and destination", (
     assert.equal(readFileSync(join(dir, RESERVATION_FILENAME), "utf8"), "{ not json");
   });
 
+  test("a one-segment legacy dir is a Work too — its key is the whole name", async () => {
+    // A repo name without an owner reaches the registry as a single segment;
+    // the same depth-bounded traversal reads it beside the nested ones.
+    const flatDir = join(layout.works, "my-tasks#7");
+    mkdirSync(flatDir, { recursive: true });
+
+    const entries = await scanReservations(layout);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]!.key, "my-tasks#7");
+    assert.deepEqual(entries[0]!.work, {
+      ticket: githubTicket("my-tasks", 7),
+      destination: githubRepository("my-tasks"),
+    });
+  });
+
   test("a pre-record GitHub reservation stays readable and usable where it is — no relocation, no migration", async () => {
     // The legacy dir with only attempt evidence: exactly what an existing
     // workspace holds today.
     const legacyDir = join(layout.works, "Sanmoo", "my-tasks#7");
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(legacyDir, { recursive: true });
     writeFileSync(join(legacyDir, "log-1.jsonl"), "", "utf8");
 
