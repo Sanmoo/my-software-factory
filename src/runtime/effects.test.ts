@@ -51,6 +51,9 @@ describe("the external-effect classifier (issue 119)", () => {
       'git commit -m "fix: a && b"',
       "git commit -m 'x; y'",
       'git commit -m "a & b"',
+      // `|`, `>` and `(` inside `""` are text, so a comment body carrying them
+      // is still one literal argument (and its effect is still journaled).
+      `git commit -m "a | b > c"`,
     ]) {
       assert.equal(classifyCommand(command).safety, "safe", command);
     }
@@ -205,6 +208,16 @@ describe("the external-effect classifier (issue 119)", () => {
     // An expansion OUTSIDE single quotes names a value the classifier cannot
     // see, even when the program itself is on the safe list.
     assert.equal(classifyCommand('git commit -m "cost $5 "').safety, "unknown");
+  });
+
+  test("a quoted pipe or redirect is text, not syntax", () => {
+    // Failing closed here would pause a recovery because a comment body
+    // contained a pipe — a false doubt, not a safe one.
+    const [comment] = effectActions(`gh pr comment 5 --body "a | b > c"`);
+    assert.equal(comment?.kind, "comment");
+    assert.equal(comment?.body, "a | b > c");
+    // Unquoted, the same characters ARE syntax and refuse the call.
+    assert.equal(classifyCommand("gh pr comment 5 --body a | b").safety, "unknown");
   });
 
   test("one unknown segment makes the whole compound command unknown", () => {
