@@ -489,6 +489,25 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     );
   });
 
+  test("an empty configured selection never strands a reserved Work — the source is the composition's, not the repo list", async () => {
+    const config = { ...makeConfig(1), repos: [] };
+    const { tracker, deps } = makeFactory(config, ["pr-open"]);
+    const work: WorkIdentity = {
+      ticket: githubTicket(REPO, 7),
+      destination: githubRepository(REPO),
+    };
+    reserveWork(layout, reservationRecordOf(work, { title: "reserved while no repo was configured" }));
+    seedIssue(tracker, { repo: REPO, number: 7, state: "closed", stateReason: "completed" });
+
+    const sweep = await runOnce(deps);
+
+    const derived = sweep.reserved.find((decision) => workKeyOf(decision.work) === workKeyOf(work));
+    assert.ok(derived, "the Work is derived from its reservation, not from the empty selection");
+    assert.equal(derived.state, "done", "done is still derived and archived with no configured repo");
+    assert.equal(sweep.pool.length, 0, "the empty selection contributes nothing to the pool");
+    assert.equal(tracker.claimedOrder.length, 0, "no claim is written");
+  });
+
   test("a reservation from a source the composition does not serve is held — no adapter substitution, no sweep abort", async () => {
     const config = makeConfig(1);
     const { deps, tracker } = makeFactory(config, ["pr-open"]);
