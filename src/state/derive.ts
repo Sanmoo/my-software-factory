@@ -196,7 +196,7 @@ export function renderUnbackedClaim(claim: UnbackedClaim): string {
       ? "this ticket is not a GitHub issue, so no gh command is offered"
       : `return it to the pool with: ${claim.command}`;
   return (
-    `unbacked claim: ${workKeyOf(claim.work)} — a factory mark on an open ticket with no reservation in this workspace ` +
+    `unbacked claim: ${workKeyOf(claim.work)} — a factory mark on an open issue with no reservation in this workspace ` +
     `(${UNBACKED_CLAIM_CAVEAT}); ${release}`
   );
 }
