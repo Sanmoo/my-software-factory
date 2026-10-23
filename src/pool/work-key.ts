@@ -4,6 +4,7 @@ import {
   githubTicket,
   githubTicketAt,
   jiraTicket,
+  workOfIssueRef,
   type RepositoryIdentity,
   type TicketProvider,
   type WorkIdentity,
@@ -131,7 +132,7 @@ export function anchorOfKey(key: string): WorkAnchor | null {
  * session keys come from here — one authority, never a second spelling.
  */
 export function issueRefKey(ref: IssueRef): string {
-  return `${ref.repo}#${ref.number}`;
+  return workKeyOf(workOfIssueRef(ref));
 }
 
 /** URI-encoding: injective, and no component ever yields "@", "/" or "#". */

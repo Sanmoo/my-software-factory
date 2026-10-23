@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { runForever, runOnce, type LoopDeps } from "../loop.js";
+import { runForever, runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -21,6 +21,8 @@ import { fakeDocker, inspectedContainer } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
+import { githubRepository, jiraTicket } from "../tracker/identity.js";
+import { workKeyOf } from "../pool/work-key.js";
 import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
@@ -237,6 +239,48 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       !log.some((line) => line.includes("recovering") || line.includes("interrupted")),
       "recognition is not a relaunch and not an interruption",
     );
+  });
+
+  test("a container whose reservation names no served source is held once, its end said once — no invented Work", async () => {
+    const config = makeConfig(1);
+    // A container carries a ticket this composition does not serve, and the
+    // workspace has no reservation for it: its Work is unknown, so nothing is
+    // invented from the key, the selection or the config (issue 126, AC4).
+    const heldKey = workKeyOf({
+      ticket: jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      destination: githubRepository(REPO),
+    });
+    let alive = true;
+    const probe: LivenessProbe = async () =>
+      alive ? [{ key: heldKey, containerId: "ctr000000009", ageMs: 5 * 60_000 }] : [];
+    const { tracker, deps, runtime, log } = makeFactory({ config, probe });
+    bindTracker(tracker);
+    // One engine, several sweeps: the hold belongs to an appearance, not to a
+    // tick (the same convention the duplicate announcement follows).
+    const engine = new SweepEngine(deps);
+
+    await engine.deriveAndAct();
+    await engine.deriveAndAct();
+
+    assert.deepEqual(engine.lastPool, [], "the configured selection contributes nothing");
+    assert.equal(runtime.launched.length, 0, "no substitute is launched for an unknown Work");
+    assert.deepEqual(tracker.claimedOrder, [], "no claim is written for an unknown Work");
+    const heldLines = log.filter((line) => line.includes("no reservation that names a Work"));
+    assert.equal(heldLines.length, 1, "the hold is said once per appearance, not once per tick");
+    assert.ok(heldLines[0]!.includes(heldKey), "the operator gets the key the container carries");
+    assert.ok(!existsSync(join(layout.works, heldKey)), "no reservation dir is invented for it");
+
+    // The worker is gone: the end is said once, and nothing else happens to a
+    // Work this composition cannot address.
+    alive = false;
+    await engine.deriveAndAct();
+    await engine.deriveAndAct();
+
+    const goneLines = log.filter((line) => line.includes("is gone; its reservation still names no Work"));
+    assert.equal(goneLines.length, 1, "the end is said once, never repeated by later sweeps");
+    assert.ok(goneLines[0]!.includes(heldKey));
+    assert.deepEqual(tracker.claimedOrder, [], "the end settles nothing on a tracker it cannot address");
+    assert.equal(runtime.launched.length, 0);
   });
 
   test("a closed issue whose worker is alive is not archived or cleaned before the confirmed exit", async () => {

@@ -82,8 +82,10 @@ export function composedTicketSources(): TicketSource[] {
   return [githubSource()];
 }
 
-/** The comparison key of a ticket source: provider + site, never presentation. */
-export function sourceKey(source: TicketSource): string {
+/** The comparison key of a ticket source: provider + site, never presentation.
+ *  Anything that names a source — a selection's source or a ticket's own
+ *  identity — can be compared with it. */
+export function sourceKey(source: Pick<TicketSource, "provider" | "site">): string {
   return `${source.provider}:${source.site}`;
 }
 
