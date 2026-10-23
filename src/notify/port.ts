@@ -31,20 +31,12 @@ export interface Notifier {
   notify(notification: Notification): Promise<void>;
 }
 
-function issueUrl(ref: IssueRef): string {
-  return githubIssueUrl(GITHUB_SITE, ref.repo, ref.number);
-}
-
-function pullUrl(ref: IssueRef, prNumber: number): string {
-  return githubPullUrl(GITHUB_SITE, ref.repo, prNumber);
-}
-
 export function reviewNotice(ref: IssueRef, prNumber: number): WorkNotification {
-  return { ref, kind: "review", url: pullUrl(ref, prNumber) };
+  return { ref, kind: "review", url: githubPullUrl(GITHUB_SITE, ref.repo, prNumber) };
 }
 
 export function helpNotice(ref: IssueRef): WorkNotification {
-  return { ref, kind: "help", url: issueUrl(ref) };
+  return { ref, kind: "help", url: githubIssueUrl(GITHUB_SITE, ref.repo, ref.number) };
 }
 
 /**
@@ -53,7 +45,7 @@ export function helpNotice(ref: IssueRef): WorkNotification {
  * idle limit. Nothing was ended, replaced or chosen — the notice says so.
  */
 export function interventionNotice(ref: IssueRef): WorkNotification {
-  return { ref, kind: "intervention", url: issueUrl(ref) };
+  return { ref, kind: "intervention", url: githubIssueUrl(GITHUB_SITE, ref.repo, ref.number) };
 }
 
 /** The one notice of a liveness-unknown episode (issue 118). */
