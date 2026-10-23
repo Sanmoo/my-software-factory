@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
-import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
+import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
 import { workKey } from "../state/derive.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
@@ -450,7 +450,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   private forceStopper(): (key: string) => Promise<void> {
-    return dockerWorkerForceStop({ image: this.image, worksRoot: join(this.workspace, WORKSPACE_SUBPATHS.works) });
+    return dockerWorkerForceStop({ image: this.image, worksRoot: workspaceLayout(this.workspace).works });
   }
 
   /**

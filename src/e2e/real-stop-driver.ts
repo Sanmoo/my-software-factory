@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AgentProvider, RunResult } from "@ai-hero/sandcastle";
+import { deferred } from "../runtime/deferred.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { dockerWorkerProbe } from "../state/liveness.js";
@@ -36,12 +37,6 @@ function deterministicAgent(): AgentProvider {
     buildPrintCommand: () => ({ command: "sh -c 'sleep 120'" }),
     parseStreamLine: () => [],
   };
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
 }
 
 function log(line: string): void {
