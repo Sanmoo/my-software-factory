@@ -527,6 +527,9 @@ export class SweepEngine {
    *  address: said once, and once more when the worker is gone (issue 126) —
    *  never a line per tick. */
   private readonly heldSurvivors = new Set<string>();
+  /** The reason each held reservation was last reported: said once per
+   *  appearance, re-said only when the reason changes (issue 126). */
+  private reportedReservationHolds = new Map<string, string>();
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -588,25 +591,31 @@ export class SweepEngine {
     // it is: no adapter is substituted, no tracker migration happens.
     const served = new Set(composedTicketSources().map(sourceKey));
     const serveable: IdentifiedReservation[] = [];
+    const held: Array<{ key: string; reason: string }> = [];
     for (const entry of reservations) {
       if (entry.work === null) {
-        this.log(
-          `reserved work ${entry.key} has no trustworthy identity (` +
+        held.push({
+          key: entry.key,
+          reason:
+            `has no trustworthy identity (` +
             `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
             "held; nothing is invented from the current configuration",
-        );
+        });
         continue;
       }
       if (!served.has(sourceKey(entry.work.ticket))) {
         const source = entry.work.ticket;
-        this.log(
-          `reserved work ${entry.key} comes from ${source.provider} on ${source.site}, which the composed ticket ` +
-            "adapter does not serve — held; no adapter is substituted and no tracker migration happens",
-        );
+        held.push({
+          key: entry.key,
+          reason:
+            `comes from ${source.provider} on ${source.site}, which the composed ticket adapter does not serve — ` +
+            "held; no adapter is substituted and no tracker migration happens",
+        });
         continue;
       }
       serveable.push({ ...entry, work: entry.work });
     }
+    this.reportReservationHolds(held);
     // The same list feeds the survivor reconciliation and the derivation: a
     // held Work is held on EVERY path, never launched just because a container
     // still carries it.
@@ -2314,6 +2323,18 @@ export class SweepEngine {
           "without spending a recovery",
       );
     }
+  }
+
+  /** Say the hold of a reservation this composition cannot address once per
+   *  appearance — the tick repeats it otherwise — and forget the ones that
+   *  cleared, so a later reappearance is said again. */
+  private reportReservationHolds(held: readonly { key: string; reason: string }[]): void {
+    const next = new Map(held.map((entry) => [entry.key, entry.reason]));
+    for (const [key, reason] of next) {
+      if (this.reportedReservationHolds.get(key) === reason) continue;
+      this.log(`reserved work ${key} ${reason}`);
+    }
+    this.reportedReservationHolds = next;
   }
 
   /** Say the hold once per appearance (the tick repeats it otherwise). */
