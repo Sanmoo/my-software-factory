@@ -98,11 +98,15 @@ export function anchorOfKey(key: string): WorkAnchor | null {
   // is not guessed into an identity.
   if (provider !== "jira" && provider !== "github") return null;
   try {
+    const site = decodeURIComponent(record[2]!);
     const stableId = decodeURIComponent(record[3]!);
+    // github.com has ONE key, the legacy one: an encoded spelling of it would
+    // name the same Work twice instead of being a Work of its own.
+    if (provider === "github" && site === GITHUB_SITE) return null;
     if (provider === "github" && (!Number.isInteger(Number(stableId)) || Number(stableId) < 1)) return null;
     return {
       provider,
-      site: decodeURIComponent(record[2]!),
+      site,
       stableId,
       repo: decodeURIComponent(record[4]!),
     };

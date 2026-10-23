@@ -3,6 +3,7 @@ import { chmod, mkdir, open, realpath, type FileHandle } from "node:fs/promises"
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
+import { describeError } from "./log.js";
 
 /**
  * Local exclusivity of `msf run`, one owner per real configuration path
@@ -64,7 +65,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
     canonicalConfig = await realpath(configPath);
   } catch (error) {
     throw new Error(
-      `cannot establish run exclusivity: cannot resolve configuration ${configPath}: ${reason(error)}`,
+      `cannot establish run exclusivity: cannot resolve configuration ${configPath}: ${describeError(error)}`,
     );
   }
 
@@ -76,7 +77,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
     configHandle = await open(canonicalConfig, "r");
   } catch (error) {
     throw new Error(
-      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
+      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${describeError(error)}`,
     );
   }
   try {
@@ -104,7 +105,7 @@ export async function acquireRunLock(configPath: string): Promise<RunLock> {
   } catch (error) {
     await closeQuietly(configHandle);
     throw new Error(
-      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
+      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${describeError(error)}`,
     );
   }
 
@@ -126,7 +127,7 @@ function lockFailure(canonicalConfig: string, via: "config-file" | "marker", err
   const code = (error as NodeJS.ErrnoException).code;
   if (code !== "EAGAIN" && code !== "EWOULDBLOCK") {
     return new Error(
-      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${reason(error)}`,
+      `cannot establish run exclusivity for configuration ${canonicalConfig}: ${describeError(error)}`,
     );
   }
   const refusing = `configuration ${canonicalConfig} already has an active msf run`;
@@ -140,6 +141,3 @@ async function closeQuietly(...handles: FileHandle[]): Promise<void> {
   for (const handle of handles) await handle.close().catch(() => {});
 }
 
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

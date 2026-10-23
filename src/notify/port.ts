@@ -1,4 +1,5 @@
 import type { IssueRef } from "../tracker/port.js";
+import { GITHUB_SITE, githubIssueUrl, githubPullUrl } from "../tracker/identity.js";
 
 /**
  * The factory's boundary with the operator's desktop: the CLI on the host
@@ -31,11 +32,11 @@ export interface Notifier {
 }
 
 function issueUrl(ref: IssueRef): string {
-  return `https://github.com/${ref.repo}/issues/${ref.number}`;
+  return githubIssueUrl(GITHUB_SITE, ref.repo, ref.number);
 }
 
 function pullUrl(ref: IssueRef, prNumber: number): string {
-  return `https://github.com/${ref.repo}/pull/${prNumber}`;
+  return githubPullUrl(GITHUB_SITE, ref.repo, prNumber);
 }
 
 export function reviewNotice(ref: IssueRef, prNumber: number): WorkNotification {

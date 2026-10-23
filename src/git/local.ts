@@ -7,7 +7,7 @@ import type { IssueRef } from "../tracker/port.js";
 import { workOfIssueRef, type WorkIdentity } from "../tracker/identity.js";
 import {
   branchOfWork,
-  repoCloneDir,
+  repoCloneDirFor,
   workerWorktreePath,
   type ExpandedGitWork,
   type LocalWorkFacts,
@@ -35,13 +35,14 @@ export class GitError extends Error {
 }
 
 export interface LocalGitWorkOptions {
-  /** <workspace>/repos — where the single clone per target repo lives. */
+  /** <workspace>/repos — where the single clone per destination lives. */
   reposDir: string;
-  /** The clone URL of a repo; defaults to the GitHub https URL. */
-  remoteUrl?: (repo: string) => string;
+  /** The clone URL of a destination repo (name + code-host site); defaults to
+   *  the https URL on the destination's own site. */
+  remoteUrl?: (repo: string, site: string) => string;
 }
 
-const defaultRemoteUrl = (repo: string): string => `https://github.com/${repo}.git`;
+const defaultRemoteUrl = (repo: string, site: string): string => `https://${site}/${repo}.git`;
 
 /** The expanded git host side over the real git CLI on the local disk. */
 export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
@@ -95,7 +96,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
 
   /** The clone and the branch the explicit Work addresses. */
   function targetOf(work: WorkIdentity): { repoDir: string; branch: string } {
-    return { repoDir: repoCloneDir(options.reposDir, work.destination.repo), branch: branchOfWork(work) };
+    return { repoDir: repoCloneDirFor(options.reposDir, work.destination), branch: branchOfWork(work) };
   }
 
   /** The default branch, revealed by the clone itself — never an API call. */
@@ -119,7 +120,7 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
     if (existsSync(join(repoDir, ".git"))) {
       await git(repoDir, ["fetch", "origin"]); // delta fetch — every launch, cheap
     } else {
-      await git(options.reposDir, ["clone", remoteUrl(work.destination.repo), repoDir]);
+      await git(options.reposDir, ["clone", remoteUrl(work.destination.repo, work.destination.site), repoDir]);
     }
 
     // The default branch, revealed by the clone itself — no API call.

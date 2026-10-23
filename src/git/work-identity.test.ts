@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "./local-fixtures.js";
 import { localGitWork } from "./local.js";
-import { branchOfWork, repoCloneDir, workBranchName, workerWorktreePath } from "./port.js";
+import { branchOfWork, repoCloneDir, repoCloneDirFor, workBranchName, workerWorktreePath } from "./port.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -148,6 +148,35 @@ describe("git work identity — branches and worktrees per Work", () => {
     assert.equal(await branchOf(second.branch), base, "beta's branch is untouched");
     assert.ok(existsSync(join(firstWorktree, "round.txt")));
     assert.ok(!existsSync(join(secondWorktree, "round.txt")));
+  });
+
+  test("a destination on another code-host site never shares a clone or a remote with github.com", async () => {
+    // Two Works of the same repository NAME on different code hosts: the
+    // remote is a different host, so the clone cannot be shared either — a
+    // shared clone would point one of them at the other's repository.
+    // A distinct fixture path for the other host: two bare remotes, not one.
+    const elsewhere = await seedFixtureRemote(root, `ghe.example/${REPO}`, { defaultBranch: "main" });
+    const onSite = (site: string): WorkIdentity => ({
+      ticket: { provider: "github", site, repo: REPO, number: 7, stableId: "7", key: "#7" },
+      destination: { provider: "github", site, repo: REPO },
+    });
+    const git = localGitWork({
+      reposDir,
+      remoteUrl: (repo, site) => (site === "github.com" ? remote.barePath(repo) : elsewhere.barePath(repo)),
+    });
+
+    const home = await git.prepareWorkFor(onSite("github.com"));
+    const ghe = await git.prepareWorkFor(onSite("ghe.example"));
+
+    assert.equal(home.repoDir, repoCloneDir(reposDir, REPO), "github.com keeps the legacy clone path");
+    assert.equal(repoCloneDirFor(reposDir, { provider: "github", site: "ghe.example", repo: REPO }), ghe.repoDir);
+    assert.notEqual(home.repoDir, ghe.repoDir, "one clone per destination, never a shared one");
+    for (const [repoDir, expected] of [
+      [home.repoDir, remote.barePath(REPO)],
+      [ghe.repoDir, elsewhere.barePath(REPO)],
+    ] as const) {
+      assert.equal((await execFile("git", ["remote", "get-url", "origin"], { cwd: repoDir })).stdout.trim(), expected);
+    }
   });
 
   test("the legacy IssueRef seam still prepares, observes and inspects the GitHub work exactly as before", async () => {

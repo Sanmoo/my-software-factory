@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { SESSIONS_SUBDIR, WORKSPACE_SUBPATHS } from "../layout.js";
+import { describeError } from "../log.js";
 import { parseWorkKey } from "../pool/registry.js";
 
 const execFile = promisify(execFileCallback);
@@ -69,7 +70,7 @@ export async function probeLiveness(
     ]);
     return { state: "known", workers };
   } catch (error) {
-    return { state: "unknown", reason: error instanceof Error ? error.message : String(error) };
+    return { state: "unknown", reason: describeError(error) };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
