@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -6,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runForever, type LoopDeps } from "../loop.js";
-import { workKey } from "../state/derive.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
@@ -20,6 +18,7 @@ import {
   type Config,
 } from "../config.js";
 import { installGhShim, spawnCli } from "./cli-harness.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
@@ -145,7 +144,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
 
       // The claim came from the tick's derivation, not from the boot sweep
       // (the boot saw an empty pool).
-      assert.deepEqual(tracker.claimedOrder, [workKey({ repo: REPO, number: 1 })]);
+      assert.deepEqual(tracker.claimedOrder, [`${REPO}#1`]);
     } finally {
       controller.abort(); // every hold has a release path
       await running;

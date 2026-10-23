@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -23,6 +22,7 @@ import {
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
 import { installGhShim, runCli } from "./cli-harness.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 13: the ruler of outcomes applied at collection, the

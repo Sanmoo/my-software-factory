@@ -75,6 +75,11 @@ export async function wireRunDeps(
   const seams = options.seams ?? {};
   let tickets = seams.tickets;
   let pullRequests = seams.pullRequests;
+  if ((tickets === undefined) !== (pullRequests === undefined)) {
+    // A half-injected pair would silently boot the real adapter (keyring and
+    // network) for the other half: the test seam is all-or-nothing.
+    throw new Error("the ticket and PR seams must be supplied together");
+  }
   if (tickets === undefined || pullRequests === undefined) {
     // The real adapter serves both expanded ports: GitHub owns the issues and
     // the PRs of a GitHub-selected Work (issue 124/126).
@@ -82,8 +87,8 @@ export async function wireRunDeps(
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
     });
-    tickets ??= githubTracker;
-    pullRequests ??= githubTracker;
+    tickets = githubTracker;
+    pullRequests = githubTracker;
   }
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace, config.workerModel));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });

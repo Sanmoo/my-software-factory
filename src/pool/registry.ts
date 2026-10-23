@@ -4,7 +4,6 @@ import { join, relative, sep, basename } from "node:path";
 
 import {
   SESSIONS_SUBDIR,
-  workDir,
   workDirOfKey,
   workspaceLayout,
   type WorkspaceLayout,

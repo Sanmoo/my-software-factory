@@ -1,4 +1,3 @@
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -18,6 +17,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * A failed sweep (issue 158) at the continuous run's seam, with a real

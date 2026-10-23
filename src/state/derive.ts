@@ -63,11 +63,6 @@ export interface PoolEntry {
   createdAt: string;
 }
 
-/** The key every seam shares for a Work: its registry identity anchor. */
-export const workKey = (ref: { repo: string; number: number }): string => `${ref.repo}#${ref.number}`;
-
-export const workKeyOfEntry = (entry: PoolEntry): string => workKeyOf(entry.work);
-
 /**
  * A work the tracker marks as claimed (the claim or the blocked label) but
  * whose registry dir does not exist in this workspace: the factory marked it
@@ -215,14 +210,24 @@ export function renderUnmarkedReservation(reservation: UnmarkedReservation): str
 }
 
 function comparePoolEntries(a: PoolEntry, b: PoolEntry): number {
-  return (
-    a.createdAt.localeCompare(b.createdAt) ||
-    workKeyOf(a.work).localeCompare(workKeyOf(b.work))
-  );
+  return a.createdAt.localeCompare(b.createdAt) || compareWorks(a.work, b.work);
 }
 
 function compareLeftoverWorks(a: { work: WorkIdentity }, b: { work: WorkIdentity }): number {
-  return workKeyOf(a.work).localeCompare(workKeyOf(b.work));
+  return compareWorks(a.work, b.work);
+}
+
+/** A stable presentation order that keeps GitHub's historical repo-then-number
+ *  comparison (#2 before #10) and falls back to the Work key for other sources. */
+function compareWorks(a: WorkIdentity, b: WorkIdentity): number {
+  if (a.ticket.provider === "github" && b.ticket.provider === "github") {
+    return (
+      a.destination.repo.localeCompare(b.destination.repo) ||
+      a.ticket.number - b.ticket.number ||
+      workKeyOf(a).localeCompare(workKeyOf(b))
+    );
+  }
+  return workKeyOf(a).localeCompare(workKeyOf(b));
 }
 
 const hasAnyLabel = (issue: OpenTicket, candidates: readonly string[]): boolean =>
@@ -460,10 +465,14 @@ export async function deriveReserved(
   );
 }
 
-/** The PR read target of a Work: its persisted association when one is known;
- *  otherwise null, which lets the code host answer from its own linkage. */
-export function workPullRequest(work: WorkIdentity, dir: string): WorkPullRequest {
-  return { work, pullRequest: activePullRequestOf(dir) };
+/** The PR read target of a Work: the association the caller already saw, else
+ *  the persisted one; null lets the code host answer from its own linkage. */
+export function workPullRequest(
+  work: WorkIdentity,
+  dir: string,
+  known: PullRequestRecord | null = null,
+): WorkPullRequest {
+  return { work, pullRequest: known?.identity ?? activePullRequestOf(dir) };
 }
 
 async function deriveReservedWork(

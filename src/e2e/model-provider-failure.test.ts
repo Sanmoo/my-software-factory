@@ -25,6 +25,7 @@ import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/mod
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
 import { seedSession } from "./session-fixtures.js";
 import { expandedGitWorkOf } from "../git/legacy-bridge.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a

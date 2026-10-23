@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import type { IssueComment, IssueRef } from "./tracker/port.js";
-import type { PullRequestRecord, PullRequestTracker, TicketTracker, WorkPullRequest } from "./tracker/expanded-port.js";
+import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { ExpandedGitWork, LocalWorkFacts } from "./git/port.js";
 import {
@@ -16,21 +16,22 @@ import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js
 import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import {
   githubSelections,
+  githubSource,
   issueRefOf,
   issueRefOfTicket,
   ticketUrl,
-  workOfIssueRef,
+  type TicketSource,
   type WorkIdentity,
 } from "./tracker/identity.js";
 import { reservationRecordOf, reserveWork, scanReservations, type ReservationEntry } from "./pool/reservation.js";
-import { activePullRequestOf, recordPrAssociation } from "./pool/pr-association.js";
+import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
   deriveReserved,
   fallbackDoneComment,
   readRepairPremise,
   repairSignature,
-  workKey,
+  workPullRequest,
   renderUnbackedClaim,
   renderUnmarkedReservation,
   unbackedClaimKey,
@@ -157,6 +158,9 @@ export interface LoopDeps {
   tickets: TicketTracker;
   /** PR/code-host facts: linkage, feedback, checks, the branch. */
   pullRequests: PullRequestTracker;
+  /** The ticket sources the composed adapter serves. Omitted = GitHub Issues,
+   *  the only production composition until the Jira slices land. */
+  ticketSources?: readonly TicketSource[];
   runtime: WorkerRuntime;
   /** The git host side: one clone per target repo, work branch per work (ticket 15). */
   git: ExpandedGitWork;
@@ -571,10 +575,10 @@ export class SweepEngine {
     // WHO is reserved is what the reservation on disk says — a work's origin is
     // never reconstructed from the current selection configuration (issue 126).
     const reservations = await scanReservations(workspace);
-    const reservationByKey = new Map(
-      reservations.filter((entry): entry is ReservationEntry & { work: WorkIdentity } => entry.work !== null)
-        .map((entry) => [entry.key, entry]),
-    );
+    const reservationByKey = new Map<string, ReservationEntry & { work: WorkIdentity }>();
+    for (const entry of reservations) {
+      if (entry.work !== null) reservationByKey.set(entry.key, entry as ReservationEntry & { work: WorkIdentity });
+    }
     const settled = await this.observeSurvivors(reservationByKey);
     this.observeCapacity();
     const suspended = this.liveness.state === "unknown";
@@ -590,15 +594,29 @@ export class SweepEngine {
     // live worker keeps its work reserved, and a settled exit is not decided
     // twice in the same sweep.
     const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
+    const served = new Set(
+      (this.deps.ticketSources ?? [githubSource()]).map((source) => `${source.provider}:${source.site}`),
+    );
+    const allReserved: ReservedWorkInput[] = [];
     for (const entry of reservations) {
-      if (entry.work !== null) continue;
-      this.log(
-        `reserved work ${entry.key} has no trustworthy identity (` +
-          `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
-          "held; nothing is invented from the current configuration",
-      );
+      if (entry.work === null) {
+        this.log(
+          `reserved work ${entry.key} has no trustworthy identity (` +
+            `${entry.reservation.state === "unreadable" ? entry.reservation.reason : "no reservation record"}) — ` +
+            "held; nothing is invented from the current configuration",
+        );
+        continue;
+      }
+      const source = entry.work.ticket;
+      if (!served.has(`${source.provider}:${source.site}`)) {
+        this.log(
+          `reserved work ${entry.key} comes from ${source.provider} on ${source.site}, which the composed ticket ` +
+            "adapter does not serve — held; no adapter is substituted and no tracker migration happens",
+        );
+        continue;
+      }
+      allReserved.push({ work: entry.work, dir: entry.dir });
     }
-    const allReserved = [...reservationByKey.values()].map((entry) => ({ work: entry.work, dir: entry.dir }));
     const reservedWorks = allReserved.filter((work) => !inFlight.has(workKeyOf(work.work)));
 
     // The repair reconciliation runs BEFORE the derivation (issue 112): a
@@ -1011,15 +1029,14 @@ export class SweepEngine {
     for (const key of survivorWorkKeys(workers, local)) {
       if (this.survivors.has(key)) continue;
       const reserved = reservations.get(key);
-      const work = reserved?.work ?? legacyWorkOfKey(key);
-      if (work === null) {
+      if (reserved === undefined) {
         this.log(
-          `a live container carries ${key}, but its Work identity cannot be trusted — ` +
+          `a live container carries ${key}, but this workspace has no readable reservation for it — ` +
             "it occupies a slot and no substitute is launched; the reservation needs a human",
         );
         continue;
       }
-      const dir = reserved?.dir ?? workDirOfKey(this.deps.workspace, key);
+      const { work, dir } = reserved;
       const attempt = await readLastAttempt(dir);
       this.survivors.set(key, {
         key,
@@ -1060,7 +1077,7 @@ export class SweepEngine {
         "the factory keeps its slot and launches no substitute; it does not end a worker it did not launch " +
         "(a human decision is needed)",
     );
-    const ref = issueRefOfTicket(record.work.ticket);
+    const ref = this.noticeRefOf(record.work);
     if (ref !== null) await this.deliverNotice(interventionNotice(ref));
   }
 
@@ -1584,17 +1601,10 @@ export class SweepEngine {
     const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
-    // The worker context still speaks the legacy IssueRef (issue 126 leaves it
-    // for #127): a ticket it cannot express is not launched rather than given
-    // a fabricated number.
-    const ref = issueRefOfTicket(work.ticket);
-    if (ref === null) {
-      this.log(
-        `launch of ${key} deferred: the worker context has not migrated to a ${work.ticket.provider} ticket yet — ` +
-          "nothing is claimed, reserved or launched",
-      );
-      return null;
-    }
+    // The worker request still carries the legacy IssueRef shape (issue 126
+    // leaves the worker context for #127); the served sources above are the
+    // GitHub Issues composition, which that shape expresses exactly.
+    const ref = issueRefOf(work.ticket);
 
     // The requested stop closes admissions the instant it arrives (issue
     // #146): a launch that has not written to the tracker yet leaves nothing
@@ -1693,7 +1703,9 @@ export class SweepEngine {
       // paying for stale evidence. The round is announced below, after this
       // decision: a returned round is never also "reactivated".
       const reading = readRepairPremise(
-        await pullRequests.readPullRequestRepairFacts(this.launchPullRequest(launchable)),
+        await pullRequests.readPullRequestRepairFacts(
+          workPullRequest(work, dir, launchable.pr),
+        ),
       );
       if (reading.premise !== "persisting") {
         this.log(
@@ -1798,7 +1810,14 @@ export class SweepEngine {
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair);
+    const material = await launchMaterial(
+      tickets,
+      pullRequests,
+      git,
+      launchable,
+      launchable.issueReplies,
+      repair,
+    );
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
     // and the registry dir) stays for the next run's reconciliation; the
@@ -2211,10 +2230,9 @@ export class SweepEngine {
       // taken for a reason to ask for help. The read happens once per
       // settlement: a settled or attempt-less cycle never reaches this line.
       const premise = readRepairPremise(
-        await this.deps.pullRequests.readPullRequestRepairFacts({
-          work: work.work,
-          pullRequest: activePullRequestOf(work.dir),
-        }),
+        await this.deps.pullRequests.readPullRequestRepairFacts(
+          workPullRequest(work.work, work.dir),
+        ),
       ).premise;
       const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
       if (decision.kind === "none") continue;
@@ -2427,15 +2445,6 @@ export class SweepEngine {
     return outcome.next;
   }
 
-  /** The PR read target of one launch: the association the derivation saw, or
-   *  the code host's own linkage when none is known. */
-  private launchPullRequest(launchable: Launchable): WorkPullRequest {
-    return {
-      work: launchable.work,
-      pullRequest: launchable.pr?.identity ?? activePullRequestOf(launchable.dir),
-    };
-  }
-
   /**
    * The ruler at the act of an end (ticket 13, extended by 14/123; survivor
    * ends by issue 118) on structured facts alone — the outcome record (absence
@@ -2452,7 +2461,9 @@ export class SweepEngine {
     const { work } = launchable;
     const key = workKeyOf(work);
 
-    const feedback = await pullRequests.readPullRequestFeedback(this.launchPullRequest(launchable));
+    const feedback = await pullRequests.readPullRequestFeedback(
+      workPullRequest(work, dir, launchable.pr),
+    );
     const pr = feedback.known ? feedback.value.pr : null;
     const prConfirmed = pr !== null && pr.state === "open";
     const issue = await tickets.readTicket(work.ticket);
@@ -2606,7 +2617,7 @@ export class SweepEngine {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch =
         origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
-      const ref = issueRefOfTicket(work.ticket);
+      const ref = this.noticeRefOf(work);
       if (ref !== null && (blockedLabelOnIssue || selfReportedNow)) {
         await this.deliverNotice(helpNotice(ref));
       } else if (ref !== null && isReviewLaunch && prConfirmed && pr !== null) {
@@ -2645,7 +2656,7 @@ export class SweepEngine {
     const { tickets, config } = this.deps;
     await tickets.blockTicketClaim(work.ticket, config.labels);
     await tickets.commentOnTicket(work.ticket, comment);
-    const ref = issueRefOfTicket(work.ticket);
+    const ref = this.noticeRefOf(work);
     if (ref !== null) await this.deliverNotice(helpNotice(ref));
   }
 
@@ -2665,6 +2676,19 @@ export class SweepEngine {
     await tickets.markTicketDone(work.ticket);
     await tickets.commentOnTicket(work.ticket, comment);
     await this.finishWork(work);
+  }
+
+  /** The address a notice still needs: the notification surface speaks GitHub
+   *  issues until #127. A work it cannot address is said, never silently lost. */
+  private noticeRefOf(work: WorkIdentity): IssueRef | null {
+    const ref = issueRefOfTicket(work.ticket);
+    if (ref === null) {
+      this.log(
+        `a notice for ${workKeyOf(work)} was not delivered: the operator notices still address GitHub ` +
+          "issues (issue 127)",
+      );
+    }
+    return ref;
   }
 
   /** Best-effort delivery of one occurrence notice; a failure only logs. A
@@ -2706,13 +2730,6 @@ export class SweepEngine {
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";
-
-/** The legacy GitHub key of a surviving container that has no readable
- * reservation: the transitional bridge only (a non-GitHub key yields null). */
-function legacyWorkOfKey(key: string): WorkIdentity | null {
-  const parsed = parseWorkKey(key);
-  return parsed === null ? null : workOfIssueRef(parsed);
-}
 
 const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
@@ -2842,12 +2859,9 @@ async function launchMaterial(
   launchable: Launchable,
   repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {
-  const { work, issueReplies } = launchable;
+  const { work, dir } = launchable;
   const issue = await tickets.readTicket(work.ticket);
-  const feedback = await pullRequests.readPullRequestFeedback({
-    work,
-    pullRequest: launchable.pr?.identity ?? activePullRequestOf(launchable.dir),
-  });
+  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, dir, launchable.pr));
   const diff = await git.diffWorkFor(work);
 
   const pr =

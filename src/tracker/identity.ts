@@ -1,4 +1,5 @@
 import type { IssueRef } from "./port.js";
+import type { TicketSelection } from "./expanded-port.js";
 
 /**
  * Explicit identities of a Work (issue 124): the ticket that requests the
@@ -67,12 +68,12 @@ export function githubRepository(repo: string): RepositoryIdentity {
 }
 
 /** The source a GitHub Issues selection reads: the code host's own issue tracker. */
-export function githubSource(site: string = GITHUB_SITE): TicketSource {
-  return { provider: "github", site };
+export function githubSource(): TicketSource {
+  return { provider: "github", site: GITHUB_SITE };
 }
 
 /** One selection per configured repository: its issues feed its own code host. */
-export function githubSelections(repos: readonly string[]): Array<{ source: TicketSource; destination: RepositoryIdentity }> {
+export function githubSelections(repos: readonly string[]): TicketSelection[] {
   return repos.map((repo) => ({ source: githubSource(), destination: githubRepository(repo) }));
 }
 

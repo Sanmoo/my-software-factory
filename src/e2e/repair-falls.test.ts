@@ -7,7 +7,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
@@ -26,6 +25,7 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 
 const execFile = promisify(execFileCallback);
 
