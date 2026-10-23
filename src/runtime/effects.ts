@@ -115,8 +115,10 @@ const NETWORK_OR_UNKNOWN: ReadonlySet<string> = new Set([
 export function classifyCommand(command: string): CommandSafety {
   const trimmed = command.trim();
   if (trimmed === "") return { safety: "safe" };
-  if (/[`]|\$\(/.test(trimmed)) {
-    return { safety: "unknown", reason: "command substitution can hide any effect" };
+  // `$(…)`, a backtick, `<(…)`/`>(…)`: each runs a command whose text is not
+  // visible here, so the effect is not this call's to classify.
+  if (/[`]|\$\(|[<>]\(/.test(trimmed)) {
+    return { safety: "unknown", reason: "command or process substitution can hide any effect" };
   }
   if (trimmed.replaceAll("||", "").includes("|")) {
     return { safety: "unknown", reason: "a pipeline hides the right side's effect" };
@@ -167,6 +169,12 @@ function splitSegments(command: string): string[] {
 function classifySegment(segment: string): CommandSafety {
   const words = tokenize(segment);
   if (words.length === 0) return { safety: "safe" };
+
+  // An expansion resolves to something this classifier never sees, whatever
+  // program runs — so it is refused before the program is even looked at.
+  if (hasUnquotedExpansion(segment)) {
+    return { safety: "unknown", reason: "a shell expansion names a value this classifier cannot resolve" };
+  }
 
   // Leading environment assignments belong to the command that follows them.
   // Nothing else is skipped: a wrapper (`sudo`, `env`, `time`, `nohup`) runs
@@ -416,17 +424,48 @@ function isSafeBinary(binary: string): boolean {
 /** Does this operand name something outside the worktree — a path the
  *  classifier cannot resolve, so it is not safe by omission?
  *
- *  The rules are deliberately crude: an expansion or home reference resolves at
- *  run time; an absolute path IS outside; a `..` segment climbs out; and a flag
- *  carrying a path (`-C/tmp`, `-o/tmp`) hides where the path begins. A plain
- *  relative path (`src/x.ts`, `refs/heads/x`, `origin`) is the worktree. */
+ *  The rules are deliberately crude: an absolute path IS outside, `~` is the
+ *  home dir only as a PREFIX (`HEAD~1` is git's own revision syntax), a `..`
+ *  component climbs out, and a flag carrying a path (`-C/tmp`, `-C..`) hides
+ *  where the path begins. A plain relative path (`src/x.ts`, `refs/heads/x`,
+ *  `origin`) is the worktree. Shell expansions are refused once per segment
+ *  ({@link hasUnquotedExpansion}), where quoting is still visible.
+ */
 function namesOutsideWorktree(token: string): boolean {
-  if (/[$`~]/.test(token)) return true;
   const value = token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
   if (value === "") return false;
-  if (value.startsWith("/")) return true;
-  if (value.split("/").includes("..")) return true;
-  return value.startsWith("-") && value.includes("/");
+  // A short flag may carry the path glued to it: `-C/tmp`, `-C..`, `-o/tmp`.
+  const path = /^-[A-Za-z]/.test(value) && !value.startsWith("--") ? value.slice(2) : value;
+  if (path.startsWith("/") || path.startsWith("~")) return true;
+  return path.split("/").includes("..");
+}
+
+/** `$VAR`, `${…}` or a backtick OUTSIDE single quotes names a value this
+ *  classifier cannot see. Inside single quotes the shell expands nothing, so
+ *  `git commit -m 'fix $PATH note'` stays literal and stays safe. */
+function hasUnquotedExpansion(segment: string): boolean {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < segment.length; index += 1) {
+    const char = segment[index]!;
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "'") {
+      quote = "'";
+      continue;
+    }
+    if (char === '"') {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (char === "$" || char === "`") return true;
+  }
+  return false;
 }
 
 function tokenize(segment: string): string[] {

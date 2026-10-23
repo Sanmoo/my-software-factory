@@ -298,8 +298,10 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
  */
 export async function continuityPausedCommentBody(input: ContinuityPausedInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
+  // An attempt the record never named is said so, not printed as "attempt 0".
+  const attempt = input.attempt >= 1 ? `attempt ${input.attempt}` : "this work's current attempt";
   const header =
-    `attempt ${input.attempt} cannot be continued safely (${describePauseReason(input.reason)}) — ` +
+    `${attempt} cannot be continued safely (${describePauseReason(input.reason)}) — ` +
     "no attempt was consumed and nothing was relaunched.";
   const session = input.sessionId === undefined ? [] : [`session: ${input.sessionId}`];
   const ask =

@@ -363,6 +363,17 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
 /** The no-worker view of {@link SweepEngine.carriedKeys} (liveness unknown). */
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
+/**
+ * The pause as it is PERSISTED and announced, now that the factory knows which
+ * work and attempt it is pausing. An unreadable record carries no work and no
+ * attempt (0); writing those into the file and the operator's comment would
+ * fabricate facts the record never held. Every other reason keeps its own.
+ */
+function persistedPause(pause: PauseRecord, ref: IssueRef, attempt: number): PauseRecord {
+  if (pause.reason !== "record-unreadable") return pause;
+  return { ...pause, work: ref, attempt: pause.attempt >= 1 ? pause.attempt : attempt };
+}
+
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
@@ -721,7 +732,12 @@ export class SweepEngine {
           );
           this.announce(decision.ref, "reserved");
           if (decision.pause.announced !== true) {
-            await this.pauseForContinuity(decision.ref, workDir(workspace, decision.ref.repo, decision.ref.number), decision.pause);
+            await this.pauseForContinuity(
+              decision.ref,
+              workDir(workspace, decision.ref.repo, decision.ref.number),
+              decision.pause,
+              decision.attempt,
+            );
           }
           break;
         }
@@ -1745,6 +1761,7 @@ export class SweepEngine {
             ref,
             dir,
             recheck.pause,
+            facts.attempt,
             "Your answer was read and the facts were checked again: the interrupted effect is still ambiguous. " +
               "Give the concrete evidence (the pushed head, the comment, the label) or resolve it on the tracker — " +
               "the factory will not replay the action on a promise.",
@@ -1766,7 +1783,7 @@ export class SweepEngine {
         `continuity of ${key} halted the relaunch (${continuity.pause.reason}) — ` +
           "the work pauses for help; no recovery is spent and no new attempt starts",
       );
-      await this.pauseForContinuity(ref, dir, continuity.pause);
+      await this.pauseForContinuity(ref, dir, continuity.pause, facts.attempt);
       return null;
     }
 
@@ -1908,10 +1925,16 @@ export class SweepEngine {
   private async pauseForContinuity(
     ref: IssueRef,
     dir: string,
-    pause: PauseRecord,
+    pending: PauseRecord,
+    attempt: number,
     note?: string,
   ): Promise<void> {
     const { tracker, config, workspace } = this.deps;
+    // By now the factory knows which work and attempt it is pausing, whatever
+    // the record could say: an unreadable record's unknown work/attempt is
+    // replaced here, so the persisted pause and the operator's comment name the
+    // real attempt instead of a fabricated zero.
+    const pause = persistedPause(pending, ref, attempt);
     const previous = readPause(dir);
     const alreadyAnnounced =
       note === undefined &&
