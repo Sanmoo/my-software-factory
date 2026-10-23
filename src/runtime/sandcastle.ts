@@ -463,7 +463,6 @@ export class SandcastleRuntime implements WorkerRuntime {
 
   private forceStopper(): (key: string) => Promise<void> {
     this.stopper ??= dockerWorkerForceStop({
-      image: this.image,
       worksRoot: workspaceLayout(this.workspace).works,
     });
     return this.stopper;

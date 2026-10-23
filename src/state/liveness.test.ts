@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
 import {
+  containersBindingWorksRoot,
   dockerWorkerProbe,
   duplicateWorkers,
   occupiedSlots,
@@ -218,8 +219,8 @@ describe("liveness — the shared interpretation (issue 118)", () => {
 
   test("a container that exits between the listing and the inspect is dropped, not read as unknown liveness", async () => {
     const calls: string[][] = [];
-    const run = async (args: string[]): Promise<string> => {
-      calls.push(args);
+    const run = async (args: readonly string[]): Promise<string> => {
+      calls.push([...args]);
       if (args[0] === "ps") return "aaa111\nbbb222\n";
       if (args[0] === "inspect" && args.length > 2) {
         throw new Error(`Command failed: docker inspect aaa111 bbb222\nError: No such object: bbb222`);
@@ -227,14 +228,13 @@ describe("liveness — the shared interpretation (issue 118)", () => {
       if (args[1] === "bbb222") throw new Error(`Command failed: docker inspect bbb222\nError: No such object: bbb222`);
       return JSON.stringify([container("aaa111", "Sanmoo/my-tasks#4", "2026-02-01T11:58:30.000Z")]);
     };
-    const probe = dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: WORKS, run });
+    const probe = dockerWorkerProbe({ worksRoot: WORKS, run });
     const workers = await probe();
     assert.deepEqual(workers.map((worker) => [worker.key, worker.containerId]), [["Sanmoo/my-tasks#4", "aaa111"]]);
     assert.equal(calls.filter((args) => args[0] === "inspect").length, 3, "the batch, then each id");
 
     // Any other failure is still unknown: the probe never invents an empty factory.
     const broken = dockerWorkerProbe({
-      image: WORKER_IMAGE,
       worksRoot: WORKS,
       run: async (args) => {
         if (args[0] === "ps") return "aaa111\n";
@@ -263,6 +263,102 @@ describe("liveness — the shared interpretation (issue 118)", () => {
       state: "known",
       workers: [{ key: "Sanmoo/a#1", containerId: "ctr-a1", ageMs: 60_000 }],
     });
+  });
+});
+
+/**
+ * The Docker shell with an injected runner (issue 160): the canned replies
+ * stand in for the daemon, and every command is recorded so a test can prove
+ * which question the shell asked — and which it never asks.
+ */
+function dockerShell(replies: { listing: string; inspect?: string; failure?: Error }): {
+  run: (args: readonly string[], timeoutMs: number) => Promise<string>;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  const run = async (args: readonly string[]): Promise<string> => {
+    calls.push([...args]);
+    if (replies.failure !== undefined) throw replies.failure;
+    if (args[0] === "ps") return replies.listing;
+    if (args[0] === "inspect") return replies.inspect ?? "[]";
+    throw new Error(`unexpected docker command: ${args.join(" ")}`);
+  };
+  return { run, calls };
+}
+
+describe("liveness — the worker identity survives the image reference moving (issue 160)", () => {
+  const OLD_WORKER = "a".repeat(64);
+  const SECOND = "b".repeat(64);
+
+  test("a live worker launched before the tag moved is recognised by its work mount, never by the image", async () => {
+    // Once its tag points at another image, Docker renders the container's
+    // image as the bare ID — the work mount is the identity that stays.
+    const listing = [
+      `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7,/var/run/docker.sock`,
+      `${SECOND} /var/run/docker.sock`,
+    ].join("\n");
+    const shell = dockerShell({
+      listing,
+      inspect: JSON.stringify([container(OLD_WORKER, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z")]),
+    });
+
+    const workers = await dockerWorkerProbe({ worksRoot: WORKS, run: shell.run })();
+
+    assert.deepEqual(
+      workers.map((worker) => ({ key: worker.key, containerId: worker.containerId })),
+      [{ key: "Sanmoo/my-tasks#7", containerId: OLD_WORKER }],
+    );
+    assert.ok(workers[0]!.ageMs >= 0, "the age comes from the container's own start");
+    assert.ok(
+      !shell.calls.some((args) => args[0] === "image" || args.some((arg) => arg.includes("ancestor"))),
+      "no query resolves the worker image reference — it can already point to another image",
+    );
+  });
+
+  test("two containers of one work stay a duplicate after the tag moved", async () => {
+    const listing = [
+      `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7`,
+      `${SECOND} ${WORKS}/Sanmoo/my-tasks#7`,
+    ].join("\n");
+    const shell = dockerShell({
+      listing,
+      inspect: JSON.stringify([
+        container(OLD_WORKER, "Sanmoo/my-tasks#7", "2026-02-01T11:47:00Z"),
+        container(SECOND, "Sanmoo/my-tasks#7", "2026-02-01T11:58:30Z"),
+      ]),
+    });
+
+    const workers = await dockerWorkerProbe({ worksRoot: WORKS, run: shell.run })();
+
+    assert.equal(workers.length, 2, "both containers are reported, not collapsed into one row");
+    assert.deepEqual(duplicateWorkers(workers), [{ key: "Sanmoo/my-tasks#7", containers: 2 }]);
+  });
+
+  test("no running container of this workspace is zero workers — a moved reference hides nothing", async () => {
+    // The listing is every running container, so its emptiness is a reliable
+    // zero: the configured image reference plays no part in it.
+    const probe = dockerWorkerProbe({ worksRoot: WORKS, run: dockerShell({ listing: "" }).run });
+    assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
+  });
+
+  test("Docker failing is unknown, never an empty factory", async () => {
+    const probe = dockerWorkerProbe({
+      worksRoot: WORKS,
+      run: dockerShell({ listing: "", failure: new Error("docker: daemon down") }).run,
+    });
+
+    const observation = await probeLiveness(probe);
+
+    assert.equal(observation.state, "unknown");
+    assert.match(observation.state === "unknown" ? observation.reason : "", /daemon down/);
+  });
+
+  test("the screening reads mount sources under THIS works root — a look-alike prefix is not a worker", () => {
+    const listing = [
+      `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7`,
+      `${SECOND} ${WORKS}-old/Sanmoo/my-tasks#8`,
+    ].join("\n");
+    assert.deepEqual(containersBindingWorksRoot(listing, WORKS), [OLD_WORKER]);
   });
 });
 
@@ -316,7 +412,7 @@ describe("liveness — the real Docker shell", () => {
         { encoding: "utf8" },
       ).trim();
       try {
-        const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
+        const workers = await dockerWorkerProbe({ worksRoot })();
         assert.deepEqual(workers.map((worker) => worker.key), ["Sanmoo/my-tasks#7"]);
         assert.ok(workers[0]!.ageMs >= 0, "the age comes from the container's start");
         assert.ok(
@@ -350,7 +446,7 @@ describe("liveness — the real Docker shell", () => {
       const first = start();
       const second = start();
       try {
-        const workers = await dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot })();
+        const workers = await dockerWorkerProbe({ worksRoot })();
         const seen = workers.filter((worker) => worker.key === "Sanmoo/my-tasks#8");
         assert.equal(seen.length, 2, "both containers are reported, not collapsed into one row");
         assert.equal(new Set(seen.map((worker) => worker.containerId)).size, 2);

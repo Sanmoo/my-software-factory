@@ -25,7 +25,7 @@ import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
-import type { LivenessProbe, LiveWorker } from "./liveness.js";
+import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
  * `msf status` (ticket 07 Q7, issue 102): derivation on demand through the
@@ -175,6 +175,60 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
     assert.match(text, /duplicate workers \(more than one container for the same work — a human decision is needed\): 1/);
     assert.match(text, new RegExp(`${REPO}#4 — 2 containers carry this work`), "the human sees the count");
+  });
+
+  test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates (issue 160)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    seedAttempt(4, 1);
+    seedAttempt(5, 1);
+    seedAttempt(6, 1); // no container: a genuine orphan
+    const dirOf = (number: number): string => workDir(layout, REPO, number);
+    const first = "a".repeat(64);
+    const second = "b".repeat(64);
+    const third = "c".repeat(64);
+    // `docker ps` shows the historical image as a bare ID once the tag moved:
+    // the work mounts are the identity the probe reads.
+    const listing = [
+      `${first} ${dirOf(4)},/var/run/docker.sock`,
+      `${second} ${dirOf(4)}/sessao`,
+      `${third} ${dirOf(5)}`,
+    ].join("\n");
+    const inspect = [first, second, third].map((containerId, index) => ({
+      Id: containerId,
+      State: { Running: true, StartedAt: new Date(Date.now() - (5 - index) * 60_000).toISOString() },
+      Mounts: [{ Source: dirOf(index < 2 ? 4 : 5), Destination: "/msf-work" }],
+    }));
+    const probe = dockerWorkerProbe({
+      worksRoot: layout.works,
+      run: async (args) => {
+        if (args[0] === "ps") return listing;
+        if (args[0] === "inspect") return JSON.stringify(inspect);
+        throw new Error(`unexpected docker command: ${args.join(" ")}`);
+      },
+    });
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, probe);
+
+    const knownView = known(view);
+    assert.deepEqual(
+      knownView.running.map((worker) => ({ key: worker.key, containerId: worker.containerId })),
+      [
+        { key: `${REPO}#4`, containerId: first },
+        { key: `${REPO}#4`, containerId: second },
+        { key: `${REPO}#5`, containerId: third },
+      ],
+      "the workers of the image the tag no longer names are still running",
+    );
+    assert.deepEqual(
+      knownView.orphaned,
+      [{ key: `${REPO}#6`, attempt: 1, recordedAttempt: null }],
+      "only the attempt with no live container is orphaned",
+    );
+    assert.deepEqual(knownView.duplicates, [{ key: `${REPO}#4`, containers: 2 }]);
+    const text = renderStatus(view);
+    assert.match(text, new RegExp(`running[\\s\\S]*${REPO}#4 \\(5m, attempt 1, container ${first.slice(0, 12)}\\)`));
+    assert.match(text, /duplicate workers[^\n]*: 1/);
+    assert.match(text, new RegExp(`orphaned[\\s\\S]*${REPO}#6 \\(attempt 1 was interrupted`));
   });
 
   test("a work with an outcome written and a live worker shows in running AND last outcome — the overlap, not a fused state", async () => {

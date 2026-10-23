@@ -13,10 +13,9 @@ import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
-import { dockerWorkerProbe, type LivenessProbe } from "./state/liveness.js";
+import { dockerWorkerProbe, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
-import { WORKER_IMAGE } from "./worker-image.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { TrackerPort } from "./tracker/port.js";
@@ -88,7 +87,7 @@ export async function wireRunDeps(
   const notifier = seams.notifier ?? new LinuxNotifier();
   // The operational liveness read (issue 118): the same read-only Docker probe
   // `msf status` uses, so the two never disagree about the same facts.
-  const probe = seams.probe ?? dockerWorkerProbe({ image: WORKER_IMAGE, worksRoot: workspace.works });
+  const probe = seams.probe ?? workspaceLivenessProbe(workspace);
   return {
     config,
     tracker,

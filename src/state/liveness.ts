@@ -1,7 +1,7 @@
 import { isAbsolute, relative, sep } from "node:path";
 
 import { runDocker } from "../docker-cli.js";
-import { SESSIONS_SUBDIR } from "../layout.js";
+import { SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 import { describeError } from "../format.js";
 import { parseWorkKey } from "../pool/registry.js";
 
@@ -14,8 +14,13 @@ import { parseWorkKey } from "../pool/registry.js";
  *
  * The interpretation of Docker's output is a PURE function over the canned
  * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
- * the only part that touches the machine, and the composition default comes
- * from tests injecting a fake probe, never a flag.
+ * the only part that touches the machine. Tests inject a fake probe, and the
+ * shell itself takes a runner — never a CLI flag.
+ *
+ * The identity is the container's bind of a work dir under the works root,
+ * never the configured worker image (issue 160): Docker resolves that image
+ * reference to whichever image it points at NOW, so filtering by it silently
+ * loses the workers launched before the reference moved.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -127,36 +132,75 @@ export function capacityExcess(
 }
 
 export interface DockerProbeOptions {
-  /** The worker image — the filter: only factory workers are listed. */
-  image: string;
-  /** The workspace's works root (<workspace>/trabalhos) the mounts resolve under. */
+  /** The workspace's works root (<workspace>/trabalhos): the mount identity. */
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /** The docker shell. Injectable so a test can reproduce a container that
-   *  exits between the listing and the inspect — the real CLI's own failure. */
-  run?: (args: string[], timeoutMs: number) => Promise<string>;
+  /** Test-only injection: the Docker command runner; production spawns docker. */
+  run?: DockerRunner;
 }
 
+/** Runs one `docker` command; production spawns the CLI, tests inject a fake. */
+export type DockerRunner = (args: readonly string[], timeoutMs: number) => Promise<string>;
+
 /**
- * The real probe: the shell the pure parser sits in. `docker ps` on the
- * worker image is the liveness authority (only running containers are
- * listed); `docker inspect` supplies the start time and the mounts.
+ * The real probe: the shell the pure parser sits in. `docker ps` supplies every
+ * running container's bind sources (so a worker is found by its work mount,
+ * whatever image it was launched from); `docker inspect` of the candidates
+ * supplies the start time and the authoritative mounts.
+ *
+ * Because the listing is every running container, an empty answer is a
+ * reliable zero — no worker hides behind a moved image reference — so an
+ * interrupted attempt is still recovered. Unknown stays reserved for Docker's
+ * silence and for an identity this workspace cannot name.
  */
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   const run = options.run ?? runDocker;
   return async () => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     const listing = await run(
-      ["ps", "--filter", `ancestor=${options.image}`, "--format", "{{.ID}}"],
+      ["ps", "--no-trunc", "--format", "{{.ID}} {{.Mounts}}"],
       timeoutMs,
     );
-    const ids = parseContainerIds(listing);
-    // Nothing running: no inspect to pay for, no workers to correlate.
+    const ids = containersBindingWorksRoot(listing, options.worksRoot);
+    // Every running container is listed, whatever image launched it, so an
+    // empty worker set is a reliable zero: a moved image reference hides no
+    // worker. Unknown stays reserved for Docker's silence and for an identity
+    // this workspace cannot name (parseWorkerContainers).
     if (ids.length === 0) return [];
-    const inspect = await inspectContainers(ids, timeoutMs, run);
-    return parseWorkerContainers(listing, inspect, options.worksRoot, new Date());
+    return parseWorkerContainers(
+      ids.join("\n"),
+      await inspectContainers(run, ids, timeoutMs),
+      options.worksRoot,
+      new Date(),
+    );
   };
+}
+
+/**
+ * The running containers that bind a path under this workspace's works root.
+ * `docker ps --no-trunc` renders each bind's SOURCE path, so the screen is
+ * independent of the container's image (issue 160); `docker inspect` stays the
+ * authority for the correlation and the age.
+ */
+export function containersBindingWorksRoot(psListing: string, worksRoot: string): string[] {
+  const underRoot = worksRoot.endsWith(sep) ? worksRoot : `${worksRoot}${sep}`;
+  const ids: string[] = [];
+  for (const line of psListing.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const [id = ""] = trimmed.split(/\s+/, 1);
+    if (id !== "" && trimmed.includes(underRoot)) ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * The production probe of one workspace: every running container, correlated
+ * by its work mount — the identity no image reference can move.
+ */
+export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
+  return dockerWorkerProbe({ worksRoot: layout.works });
 }
 
 /**
@@ -168,9 +212,9 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
  * gone.
  */
 async function inspectContainers(
+  run: DockerRunner,
   ids: readonly string[],
   timeoutMs: number,
-  run: (args: string[], timeoutMs: number) => Promise<string>,
 ): Promise<string> {
   try {
     return await run(["inspect", ...ids], timeoutMs);
@@ -197,7 +241,9 @@ function vanished(error: unknown): boolean {
   return /no such (object|container)/i.test(describeError(error));
 }
 
-/** The container IDs of a `docker ps --format "{{.ID}}"` listing (one per line). */
+/** The container IDs of a listing — the shell re-renders the screened rows in
+ *  this form, so the pure parser reads one listing shape whatever the screen
+ *  selected. */
 function parseContainerIds(listing: string): string[] {
   return listing.split(/\s+/).filter((id) => id !== "");
 }
@@ -278,13 +324,12 @@ interface InspectedContainer {
   Mounts?: Array<{ Source?: string }>;
 }
 
-/**
- * What a worker-image container's mounts say about its work (issue 118): the
- * work this workspace owns, a work of ANOTHER workspace (a sibling factory on
- * the same host — a decided "not ours"), or an identity that cannot be
- * decided. Only the first counts; the last fails the probe, because an
- * inconclusive correlation never authorizes assuming no relevant worker.
- */
+/** The correlation verdict (issue 160): the container binds a work this
+ *  workspace owns, a work of ANOTHER workspace (a sibling factory on the same
+ *  host — a decided "not ours"), an identity under our works root that cannot
+ *  be decided, or no work at all. Only the first counts; an inconclusive
+ *  correlation fails the probe, because it never authorizes assuming no
+ *  relevant worker. */
 type WorkCorrelation =
   | { kind: "ours"; key: string }
   | { kind: "foreign" }
