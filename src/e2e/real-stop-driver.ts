@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AgentProvider, RunResult } from "@ai-hero/sandcastle";
-import { deferred } from "../runtime/deferred.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { dockerWorkerProbe } from "../state/liveness.js";
@@ -47,7 +46,8 @@ function deterministicAgent(): AgentProvider {
 const APPEARANCE_LIMIT_MS = 20_000;
 /** The launch must settle within this bound once the forced stop ran. */
 const SETTLE_LIMIT_MS = 20_000;
-/** The cooperative request's own grace in the abort mode (the factory's is 10 s). */
+/** The abort's own grace: how long the cooperative request alone gets to end
+ *  the real container in the abort mode (the factory's window is 10 s). */
 const ABORT_GRACE_MS = 15_000;
 
 function log(line: string): void {
