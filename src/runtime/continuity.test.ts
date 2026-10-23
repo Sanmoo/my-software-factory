@@ -69,7 +69,6 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
       sessionsDir: join(workDir, SESSIONS_SUBDIR),
       ref: REF,
       attempt: 2,
-      branch: BRANCH,
       git,
       tracker,
       now: () => new Date("2026-01-01T00:00:00.000Z"),
@@ -324,6 +323,24 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(plan.decision, "pause");
     if (plan.decision !== "pause") return;
     assert.equal(plan.pause.reason, "tool-evidence-missing");
+  });
+
+  test("an interruption inside a provably local call is continued: there is nothing to reconcile", async () => {
+    // The guardrail journals only what can reach outside the worktree, so a
+    // safe call leaves no intent — and its absence must NOT be read as an
+    // unexplained mutation. This is the "comprovadamente seguro pode
+    // prosseguir" half of the issue's criterion: pausing here would refuse
+    // every legitimate recovery.
+    const session = seedSession(workDir, REF, 2);
+    appendJournalStart(workDir, { attempt: 2, sessionId: session.sessionId });
+    seedSessionToolCall(session, { callId: "call-read", command: "git status && rg -n continuity src", answered: false });
+
+    const plan = await planContinuity(deps, "resume");
+    assert.equal(plan.decision, "launch", JSON.stringify(plan));
+    if (plan.decision !== "launch") return;
+    assert.equal(plan.mode, "resume");
+    assert.equal(plan.sessionId, session.sessionId);
+    assert.deepEqual(readGuardrailState(workDir)?.verdicts, {}, "a local call produces no effect to reconcile");
   });
 
   test("a partial tail under the guardrail's record is usable; without it, it pauses", async () => {

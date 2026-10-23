@@ -23,6 +23,7 @@ import {
   appendJournalIntent,
   appendJournalResult,
   appendJournalStart,
+  callKey,
   readEffectJournal,
   readGuardrailState,
   type GuardrailState,
@@ -80,6 +81,11 @@ export interface GuardrailOptions {
 const BLOCKED_PREAMBLE = "msf continuity guardrail:";
 
 export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {}): void {
+  // /msf-work is the mount the runtime names in WORKER_DOCKER_ENV: spelled out
+  // here instead of imported, because this module is staged into the image on
+  // its own (`scripts/stage-guardrail.mjs` follows relative imports only) and
+  // must not drag the runtime's prompt in. The env var is the runtime's own
+  // way to state it; the literal is the fallback when nothing set it.
   const workMount = options.workMount ?? process.env["MSF_WORK_MOUNT"] ?? "/msf-work";
   const observeRef = options.observeRef ?? observeWorktree;
   // Per-process memory of "allowed exactly once" verdicts and the state read
@@ -163,7 +169,7 @@ function blockedAction(
   const journal = readEffectJournal(workMount);
   // Scoped to the session: a call id repeats across the attempt's rounds.
   const failed = new Set(
-    journal.results.filter((result) => !result.ok).map((result) => `${result.sessionId}\u0000${result.callId}`),
+    journal.results.filter((result) => !result.ok).map((result) => callKey(result.sessionId, result.callId)),
   );
   for (const action of actions) {
     const verdict = state?.verdicts[action.key];
@@ -180,7 +186,7 @@ function blockedAction(
     const previous = journal.intents.find(
       (intent) =>
         intent.actions.some((prior) => prior.key === action.key) &&
-        !failed.has(`${intent.sessionId}\u0000${intent.callId}`),
+        !failed.has(callKey(intent.sessionId, intent.callId)),
     );
     if (previous !== undefined) {
       return { detail: action.detail, why: "already attempted by an earlier round" };

@@ -20,7 +20,7 @@ import { join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
 import type { IssueRef } from "../tracker/port.js";
-import { parseJsonLine, type JsonValue } from "./json-line.js";
+import { parseJsonLine } from "./json-line.js";
 
 export const SESSION_LINKS_FILENAME = "sessao-vinculos.jsonl";
 export const EFFECT_JOURNAL_FILENAME = "efeitos.jsonl";
@@ -114,6 +114,19 @@ export type PauseReason =
   | "effect-ambiguous"
   | "tool-evidence-missing";
 
+/** Every pause reason this version knows. A record naming another one belongs
+ *  to a version this factory cannot interpret. */
+const PAUSE_REASONS: ReadonlySet<PauseReason> = new Set<PauseReason>([
+  "link-missing",
+  "session-missing",
+  "session-unreadable",
+  "session-identity",
+  "journal-unreadable",
+  "effect-unsupported",
+  "effect-ambiguous",
+  "tool-evidence-missing",
+]);
+
 export interface PauseRecord {
   version: 1;
   work: IssueRef;
@@ -160,7 +173,7 @@ export function readSessionLinks(workDir: string): SessionLinks {
 
 /** The launch a recovery continues: the LAST association recorded for the
  *  exact (work, attempt). Never the newest file, never a guess. */
-export function linkForAttempt(links: readonly SessionLink[], work: { repo: string; number: number }, attempt: number): SessionLink | null {
+export function linkForAttempt(links: readonly SessionLink[], work: IssueRef, attempt: number): SessionLink | null {
   let found: SessionLink | null = null;
   for (const link of links) {
     if (link.work.repo !== work.repo || link.work.number !== work.number) continue;
@@ -170,7 +183,7 @@ export function linkForAttempt(links: readonly SessionLink[], work: { repo: stri
   return found;
 }
 
-export function nextRound(links: readonly SessionLink[], work: { repo: string; number: number }, attempt: number): number {
+export function nextRound(links: readonly SessionLink[], work: IssueRef, attempt: number): number {
   let round = 0;
   for (const link of links) {
     if (link.work.repo === work.repo && link.work.number === work.number && link.attempt === attempt) {
@@ -181,6 +194,14 @@ export function nextRound(links: readonly SessionLink[], work: { repo: string; n
 }
 
 // ---- the effect journal ----
+
+/** One tool call, as the session that issued it names it. Exported because the
+ *  guardrail runs in another process, on the same journal: `call-1` is unique
+ *  inside its session, not across the attempt's rounds, so every reader pairs
+ *  on both halves with this one rule. */
+export function callKey(sessionId: string, callId: string): string {
+  return `${sessionId}\u0000${callId}`;
+}
 
 export function appendJournalStart(workDir: string, entry: Omit<JournalSessionStart, "type" | "at">, at = new Date().toISOString()): void {
   appendDurable(join(workDir, EFFECT_JOURNAL_FILENAME), { type: "session-start", at, ...entry } satisfies JournalSessionStart);
@@ -213,14 +234,17 @@ export function readEffectJournal(workDir: string): EffectJournal {
   const completed = [...lines];
   for (const line of completed) {
     if (line.trim() === "") continue;
-    const parsed = parseJsonLine(line);
-    if (isJournalLine(parsed)) {
-      if (parsed.type === "session-start") journal.sessions.push(parsed);
-      else if (parsed.type === "intent") journal.intents.push(parsed);
-      else journal.results.push(parsed);
-    } else {
+    // Widened to `unknown` so the guard narrows to exactly JournalLine: on the
+    // parsed JsonValue the narrowing would be an intersection of unrelated
+    // members, which no longer discriminates on `type`.
+    const parsed: unknown = parseJsonLine(line);
+    if (!isJournalLine(parsed)) {
       journal.intact = false;
+      continue;
     }
+    if (parsed.type === "session-start") journal.sessions.push(parsed);
+    else if (parsed.type === "intent") journal.intents.push(parsed);
+    else journal.results.push(parsed);
   }
   // A call id is unique inside its session, not across the attempt's rounds:
   // pair on both, or a later round's "call-1" would mark an earlier round's
@@ -228,11 +252,6 @@ export function readEffectJournal(workDir: string): EffectJournal {
   const answered = new Set(journal.results.map((result) => callKey(result.sessionId, result.callId)));
   journal.pending = journal.intents.filter((intent) => !answered.has(callKey(intent.sessionId, intent.callId)));
   return journal;
-}
-
-/** One tool call, as the session that issued it names it. */
-function callKey(sessionId: string, callId: string): string {
-  return `${sessionId}\u0000${callId}`;
 }
 
 function nextSeq(journal: EffectJournal): number {
@@ -284,7 +303,14 @@ export function readPause(workDir: string): PauseRecord | null {
   const parsed = parseJsonLine(raw);
   if (parsed === null || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
-  if (record["version"] !== 1 || typeof record["reason"] !== "string") return null;
+  // A record that does not say which attempt paused, or names a reason this
+  // factory does not know, is not a pause it can act on: read as absent rather
+  // than repaired into a pause with invented facts (a fabricated attempt 0
+  // would silently match no attempt and hide the doubt).
+  if (record["version"] !== 1) return null;
+  if (typeof record["attempt"] !== "number" || record["attempt"] < 1) return null;
+  if (!PAUSE_REASONS.has(record["reason"] as PauseReason)) return null;
+  const reason = record["reason"] as PauseReason;
   const work = record["work"];
   if (work === null || typeof work !== "object") return null;
   const workRecord = work as Record<string, unknown>;
@@ -292,8 +318,8 @@ export function readPause(workDir: string): PauseRecord | null {
   return {
     version: 1,
     work: { repo: workRecord["repo"], number: workRecord["number"] },
-    attempt: typeof record["attempt"] === "number" ? record["attempt"] : 0,
-    reason: record["reason"] as PauseReason,
+    attempt: record["attempt"],
+    reason,
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
     at: typeof record["at"] === "string" ? record["at"] : "",
     ...(typeof record["sessionId"] === "string" ? { sessionId: record["sessionId"] } : {}),

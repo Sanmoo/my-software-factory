@@ -1729,7 +1729,6 @@ export class SweepEngine {
       sessionsDir: join(dir, SESSIONS_SUBDIR),
       ref,
       attempt: facts.attempt,
-      branch: prepared.branch,
       git,
       tracker,
     };

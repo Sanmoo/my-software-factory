@@ -184,7 +184,7 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
   const byId = new Map<string, SessionToolCall>();
   const answered = new Set<string>();
   for (let index = 1; index <= intactEntries && index < segments.length; index += 1) {
-    const entry = parseEntry(segments[index]!);
+    const entry = parseJsonObject(segments[index]!);
     if (entry === null) continue;
     if (entry.type === "message") {
       const body = entry["message"];
@@ -219,7 +219,7 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
 
 function parseHeader(line: string | null): SessionHeader | null {
   if (line === null) return null;
-  const entry = parseEntry(line);
+  const entry = parseJsonObject(line);
   if (entry === null || entry["type"] !== "session") return null;
   const id = entry["id"];
   const cwd = entry["cwd"];
@@ -233,10 +233,6 @@ function parseHeader(line: string | null): SessionHeader | null {
   };
 }
 
-function parseEntry(line: string): Record<string, JsonValue> | null {
-  return parseJsonObject(line);
-}
-
 function parses(line: string): boolean {
-  return parseEntry(line) !== null;
+  return parseJsonObject(line) !== null;
 }

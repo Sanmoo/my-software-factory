@@ -44,7 +44,6 @@ export interface ContinuityDeps {
   sessionsDir: string;
   ref: IssueRef;
   attempt: number;
-  branch: string;
   git: GitWork;
   tracker: TrackerPort;
   now?: () => Date;
