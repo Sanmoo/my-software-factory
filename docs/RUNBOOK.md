@@ -3,12 +3,11 @@
 The factory is wired end to end with only real components: the real GitHub
 adapter (`gh` keyring token at boot), the real Sandcastle runtime (Pi
 headless in a container, agent resources provisioned by the image), the real
-git host. This is the
-exact script of the live proof: a real issue → worker → PR opened by the
-configured account → human feedback → merge. In v0.1 that account is the
-operator's: GitHub hides `bot-do-samuca`, and the accepted risk is the
-operator PAT inside the unrestricted container — as is the host's Docker
-socket riding inside it (ADR 0003). Factory speech is the
+git host. This is the exact script of the live proof: a real issue → worker →
+PR opened by the configured account → human feedback → merge. In v0.1 that
+account is the operator's: GitHub hides `bot-do-samuca`, and the accepted risk
+is the operator PAT inside the unrestricted container — as is the host's
+Docker socket riding inside it (ADR 0003). Factory speech is the
 `<!-- msf:agent -->` marker, not a different login.
 
 ## Before the first run (once)
