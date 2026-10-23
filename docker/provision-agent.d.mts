@@ -14,7 +14,6 @@ export interface ProvisionOptions {
     options?: { cwd?: string; env?: NodeJS.ProcessEnv },
   ) => Promise<{ stdout: string; stderr: string }>;
   workDir?: string;
-  keepWorkDir?: boolean;
 }
 
 export function listFiles(dir: string): string[];

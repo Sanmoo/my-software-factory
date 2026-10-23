@@ -234,7 +234,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     ).buildPrintCommand({ prompt: "p" }).command;
     assert.ok(!command.includes(fakeHome), "no personal path rides the print command");
     assert.ok(!(runOptions?.prompt ?? "").includes(fakeHome), "no personal path rides the prompt");
-    assert.ok(!command.includes("auth.json"), "no personal auth rides the launch");
+    assert.ok(!command.includes("auth.json"), "no auth file is named when none is supplied");
   });
 
   test("the toolchain host dir is created idempotently at launch — pre-existing state is never clobbered", async () => {

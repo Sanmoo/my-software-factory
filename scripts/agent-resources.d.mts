@@ -54,7 +54,7 @@ export const AGENT_ROLES: readonly AgentRole[];
 export const AGENT_INVENTORY_SCHEMA: "msf-agent-inventory/v1";
 
 export function parseAgentResources(text: string, source?: string): AgentResourcesDeclaration;
-export function sha256(text: string): string;
+export function sha256(input: string | Uint8Array): string;
 export function expectedSkills(declaration: AgentResourcesDeclaration): Array<{
   name: string;
   origin: "git" | "npm";
