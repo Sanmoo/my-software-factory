@@ -360,9 +360,9 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
   /** 1. The neutral read of the repo's open issues: one issues
    *  listing + one open-PRs listing, never a per-issue read.
    *
-   *  The listing is the PLAIN open-issues one, never label-filtered: GitHub's
+   *  The listing is the PLAIN open-issues one, never label-filtered: the
    *  label-filtered listing is search-index-backed and lags minutes behind a
-   * fresh label, while the plain listing is immediately consistent.
+   *  fresh label, while the plain listing is immediately consistent.
    *
    *  The issue listing cannot tell PR linkage, so OPEN PR bodies are read for
    *  Closes/Fixes/Resolves #N. A human PR whose body carries no linkage keyword
