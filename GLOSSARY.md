@@ -57,8 +57,12 @@ _Avoid_: Current user, when it could mean either the operator or the authenticat
 The set of work currently available for the factory to pick up.
 
 **Jira candidate**:
-A ticket the configured JQL selects for one explicit destination, presented by `msf status` in the site's native Rank order; it carries no Claim and no Reservation, so it is never available Work by itself. A ticket the configured selections promise to different destinations is ambiguous: it is held with a diagnosis, never a candidate.
+A ticket the configured JQL selects for an explicit destination, presented by `msf status` in the site's native Rank order; it carries no Claim and no Reservation, so it is never available Work by itself.
 _Avoid_: Pool, when the ticket is only selected.
+
+**Ambiguous Jira ticket**:
+A ticket more than one configured selection promises to a different destination; `msf status` holds it with the reason instead of presenting it as a candidate for either destination.
+_Avoid_: Candidate, when the destination is not explicit.
 
 **Claim**:
 The factory's mark on a Ticket, together with assignment to its acting account, reserving that Ticket for exclusive factory activity. It covers the whole Ticket regardless of Destination; sub-issues are distinct Tickets.

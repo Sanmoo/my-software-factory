@@ -291,9 +291,9 @@ export function waitForStdout(child: ChildProcess, text: string, timeoutMs = 10_
  * a canned channel. Answers are keyed by "METHOD /rest/api/3/<path>"; a search
  * may instead be keyed by "METHOD path :: <jql>" (the JQL the request carried)
  * when two selections query the same site differently. A key may hold a list,
- * consumed in order, for the token-paginated search. The call log records what
- * the child actually requested, and an undeclared request fails loudly — a
- * mutation or a dropped query is a test bug, never swallowed.
+ * consumed per entry key, for the token-paginated search. The call log records
+ * what the child actually requested; a malformed body or an undeclared request
+ * fails loudly — a mutation or a dropped query is a test bug, never swallowed.
  */
 export interface JiraRestAnswer {
   /** The JSON body the shim answers (200 by default). */
@@ -337,15 +337,22 @@ export function installJiraFetchShim(
       '  const key = method + " " + url.pathname;',
       '  fs.appendFileSync(process.env.MSF_JIRA_CALLS, key + "\\n");',
       "  let jql = null;",
-      "  try {",
-      '    const body = init && init.body ? JSON.parse(String(init.body)) : null;',
+      "  if (init && init.body) {",
+      "    let body;",
+      "    try {",
+      '      body = JSON.parse(String(init.body));',
+      "    } catch {",
+      '      throw new TypeError("msf jira-shim: the request body is not JSON");',
+      "    }",
       '    if (body && typeof body.jql === "string") jql = body.jql;',
-      "  } catch {}",
-      "  const entry = (jql === null ? undefined : answers[key + ' :: ' + jql]) ?? answers[key];",
+      "  }",
+      "  const qualified = jql === null ? null : key + ' :: ' + jql;",
+      "  const entryKey = qualified !== null && answers[qualified] !== undefined ? qualified : key;",
+      "  const entry = answers[entryKey];",
       '  if (entry === undefined) throw new TypeError("msf jira-shim: no canned answer for " + key);',
       "  const list = Array.isArray(entry) ? entry : [entry];",
-      "  const index = used.get(key) ?? 0;",
-      "  used.set(key, index + 1);",
+      "  const index = used.get(entryKey) ?? 0;",
+      "  used.set(entryKey, index + 1);",
       "  const answer = list[Math.min(index, list.length - 1)];",
       "  if (answer.failure) throw new TypeError(answer.failure);",
       "  return new Response(JSON.stringify(answer.body === undefined ? {} : answer.body), {",

@@ -180,6 +180,12 @@ export function renderTicketIdentity(ticket: TicketIdentity): string {
   return `${ticket.key} (${ticket.provider}:${ticket.site})`;
 }
 
+/** The operator-facing name of a destination repository: one template for
+ *  every surface. */
+export function renderRepositoryIdentity(repository: RepositoryIdentity): string {
+  return `${repository.repo}${repository.site === GITHUB_SITE ? "" : ` (github:${repository.site})`}`;
+}
+
 /** The operator-facing name of a Work: its ticket source and the destination
  *  that receives the code. The legacy GitHub spelling stays byte-identical. */
 export function renderWorkIdentity(work: WorkIdentity): string {
@@ -187,7 +193,7 @@ export function renderWorkIdentity(work: WorkIdentity): string {
   if (ticket.provider === "github" && ticket.site === GITHUB_SITE && destination.site === GITHUB_SITE) {
     return `${ticket.repo}${ticket.key}`;
   }
-  return `${renderTicketIdentity(ticket)} → ${destination.repo}${destination.site === GITHUB_SITE ? "" : ` (github:${destination.site})`}`;
+  return `${renderTicketIdentity(ticket)} → ${renderRepositoryIdentity(destination)}`;
 }
 
 /** The GitHub issue a ticket names, for the adapter's legacy surface (the
