@@ -194,7 +194,7 @@ describe("reservation record — the Work's persisted source and destination", (
   test("a work-like dir nested inside a work is not a reservation of this registry", async () => {
     // A proof's disposable workspace can live under a work's dir and carry its
     // own trabalhos/<repo>#<n> — or a session artifact can be named like a
-    // work. Neither is a reservation of THIS workspace (issue 118's sweep bug).
+    // work. Neither is a reservation of THIS workspace.
     const work = jiraWork({ site: "alpha.atlassian.net", stableId: "10001", key: "ABC-1", repo: "Sanmoo/my-tasks" });
     const dir = (reserveWork(layout, reservationRecordOf(work))).dir;
     const legacyDir = join(layout.works, "Sanmoo", "a#1");

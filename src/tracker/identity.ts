@@ -2,7 +2,7 @@ import type { JiraSelectionConfig } from "../config.js";
 import type { TicketSelection } from "./expanded-port.js";
 
 /**
- * Explicit identities of a Work (issue 124): the ticket that requests the
+ * Explicit identities of a Work: the ticket that requests the
  * change, the code repository that receives it and the PR that delivers it.
  *
  * The provider and site scope every identity, so equal keys/numbers on
@@ -74,7 +74,7 @@ function githubSource(): TicketSource {
 
 /**
  * The ticket sources the composed adapter serves in production. The
- * orchestration is GitHub-only until the Jira slices land (issue 126): the
+ * orchestration is GitHub-only until the Jira slices land: the
  * configured repos narrow WHAT is read from these sources, never which
  * sources the factory can address.
  */

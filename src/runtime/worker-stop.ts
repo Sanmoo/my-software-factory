@@ -2,7 +2,7 @@ import { runDocker } from "../docker-cli.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, dockerWorkerProbe, type DockerProbeOptions } from "../state/liveness.js";
 
 /**
- * The forced stop of a work's workers (issue #146) — the one place that writes
+ * The forced stop of a work's workers — the one place that writes
  * to Docker. ADR 0002 keeps the STATUS path read-only; ending a worker is work
  * the runtime owes the operator's stop, not something status may do, so the
  * write lives here and the read it needs (`dockerWorkerProbe`) stays in the

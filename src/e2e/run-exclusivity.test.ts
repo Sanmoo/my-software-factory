@@ -18,8 +18,8 @@ import { join } from "node:path";
 import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } from "./cli-harness.js";
 
 /**
- * End-to-end of issue #90 at the CLI boundary: `msf run` is exclusive per REAL
- * config path. Real, concurrent CLI subprocesses against a real temp
+ * End-to-end of the run exclusivity at the CLI boundary: `msf run` is exclusive
+ * per REAL config path. Real, concurrent CLI subprocesses against a real temp
  * filesystem; the tracker boot read is served by a hermetic `gh` shim on PATH
  * (no keyring, no GitHub, no network) whose `env` also isolates the child's
  * HOME. The protected identity is the symlink-resolved path of the config
@@ -35,7 +35,7 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * startup — not the behaviour under test — dominates.
  */
 
-describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 60_000 }, () => {
+describe("e2e: msf run exclusivity per real config path", { timeout: 60_000 }, () => {
   let dir: string;
   let shim: GhShim;
   let children: ChildProcess[];

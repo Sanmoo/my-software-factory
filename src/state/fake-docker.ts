@@ -1,7 +1,7 @@
 import type { DockerRunner } from "./liveness.js";
 
 /**
- * The Docker shell's canned replies (issue 160): the daemon is
+ * The Docker shell's canned replies: the daemon is
  * replaced by a runner, and every command is recorded so a test can prove
  * which question the shell asked — and which it never asks.
  */

@@ -27,7 +27,7 @@ import { installGhShim, runCli } from "./cli-harness.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * End-to-end of ticket 13: the ruler of outcomes applied at collection, the
+ * End-to-end of the ruler of outcomes applied at collection, the
  * per-work registry on real disk and the artifacts surviving the factory's
  * exit. The whole sweep runs against the two fake seams (in-memory tracker
  * adapter + scriptable fake runtime) — fast and deterministic, real temp
@@ -37,7 +37,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
  *   1. outcome with PR open → stays reserved awaiting the human (claim held);
  *   2. fall without PR, 1st consecutive → release (claimed→ready; branch stays);
  *   3. fall without PR, 2nd consecutive → blocked + comment with the exact outcome;
- *   4. NO outcome record → an interruption, absorbed by its recovery budget (issue 123);
+ * 4. NO outcome record → an interruption, absorbed by its recovery budget;
  *   5. PR already existing on the issue → reserved, no launch, no fall recorded;
  *   6. blocked self-report → the factory only records it.
  */
@@ -45,7 +45,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
@@ -75,7 +75,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the ruler of outcomes (ticket 13)", () => {
+describe("e2e: the ruler of outcomes", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -257,7 +257,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
       "the comment carries the exact outcome class");
     assert.ok(comment.includes(JSON.stringify(JSON.parse(readFileSync(join(workDir(layout, REPO, 1), DESFECHO_FILENAME), "utf8")), null, 2)),
       "the comment carries the exact outcome record");
-    // The evidence is added next to the record (issue 103), probed on disk.
+    // The evidence is added next to the record, probed on disk.
     assert.match(comment, /relative to the factory workspace on the host/);
     assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/ — present/);
     assert.match(comment, /trabalhos\/Sanmoo\/my-tasks#1\/log-2\.jsonl — present/);
@@ -265,7 +265,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(runtime.launched.length, 2, "attempt 2 was launched once (no thrash on blocked works)");
   });
 
-  test("issue 103 — an attempt that dies without a record is an interruption; the previous attempt's record is history", async () => {
+  test("an attempt that dies without a record is an interruption; the previous attempt's record is history", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -294,7 +294,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(second.collected[0]?.ruling?.because, "no-outcome");
     assert.equal(second.collected[1]?.ruling?.decision, "reserve", "the recovered session opened the PR");
 
-    // Nothing blocked, no comment: an interruption is not a failure (issue 123).
+    // Nothing blocked, no comment: an interruption is not a failure.
     const labels = await labelsOf(tracker, 1);
     assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "an interruption never blocks");
     const comments = await tracker.readComments({ repo: REPO, number: 1 });
@@ -344,7 +344,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.equal(record.attempt, 1, "the record belongs to the attempt the recoveries continued");
   });
 
-  test("an operator release explicitly ends an interrupted attempt: the next claim is a NEW attempt, as today (issue 123)", async () => {
+  test("an operator release explicitly ends an interrupted attempt: the next claim is a NEW attempt, as today", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -437,7 +437,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     // The ruler's exception at collection (a fall record with the PR open is
     // reserved, never a fall) is decided in classifyOutcome — covered by the
     // ruler's unit suite; the loop can only reach that combination once
-    // feedback/retomada relaunches exist (ticket 14).
+    // feedback/retomada relaunches exist.
   });
 
   // ---- class 6: blocked self-report → the factory only records it ----
@@ -586,7 +586,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
 
   function runStatus(): { stdout: string; stderr: string; status: number | null } {
     // `repos: []` keeps the pool listing OFFLINE (no REST call): the status
-    // command is wired to the REAL tracker adapter (ticket 18) — the boot
+    // command is wired to the REAL tracker adapter — the boot
     // read goes through the hermetic `gh` shim on PATH. The pool-over-real-
     // repos path is derived with the fake in status.test.ts.
     writeFileSync(

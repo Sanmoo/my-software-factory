@@ -17,8 +17,8 @@ import { runSmokeCycle } from "./smoke-cycle.js";
 import { DEFAULT_LABELS } from "../config.js";
 
 /**
- * The real smoke of the GitHub adapter (ticket 16), in the empirical-proof
- * pattern of wayfinder ticket 09: against a REAL repo (default
+ * The real smoke of the GitHub adapter, in the empirical-proof
+ * pattern of the empirical proof: against a REAL repo (default
  * `Sanmoo/my-tasks`, the config's example repo) with the bot account, ONE
  * issue's full cycle is executed, verified and reverted — nothing stays
  * behind (comments deleted, labels and assignees removed, blockers unlinked,
@@ -35,8 +35,8 @@ import { DEFAULT_LABELS } from "../config.js";
  * explicitly: `npm run smoke:github`. Overrides: MSF_SMOKE_REPO,
  * MSF_SMOKE_ACCOUNT.
  *
- * op1 is restructured around GitHub's eventual consistency (ticket 16
- * follow-up — the lesson of two failed full-cycle runs): listings converge
+ * op1 is designed around GitHub's eventual consistency (the lesson of two
+ * failed full-cycle runs): listings converge
  * LATE (the label-filtered one lagged minutes; even the plain open-issues
  * listing lagged >30s behind a freshly CREATED issue), while DIRECT GETs
  * are immediate. Eligibility is proven via direct reads right after seeding
@@ -498,7 +498,7 @@ async function main(): Promise<void> {
   const repo = process.env.MSF_SMOKE_REPO ?? "Sanmoo/my-tasks";
   const account = process.env.MSF_SMOKE_ACCOUNT ?? "bot-do-samuca";
 
-  console.log(`smoke: ticket 16 — the real GitHub adapter, over ${repo} as ${account}`);
+  console.log(`smoke: the real GitHub adapter, over ${repo} as ${account}`);
 
   let token: string;
   try {

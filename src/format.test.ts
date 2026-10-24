@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { describeError, formatDuration } from "./format.js";
 
 /**
- * The operator-facing renderings (issue #146 added the sub-second case): a
+ * The operator-facing renderings: a
  * duration never rounds a real span away, and an error is one line.
  */
 

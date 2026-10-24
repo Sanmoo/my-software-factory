@@ -301,13 +301,13 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- Nada sobre queda elétrica, reinício de host, perda de disco ou migração entre máquinas: o kill foi `SIGKILL` de processo com disco preservado.",
 	);
 	lines.push(
-		"- Nada sobre o isolamento de produção (Sandcastle/container), recursos versionados (#87), delegação/subagentes ou MCP.",
+		"- Nada sobre o isolamento de produção (Sandcastle/container), recursos versionados, delegação/subagentes ou MCP.",
 	);
 	lines.push(
 		"- Nada sobre o ganho real de A com um modelo de verdade, que poderia inferir parte do progresso do diff e da conversa do PR. O mecanismo, porém, não oferece nenhuma garantia de reaproveitamento — só o contexto reconstruído.",
 	);
 	lines.push(
-		"- Concorrência global da fábrica (#90) não foi implementada nem medida; a exclusão exercitada é a do harness.",
+		"- Concorrência global da fábrica não foi implementada nem medida; a exclusão exercitada é a do harness.",
 	);
 	lines.push("");
 	lines.push("### Recomendação");
@@ -317,7 +317,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	);
 	lines.push("");
 	lines.push(
-		"Duas condições acompanham a recomendação: (1) os guardrails não são opcionais — sem eles, B e C duplicam efeitos externos (medido em s3) e nenhuma das duas é segura; (2) a exclusão de dono tem de vir do desenho da fábrica (#90), porque nem a sessão nativa nem o durable a fornecem.",
+		"Duas condições acompanham a recomendação: (1) os guardrails não são opcionais — sem eles, B e C duplicam efeitos externos (medido em s3) e nenhuma das duas é segura; (2) a exclusão de dono tem de vir do desenho da fábrica, porque nem a sessão nativa nem o durable a fornecem.",
 	);
 	lines.push("");
 	lines.push(
@@ -331,7 +331,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- **Sandcastle/container**: o harness não exercita o isolamento de produção (containers, binds, sandbox, egress). Nenhuma afirmação de compatibilidade com Sandcastle é feita; o que se compara é o mecanismo de retomada.",
 	);
 	lines.push(
-		"- **Recursos versionados da fábrica (#87)**: nem instalados nem lidos; a disponibilidade de extensões/ferramentas após restart não foi exercitada.",
+		"- **Recursos versionados da fábrica**: nem instalados nem lidos; a disponibilidade de extensões/ferramentas após restart não foi exercitada.",
 	);
 	lines.push(
 		"- **Ferramentas e delegação**: o único tool é o do workload. A política de replay por ferramenta existe no durable e não tem equivalente nativo no Pi; delegações/subagentes recuperáveis estão fora do escopo.",
@@ -356,7 +356,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- A baseline A é reproduzida a partir do caminho de lançamento atual (sessão nova sobre `sessao/` preservado, contexto reconstruído, régua de primeira/segunda queda), **sem** Docker/Sandcastle.",
 	);
 	lines.push(
-		"- A exclusão de dono é um protocolo `O_EXCL` + liveness de pid deste harness, não um lock de kernel, e não é a solução global de concorrência da fábrica (#90).",
+		"- A exclusão de dono é um protocolo `O_EXCL` + liveness de pid deste harness, não um lock de kernel, e não é a solução global de concorrência da fábrica.",
 	);
 	lines.push(
 		"- GitHub é simulado por um log append-only inspecionável; nenhuma escrita real de issue, PR ou comentário foi feita.",
@@ -369,7 +369,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	lines.push("## Reprodução mínima");
 	lines.push("");
 	lines.push("```bash");
-	lines.push("cd experiments/issue-111");
+	lines.push("cd experiments/continuity");
 	lines.push("npm install");
 	lines.push("npm test                                   # contratos, políticas e métricas");
 	lines.push("node dist/run.js --repeats 3 --root ./runs # matriz completa");

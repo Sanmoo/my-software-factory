@@ -29,7 +29,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber, githubWork, launchedNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of ticket 14: the derivation of the tick now covers the states
+ * End-to-end of the derivation: the tick covers the states
  * of ALL reserved works — the feedback round (human comment on the PR),
  * the retomada (human answer on the issue after the marker), the rejection
  * (PR closed without merge) and done (issue closed — linkage or fallback),
@@ -81,7 +81,7 @@ class RecordingGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
+describe("e2e: the derivation of ALL reserved works", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -238,7 +238,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(runtime.launched.length, 3);
   });
 
-  test("an interrupted retomada is recovered with the human's answer — the SAME attempt, the same material (issue 123)", async () => {
+  test("an interrupted retomada is recovered with the human's answer — the SAME attempt, the same material", async () => {
     const config = makeConfig(1);
     const { tracker, runtime, deps } = makeFactory(config, [
       "clean-without-pr",
@@ -421,7 +421,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(launchOf(second.launched, githubWork(REPO, 10))?.request.attempt, 2, "the registry numbered the round");
   });
 
-  // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an interruption (issue 123) ----
+  // ---- checklist 6: the orphan claim — a death between the claim and the spawn is an interruption ----
 
   test("an orphan claim with zero footprint is recovered as attempt 1 — never released, never a fall", async () => {
     const config = makeConfig(2);
@@ -439,7 +439,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     const sweep = await runOnce(deps);
     const interrupted = sweep.reserved.find((decision) => githubTicketNumber(decision.work.ticket) === 7);
     assert.ok(interrupted, "the orphan was derived as a reserved work");
-    assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption (issue 123)");
+    assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption");
     assert.ok(
       interrupted.state === "interrupted" && interrupted.attempt === 1,
       "zero evidence numbers attempt 1, and the recovery continues it",
@@ -465,7 +465,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     });
   }
 
-  // ---- issue 126: the orchestration crosses the expanded contracts ----
+  // ---- the orchestration crosses the expanded contracts ----
 
   test("a reserved Work keeps its own source when the configured selection changes — no implicit tracker migration", async () => {
     const config = { ...makeConfig(1), repos: ["Sanmoo/other"] };

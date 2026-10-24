@@ -6,7 +6,7 @@ import type { WorkspaceLayout } from "../layout.js";
 import { reportFileName, RETRO_REPORT_SUFFIX } from "./window.js";
 
 /**
- * The retrospective marker (issue 141): the report artifacts in the retros
+ * The retrospective marker: the report artifacts in the retros
  * directory ARE the marker — a round's state advances only when its report
  * exists — and the small state file here indexes the last report so the next
  * window's boundary needs no prose parsing and no separate scheduler. Rounds
@@ -105,7 +105,7 @@ export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroI
 }
 
 /**
- * The lane's exclusivity (issue 141): a round in flight by a live process, or
+ * The lane's exclusivity: a round in flight by a live process, or
  * null after clearing the record a dead process left — the next round can only
  * start once the previous one is over.
  */

@@ -1,7 +1,7 @@
 /**
  * The pool is everything that does not survive a restart: `y` slots in
  * memory; what survives (desfecho, logs, session, branch) is a disk artifact
- * read by the registry. Slots exist only in process (ticket 05 Q4).
+ * read by the registry. Slots exist only in process.
  */
 export class Slots {
   private readonly running: Set<string> = new Set();

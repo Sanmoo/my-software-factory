@@ -6,7 +6,7 @@ import { runGitHubOnlySuite, runGitHubContractSuite, type GitHubContractHarness 
 import { AGENT_MARKER } from "./port.js";
 
 /**
- * The fake adapter is the test mirror of the port (ticket 16): it satisfies
+ * The fake adapter is the test mirror of the port: it satisfies
  * the same contract suite the real GitHub adapter must satisfy. The suite
  * lives in contract.ts; the harness below only seeds and asserts what the
  * fake makes cheap. Fake-specific behaviors (author attribution on seeded
@@ -94,7 +94,7 @@ function makeHarness(): GitHubContractHarness {
       // in-memory: nothing to revert
     },
     // The interruption rows: the fake can arm the real failure of one write
-    // (issue 98) — the shared contract checks the surviving state with it.
+    // — the shared contract checks the surviving state with it.
     faults: () => ({
       failRemovingLabel: (label: string) => {
         adapter.failAt.add(`remove:${label}`);
@@ -137,7 +137,7 @@ test("fake comments never lose the agent marker prefix", async () => {
   assert.equal(comments.value[0]?.body, `${AGENT_MARKER} already marked`);
 });
 
-test("fake claim swaps the ready label away (the reservation is the swap, ticket 12)", async () => {
+test("fake claim swaps the ready label away (the reservation is the swap)", async () => {
   const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
   adapter.seedIssue({ repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent", "triaged"] });
   await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
@@ -149,7 +149,7 @@ test("fake claim swaps the ready label away (the reservation is the swap, ticket
   assert.ok(issue.value.labels.includes("triaged"), "unrelated labels are untouched");
 });
 
-test("fake claim writes the padlock first and removes the pool label last (issue 98)", async () => {
+test("fake claim writes the padlock first and removes the pool label last", async () => {
   const adapter = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
   adapter.seedIssue({ repo: "Sanmoo/a", number: 1, labels: ["ready-for-agent"] });
 

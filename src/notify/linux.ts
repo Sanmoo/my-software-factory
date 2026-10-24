@@ -27,7 +27,7 @@ export class LinuxNotifier implements Notifier {
 /** Composed from the structured kind only — never agent prose. */
 export function renderNotification(notification: Notification): { title: string; body: string } {
   if (notification.kind === "factory-unavailable") {
-    // The factory's own occurrence (issue 118): no work is invented, and no
+    // The factory's own occurrence: no work is invented, and no
     // issue receives a comment for Docker's silence.
     return {
       title: "msf: factory — Docker unreachable",
@@ -37,7 +37,7 @@ export function renderNotification(notification: Notification): { title: string;
     };
   }
   if (notification.kind === "retro-items") {
-    // The retrospective's occurrence (issue 141): no work is invented and no
+    // The retrospective's occurrence: no work is invented and no
     // issue receives a comment — the operator's triage is the next gate.
     return {
       title: `msf: retro — ${notification.items} improvement item(s) filed`,

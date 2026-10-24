@@ -22,7 +22,7 @@ import {
 import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
- * The continuity artifacts as files (issue 119): the association a recovery
+ * The continuity artifacts as files: the association a recovery
  * selects from, the journal whose missing result is the interrupted window,
  * and the pause that survives a restart. A record this version cannot read is
  * reported absent, never repaired into an invented fact.
@@ -30,7 +30,7 @@ import { githubWork } from "../e2e/work-fixtures.js";
 
 const REF = githubWork("Sanmoo/my-tasks", 7);
 
-describe("the continuity artifacts (issue 119)", () => {
+describe("the continuity artifacts", () => {
   let dir: string;
 
   beforeEach(() => {

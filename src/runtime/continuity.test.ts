@@ -25,7 +25,7 @@ import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
- * The host-side continuity contract (issue 119): where a launch comes from,
+ * The host-side continuity contract: where a launch comes from,
  * whether an interrupted attempt may be reopened, and what makes the factory
  * pause instead of guessing. Tested at the module's public functions with the
  * REAL artifacts on temp disk and the tracker/git boundaries the loop uses.
@@ -68,7 +68,7 @@ class FakeGit implements GitWork {
   }
 }
 
-describe("continuity of an interrupted attempt (issue 119)", () => {
+describe("continuity of an interrupted attempt", () => {
   let dir: string;
   let workDir: string;
   let tracker: FakeTrackerAdapter;

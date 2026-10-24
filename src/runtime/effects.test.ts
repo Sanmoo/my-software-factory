@@ -5,7 +5,7 @@ import { classifyCommand, withObservedRef, type EffectAction } from "./effects.j
 
 /**
  * The classifier that both the host reconciliation and the in-container
- * guardrail share (issue 119). The contract tested here is the one that keeps
+ * guardrail share. The contract tested here is the one that keeps
  * a recovery safe: only the four supported effects are recognised, everything
  * else is either provably local ("safe") or unknown — never safe by omission.
  */
@@ -16,7 +16,7 @@ function effectActions(command: string): EffectAction[] {
   return result.safety === "effect" ? result.actions : [];
 }
 
-describe("the external-effect classifier (issue 119)", () => {
+describe("the external-effect classifier", () => {
   test("provably local commands are safe", () => {
     for (const command of [
       "ls -la",

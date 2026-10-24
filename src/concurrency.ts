@@ -1,5 +1,5 @@
 /**
- * Bounded concurrency for the tracker reads (issue 147).
+ * Bounded concurrency for the tracker reads.
  *
  * The status derivation pays one REST round-trip per candidate for the fact the
  * open-issues listing cannot carry (the blocker read). Awaiting each read

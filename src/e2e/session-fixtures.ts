@@ -1,5 +1,5 @@
 /**
- * Test support for the continuity artifacts (issue 119): what a real worker
+ * Test support for the continuity artifacts: what a real worker
  * launch leaves on disk — the session association and, when the session
  * actually started, its Pi-format file in the bind-mounted sessions dir.
  *

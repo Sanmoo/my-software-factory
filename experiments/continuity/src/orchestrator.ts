@@ -219,7 +219,7 @@ export async function runOnce(
 		ownerId: runId,
 		attemptId: "attempt-1",
 		reconstructedContext:
-			"Contexto reconstruído: issue #111, conversa do PR e diff do branch de trabalho.",
+			"Contexto reconstruído: a conversa do PR e o diff do branch de trabalho.",
 		corruptState: scenario.corruptState === "session" && variant.alternative === "C" ? "storage" : scenario.corruptState,
 		killControllerAfterMilestone: scenario.killControllerAfterMilestone,
 		repeatFault: scenario.id === "g1",

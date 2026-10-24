@@ -6,13 +6,13 @@ import type { TicketTracker } from "./expanded-port.js";
 import { DEFAULT_LABELS } from "../config.js";
 
 /**
- * The full cycle of ticket 16's real GitHub smoke, as its own module so the
+ * The full cycle of the real GitHub smoke, as its own module so the
  * offline suites can run the REAL adapter through the SAME flow against the
  * sim (`npm test`); the smoke itself runs it against the real repo
  * (`npm run smoke:github`).
  *
- * op1 is RESTRUCTURED around GitHub's eventual consistency (ticket 16
- * follow-up — the empirical lesson of two failed full-cycle runs): listings
+ * op1 is designed around GitHub's eventual consistency (the empirical lesson
+ * of two failed full-cycle runs): listings
  * converge LATE — the label-filtered one lagged minutes (search index), and
  * even the plain open-issues listing lagged >30s behind a freshly CREATED
  * issue — while DIRECT GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies
@@ -121,8 +121,7 @@ export async function runSmokeCycle(
   console.log("op1+op3 EXECUTED+VERIFIED: readBlockers → native blocked_by, terminal (closed) (direct read — immediate)");
 
   // 4. claim — WITH the ready label this time: the reservation is the swap
-  // (padlock first, pool label last — issue 98), ticket 12's mirrored write on
-  // the real repo
+  // (padlock first, pool label last) — the mirrored write on the real repo
   await adapter.claim(issue.ref, account, DEFAULT_LABELS.ready);
   const claimed = await adapter.readIssue(issue.ref);
   if (
@@ -136,7 +135,7 @@ export async function runSmokeCycle(
   console.log(`op4 EXECUTED+VERIFIED: claim → ready swapped away, label ${DEFAULT_LABELS.claimed} + assignee ${account}`);
 
   // 5. release — with the ready label: the 1st-fall swap BACK (pool label
-  // first, padlock last — issue 98, ticket 13's mirrored write on the real repo)
+  // first, padlock last — the mirrored write on the real repo)
   await adapter.releaseClaim(issue.ref, account, DEFAULT_LABELS.ready);
   const released = await adapter.readIssue(issue.ref);
   if (
@@ -204,9 +203,9 @@ export async function runSmokeCycle(
   }
   console.log("op7+op8 EXECUTED+VERIFIED: comment → marker carried; readComments → both readable");
 
-  // derivation over the real adapter: the pool derivation of ticket 11 —
+  // derivation over the real adapter: the pool derivation —
   // the work's own open PR (op9b, "Closes #N") keeps it out of the pool
-  // (ticket 12: only sem-PR issues enter), and the blocked label would too
+  // (only works without a PR enter), and the blocked label would too
   const { pool } = await deriveTrackerState(adapter, githubSelections([repo]), DEFAULT_LABELS);
   if (pool.some((entry) => entry.work.ticket.provider === "github" && entry.work.ticket.number === issue.ref.number)) {
     throw new Error("derive: the PR-linked blocked claim must NOT be eligible");

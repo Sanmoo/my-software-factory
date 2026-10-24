@@ -22,7 +22,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { launchedNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of ticket 12: pool, claim and launch up to the outcome with PR.
+ * End-to-end of the pool, the claim and launch up to the outcome with PR.
  * The whole sweep runs against the two fake seams (in-memory tracker adapter
  * + scriptable fake runtime) — fast and deterministic, real temp workspace,
  * no network, no container (spec, Testing Decisions).
@@ -33,11 +33,11 @@ import { launchedNumber } from "./work-fixtures.js";
  *   2. An eligible with an open blocker stays out of the pool; with all
  *      closed it enters.
  *   3. The claim lands on the tracker before the launch — and the reservation
- *      on disk lands before the claim itself (issue 98) — while the engine's
+ * on disk lands before the claim itself — while the engine's
  *      own in-flight set keeps its launches out of its own re-derivations. A
  *      second, stateless sweep reading a claim with ZERO attempt evidence
  *      cannot see the live launch: it treats the claim as an orphan and falls
- *      it (ticket 18, story 22) — the honest disk truth, never a freeze.
+ * it — the honest disk truth, never a freeze.
  *   4. --once only exits after every launched worker ended, with the final
  *      tracker state correct (claimed with an open PR).
  *   5. A long work never blocks the other slots.
@@ -56,7 +56,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
@@ -335,7 +335,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
 
       // A second, stateless sweep derives the same tracker with an EMPTY
       // in-flight set: the claim has its reservation on disk but ZERO attempt
-      // evidence — an interruption (issue 123), recovered as the SAME attempt
+      // evidence — an interruption, recovered as the SAME attempt
       // with the claim re-asserted. The disk truth is honest: no session ever
       // started, and no attempt was consumed. The claim mark protects the pool
       // within one derivation, never across processes — a freeze would hold

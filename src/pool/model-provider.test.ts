@@ -14,10 +14,10 @@ import {
 } from "./model-provider.js";
 
 /**
- * The model provider failure budget (issue 144): an outage is not an
+ * The model provider failure budget: an outage is not an
  * interruption of the agent, so it retries on its own finite, persisted
- * allowance with its own backoff — never spending the interruption budget of
- * issue 123. The ledger is an artifact of the work (provedor.json), so a
+ * allowance with its own backoff — never spending the interruption budget.
+ * The ledger is an artifact of the work (provedor.json), so a
  * restart continues the count instead of renewing it.
  */
 

@@ -2,7 +2,7 @@ import type { LocalWorkFacts } from "../git/port.js";
 import type { RepairPublication } from "../work-record/repair.js";
 
 /**
- * The operator's words for a repair cycle (issue 112): what a publication
+ * The operator's words for a repair cycle: what a publication
  * verdict, the preserved local work and a commit mean in the issue comment,
  * the status line and the worker prompt. Presentation only — the cycle and the
  * reconciliation live in pool/repair.ts.

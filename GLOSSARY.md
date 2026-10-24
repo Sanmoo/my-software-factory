@@ -137,7 +137,7 @@ The external service that serves the worker model's inference. Distinct from the
 _Avoid_: Provider, alone, when the ticket provider may be meant.
 
 **Model provider failure**:
-An attempt whose turn ended in the model provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. Within the interruption recovery it is not a failure of the work and never enters the fall ruler; a Repair round ending in it is settled by the repair ruler (issue 112).
+An attempt whose turn ended in the model provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. Within the interruption recovery it is not a failure of the work and never enters the fall ruler; a Repair round ending in it is settled by the repair ruler.
 _Avoid_: Provider failure, when the ticket provider could be read as the cause.
 
 **Model provider budget**:

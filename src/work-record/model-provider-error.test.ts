@@ -8,7 +8,7 @@ import { appendAttemptEvent } from "./logs.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 
 /**
- * The model provider failure of a turn (issue 144), read from the attempt's
+ * The model provider failure of a turn, read from the attempt's
  * stream log. The shapes below are the real pi stdout lines (verbatim
  * `agent-raw` entries): `stopReason: "error"` with the model provider's
  * `errorMessage`, and the surrounding `message_start` / `turn_end` /

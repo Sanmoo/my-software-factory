@@ -86,7 +86,7 @@ class CountingTracker extends FakeTrackerAdapter {
   }
 }
 
-describe("e2e: the operational log — initial state, change-only summaries, UTC stamps (issue 91)", () => {
+describe("e2e: the operational log — initial state, change-only summaries, UTC stamps", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
