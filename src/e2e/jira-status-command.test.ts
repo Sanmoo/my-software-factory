@@ -277,4 +277,65 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
     assert.deepEqual(gh.restCalls(), [], "no GitHub Issues read");
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
+
+  test("a ticket two rules promise to different destinations is held, not listed as a candidate", () => {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${workspace}`,
+        "jira:",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC AND labels = frontend",
+        "    destination: Sanmoo/frontend",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC AND labels = shared",
+        "    destination: Sanmoo/backend",
+      ].join("\n"),
+      "utf8",
+    );
+    const shared = {
+      body: {
+        isLast: true,
+        issues: [
+          {
+            id: "10030",
+            key: "ABC-30",
+            fields: {
+              summary: "Shared across layers",
+              labels: ["frontend", "shared"],
+              created: "2026-01-01T00:00:00.000+0000",
+              assignee: null,
+            },
+          },
+        ],
+      },
+    };
+    jira = installJiraFetchShim(dir, {
+      [`GET /rest/api/3/myself`]: {
+        body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
+      },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: shared,
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = shared ORDER BY Rank ASC`]: shared,
+    });
+
+    const result = runCli(dir, ["status"], cliEnv());
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/frontend: 0 candidates, 1 held as ambiguous/);
+    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/backend: 0 candidates, 1 held as ambiguous/);
+    assert.match(result.stdout, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
+    assert.match(
+      result.stdout,
+      /1\. ABC-30 \(jira:acme\.atlassian\.net\) — Shared across layers → Sanmoo\/frontend, Sanmoo\/backend/,
+    );
+    assert.match(result.stdout, /pool \(eligible\): none/);
+    assert.equal(existsSync(workspace), false, "no execution workspace");
+  });
 });

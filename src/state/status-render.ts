@@ -186,32 +186,20 @@ function renderJiraSources(
   cap: number,
 ): string[] {
   if (sources.length === 0) return [];
-  // A site with an unreadable selection cannot rule out an overlap: the
-  // readable selections on it still list, and say the overlap is unverified.
-  const unverifiedSites = new Set(
-    sources.filter((source) => source.state === "unknown").map((source) => source.selection.source.site),
-  );
   const lines = [
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ${sources.length}`,
   ];
   for (const source of sources) {
     const site = source.selection.source.site;
-    const repo = source.selection.destination.repo;
+    const destination = renderRepositoryIdentity(source.selection.destination);
     if (source.state === "unknown") {
-      lines.push(`  ${site} → ${repo}: unknown (${source.reason})`);
+      lines.push(`  ${site} → ${destination}: unknown (${source.reason})`);
       continue;
     }
-    const unverified = unverifiedSites.has(site)
+    const unverified = source.unverified
       ? "; another selection on this site is unknown, so a conflicting destination is unverified"
       : "";
-    const held = source.held === 0 ? "" : `${source.held} held as ambiguous`;
-    if (source.candidates.length === 0) {
-      lines.push(`  ${site} → ${repo}: ${held === "" ? "none" : `0 (${held})`}${unverified}`);
-      continue;
-    }
-    lines.push(
-      `  ${site} → ${repo}: ${source.candidates.length}${held === "" ? "" : ` (${held})`}${unverified}`,
-    );
+    lines.push(`  ${site} → ${destination}: ${describeCandidates(source)}${unverified}`);
     renderCapped(lines, source.candidates, cap, (candidate, index) => {
       const assignee =
         candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
@@ -220,12 +208,21 @@ function renderJiraSources(
   }
   if (ambiguous.length > 0) {
     lines.push(`  ambiguous (more than one destination — held, no destination chosen): ${ambiguous.length}`);
-    renderCapped(lines, ambiguous, cap, (entry) => {
+    renderCapped(lines, ambiguous, cap, (entry, index) => {
       const destinations = entry.destinations.map(renderRepositoryIdentity).join(", ");
-      return `    ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${destinations}`;
+      const unverified = entry.unverified ? " (an unreadable selection on this site may also claim it)" : "";
+      return `    ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${destinations}${unverified}`;
     });
   }
   return lines;
+}
+
+/** The per-selection counts: candidates kept, and the tickets it lost because
+ *  more than one destination promises them. */
+function describeCandidates(source: JiraSourceView & { state: "known" }): string {
+  if (source.candidates.length === 0 && source.held === 0) return "none";
+  const candidates = `${source.candidates.length} candidate${source.candidates.length === 1 ? "" : "s"}`;
+  return source.held === 0 ? candidates : `${candidates}, ${source.held} held as ambiguous`;
 }
 
 /** One capped list: the entries, then the omission marker past the cap. */
@@ -234,11 +231,12 @@ function renderCapped<T>(
   entries: readonly T[],
   cap: number,
   render: (entry: T, index: number) => string,
+  indent = "    ",
 ): void {
   const shown = entries.slice(0, cap);
   for (const [index, entry] of shown.entries()) lines.push(render(entry, index));
   if (entries.length > shown.length) {
-    lines.push(`    … and ${entries.length - shown.length} more`);
+    lines.push(`${indent}… and ${entries.length - shown.length} more`);
   }
 }
 
@@ -381,8 +379,7 @@ function renderEvidence(evidence: WorkEvidence): string {
 function section(title: string, entries: readonly string[] | null, cap: number): string[] {
   if (entries === null) return [`${title}: ${LIVENESS_UNKNOWN}`];
   if (entries.length === 0) return [`${title}: none`];
-  const shown = entries.slice(0, cap);
-  const lines = [`${title}: ${entries.length}`, ...shown.map((entry) => `  ${entry}`)];
-  if (entries.length > shown.length) lines.push(`  … and ${entries.length - shown.length} more`);
+  const lines = [`${title}: ${entries.length}`];
+  renderCapped(lines, entries, cap, (entry) => `  ${entry}`, "  ");
   return lines;
 }
