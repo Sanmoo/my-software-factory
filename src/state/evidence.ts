@@ -51,6 +51,11 @@ export async function probeAttemptArtifacts(
   return { eventLog, sandcastleLog };
 }
 
+/** A probe that cannot answer is uncertainty, never absence. */
+export function unverified(presence: EvidencePresence): boolean {
+  return presence === "could not be verified";
+}
+
 /** Probe the three locations of one attempt: `dir` inside the workspace. */
 export async function readWorkEvidence(
   workspace: WorkspaceLayout,
@@ -77,7 +82,7 @@ export async function readWorkEvidence(
  * (permissions, I/O, a symlink loop) is "could not be verified" — an
  * unverifiable location is never reported absent and never blocks the comment.
  */
-export async function presenceOf(path: string): Promise<EvidencePresence> {
+async function presenceOf(path: string): Promise<EvidencePresence> {
   try {
     await stat(path);
     return "present";

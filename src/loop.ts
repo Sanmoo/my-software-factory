@@ -2487,15 +2487,17 @@ export class SweepEngine {
         // A recorded round whose attempt never reached a worker is not an
         // attempt and not a fall (issue 181) — this also heals legacy records.
         const start = await readAttemptStartEvidence(work.dir, attempt.attempt);
-        if (start === "never-started") {
+        if (start === "unstarted") {
           const returned = returnUnstartedRound(stored);
-          await writeRepairCycle(work.dir, returned);
-          this.log(
-            `repair attempt ${attempt.attempt} of ${key} never started (no session evidence) — ` +
-              `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
-              `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
-          );
-          continue;
+          if (returned !== stored) {
+            await writeRepairCycle(work.dir, returned);
+            this.log(
+              `repair attempt ${attempt.attempt} of ${key} unstarted (no session evidence) — ` +
+                `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
+                `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
+            );
+            continue;
+          }
         }
         if (isSettledPublication(attempt.publication)) continue;
       }

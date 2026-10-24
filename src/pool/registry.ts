@@ -22,8 +22,8 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
-import { pauseWaits, readEffectJournal, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
-import { readWorkEvidence, probeAttemptArtifacts, type WorkEvidence } from "../state/evidence.js";
+import { pauseWaits, readEffectJournal, readPause, readSessionLinks, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { readWorkEvidence, probeAttemptArtifacts, unverified, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
@@ -110,7 +110,7 @@ function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
  * log, its Sandcastle log, an outcome record of its own or the guardrail's
  * session entry. A probe that cannot answer is `unknown`, never absence.
  */
-export type AttemptStartEvidence = "started" | "never-started" | "unknown";
+export type AttemptStartEvidence = "started" | "unstarted" | "unknown";
 
 export async function readAttemptStartEvidence(
   workDir: string,
@@ -120,16 +120,14 @@ export async function readAttemptStartEvidence(
   if (eventLog === "present" || sandcastleLog === "present") return "started";
   const record = await readOutcomeRecord(workDir);
   if (record?.attempt === attempt) return "started";
+  const links = readSessionLinks(workDir);
+  if (links.links.some((link) => link.attempt === attempt)) return "started";
   const journal = readEffectJournal(workDir);
   if (journal.sessions.some((session) => session.attempt === attempt)) return "started";
-  if (
-    eventLog === "could not be verified" ||
-    sandcastleLog === "could not be verified" ||
-    !journal.intact
-  ) {
+  if (unverified(eventLog) || unverified(sandcastleLog) || !links.intact || !journal.intact) {
     return "unknown";
   }
-  return "never-started";
+  return "unstarted";
 }
 
 /** The attempt numbers present in the registry dir, ascending. */
