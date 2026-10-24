@@ -376,9 +376,9 @@ describe("config", () => {
   });
 });
 
-// ---- Jira Cloud sources (issue 128) ----
+// ---- Jira Cloud selections (issue 128) ----
 
-describe("config: Jira Cloud sources", () => {
+describe("config: Jira Cloud selections", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -410,7 +410,7 @@ describe("config: Jira Cloud sources", () => {
       .join("\n");
   }
 
-  test("a Jira source carries site, account, the local credential reference, the query and the destination", () => {
+  test("a Jira selection carries site, account, the local credential reference, the query and the destination", () => {
     const config = loadConfig(jiraYaml(oneEntry()));
 
     assert.equal(config.jira.length, 1);
@@ -423,7 +423,7 @@ describe("config: Jira Cloud sources", () => {
     });
   });
 
-  test("a GitHub-only config stays valid and has no Jira source", () => {
+  test("a GitHub-only config stays valid and has no Jira selection", () => {
     const path = writeYaml(dir, `${HEAD.join("\n")}\nrepos: [Sanmoo/a]`);
 
     assert.deepEqual(loadConfig(path).jira, []);
@@ -484,7 +484,7 @@ describe("config: Jira Cloud sources", () => {
     }
   });
 
-  test("every required field of a source is required", () => {
+  test("every required field of a selection is required", () => {
     for (const key of ["site", "account", "token-env", "jql", "destination"]) {
       const fields = {
         site: "acme.atlassian.net",

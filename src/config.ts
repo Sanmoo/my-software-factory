@@ -112,9 +112,8 @@ export interface Labels {
  * `tokenEnv` is the NAME of the local environment variable carrying the API
  * token — the token value never enters this file, a log or a message. The JQL
  * is stored with its effective ordering: native Rank ascending, supplied when
- * the operator gave none and refused when they gave a conflicting one. One
- * entry IS one selection: two selections on one site (one Source) are two
- * entries sharing that site's account and token.
+ * the operator gave none and refused when they gave a conflicting one. Two
+ * selections on one site share that site's account and token.
  */
 export interface JiraSelectionConfig {
   /** The Jira Cloud site host (`<tenant>.atlassian.net`). */
@@ -123,7 +122,7 @@ export interface JiraSelectionConfig {
   account: string;
   /** The name of the local environment variable holding the API token. */
   tokenEnv: string;
-  /** The selection query, with `ORDER BY Rank ASC` made explicit. */
+  /** The operator's JQL. */
   jql: string;
   /** The GitHub repository (`owner/name`) receiving the Work's code. */
   destination: string;

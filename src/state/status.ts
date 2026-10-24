@@ -251,9 +251,9 @@ interface JiraHold {
  * A ticket two readable selections promise to different destinations has no
  * explicit destination (spec #92 story 8): it is held with the reason instead
  * of being listed once per selection — the operator resolves the overlap in
- * the selections. The same Work selected by several selections is listed once. An
- * UNKNOWN sibling naming a different destination may hide a conflict; the
- * readable source still lists, and says the overlap is unverified.
+ * the selections. The same Work selected by several selections is listed once.
+ * An UNKNOWN sibling naming a different destination may hide a conflict; the
+ * readable selection still lists, and says the overlap is unverified.
  */
 function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
   interface SelectedTicket extends JiraTicketFacts {
