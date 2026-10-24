@@ -379,6 +379,29 @@ export function reconcileRepairAttempt(input: {
   return { kind: "concurrent-change", ...settled("concurrent-change", input.cycle) };
 }
 
+/**
+ * A recorded round that never reached a worker is not an attempt (issue 181):
+ * the continuity decision, the operator's stop or a death before the spawn can
+ * leave its facts on disk with no session behind them. The charge returns to
+ * the budget, the evidence is released so the same failure can open the round
+ * it deserved, and a fall the old settlement already counted for it is
+ * withdrawn. The attempt itself leaves the cycle — calling this twice on the
+ * same record never refunds a round it did not charge, because the first call
+ * clears the attempt.
+ */
+export function returnUnstartedRound(cycle: RepairCycle): RepairCycle {
+  if (cycle.attempt === null) return cycle;
+  const countedAsFall = cycle.attempt.publication === "not-published";
+  return {
+    usedRounds: Math.max(0, cycle.usedRounds - 1),
+    lastEvidence: null,
+    consecutiveFalls: countedAsFall
+      ? Math.max(0, cycle.consecutiveFalls - 1)
+      : cycle.consecutiveFalls,
+    attempt: null,
+  };
+}
+
 /** Persist one verdict on the attempt, keeping the round/fall ledgers as given.
  *  An unobserved remote head (a failed query) keeps the last known one. */
 function settleAttempt(

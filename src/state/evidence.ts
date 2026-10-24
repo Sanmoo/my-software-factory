@@ -60,7 +60,7 @@ export async function readWorkEvidence(
  * (permissions, I/O, a symlink loop) is "could not be verified" — an
  * unverifiable location is never reported absent and never blocks the comment.
  */
-async function presenceOf(path: string): Promise<EvidencePresence> {
+export async function presenceOf(path: string): Promise<EvidencePresence> {
   try {
     await stat(path);
     return "present";

@@ -22,9 +22,9 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
-import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
-import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
-import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
+import { pauseWaits, readEffectJournal, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { readWorkEvidence, presenceOf, type WorkEvidence } from "../state/evidence.js";
+import { EVENT_LOG_PATTERN, eventLogName, sandcastleLogName } from "../runtime/attempt-logs.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import { workKeyOf } from "./work-key.js";
@@ -100,6 +100,39 @@ export async function readLaunchFacts(
  *  or the session dir. Its absence is the bare reservation. */
 function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
   return logs.length > 0 || existsSync(join(workDir, SESSIONS_SUBDIR));
+}
+
+/**
+ * Did an attempt ever reach a worker? A repair round can be charged and then
+ * never launched (continuity refused it, the factory stopped), leaving an
+ * attempt record with no session behind it — that is NOT a repair fall. The
+ * answer comes from the attempt's own artifacts only (issue 181): its event
+ * log, its Sandcastle log, an outcome record of its own or the guardrail's
+ * session entry. A probe that cannot answer is `unknown`, never absence.
+ */
+export type AttemptStartEvidence = "started" | "never-started" | "unknown";
+
+export async function readAttemptStartEvidence(
+  workDir: string,
+  attempt: number,
+): Promise<AttemptStartEvidence> {
+  const [eventLog, sandcastleLog] = await Promise.all([
+    presenceOf(join(workDir, eventLogName(attempt))),
+    presenceOf(join(workDir, SESSIONS_SUBDIR, sandcastleLogName(attempt))),
+  ]);
+  if (eventLog === "present" || sandcastleLog === "present") return "started";
+  const record = await readOutcomeRecord(workDir);
+  if (record?.attempt === attempt) return "started";
+  const journal = readEffectJournal(workDir);
+  if (journal.sessions.some((session) => session.attempt === attempt)) return "started";
+  if (
+    eventLog === "could not be verified" ||
+    sandcastleLog === "could not be verified" ||
+    !journal.intact
+  ) {
+    return "unknown";
+  }
+  return "never-started";
 }
 
 /** The attempt numbers present in the registry dir, ascending. */

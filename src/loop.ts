@@ -64,6 +64,7 @@ import {
   readLaunchFacts,
   archiveDoneWorkFor,
   readAttemptLedger,
+  readAttemptStartEvidence,
   readLastAttempt,
 } from "./pool/registry.js";
 import {
@@ -75,6 +76,7 @@ import {
   legacyRepairAttempt,
   readRepairCycle,
   reconcileRepairAttempt,
+  returnUnstartedRound,
   writeRepairCycle,
   type RemoteObservation,
   type RepairAttempt,
@@ -112,7 +114,6 @@ import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.
 import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
 import {
   clearPause,
-  readEffectJournal,
   knownAttempt,
   readPause,
   recheckablePause,
@@ -139,7 +140,7 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
+import { appendAttemptEvent } from "./runtime/attempt-logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
@@ -1952,7 +1953,9 @@ export class SweepEngine {
     // The local work the round takes over, read from real git only once the
     // round is really going out: existing commits are reused, changes are
     // inspected, an unfinished operation is continued — the resumption never
-    // restarts the work blind (issue 112).
+    // restarts the work blind (issue 112). The ROUND is not charged here: a
+    // continuity pause below means no worker ever ran, and a charged round
+    // would then be settled as a fall (issue 181).
     if (repair !== undefined) {
       repair.localWork = await this.inspectLocalWork(work);
     }
@@ -2096,6 +2099,15 @@ export class SweepEngine {
     // interruption of this attempt.
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
+
+    // The round is charged HERE — after continuity granted the launch, so a
+    // pause that prevented the session never spends a round and never becomes
+    // a fall (issue 181) — and BEFORE the worker starts (issue 107), with the
+    // attempt's own facts (issue 112): a death mid-round refunds the round only
+    // once publication is provably absent, never by presumption.
+    if (repair !== undefined) {
+      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
+    }
 
     if (launchable.callRecovery !== undefined) clearPause(dir);
     // Charge only after continuity allowed the launch. A pause before a worker
@@ -2472,18 +2484,27 @@ export class SweepEngine {
       if (inFlight.has(key)) continue;
 
       const stored = await readRepairCycle(work.dir);
-      const requestedStop = stored.attempt !== null && await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt);
-      if (stored.attempt !== null && !requestedStop && stored.attempt.publication === "unknown" &&
-          !existsSync(join(work.dir, eventLogName(stored.attempt.attempt)))) {
-        const journal = readEffectJournal(work.dir);
-        const record = await readOutcomeRecord(work.dir);
-        if (journal.intact && !journal.sessions.some((entry) => entry.attempt === stored.attempt!.attempt) &&
-            record?.attempt !== stored.attempt.attempt) {
-          await writeRepairCycle(work.dir, {
-            ...stored, usedRounds: Math.max(0, stored.usedRounds - 1), lastEvidence: null, attempt: null,
-          });
-          this.log(`repair attempt ${stored.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`);
-          continue;
+      const requestedStop =
+        stored.attempt !== null && (await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt));
+      // A recorded round whose attempt never reached a worker (issue 181): the
+      // continuity pause, the operator's stop or a death before the spawn left
+      // an attempt record with no session behind it. It is not an attempt and
+      // not a fall — the charge returns and the old settlement's fall, if any,
+      // is withdrawn. This also heals a `reparo.json` written by an older
+      // version before the charge moved behind the continuity decision.
+      if (stored.attempt !== null) {
+        const start = await readAttemptStartEvidence(work.dir, stored.attempt.attempt);
+        if (start === "unstarted") {
+          const returned = returnUnstartedRound(stored);
+          if (returned !== stored) {
+            await writeRepairCycle(work.dir, returned);
+            this.log(
+              `repair attempt ${stored.attempt.attempt} of ${key} unstarted (no session artifacts) — ` +
+                `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
+                `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
+            );
+            continue;
+          }
         }
       }
       if (stored.attempt !== null && requestedStop &&
