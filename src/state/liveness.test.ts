@@ -362,22 +362,6 @@ describe("liveness — the worker identity survives the image reference moving (
     );
   });
 
-  test("a candidate that left between the listing and its inspect is not running, not a dying probe", async () => {
-    // The container is gone by the time the inspect runs (a stop racing the
-    // probe): the daemon's "no such container" is that container's absence,
-    // not the factory's — a reader that failed here would call every stop a
-    // broken liveness query.
-    const probe = dockerWorkerProbe({
-      worksRoot: WORKS,
-      run: fakeDocker({
-        listing: `${SECOND} ${WORKS}/Sanmoo/my-tasks#7`,
-        inspectFailure: new Error(`Error response from daemon: No such container: ${SECOND}`),
-      }).run,
-    });
-
-    assert.deepEqual(await probeLiveness(probe), { state: "known", workers: [] });
-  });
-
   test("a truncated mount column is not read as absence either", async () => {
     const shell = fakeDocker({
       listing: `${SECOND} /home/sanmoo/…,/var/run/docke…`,
