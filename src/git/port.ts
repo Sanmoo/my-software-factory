@@ -167,9 +167,9 @@ export interface GitWork {
 
 /**
  * The same git host side addressed by the explicit Work identity (issue 125):
- * the legacy `GitWork` methods above are the transitional bridge over these,
- * kept for the consumers not migrated yet. The slice does not migrate the
- * orchestration or runtime.
+ * the legacy `GitWork` methods above are the transitional bridge over these.
+ * The orchestration speaks the expanded methods (issue 126); the runtime's
+ * continuity read is the one legacy caller left, until #127 migrates it.
  */
 export interface ExpandedGitWork extends GitWork {
   prepareWorkFor(work: WorkIdentity): Promise<PreparedWork>;
