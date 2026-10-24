@@ -197,7 +197,7 @@ export const DEFAULT_PROFILE_DIR = join(homedir(), ".pi", "agent");
  *  code that journals effects before they happen and blocks a repeat on a
  *  resumed session. Provisioned at image build time (ADR 0001); the preflight
  *  refuses a stale image rather than letting the session run unguarded. */
-export const GUARDRAIL_CONTAINER_DIR = "/opt/msf/guardrail";
+export const GUARDRAIL_CONTAINER_DIR = "/opt/msf/runtime/guardrail";
 export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_CONTAINER_DIR}/extension.js`;
 
 /** The proven closed flags of the worker's print command (v1 agentFor):

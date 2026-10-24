@@ -10,11 +10,13 @@ import { fileURLToPath } from "node:url";
  * copy of the code the factory version pins, and `npm run build:image` refuses
  * to stage a missing build instead of shipping an unguarded worker.
  *
- * The relative layout mirrors dist/runtime, so the extension's `../effects.js`
- * import resolves inside /opt/msf. Every relative import of a staged file must
- * itself be staged: a module the extension imports but the image lacks makes
- * Pi refuse the whole extension at session start, which the launch preflight
- * cannot see from the file's mere existence.
+ * The staged tree mirrors the compiled layout under dist/ and the image copies
+ * it to /opt/msf, so every relative import keeps its build-tree meaning: the
+ * extension's `../effects.js` and continuity-artifacts' `../tracker/identity.js`
+ * resolve exactly as they do in dist/. Every relative import of a staged file
+ * must itself be staged: a module the extension imports but the image lacks
+ * makes Pi refuse the whole extension at session start, which the launch
+ * preflight cannot see from the file's mere existence.
  *
  * Test-only copies are not needed: the same dist files are imported directly
  * by the unit and e2e tests.
@@ -23,12 +25,14 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const stage = join(root, "docker", "guardrail");
 
-const files = [
-  { from: join(root, "dist", "runtime", "effects.js"), to: join(stage, "effects.js") },
-  { from: join(root, "dist", "runtime", "json-line.js"), to: join(stage, "json-line.js") },
-  { from: join(root, "dist", "runtime", "continuity-artifacts.js"), to: join(stage, "continuity-artifacts.js") },
-  { from: join(root, "dist", "runtime", "guardrail", "extension.js"), to: join(stage, "guardrail", "extension.js") },
+const modules = [
+  "runtime/effects.js",
+  "runtime/json-line.js",
+  "runtime/continuity-artifacts.js",
+  "runtime/guardrail/extension.js",
+  "tracker/identity.js",
 ];
+const files = modules.map((module) => ({ from: join(root, "dist", module), to: join(stage, module) }));
 
 for (const file of files) {
   if (!existsSync(file.from)) {
@@ -54,7 +58,7 @@ for (const path of stagedFiles(stage)) {
   }
 }
 if (missing.length > 0) {
-  process.stderr.write(`stage-guardrail: the staged extension is incomplete — add the module(s) to \`files\`:\n`);
+  process.stderr.write(`stage-guardrail: the staged extension is incomplete — add the module(s) to \`modules\`:\n`);
   for (const entry of missing) process.stderr.write(`  ${entry}\n`);
   process.exit(1);
 }
