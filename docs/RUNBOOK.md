@@ -305,6 +305,33 @@ or silent worker, the factory's Docker warning after the configured threshold,
 silence after a restart — and every work notice carrying the work and its
 address, with no window opened and no focus taken.
 
+## (e) Retrospective (issue 141)
+
+The retrospective is a factory job on its own lane (ADR 0006): the orchestrator
+checks the trigger at each sweep and starts a round once `retro.threshold`
+works were archived since the last report. The round runs the same Sandcastle
+runtime with `retro.model` (default: the worker model), outside the worker
+slots, over a window of finished works (delivered, cancelled and blocked; a
+work pending reconciliation waits). It writes `<workspace>/retros/<instant>-retro.md`
+— the marker of the next window — and `<instant>-resultado.json`, and files
+its worthy candidates as `needs-triage` issues: factory items at
+`retro.factory-items-destination`, target-repo items at the repo concerned.
+
+Manual triggers (never waiting for the threshold):
+
+```sh
+node dist/cli.js retro              # the full window since the last report
+node dist/cli.js retro <owner>/<name>#<n> --language pt-BR  # one finished work
+```
+
+Live proof: enable the block in `msf.yaml`, let two/`threshold` works be
+archived, run one sweep — the log names the round, the report exists in
+`retros/`, the issues exist with `needs-triage` and reference the report, a
+retro-items notification points at each destination, `msf status` shows the
+last report (and the round in flight while it runs), and the next round's
+window starts after the previous report. Nothing is ever labeled
+`ready-for-agent`: your triage is the gate.
+
 ## What the human does in the proof
 
 1. **Review the PR** the bot account opened.

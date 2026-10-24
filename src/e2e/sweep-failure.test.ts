@@ -13,6 +13,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -114,6 +115,7 @@ describe("e2e: a failed sweep never kills the continuous factory (issue 158)", (
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: false,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),

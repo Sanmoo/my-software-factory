@@ -32,7 +32,21 @@ export interface FactoryNotification {
   unavailableForMs: number;
 }
 
-export type Notification = WorkNotification | FactoryNotification;
+/**
+ * A retrospective round filed improvement items (issue 141): the factory's own
+ * occurrence, pointing at the triage destination the operator must review. It
+ * names no work — the round is not one.
+ */
+export interface RetroNotification {
+  kind: "retro-items";
+  /** How many items the round filed at this destination. */
+  items: number;
+  /** The "owner/name" destination whose triage queue grew. */
+  destination: string;
+  url: string;
+}
+
+export type Notification = WorkNotification | FactoryNotification | RetroNotification;
 
 export interface Notifier {
   /** Rejects when the host cannot deliver. Never retries or remembers. */
@@ -66,8 +80,21 @@ export function factoryUnavailableNotice(unavailableForMs: number): FactoryNotif
   return { kind: "factory-unavailable", unavailableForMs };
 }
 
+/** The notice that a round filed items (issue 141): the triage queue grew. */
+export function retroItemsNotice(destination: string, items: number): RetroNotification {
+  return {
+    kind: "retro-items",
+    items,
+    destination,
+    url: `https://github.com/${destination}/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-triage`,
+  };
+}
+
 /** A notice's identity for the operator's log — a work's, or the factory's own. */
 export function describeNotification(notification: Notification): string {
   if (notification.kind === "factory-unavailable") return "factory (Docker unreachable)";
+  if (notification.kind === "retro-items") {
+    return `retro (${notification.items} item(s) filed in ${notification.destination})`;
+  }
   return `${notification.kind} ${renderTicketIdentity(notification.work.ticket)}`;
 }

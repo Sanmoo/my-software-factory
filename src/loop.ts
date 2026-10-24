@@ -67,7 +67,11 @@ import {
 } from "./state/liveness.js";
 import { processRecoveryRequests } from "./recover.js";
 import { operationalLog } from "./log.js";
-import { describeError } from "./format.js";
+import { collectFinishedWorks } from "./retro/window.js";
+import { clearRetroInFlight } from "./retro/marker.js";
+import { planAutomaticRound, runRetroRound } from "./retro/round.js";
+import { describeError, formatDuration } from "./format.js";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -296,6 +300,8 @@ export class SweepEngine {
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
+  /** The retrospective round in flight (issue 141) — its own lane, never a slot. */
+  private retroRun: Promise<void> | null = null;
 
   /** Liveness and the survivor ledger (issue 118; ticket #206): which worker
    *  carries each Work, and every occurrence of that observation said once. */
@@ -404,6 +410,9 @@ export class SweepEngine {
       ...(deps.wait === undefined ? {} : { wait: deps.wait }),
       cycle: this.launchCycle(),
     });
+    // A round file left by a dead run is stale: this run holds the workspace
+    // lock, so nothing else is analysing it.
+    clearRetroInFlight(deps.workspace);
     // The signals are listened to from the START of the run (issue #146): a
     // stop requested during the derivation, before the first admission, is
     // honoured exactly like one during a worker.
@@ -778,7 +787,51 @@ export class SweepEngine {
     };
     this.reportReconciliation(this.lastReconciliation);
     this.observeOperationalState(this.lastPool, derived, inFlight);
+    // The retrospective trigger is checked at each sweep (issue 141): the
+    // archived works are the pulse and the report is the marker — no separate
+    // scheduler exists. The round runs on its own lane: it takes no slot and
+    // the sweep never waits for it.
+    this.maybeStartRetro();
     return derived;
+  }
+
+  /**
+   * Start a retrospective round when the trigger asks for one (issue 141).
+   * The round is fire-and-forget for the sweep — it never consumes a slot and
+   * never delays a launch — but a failure is logged, never silent, and the
+   * `--once` boundary waits for it (settle).
+   */
+  private maybeStartRetro(): void {
+    if (!this.deps.config.retro.enabled || this.retroRun !== null || this.stopping) return;
+    this.retroRun = this.startRetroRound()
+      .catch((error: unknown) => this.log(`retro round failed: ${describeError(error)}`))
+      .finally(() => {
+        this.retroRun = null;
+      });
+  }
+
+  private async startRetroRound(): Promise<void> {
+    const { config, runtime, workspace, notifier, now } = this.deps;
+    const finished = await collectFinishedWorks(workspace, this.carriedKeys);
+    const plan = await planAutomaticRound(config, workspace, finished, now);
+    if (plan === null) return;
+    if ("empty" in plan) {
+      this.log(
+        "retro: nothing new since the last report — no round is launched and no report is written",
+      );
+      return;
+    }
+    await runRetroRound(
+      {
+        config,
+        runtime,
+        workspace,
+        log: this.log,
+        ...(notifier === undefined ? {} : { notifier }),
+        ...(now === undefined ? {} : { now }),
+      },
+      plan,
+    );
   }
 
   /**
@@ -1029,6 +1082,10 @@ export class SweepEngine {
     // may legitimately finish without every launch promise settling (an
     // unconfirmed end; the report carries the uncertainty).
     await Promise.race([this.awaitAllLaunched(), this.requestedStopBegan.promise]);
+    // The retrospective lane is outside the slots, so the boundary waits for
+    // it explicitly. A requested stop does not wait: the stop is the operator's
+    // act and the round advances no marker without its report.
+    if (this.operatorStop.report === null && this.retroRun !== null) await this.retroRun;
     return this.operatorStop.report;
   }
 

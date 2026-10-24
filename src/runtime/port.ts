@@ -92,6 +92,62 @@ export interface SessionResult {
   outcome: "pr-open" | "clean-without-pr" | "blocked-self-report" | "abrupt-death";
 }
 
+/**
+ * One work of a retrospective window, as the round's agent reads it (issue
+ * 141): where the evidence lives inside the container, what the work ended as
+ * and when — never the work's issue body or diff, which the round does not
+ * change.
+ */
+export interface RetroWorkInput {
+  /** "<repo>#<n>" — the registry key the report names. */
+  key: string;
+  repo: string;
+  /** The work's artifacts as mounted read-only inside the round's container. */
+  evidencePath: string;
+  archived: boolean;
+  outcome: "pr-open" | "clean-without-pr" | "blocked-self-report";
+  attempt: number;
+  /** ISO 8601 finish time (the outcome record's mtime). */
+  completedAt: string;
+}
+
+/**
+ * The retro-specific launch shape (issue 141, ADR 0006): a factory job, not a
+ * Work — no claim, no branch, no outcome record. The round reads a window of
+ * finished works and writes a report plus a result record; its model and
+ * language are the round's, never the worker's by accident.
+ */
+export interface RetroRequest {
+  /** The round id — also the report and result file names' prefix. */
+  round: string;
+  /** The dedicated retrospective model. */
+  model: string;
+  /** The one language of the round (report and every filed item). */
+  language: string;
+  /** The acting account that files the issues. */
+  account: string;
+  /** Where factory-axis improvement items are filed. */
+  factoryItemsDestination: string;
+  works: RetroWorkInput[];
+  /** Host paths the round writes (report and result record). */
+  reportPath: string;
+  resultPath: string;
+  /** The same paths as mounted read-write inside the container. */
+  reportContainerPath: string;
+  resultContainerPath: string;
+  /** The factual summary of the window, drawn from the operational records. */
+  summary: string;
+  /** The factory-owned, versioned analysis instructions. */
+  instructions: string;
+  instructionsVersion: string;
+}
+
+export interface RetroResult {
+  request: RetroRequest;
+  /** What the runtime saw the round produce: the report artifact, or nothing. */
+  outcome: "report-written" | "no-report";
+}
+
 export interface WorkerRuntime {
   launch(request: WorkRequest): Promise<SessionResult>;
   /**
@@ -109,4 +165,10 @@ export interface WorkerRuntime {
    * with the reason when the end cannot be confirmed.
    */
   forceStop(work: WorkIdentity): Promise<void>;
+  /**
+   * Run one retrospective round (issue 141). It is not a Work: no claim, no
+   * slot, no branch, no outcome record — the round writes its report and
+   * result record and ends, and the factory reads the artifacts back.
+   */
+  launchRetro(request: RetroRequest): Promise<RetroResult>;
 }

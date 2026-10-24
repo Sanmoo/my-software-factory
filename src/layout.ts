@@ -2,13 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * The workspace: root of clones, worktrees, works and the archive.
+ * The workspace: root of clones, worktrees, works, the archive and the
+ * retrospective reports.
  *
  * Disk names are decided in tickets 05/10 and stay in PT-BR — layout of disk
  * is a taken decision, not code:
  *   <workspace>/repos/      — single clone per target repo
  *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs (sessao/, log-<n>.jsonl, desfecho.json)
  *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
+ *   <workspace>/retros/     — the retrospective reports (the marker) of issue 141
  */
 
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */
@@ -19,6 +21,20 @@ export const WORKSPACE_SUBPATHS = {
   repos: "repos",
   works: "trabalhos",
   archive: "arquivo",
+  retros: "retros",
+} as const;
+
+/**
+ * Where the retrospective round reads and writes inside its container (issue
+ * 141): the archive and the works are mounted read-only, the retros directory
+ * read-write (the report is the only artifact that leaves the round). Layout,
+ * not prose — the prompt and the runtime agree on these paths here.
+ */
+export const RETRO_MOUNT_PATHS = {
+  retros: "/msf-retros",
+  archive: "/msf-arquivo",
+  works: "/msf-trabalhos",
+  operationalLog: "/msf-operacional.log",
 } as const;
 
 export interface WorkspaceLayout {
@@ -26,6 +42,8 @@ export interface WorkspaceLayout {
   repos: string;
   works: string;
   archive: string;
+  /** The retrospective reports: the marker of the next window (issue 141). */
+  retros: string;
 }
 
 /** Directory of one work's artifacts: <workspace>/trabalhos/<repo>#<n>/ */
@@ -45,13 +63,14 @@ export function workspaceLayout(root: string): WorkspaceLayout {
     repos: join(root, WORKSPACE_SUBPATHS.repos),
     works: join(root, WORKSPACE_SUBPATHS.works),
     archive: join(root, WORKSPACE_SUBPATHS.archive),
+    retros: join(root, WORKSPACE_SUBPATHS.retros),
   };
 }
 
 /** Guarantee the workspace and its derived subpaths exist (idempotent). */
 export function ensureWorkspace(root: string): WorkspaceLayout {
   const layout = workspaceLayout(root);
-  for (const path of [layout.root, layout.repos, layout.works, layout.archive]) {
+  for (const path of [layout.root, layout.repos, layout.works, layout.archive, layout.retros]) {
     mkdirSync(path, { recursive: true });
   }
   return layout;
