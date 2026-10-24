@@ -11,12 +11,11 @@ import { DEFAULT_LABELS } from "../config.js";
  * sim (`npm test`); the smoke itself runs it against the real repo
  * (`npm run smoke:github`).
  *
- * op1 is designed around GitHub's eventual consistency (the empirical lesson
- * of two failed full-cycle runs): listings
- * converge LATE — the label-filtered one lagged minutes (search index), and
- * even the plain open-issues listing lagged >30s behind a freshly CREATED
- * issue — while DIRECT GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies
- * read) are immediately consistent. So the cycle proves eligibility via
+ * op1 is designed around GitHub's eventual consistency: listings converge LATE
+ * — the label-filtered one lags minutes (search index), and even the plain
+ * open-issues listing lags >30s behind a freshly created issue — while DIRECT
+ * GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies read) are immediately
+ * consistent. So the cycle proves eligibility via
  * DIRECT reads right after seeding (ops 1+2 and 1+3) with NO settle wait,
  * and the LISTING's live proof becomes ONE non-blocking open-issues()
  * re-check after the cycle's LAST operation — by then the listing has had

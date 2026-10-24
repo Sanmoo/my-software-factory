@@ -112,8 +112,8 @@ export interface OutcomeFacts {
 }
 
 /**
- * The factory's ruler, applied at collection
- * (loop) on structured facts alone. Priority is the vocabulary of the classes:
+ * The factory's ruler, applied at collection (loop) on structured facts alone.
+ * Priority is the vocabulary of the classes:
  *   1/5. PR open → reserve, no fall recorded (pre-existing PR included);
  *   6. blocked self-report → only recorded (the worker posted marker + label);
  *   4. no own record → INTERRUPTION: the recovery budget absorbs it and the

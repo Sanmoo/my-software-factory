@@ -183,8 +183,9 @@ export async function bakeCredentialHelper(
   await runner("git", ["config", "--local", CREDENTIAL_URL_HELPER_KEY, GIT_CREDENTIAL_HELPER], { cwd: cloneDir, env });
 }
 
-/** The ambient token env vars that must never shadow the keyring. One list: the boot check strips them from the
- * `gh` call, and the e2e harness adds gh's config-dir override on top. */
+/** The ambient token env vars that must never shadow the keyring. One list:
+ *  the boot check strips them from the `gh` call, and the e2e harness adds gh's
+ *  config-dir override on top. */
 export const AMBIENT_TOKEN_ENV_VARS = [
   "GH_TOKEN",
   "GH_ENTERPRISE_TOKEN",

@@ -141,9 +141,9 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
     {
       name: "1. listOpenIssues: a JUST-created issue appears on the first call — no settle",
       run: async () => {
-        // The dialect proof: on real GitHub the old
-        // label-filtered listing lagged minutes behind a fresh label (search
-        // index); the unfiltered open-issues listing is immediate. The read
+        // The dialect proof: the label-filtered listing lags minutes behind a
+        // fresh label (search index); the unfiltered open-issues listing is
+        // immediate. The read
         // that follows the create must therefore need no bounded wait at all
         // — one call, the issue is right there.
         const seeded = await harness.createIssue({ title: `just labeled ${harness.name}`, labels: [ready] });

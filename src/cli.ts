@@ -36,8 +36,9 @@ import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
 /**
- * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal
- * CLI. The run loads msf.yaml from the cwd, reads the bot token from the gh
+ * `msf run [--once] [--config <path>] [--runtime <name>]` and
+ * `msf status [--all] [--config <path>]` — the minimal CLI. The run loads
+ * msf.yaml from the cwd, reads the bot token from the gh
  * keyring (boot check: no token → clear failure), guarantees the workspace and
  * hands the thin loop its four seams.
  *

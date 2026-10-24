@@ -696,7 +696,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a later plain interruption is not read as 'retrying after the model provider' ", async () => {
+  test("a later plain interruption is not read as 'retrying after the model provider'", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(42, 1);
     const at = seedModelProviderEnding(dir, 1);

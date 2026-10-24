@@ -503,8 +503,8 @@ function renderPoolSummary(
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
  *  repair — or the continuation of an attempt that ended without its own
- * outcome: the recovery of an interruption or the retry of a
- * model provider failure. */
+ *  outcome: the recovery of an interruption or the retry of a model provider
+ *  failure. */
 type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 interface Launchable {
@@ -1999,8 +1999,9 @@ export class SweepEngine {
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     entry.attempt = facts.attempt;
     if (kind === "resume" && facts.previousFall) {
-      // The human's answer resets the consecutive failure count — the blocked valve already did its job and was
-      // addressed; a new failure starts a fresh count (1st → release again).
+      // The human's answer resets the consecutive failure count — the blocked
+      // valve already did its job and was addressed; a new failure starts a
+      // fresh count (1st → release again).
       facts.previousFall = false;
     }
     if (kind === "resume") {
@@ -2752,7 +2753,7 @@ export class SweepEngine {
   /** Charge one automatic repair round before its session: the budget, the
    *  consumed evidence and the attempt's own facts persist on disk, so a
    *  restart neither renews the cap nor repeats the same round, and a death is
-   * attributable once the remote answers. */
+   *  attributable once the remote answers. */
   private async recordRepairRound(
     dir: string,
     work: WorkIdentity,
@@ -2805,8 +2806,8 @@ export class SweepEngine {
 
   /**
    * The ruler at the act of an end — the survivor ends included — on structured
-   * facts alone: the outcome record (absence
-   * = an interruption), the PR fact and the label facts from the port, and the
+   * facts alone: the outcome record (absence = an interruption), the PR fact
+   * and the label facts from the port, and the
    * registry's consecutiveness. The decided transition is applied here; an
    * interruption returns the SAME attempt as the next launch.
    * `origin` only names the actor in the operator's log: a survivor's end is
@@ -3009,8 +3010,8 @@ export class SweepEngine {
   /** The block transition every 2nd fall and every rejection shares: the
    *  claimed label swaps to blocked (the claim is held until the terminal
    *  state) and the diagnosis is commented on the issue — the human must
-   * SEE why it fell before deciding to resume. Applying a block IS the
-   * new occurrence, so the help notice is delivered here, once. */
+   *  SEE why it fell before deciding to resume. Applying a block IS the new
+   *  occurrence, so the help notice is delivered here, once. */
   private async applyBlockWithComment(work: WorkIdentity, comment: string): Promise<void> {
     const { tickets, config } = this.deps;
     await tickets.blockTicketClaim(work.ticket, config.labels);
@@ -3027,8 +3028,8 @@ export class SweepEngine {
 
   /** The delivery a merge without closure implies: close the issue with the
    *  short fallback comment, then archive and clean — done must always be
-   * reflected on the tracker. Shared by the derivation's
-   * done-fallback and by a merge that landed mid-round. */
+   *  reflected on the tracker. Shared by the derivation's done-fallback and by
+   *  a merge that landed mid-round. */
   private async completeMergedWork(work: WorkIdentity, comment: string): Promise<void> {
     const { tickets } = this.deps;
     await tickets.markTicketDone(work.ticket);

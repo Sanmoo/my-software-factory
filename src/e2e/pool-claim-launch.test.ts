@@ -27,7 +27,7 @@ import { launchedNumber } from "./work-fixtures.js";
  * + scriptable fake runtime) — fast and deterministic, real temp workspace,
  * no network, no container (spec, Testing Decisions).
  *
- * The five checklist scenarios:
+ * The five cases:
  *   1. 3 eligibles with y=2 — two claims by age; the third enters in the same
  *      cycle the moment a slot frees, with no barrier waiting for the slowest.
  *   2. An eligible with an open blocker stays out of the pool; with all
@@ -148,7 +148,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   }
 
-  // ---- checklist 1 + 5: age order, same-cycle replenishment, no barrier ----
+  // ---- case 1 + 5: age order, same-cycle replenishment, no barrier ----
 
   test("3 eligibles with y=2: two claims by age; the third enters the same cycle a slot frees, without waiting for the slowest", async () => {
     const config = makeConfig(2);
@@ -280,7 +280,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   });
 
-  // ---- checklist 2: blockers gate the pool ----
+  // ---- case 2: blockers gate the pool ----
 
   test("an eligible with an open blocker stays out of the pool; with all closed it enters", async () => {
     const config = makeConfig(2);
@@ -305,7 +305,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     assert.ok(free.collected[0]?.prConfirmed);
   });
 
-  // ---- checklist 3: the claim swaps the label before the launch ----
+  // ---- case 3: the claim swaps the label before the launch ----
 
   test("the claim swaps ready→claimed on the tracker before the launch — this sweep's in-flight set keeps its own launch out of its own re-derivations", async () => {
     const config = makeConfig(1);
@@ -373,7 +373,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   });
 
-  // ---- checklist 4: --once waits for every launched worker ----
+  // ---- case 4: --once waits for every launched worker ----
 
   test("--once only exits after every launched worker ended, with the final tracker state correct (claimed with PR)", async () => {
     const config = makeConfig(2);

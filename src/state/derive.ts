@@ -413,7 +413,7 @@ export type ReservedDerivation = ReservedWorkInput &
     | { state: "idle" }
     /** A written failure the factory did not rule yet (it died between the
      *  record and the transition): release, or block on the 2nd consecutive
-     * failure — the ruler applies as at collection. */
+     *  failure — the ruler applies as at collection. */
     | { state: "fall"; decision: "release"; attempt: number }
     | { state: "fall"; decision: "block"; comment: string; attempt: number }
     /** An INTERRUPTION: the claimed work's attempt ended without an
