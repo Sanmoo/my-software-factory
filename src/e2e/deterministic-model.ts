@@ -3,7 +3,7 @@
  * an LLM and needs no provider account: it answers from the
  * transcript it receives, so the test proves the RUNTIME behaviour (session
  * persistence, resume selection, in-container guardrail) instead of a model's
- * creativity — exactly the category the issue allows for the mandatory
+ * creativity — the category a deterministic harness keeps for the mandatory
  * integration proof.
  *
  * The script, by number of assistant messages already in the transcript:
