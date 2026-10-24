@@ -1,13 +1,12 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { Config } from "../config.js";
 import type { Notifier } from "../notify/port.js";
 import { retroItemsNotice } from "../notify/port.js";
 import { RETRO_MOUNT_PATHS, type WorkspaceLayout } from "../layout.js";
-
-import type { RetroRequest, RetroWorkInput, WorkerRuntime } from "../runtime/port.js";
+import type { RetroRequest, RetroResult, RetroWorkInput, WorkerRuntime } from "../runtime/port.js";
 import { RETRO_INSTRUCTIONS, RETRO_INSTRUCTIONS_VERSION } from "./instructions.js";
 import {
   clearRetroInFlight,
@@ -20,6 +19,7 @@ import {
 import {
   FIRST_WINDOW_SIZE,
   renderWindowSummary,
+  reportFileName,
   resultFileName,
   roundId,
   type FinishedWork,
@@ -55,7 +55,6 @@ export interface RetroPlan {
   singleWork: boolean;
   language: string;
   model: string;
-  summary: string;
 }
 
 export interface FiledRetroItem {
@@ -103,10 +102,7 @@ export async function planAutomaticRound(
   const archivedSince = unseen.filter((work) => work.archived);
   if (archivedSince.length < config.retro.threshold) return null;
 
-  const window =
-    state.lastReport === null
-      ? finished.slice(-FIRST_WINDOW_SIZE)
-      : unseen.filter((work) => !state.analyzed.includes(work.key));
+  const window = state.boundaryAt === null ? finished.slice(-FIRST_WINDOW_SIZE) : pendingWindow(unseen, state);
   if (window.length === 0) return { empty: "nothing-new" };
 
   return {
@@ -117,7 +113,6 @@ export async function planAutomaticRound(
     singleWork: false,
     language: config.retro.language,
     model: retroModel(config),
-    summary: "",
   };
 }
 
@@ -153,11 +148,11 @@ export async function planManualRound(
       singleWork: true,
       language: options.language ?? config.retro.language,
       model: retroModel(config),
-      summary: "",
     };
   }
 
-  const window = finished.filter((work) => isUnseen(work, state) && !state.analyzed.includes(work.key));
+  const unseen = finished.filter((work) => isUnseen(work, state));
+  const window = pendingWindow(unseen, state);
   if (window.length === 0) return { empty: finished.length === 0 ? "no-finished-works" : "nothing-new" };
   return {
     round: roundId(new Date(now())),
@@ -167,17 +162,20 @@ export async function planManualRound(
     singleWork: false,
     language: options.language ?? config.retro.language,
     model: retroModel(config),
-    summary: "",
   };
 }
 
-/** The dedicated model: `retro.model` when configured, else the worker model. */
 function retroModel(config: Config): string {
   return config.retro.model ?? config.workerModel;
 }
 
 function isUnseen(work: FinishedWork, state: RetroState): boolean {
   return state.boundaryAt === null || work.completedAt > state.boundaryAt;
+}
+
+/** The works of `unseen` no report has analyzed yet. */
+function pendingWindow(unseen: readonly FinishedWork[], state: RetroState): FinishedWork[] {
+  return unseen.filter((work) => !state.analyzed.includes(work.key));
 }
 
 function newestFinish(works: readonly FinishedWork[]): number | null {
@@ -213,45 +211,53 @@ export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<R
       `retro round ${plan.round}: ${plan.manual ? "forced" : "automatic"} window of ${plan.works.length} ` +
         `finished work(s) in ${plan.language} — launching on model ${plan.model}, outside the worker slots`,
     );
+    const destination = deps.config.retro.factoryItemsDestination;
+    if (destination === null) {
+      throw new RetroError(
+        "retro.factory-items-destination is required for a round — the factory-axis items need their destination",
+      );
+    }
     const request: RetroRequest = {
       round: plan.round,
       model: plan.model,
       language: plan.language,
       account: deps.config.workerGhAccount,
-      factoryItemsDestination: deps.config.retro.factoryItemsDestination ?? "",
+      factoryItemsDestination: destination,
       works: plan.works.map(retroWorkInput),
       reportPath,
       resultPath,
-      reportContainerPath: `${RETRO_MOUNT_PATHS.retros}/${fileNameOf(reportPath)}`,
-      resultContainerPath: `${RETRO_MOUNT_PATHS.retros}/${fileNameOf(resultPath)}`,
-      summary: await renderWindowSummary(plan.works),
+      reportContainerPath: `${RETRO_MOUNT_PATHS.retros}/${basename(reportPath)}`,
+      resultContainerPath: `${RETRO_MOUNT_PATHS.retros}/${basename(resultPath)}`,
+      summary: await renderWindowSummary(deps.workspace, plan.works),
       instructions: RETRO_INSTRUCTIONS,
       instructionsVersion: RETRO_INSTRUCTIONS_VERSION,
     };
 
-    await deps.runtime.launchRetro(request);
-    return await settleRound(deps, plan, request);
+    const result = await deps.runtime.launchRetro(request);
+    return await settleRound(deps, plan, request, result);
   } finally {
     clearRetroInFlight(layout);
   }
 }
 
-function fileNameOf(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
-}
-
 /** Read the artifacts back: the report moves the marker, the result record says what was filed. */
-async function settleRound(deps: RetroDeps, plan: RetroPlan, request: RetroRequest): Promise<RetroRoundReport> {
+async function settleRound(
+  deps: RetroDeps,
+  plan: RetroPlan,
+  request: RetroRequest,
+  result: RetroResult,
+): Promise<RetroRoundReport> {
   const log = deps.log ?? (() => {});
   const { workspace: layout } = deps;
-  const filed = await readFiledItems(request.resultPath);
-  const discarded = await readDiscarded(request.resultPath);
+  const record = await readResultRecord(request.resultPath);
+  const filed = readFiledItems(record);
+  const discarded = readDiscarded(record);
   const window = plan.works.map((work) => work.key);
 
   if (!existsSync(request.reportPath)) {
     log(
-      `retro round ${plan.round}: no report was written — the marker does not move and the next sweep retries ` +
-        "the same window",
+      `retro round ${plan.round}: the runtime reported "${result.outcome}" and no report was written — ` +
+        "the marker does not move and the next sweep retries the same window",
     );
     return { round: plan.round, window, reportPath: null, filed: [], discarded: [] };
   }
@@ -269,7 +275,7 @@ async function settleRound(deps: RetroDeps, plan: RetroPlan, request: RetroReque
 
 /** The boundary only advances on a full round whose report exists. */
 function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): RetroState {
-  const reportName = `${plan.round}-retro.md`;
+  const reportName = reportFileName(plan.round);
   if (plan.singleWork) {
     const analyzed = new Set([...state.analyzed, ...plan.works.map((work) => work.key)]);
     return { ...state, lastReport: reportName, analyzed: [...analyzed].sort(), lastFiled: filedCount };
@@ -317,8 +323,7 @@ function retroWorkInput(work: FinishedWork): RetroWorkInput {
 }
 
 /** The result record's filed list; anything unreadable is an honest empty list. */
-async function readFiledItems(resultPath: string): Promise<FiledRetroItem[]> {
-  const record = await readResultRecord(resultPath);
+function readFiledItems(record: Record<string, unknown> | null): FiledRetroItem[] {
   if (record === null || !Array.isArray(record["filed"])) return [];
   const items: FiledRetroItem[] = [];
   for (const entry of record["filed"] as unknown[]) {
@@ -333,8 +338,7 @@ async function readFiledItems(resultPath: string): Promise<FiledRetroItem[]> {
   return items;
 }
 
-async function readDiscarded(resultPath: string): Promise<DiscardedCandidate[]> {
-  const record = await readResultRecord(resultPath);
+function readDiscarded(record: Record<string, unknown> | null): DiscardedCandidate[] {
   if (record === null || !Array.isArray(record["discarded"])) return [];
   const discarded: DiscardedCandidate[] = [];
   for (const entry of record["discarded"] as unknown[]) {

@@ -21,7 +21,7 @@ import {
   type WorkIdentity,
 } from "../tracker/identity.js";
 import { describeError } from "../format.js";
-import { readRetroInFlight, readRetroState } from "../retro/marker.js";
+import { readRetroInFlight, readRetroState, type RetroInFlight } from "../retro/marker.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -167,8 +167,8 @@ export interface RetroStatus {
   lastReport: string | null;
   /** Items the last report filed as needs-triage. */
   filed: number;
-  /** The round in flight: its id, start, window and whether it was forced. */
-  inFlight: { round: string; startedAt: number; window: string[]; manual: boolean } | null;
+  /** The round in flight, or null when the lane is idle. */
+  inFlight: RetroInFlight | null;
 }
 
 export interface StatusView {
@@ -256,21 +256,12 @@ export async function deriveStatus(
   };
 }
 
-/** The retro marker and the round in flight, read-only (issue 141). */
 async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
   const [state, inFlight] = await Promise.all([readRetroState(layout), readRetroInFlight(layout)]);
   return {
     lastReport: state.lastReport,
     filed: state.lastFiled,
-    inFlight:
-      inFlight === null
-        ? null
-        : {
-            round: inFlight.round,
-            startedAt: inFlight.startedAt,
-            window: inFlight.window,
-            manual: inFlight.manual,
-          },
+    inFlight,
   };
 }
 

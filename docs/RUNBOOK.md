@@ -329,8 +329,7 @@ archived, run one sweep — the log names the round, the report exists in
 `retros/`, the issues exist with `needs-triage` and reference the report, a
 retro-items notification points at each destination, `msf status` shows the
 last report (and the round in flight while it runs), and the next round's
-window starts after the previous report. Nothing is ever labeled
-`ready-for-agent`: your triage is the gate.
+window starts after the previous report.
 
 ## What the human does in the proof
 
