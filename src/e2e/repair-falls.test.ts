@@ -38,8 +38,8 @@ const execFile = promisify(execFileCallback);
 /**
  * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing
  * must not burn the round, must stay visible, and must be resumed automatically
- * on
- * the same branch and PR while the remote is still where it was observed. The
+ * on the same branch and PR while the remote is still where it was observed.
+ * The
  * two ledgers are covered here — the DELIVERED rounds (two before the block)
  * and the consecutive FALLS (two before the block, PR open or not) — plus the
  * three publication verdicts, the pending reconciliation, the concurrent change
@@ -277,8 +277,8 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal((await readRepairCycle(workDir(layout, REPO, 7))).consecutiveFalls, 0);
   });
 
-  test("the #100 incident resumes automatically: the unpublished round returns, the same evidence resumes, nothing is charged twice", async () => {
-    // Attempt 1 opens the PR; both repair attempts die abruptly, like the incident.
+  test("a repair that fell before publishing resumes automatically: the unpublished round returns, the same evidence resumes, nothing is charged twice", async () => {
+    // Attempt 1 opens the PR; both repair attempts die abruptly.
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "abrupt-death", "abrupt-death"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 100);
 
