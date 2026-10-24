@@ -1035,7 +1035,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
 
     const [first, second] = view.jira;
-    if (first?.state !== "known") assert.fail("the healthy source is readable");
+    if (first?.state !== "known") assert.fail("the healthy selection is readable");
     assert.deepEqual(
       first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       [
@@ -1045,7 +1045,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
       "the adapter's Rank order is presented as-is",
     );
     assert.deepEqual(first.candidates[0]?.assignees, [], "an unassigned candidate is presented, not dropped");
-    assert.equal(second?.state, "unknown", "a source that cannot be read is unknown, never an empty list");
+    assert.equal(second?.state, "unknown", "a selection that cannot be read is unknown, never an empty list");
     if (second?.state !== "unknown") assert.fail("unreachable");
     assert.match(second.reason, new RegExp(TOKEN_ENV), "the diagnostic names the missing local credential");
     assert.match(second.reason, /not set/);
@@ -1055,7 +1055,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
       ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql"],
       "status only reads: one identity read and the native search, no claim, comment or transition",
     );
-    assert.deepEqual(broken.requests, [], "the source without a credential never reaches the network");
+    assert.deepEqual(broken.requests, [], "the selection without a credential never reaches the network");
     assert.deepEqual(readdirSync(join(layout.works)), [], "no reservation, workspace or attempt is created");
   });
 

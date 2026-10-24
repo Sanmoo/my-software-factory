@@ -164,7 +164,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   lines.push(...section("pool (eligible)", view.pool.map((entry) => renderWorkIdentity(entry.work)), cap));
 
   // Jira candidates are read-only in this release (issue 128): the section
-  // never claims, comments or launches, and a source that could not be read
+  // never claims, comments or launches, and a selection that could not be read
   // says unknown instead of "none" — a candidate is not a reservation.
   lines.push(...renderJiraSources(view.jira, view.jiraAmbiguous, cap));
 

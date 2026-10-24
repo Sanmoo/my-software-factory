@@ -153,19 +153,19 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
 
 /**
  * Jira execution is not part of this release (issue 128): the configuration is
- * read-only. The refusal names the configured sources and happens before Claim.
+ * read-only. The refusal names the configured selections and happens before Claim.
  */
 function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
-  const sources = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
+  const selections = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
   throw new Error(
-    `Jira execution is not implemented yet: msf.yaml configures ${sources}. ` +
+    `Jira execution is not implemented yet: msf.yaml configures ${selections}. ` +
       `This release reads Jira candidates in \`msf status\` only; refusing before any claim, comment or launch`,
   );
 }
 
 /** The read-only Jira selections of `msf status`: one adapter per site (so the
- *  Acting account is identified once) and one selection per configured source. */
+ *  Acting account is identified once) and one reader per configured selection. */
 function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   const adapters = new Map<string, JiraTicketAdapter>();
   const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {
@@ -351,8 +351,8 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // GitHub Issues repo is configured); the reads themselves are the same REST
   // reads the sweep does, and the command writes NOTHING to the tracker.
   const github = config.repos.length === 0 ? null : await createGitHubAdapter({ account: config.workerGhAccount });
-  // The Jira sources are read through their own adapters — the same read-only
-  // selection and native Rank order the adapter contract suite proves. A source
+  // The Jira selections are read through their own adapters — the same read-only
+  // read and native Rank order the adapter contract suite proves. A selection
   // whose credential is missing is reported as unknown, never skipped.
   const view = await deriveStatus(
     { github, jira: jiraSelectionReaders(config) },
