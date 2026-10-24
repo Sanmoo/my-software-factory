@@ -54,9 +54,9 @@ Each `jira:` entry is its own selection: its JQL decides what it reads — no
 filter is added — and the result always arrives in native **Rank ascending**
 order, so a conflicting `ORDER BY` is a configuration error. `currentUser()`
 means the account the API token authenticates as, not an implicit operator. One
-site may feed several repositories through several selections. When readable
-selections promise one ticket to different destinations, `msf status` holds it
-with the reason; an unreadable selection leaves that overlap unverified. This
+site may feed several repositories through several selections. `msf status`
+reports an overlap it cannot turn into one destination under `ambiguous`; an
+unreadable selection leaves that overlap unverified. This
 release only reads Jira: `msf status` lists candidates (no claim, comment or
 launch) and `msf run` refuses a Jira configuration before any claim; a
 Jira-only factory writes `repos: []`.

@@ -151,10 +151,8 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
-/**
- * Jira execution is not part of this release (issue 128): the configuration is
- * read-only. The refusal names the configured selections and happens before Claim.
- */
+/** Jira execution is not part of this release (issue 128): the configuration is
+ *  read-only, and the refusal names the configured selections. */
 function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
   const selections = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
@@ -183,20 +181,6 @@ function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
     selection: jiraSelectionOf(entry),
     tickets: adapterFor(entry),
   }));
-}
-
-function workerCredentials(config: Config, env: NodeJS.ProcessEnv = process.env) {
-  return {
-    model: config.workerModel,
-    authEnv: modelAuthEnv(env),
-    agentFiles:
-      config.workerAuthFile === null ? [] : [{ name: "auth.json", hostPath: config.workerAuthFile }],
-  };
-}
-
-async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Promise<WorkerRuntime> {
-  const token = await workerToken(config.workerGhAccount);
-  return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
 /** `--runtime fake`: the placeholder that never launches — tests only; the
@@ -282,10 +266,9 @@ async function executeRun(
   runtimeName: string,
   stop: StopSignals,
 ): Promise<StopReport | null> {
-  // Jira-backed execution is a later slice: a configured Jira selection is
-  // READ-ONLY in this release. Refuse before the workspace, the keyring read,
-  // any claim or any launch — a sweep that silently ignored its Jira selections
-  // would pretend the configured work was handled.
+  // Before the workspace, the keyring read, any claim or any launch: a sweep
+  // that silently ignored its Jira selections would pretend the configured work
+  // was handled.
   assertNoJiraExecution(config);
   if (runtimeName === "sandcastle") {
     try {

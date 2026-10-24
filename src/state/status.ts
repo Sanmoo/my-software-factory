@@ -28,7 +28,6 @@ import {
 import {
   duplicateWorkers,
   probeLiveness,
-  workspaceLivenessProbe,
   type DuplicateWorkers,
   type LivenessProbe,
   type LiveWorker,
@@ -162,7 +161,7 @@ export interface StatusView {
 }
 
 /**
- * The status derivation. The probe is the seam tests replace: production gets
+ * The status derivation. The probe is the seam tests replace: the caller passes
  * the real read-only Docker probe over this workspace, and only a test passes
  * another one — never a CLI flag.
  */
@@ -170,7 +169,7 @@ export async function deriveStatus(
   sources: StatusSources,
   config: Config,
   layout: WorkspaceLayout,
-  probe: LivenessProbe = workspaceLivenessProbe(layout),
+  probe: LivenessProbe,
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
@@ -256,8 +255,9 @@ interface JiraHold {
  * readable selection still lists, and says the overlap is unverified.
  */
 function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
-  interface SelectedTicket extends JiraTicketFacts {
+  interface SelectedTicket {
     ticket: TicketIdentity;
+    facts: JiraTicketFacts;
     destinations: Map<string, RepositoryIdentity>;
   }
   const selected = new Map<string, SelectedTicket>();
@@ -267,8 +267,7 @@ function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
       const key = ticketIdentityKey(candidate.work.ticket);
       const entry = selected.get(key) ?? {
         ticket: candidate.work.ticket,
-        title: candidate.title,
-        assignees: candidate.assignees,
+        facts: { title: candidate.title, assignees: candidate.assignees },
         destinations: new Map<string, RepositoryIdentity>(),
       };
       entry.destinations.set(repositoryIdentityKey(candidate.work.destination), candidate.work.destination);
@@ -284,8 +283,7 @@ function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
     const destinations = [...entry.destinations.values()];
     ambiguous.push({
       ticket: entry.ticket,
-      title: entry.title,
-      assignees: entry.assignees,
+      ...entry.facts,
       destinations,
       unverified: unknownSelectionConflicts(views, entry.ticket.site, destinations),
     });
