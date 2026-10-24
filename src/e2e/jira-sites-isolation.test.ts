@@ -17,10 +17,11 @@ import {
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { branchOfWork, repoCloneDir, workerWorktreePath } from "../git/port.js";
-import { readAttemptLedger, readLaunchFacts } from "../pool/registry.js";
+import { readAttemptLedger } from "../work-record/attempts.js";
+import { readLaunchFacts } from "../pool/registry.js";
 import { reservationRecordOf, reserveWork, scanReservations } from "../pool/reservation.js";
 import { activePullRequest, readPrAssociations, recordPrAssociation } from "../pool/pr-association.js";
-import { readOutcomeRecord } from "../state/outcome.js";
+import { readOutcomeRecord } from "../work-record/outcome.js";
 
 const execFile = promisify(execFileCallback);
 

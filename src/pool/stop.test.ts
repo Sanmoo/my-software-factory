@@ -9,7 +9,8 @@ import { ensureWorkspace, workDirOfKey, type WorkspaceLayout } from "../layout.j
 import { deferred } from "../runtime/deferred.js";
 import type { LivenessObservation, LiveWorker } from "../state/liveness.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import { consumeRecovery, readRecoveryLedger, recordUnconfirmedStop } from "./recovery.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
+import { consumeRecovery, recordUnconfirmedStop } from "./recovery.js";
 import {
   OperatorStop,
   reconcileUnconfirmedStops,

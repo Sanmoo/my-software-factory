@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { ensureWorkspace, workDir } from "../layout.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "./fake-runtime.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 

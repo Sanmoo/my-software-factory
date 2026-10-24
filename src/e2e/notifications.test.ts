@@ -21,7 +21,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 const REPO = "Sanmoo/my-tasks";

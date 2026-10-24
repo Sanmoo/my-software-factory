@@ -20,8 +20,8 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../pool/repair.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { REPAIR_FILENAME, readRepairCycle, type RepairCycle } from "../work-record/repair.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
@@ -29,8 +29,8 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 import { waitFor } from "./cli-harness.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
-import { appendJournalIntent } from "../runtime/continuity-artifacts.js";
-import { readRecoveryLedger } from "../pool/recovery.js";
+import { appendJournalIntent } from "../work-record/continuity.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
 
 const execFile = promisify(execFileCallback);
 

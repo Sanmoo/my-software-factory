@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
-import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./session-log.js";
+import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./sessions.js";
 
 /**
  * Reading a persisted Pi session (issue 119): identity, the intact prefix and

@@ -18,8 +18,8 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { DESFECHO_FILENAME } from "./outcome.js";
-import { writeRepairCycle } from "../pool/repair.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
+import { writeRepairCycle } from "../work-record/repair.js";
 import {
   consumeRecovery,
   recordFailure,
@@ -27,8 +27,8 @@ import {
   recordUnconfirmedStop,
 } from "../pool/recovery.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
-import { appendAttemptEvent } from "../runtime/attempt-logs.js";
-import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-artifacts.js";
+import { appendAttemptEvent } from "../work-record/logs.js";
+import { PAUSE_FILENAME, clearPause, writePause } from "../work-record/continuity.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import { fakeDocker, inspectedContainer } from "./fake-docker.js";

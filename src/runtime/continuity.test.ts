@@ -15,7 +15,7 @@ import {
   readSessionLinks,
   type PauseReason,
   type PauseRecord,
-} from "./continuity-artifacts.js";
+} from "../work-record/continuity.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { DEFAULT_LABELS } from "../config.js";
 import type { EffectAction } from "./effects.js";

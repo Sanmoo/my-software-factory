@@ -18,7 +18,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { readRecoveryLedger } from "../pool/recovery.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import {
   installGhShim,
@@ -442,7 +442,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         'import { join } from "node:path";',
         `import { installStopSignals } from ${JSON.stringify(new URL("../stop-signals.js", import.meta.url).href)};`,
         `import { runOnce } from ${JSON.stringify(new URL("../loop.js", import.meta.url).href)};`,
-        `import { readRecoveryLedger } from ${JSON.stringify(new URL("../pool/recovery.js", import.meta.url).href)};`,
+        `import { readRecoveryLedger } from ${JSON.stringify(new URL("../work-record/recovery.js", import.meta.url).href)};`,
         "const [mode, workspaceRoot, launchedFile, resultFile] = process.argv.slice(2);",
         "// A signal listener does not keep Node alive: the child must outlive its",
         "// parked worker so the test can deliver the real signal.",

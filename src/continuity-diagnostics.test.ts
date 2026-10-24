@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
-import type { PauseRecord } from "./runtime/continuity-artifacts.js";
+import type { PauseRecord } from "./work-record/continuity.js";
 
 const pause: PauseRecord = {
   version: 1, attempt: 5, id: "occurrence", sessionId: "session",

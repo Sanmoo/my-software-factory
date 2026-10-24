@@ -22,7 +22,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { scanRegistry } from "../pool/registry.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber, githubWork, launchedNumber } from "./work-fixtures.js";

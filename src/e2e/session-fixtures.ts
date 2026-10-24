@@ -3,16 +3,17 @@
  * launch leaves on disk — the session association and, when the session
  * actually started, its Pi-format file in the bind-mounted sessions dir.
  *
- * The fixtures write the REAL artifact shapes (`continuity-artifacts.ts`,
- * `session-log.ts`), so a test that seeds an interrupted attempt exercises the
- * same readers the production recovery uses. No test bypasses verification.
+ * The fixtures write the REAL artifact shapes (`work-record/continuity.ts`,
+ * `work-record/sessions.ts`), so a test that seeds an interrupted attempt
+ * exercises the same readers the production recovery uses. No test bypasses
+ * verification.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { SESSIONS_SUBDIR } from "../layout.js";
-import { appendSessionLink, type SessionLink } from "../runtime/continuity-artifacts.js";
+import { appendSessionLink, type SessionLink } from "../work-record/continuity.js";
 import {
   isLegacyWorkRef,
   workOfLegacyRef,

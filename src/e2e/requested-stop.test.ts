@@ -20,13 +20,14 @@ import {
   type Config,
   type RecoveryBudget,
 } from "../config.js";
-import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
+import { recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { githubWork, launchedNumber } from "./work-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { waitFor } from "./cli-harness.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
-import { appendJournalIntent, readPause } from "../runtime/continuity-artifacts.js";
+import { appendJournalIntent, readPause } from "../work-record/continuity.js";
 
 /**
  * The operator's requested stop and the restart that follows (issue #146), at

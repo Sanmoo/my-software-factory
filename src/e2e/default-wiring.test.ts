@@ -13,7 +13,7 @@ import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { seedSession } from "./session-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
-import { readOutcomeRecord } from "../state/outcome.js";
+import { readOutcomeRecord } from "../work-record/outcome.js";
 import { RESERVATION_FILENAME, readReservation } from "../pool/reservation.js";
 import { PR_ASSOCIATIONS_FILENAME, activePullRequest, readPrAssociations } from "../pool/pr-association.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";

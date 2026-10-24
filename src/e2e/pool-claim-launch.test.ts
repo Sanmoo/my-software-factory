@@ -406,7 +406,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       assert.equal(feedback.value.pr.author, "bot-do-samuca");
 
       // The outcome record exists on real disk under the workspace layout.
-      const record = await import("../state/outcome.js").then((m) => m.readOutcomeRecord(workDirOf(number)));
+      const record = await import("../work-record/outcome.js").then((m) => m.readOutcomeRecord(workDirOf(number)));
       assert.ok(record, `#${number} wrote desfecho.json`);
       assert.equal(record.class, "pr-open");
     }

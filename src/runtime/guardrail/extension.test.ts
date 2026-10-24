@@ -16,7 +16,7 @@ import {
   EFFECT_JOURNAL_FILENAME,
   GUARDRAIL_STATE_FILENAME,
   type GuardrailState,
-} from "../continuity-artifacts.js";
+} from "../../work-record/continuity.js";
 
 /**
  * The in-container guardrail (issue 119): executable protection at the tool

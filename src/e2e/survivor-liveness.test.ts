@@ -12,11 +12,11 @@ import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/p
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
-import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
-import { EVENT_LOG_PATTERN, eventLogName } from "../runtime/attempt-logs.js";
+import { RECOVERY_FILENAME, readRecoveryLedger } from "../work-record/recovery.js";
+import { EVENT_LOG_PATTERN, eventLogName } from "../work-record/logs.js";
 import { fakeDocker, inspectedContainer } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";

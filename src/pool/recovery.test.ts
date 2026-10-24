@@ -4,20 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
+import { RECOVERY_FILENAME, readRecoveryLedger, type RecoveryLedger } from "../work-record/recovery.js";
 import {
   confirmStopRequest,
   consumeRecovery,
   consumeStopRequest,
   exhaustedReason,
   peekRecovery,
-  readRecoveryLedger,
   recordFailure,
   recordStopRequest,
   recordUnconfirmedStop,
-  RECOVERY_FILENAME,
   recoveryDecision,
   refundRecovery,
-  type RecoveryLedger,
 } from "./recovery.js";
 
 /**

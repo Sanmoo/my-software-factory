@@ -6,15 +6,14 @@ import { join } from "node:path";
 
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 
+import { DESFECHO_FILENAME, readOutcomeRecord } from "../work-record/outcome.js";
 import {
-  readOutcomeRecord,
   classifyOutcome,
   blockedCommentBody,
   interruptionPausedCommentBody,
   isRecordedFailure,
   ownWrittenOutcome,
   continuityPausedCommentBody,
-  DESFECHO_FILENAME,
 } from "./outcome.js";
 import { DEFAULT_RECOVERY_BUDGET } from "../config.js";
 

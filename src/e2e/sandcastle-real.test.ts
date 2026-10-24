@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, describe } from "node:test";
 
-import { readOutcomeRecord } from "../state/outcome.js";
+import { readOutcomeRecord } from "../work-record/outcome.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { modelAuthEnv } from "../runtime/model-auth.js";
 import { reviewReportPath } from "../runtime/prompt.js";

@@ -18,7 +18,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { readRepairCycle } from "../pool/repair.js";
+import { readRepairCycle } from "../work-record/repair.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 

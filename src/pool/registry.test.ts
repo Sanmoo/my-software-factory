@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { archiveDoneWorkFor, parseWorkKey, readLaunchFacts, scanRegistry } from "./registry.js";
-import { readPause, writePause } from "../runtime/continuity-artifacts.js";
+import { readPause, writePause } from "../work-record/continuity.js";
 import { githubRepository, githubTicket, type WorkIdentity } from "../tracker/identity.js";
 import { scanReservations } from "./reservation.js";
 

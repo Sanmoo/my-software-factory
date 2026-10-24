@@ -14,7 +14,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import type { GitWork } from "../git/port.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { authorizeCallRecovery, CALL_RECOVERY_FILENAME, readCallRecoveries, recoveryConsumption, reviewCallRecovery } from "../runtime/call-recovery.js";
-import { appendJournalIntent, appendJournalResult, appendJournalStart, clearPause, readEffectJournal, readPause, writeGuardrailState, writePause } from "../runtime/continuity-artifacts.js";
+import { appendJournalIntent, appendJournalResult, appendJournalStart, clearPause, readEffectJournal, readPause, writeGuardrailState, writePause } from "../work-record/continuity.js";
 import { installGuardrail, type GuardrailApi, type GuardrailBlock, type ToolCallLike, type ToolResultLike } from "../runtime/guardrail/extension.js";
 import { buildWorkerPrompt } from "../runtime/prompt.js";
 import { seedExtraToolResult, seedSession, seedSessionToolCall } from "./session-fixtures.js";

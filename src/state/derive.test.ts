@@ -17,8 +17,8 @@ import {
 } from "./derive.js";
 import { DEFAULT_LABELS, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { DESFECHO_FILENAME, readOutcomeRecord } from "./outcome.js";
-import { appendAttemptEvent } from "../runtime/attempt-logs.js";
+import { DESFECHO_FILENAME, readOutcomeRecord } from "../work-record/outcome.js";
+import { appendAttemptEvent } from "../work-record/logs.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
 
 /** The pool-only view over the single derivation, for the tests of the pool's rules. */

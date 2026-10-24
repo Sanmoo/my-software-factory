@@ -9,9 +9,9 @@ import { localGitWork } from "../git/local.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { readRecoveryLedger } from "../pool/recovery.js";
-import { readEffectJournal, readPause } from "../runtime/continuity-artifacts.js";
-import { findSessionFile as findSession, inspectSessionFile, sessionToolResults } from "../runtime/session-log.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
+import { readEffectJournal, readPause } from "../work-record/continuity.js";
+import { findSessionFile as findSession, inspectSessionFile, sessionToolResults } from "../work-record/sessions.js";
 import { startDeterministicModel, type DeterministicModel } from "./deterministic-model.js";
 import { hostVisibleBase, bridgeAddress, waitForPushThenFindWorker, killContainer } from "./real-continuity-fixtures.js";
 

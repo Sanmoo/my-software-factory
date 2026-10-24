@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { runCli, installGhShim, type GhShim, type RestAnswer } from "./cli-harness.js";
 import { githubWork } from "./work-fixtures.js";
-import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-artifacts.js";
+import { PAUSE_FILENAME, clearPause, writePause } from "../work-record/continuity.js";
 import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 
 /**

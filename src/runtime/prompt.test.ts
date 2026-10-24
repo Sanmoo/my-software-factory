@@ -3,7 +3,7 @@ import { test, describe } from "node:test";
 
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DEFAULT_LABELS } from "../config.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
 import type { LoadedAgentResources } from "./inventory.js";
 import type { WorkRequest } from "./port.js";

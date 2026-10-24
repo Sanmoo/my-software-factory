@@ -5,7 +5,7 @@ import type { LocalWorkFacts } from "../git/port.js";
 import type { PrRepairFacts, RequiredCheckResult } from "../tracker/port.js";
 import { known, notKnown } from "../tracker/port.js";
 import type { RepairTrigger } from "../state/derive.js";
-import type { RepairAttempt, RepairCycle } from "./repair.js";
+import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import { openRepairRound, settleRepairRound, type RepairSettlementInput } from "./repair-round.js";
 
 const BASE = "main";

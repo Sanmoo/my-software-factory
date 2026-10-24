@@ -18,7 +18,7 @@ import {
   readPause,
   readSessionLinks,
   writePause,
-} from "./continuity-artifacts.js";
+} from "./continuity.js";
 import { githubWork } from "../e2e/work-fixtures.js";
 
 /**

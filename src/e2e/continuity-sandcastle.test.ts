@@ -21,11 +21,11 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { GUARDRAIL_CONTAINER_FILE, SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { EFFECT_JOURNAL_FILENAME, GUARDRAIL_STATE_FILENAME, readEffectJournal, readPause } from "../runtime/continuity-artifacts.js";
+import { EFFECT_JOURNAL_FILENAME, GUARDRAIL_STATE_FILENAME, readEffectJournal, readPause } from "../work-record/continuity.js";
 import { planContinuity, recheckPausedEffects } from "../runtime/continuity.js";
 import { WORK_MOUNT } from "../runtime/prompt.js";
-import { inspectSessionFile, sessionToolCalls, sessionToolResults } from "../runtime/session-log.js";
-import { readRecoveryLedger } from "../pool/recovery.js";
+import { inspectSessionFile, sessionToolCalls, sessionToolResults } from "../work-record/sessions.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
 import { githubWork } from "./work-fixtures.js";
 import {
   COMPLETION,
