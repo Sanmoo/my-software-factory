@@ -15,10 +15,10 @@ import {
 
 /**
  * `msf status` and `msf run` at the hermetic CLI seam over the REAL Jira
- * adapter (issue 128): the spawned binary reads a Cloud source through a
- * canned Jira REST channel (fetch preload), with an isolated HOME and no
- * ambient credential. Status presents the JQL candidates in the native Rank
- * order without claiming anything; a source without its local credential is
+ * adapter (issue 128): the spawned binary reads the configured selections
+ * through a canned Jira REST channel (fetch preload), with an isolated HOME and
+ * no ambient credential. Status presents the JQL candidates in the native Rank
+ * order without claiming anything; a selection without its local credential is
  * unknown while the healthy one still lists; `run` refuses a Jira
  * configuration before any claim, launch or workspace write.
  */
