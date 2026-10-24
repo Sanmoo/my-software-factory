@@ -637,12 +637,9 @@ export class SandcastleRuntime implements WorkerRuntime {
       sessionStorage: { hostSessionsDir: sessionsDir },
     });
 
-    // Every resource is named explicitly and discovery is off — one
-    // concatenation because pi's print command is a string, not structured
-    // args (`workerFlagArgs` is the single source of the list). A NEW session
-    // is born with the id the factory already recorded: the association exists
-    // before the worker starts, so a recovery can never pick the wrong file.
-    const flags = workerFlagArgs(this.agentResources);
+    // A NEW session is born with the id the factory already recorded: the
+    // association exists before the worker starts, so a recovery can never
+    // pick the wrong file.
     const newSessionId = request.session?.mode === "new" ? request.session.sessionId : null;
     const agentWithFlags = this.withPrintFlags(agent, {
       // The flag fragment, named for what it is: the id itself is above.
