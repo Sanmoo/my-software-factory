@@ -1074,7 +1074,10 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
     const text = renderStatus(view);
 
-    assert.match(text, /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1/);
+    assert.match(
+      text,
+      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1 source$/m,
+    );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1/);
     assert.match(
       text,

@@ -185,7 +185,9 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 }
 
 /** One block per configured selection, in native Rank order, nothing claimed;
- *  an unreadable source says unknown, and a held ticket gets its own section. */
+ *  an unreadable source says unknown, and a held ticket gets its own section.
+ *  The header count is the lines below it — the configured sources — because a
+ *  source counts as one line whether it listed nothing or could not be read. */
 function renderJiraSources(
   sources: readonly JiraSourceView[],
   ambiguous: readonly JiraAmbiguousTicket[],
@@ -193,7 +195,8 @@ function renderJiraSources(
 ): string[] {
   if (sources.length === 0) return [];
   const lines = [
-    `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ${sources.length}`,
+    `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ` +
+      `${sources.length} source${sources.length === 1 ? "" : "s"}`,
   ];
   for (const source of sources) {
     const site = source.selection.source.site;
