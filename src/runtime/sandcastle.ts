@@ -118,16 +118,23 @@ export interface AgentFile {
 /** Where the supplied files ride read-only; the start hook copies each one. */
 export const AGENT_FILES_MOUNT_DIR = "/msf-agent-files";
 
+/** The only shape a supplied file's name may take: it is interpolated into the
+ *  start hook's command and must name a file inside the agent dir. */
+const AGENT_FILE_NAME = /^[A-Za-z0-9._-]+$/;
+
 /** Stage the supplied files in a private host dir for the read-only bind.
  *  The caller removes the dir with the launch. */
 export function stageAgentFiles(files: readonly AgentFile[]): string {
   const dir = mkdtempSync(join(tmpdir(), "msf-agent-files-"));
   try {
     for (const file of files) {
-      // The name reaches the agent dir and the copy command: a path (or a
-      // shell metacharacter) in it is a factory bug, never a silent surprise.
-      if (file.name === "" || file.name !== basename(file.name)) {
-        throw new Error(`an agent file name must be a bare file name, got "${file.name}"`);
+      // The name reaches the agent dir and an unquoted shell command: a path
+      // or a metacharacter in it is a factory bug, refused here, never a silent
+      // surprise at the copy.
+      if (!AGENT_FILE_NAME.test(file.name) || file.name !== basename(file.name)) {
+        throw new Error(
+          `an agent file name must be a bare file name (letters, digits, dot, dash, underscore), got "${file.name}"`,
+        );
       }
       const target = join(dir, file.name);
       copyFileSync(file.hostPath, target);

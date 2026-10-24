@@ -57,12 +57,12 @@ and moves the tag (`workerImage` in `package.json`) only on success.
   rebuild. Never edit a running image.
 - **Upgrading from the profile snapshot**: delete `profile-allowed-roots` and
   `profile-skip-dangling-links` from `msf.yaml`.
-- **Diagnose**: `docker run --rm --network none --entrypoint cat <image> /opt/msf/agent-inventory.json`;
-  a launch whose image differs from this checkout's declaration refuses to
-  start the worker and names the rebuild command.
-- **Concurrent checkouts**: set `MSF_WORKER_IMAGE=<image>:<name>` for both
-  `build:image` and `gateway`, so two checkouts on one Docker host keep their
-  tags apart.
+- **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`
+  (the default tag; a launch whose image differs from this checkout's
+  declaration refuses to start the worker and names the rebuild command).
+- **Concurrent checkouts**: give each checkout its own tag by exporting
+  `MSF_WORKER_IMAGE` before `build:image` and `gateway`, so two checkouts on one
+  Docker host do not overwrite each other's image.
 - **Clean host check**: with no `~/.pi/agent` and no Pi installed, rebuild, run
   the gateway, then `node dist/cli.js run --once`.
 
