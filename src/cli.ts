@@ -330,10 +330,12 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
 
   // Ticket 18: status reads the REAL tracker — the trail it shows is the
   // work's real trail (issue labels, PR, the works the registry holds on
-  // disk). Only the keyring read at boot touches the machine (and only when a
-  // GitHub Issues repo is configured); the reads themselves are the same REST
-  // reads the sweep does, and the command writes NOTHING to the tracker.
-  const github = config.repos.length === 0 ? null : await createGitHubAdapter({ account: config.workerGhAccount });
+  // disk). Only the keyring read at boot touches the machine; the reads
+  // themselves are the same REST reads the sweep does, and the command
+  // writes NOTHING to the tracker. The boot check runs for every factory —
+  // `repos: []` (a Jira-only factory) reads no GitHub Issues, but its identity
+  // is still verified before anything is shown.
+  const github = await createGitHubAdapter({ account: config.workerGhAccount });
   // The Jira selections are read through their own adapters — the same read-only
   // read and native Rank order the adapter contract suite proves. A selection
   // whose credential is missing is reported as unknown, never skipped.

@@ -179,7 +179,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", ()
       "one identity read and the native pages: no claim, comment or transition",
     );
     assert.deepEqual(gh.restCalls(), [], "repos: [] means no GitHub Issues REST call");
-    assert.equal(existsSync(ready), false, "a Jira-only status needs no GitHub credential");
+    assert.equal(existsSync(ready), true, "the GitHub identity boot check still runs: a Jira-only factory verifies it too");
     assert.equal(existsSync(workspace), false, "status created no execution workspace");
   });
 
