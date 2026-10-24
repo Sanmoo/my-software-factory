@@ -14,8 +14,11 @@
  *   3 → print the completion signal and stop.
  *
  * The "refused-call" script proves the journal gap of the reported incident:
- *   0 → issue ONE guarded call a probe extension refuses after the guardrail
- *       journaled its intent (so the journal keeps an intent with no result);
+ *   0 → run ONE harmless safe call, so the session itself proves what Pi
+ *       records for a call that executed (`durationMs`);
+ *   1 → issue ONE guarded call a probe extension refuses after the guardrail
+ *       journaled its intent (so the journal keeps an intent with no result and
+ *       the terminal error records no `durationMs`);
  *   — → the first session ends with NO outcome record: its attempt is
  *       interrupted, and repairing the journal is the factory's job;
  *   resumed    → write the outcome record once, then the completion.
@@ -37,9 +40,6 @@ export interface DeterministicModelOptions {
   /** Which proof this model drives; "interruption" (the default) is the kill
    *  test, "refused-call" the journal-gap test. */
   script?: "interruption" | "refused-call";
-  /** The guarded command the "refused-call" script issues: refused by the probe
-   *  extension BEFORE it runs, journaled by the guardrail before that. */
-  refusedCommand?: string;
   /** Address the sibling container dials (the host's bridge address). */
   address: string;
   /** Where the completion signal / outcome path point inside the container. */
@@ -50,6 +50,15 @@ export interface DeterministicModelOptions {
 }
 
 export const COMPLETION = "<promise>MSF-RESULT</promise>";
+
+/** The harmless command the "refused-call" script runs first: the proof reads
+ *  the `durationMs` Pi records for a call that really executed in the container. */
+export const SAFE_CALL_COMMAND = "printf 'msf-probe-safe\\n'";
+
+/** The guarded command the "refused-call" script issues next: the probe
+ *  extension refuses it BEFORE it runs, after the guardrail journaled its
+ *  intent, so Pi stores the error with no `durationMs`. */
+export const REFUSED_CALL_COMMAND = "curl -sS https://example.invalid/msf-probe";
 
 /** The heading the factory's prompt uses when it reopens the attempt's own
  *  session (src/runtime/prompt.ts): `## This session CONTINUES attempt <n>`. */
@@ -200,13 +209,14 @@ function script(state: ScriptState, options: DeterministicModelOptions): Reply {
 }
 
 function refusedCallScript(state: ScriptState, options: DeterministicModelOptions): Reply {
-  if (state.assistantMessages === 0) {
-    return { kind: "tool", command: options.refusedCommand ?? "curl -sS https://example.invalid/msf-probe" };
+  if (!state.resumed) {
+    if (state.assistantMessages === 0) return { kind: "tool", command: SAFE_CALL_COMMAND };
+    if (state.assistantMessages === 1) return { kind: "tool", command: REFUSED_CALL_COMMAND };
+    // The first session ends with no outcome record on purpose: the attempt is
+    // interrupted and the factory's recovery must repair the journal from the
+    // terminal result Pi persisted for the refused call.
+    return { kind: "text", text: COMPLETION };
   }
-  // The first session ends with no outcome record on purpose: the attempt is
-  // interrupted and the factory's recovery must repair the journal from the
-  // terminal result Pi persisted for the refused call.
-  if (!state.resumed) return { kind: "text", text: COMPLETION };
   // The reopened session writes the record once, then ends its turn.
   if (!state.commands.some((command) => command.includes(`${options.workMount}/desfecho.json`))) {
     const record = JSON.stringify({ class: "clean-without-pr", attempt: options.attempt });

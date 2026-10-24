@@ -767,16 +767,18 @@ function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
   return pause !== null && pauseWaits(pause, attempt) ? pause : null;
 }
 
-/** The pause the factory keeps re-evaluating, if any: the same "current" rule
- *  the interrupted branch applies, plus the attempt the disk evidence numbers
- *  (a pause of a planned attempt is still current). Read only when a record
- *  exists — a blocked work without one never touches the ledger for this. */
+/** The pause the factory keeps re-evaluating, if any: it is history only once
+ *  the ledger advanced PAST it, and a claim that wrote no attempt yet cannot
+ *  have advanced past one (`pauseWaits` holds for every record against 0). The
+ *  attempt reported is the one the pause waits for — its own, or the claim's
+ *  first when the record cannot name one. Read only when a record exists — a
+ *  blocked work without one never touches the ledger for this. */
 async function currentPause(dir: string): Promise<{ pause: PauseRecord; attempt: number } | null> {
   const pause = readPause(dir);
   if (pause === null) return null;
-  const ledger = await readAttemptLedger(dir);
-  const attempt = ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt;
-  return pauseWaits(pause, attempt) ? { pause, attempt } : null;
+  const { lastAttempt } = await readAttemptLedger(dir);
+  if (!pauseWaits(pause, lastAttempt)) return null;
+  return { pause, attempt: pause.attempt >= 1 ? pause.attempt : Math.max(lastAttempt, 1) };
 }
 
 /**

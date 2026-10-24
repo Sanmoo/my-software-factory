@@ -28,7 +28,13 @@ import { WORK_MOUNT } from "../runtime/prompt.js";
 import { inspectSessionFile, sessionToolCalls, sessionToolResults } from "../runtime/session-log.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { githubWork } from "./work-fixtures.js";
-import { COMPLETION, startDeterministicModel, type DeterministicModel } from "./deterministic-model.js";
+import {
+  COMPLETION,
+  REFUSED_CALL_COMMAND,
+  SAFE_CALL_COMMAND,
+  startDeterministicModel,
+  type DeterministicModel,
+} from "./deterministic-model.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 
 /**
@@ -496,8 +502,23 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         assert.ok(file, "the session persisted on the host");
         const inspection = inspectSessionFile(file, decision.sessionId);
         assert.equal(inspection.status, "intact", inspection.detail);
-        const refused = sessionToolCalls(file, inspection.intactEntries).find((call) =>
-          call.command.includes(PROBE_MARKER),
+        // 2a. The rule the factory reads needs its POSITIVE control in the SAME
+        //     session: a call that really executed carries the duration Pi only
+        //     records for one, so "no duration" means "never ran" and not "this
+        //     Pi version records none".
+        const safe = sessionToolCalls(file, inspection.intactEntries).find((call) => call.command === SAFE_CALL_COMMAND);
+        assert.ok(safe, `the harmless call reached the session: ${inspection.detail ?? ""}`);
+        const safeTerminal = sessionToolResults(file, inspection.intactEntries).filter(
+          (result) => result.callId === safe.callId,
+        );
+        assert.equal(safeTerminal.length, 1, "the executed call has exactly one terminal result");
+        assert.equal(safeTerminal[0]?.isError, false, "the harmless call succeeded");
+        assert.equal(typeof safeTerminal[0]?.durationMs, "number", "a call that executed records its duration");
+        // 2b. The guarded call, refused by the probe AFTER the guardrail's intent:
+        //     the terminal error exists only in the session, and it carries no
+        //     duration — the contrast with the call above is the whole rule.
+        const refused = sessionToolCalls(file, inspection.intactEntries).find(
+          (call) => call.command === REFUSED_CALL_COMMAND,
         );
         assert.ok(refused, `the guarded call reached the session: ${inspection.detail ?? ""}`);
         const terminal = sessionToolResults(file, inspection.intactEntries).filter(
@@ -607,12 +628,10 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
  *  in load order, so the guardrail has journaled the intent by the time this one
  *  refuses the call. */
 const PROBE_FILENAME = "prova-extensao.js";
-const PROBE_MARKER = "example.invalid/msf-probe";
 const PROBE_SOURCE = `export default function probe(pi) {
   pi.on("tool_call", (event) => {
     if (event.toolName !== "bash") return undefined;
-    const command = String(event.input?.command ?? "");
-    if (!command.includes(${JSON.stringify(PROBE_MARKER)})) return undefined;
+    if (String(event.input?.command ?? "") !== ${JSON.stringify(REFUSED_CALL_COMMAND)}) return undefined;
     return { block: true, reason: "msf test probe: refused after the guardrail journaled the intent" };
   });
 }

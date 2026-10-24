@@ -140,8 +140,7 @@ Restarting after a crash loses nothing either: the next boot re-derives every
 reserved work from disk + tracker alone (a crashed round is an interruption:
 the SAME attempt is recovered after the configured backoff by reopening its own
 session — or, when that session cannot be proven safe to continue, pauses and
-asks for help, re-evaluating the pause every cycle and clearing it by itself
-once the session or the real state settles the doubt, without another answer; a
+asks for help, re-evaluating the pause every cycle. A
 written failure still releases the work to the pool, its 2nd consecutive one
 blocks it, and an exhausted recovery budget pauses it and asks for help; a PR
 waiting for you stays parked; a merge you already did becomes

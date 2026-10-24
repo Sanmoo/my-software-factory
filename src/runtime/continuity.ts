@@ -68,7 +68,7 @@ export type ContinuityPlan =
   | { decision: "pause"; pause: PauseRecord };
 
 export interface RecheckResult {
-  /** Every open effect is settled: the paused work may start a new round. */
+  /** Nothing the pause doubted is still there: the paused work may continue. */
   resolved: boolean;
   pause: PauseRecord | null;
 }
@@ -87,76 +87,48 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
 
   if (mode === "new") return startFirstSession(deps, effects.verdicts);
 
-  const links = readSessionLinks(deps.workDir);
-  if (!links.intact) {
-    return {
-      decision: "pause",
-      pause: pauseOf(deps, "session-identity", "the session-association journal is unreadable"),
-    };
-  }
-  const link = linkForAttempt(links.links, deps.work, deps.attempt);
-  if (link === null) {
-    // A claim whose worker never started (a death between the claim and the
-    // spawn) leaves ZERO attempt evidence: there is no session to lose, so the
-    // SAME attempt legitimately creates its first session. A legacy attempt
-    // that left any evidence but no association is a different case: its
-    // session cannot be identified and the work pauses.
-    return firstSessionOrPause(
-      deps,
-      effects.verdicts,
-      "link-missing",
-      `attempt ${deps.attempt} has no recorded Pi session — a fresh session would be a new execution, not a continuation`,
-    );
-  }
-
-  const file = findSessionFile(deps.sessionsDir, link.sessionId);
-  if (file === null) {
-    // The association exists but the file does not. A session Pi never started
-    // leaves no log, no journal record and no session file: nothing can be
-    // lost, so the SAME attempt starts its first session. Once any evidence
-    // exists (the session ran), its absence pauses the work.
-    return firstSessionOrPause(
-      deps,
-      effects.verdicts,
-      "session-missing",
-      `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk`,
-      link.sessionId,
-    );
-  }
-  const inspection = inspectSessionFile(file, link.sessionId);
-  if (inspection.status === "identity-mismatch" || inspection.status === "missing") {
-    return {
-      decision: "pause",
-      pause: pauseOf(deps, "session-identity", inspection.detail ?? "the session identity does not match", link.sessionId),
-    };
-  }
-  if (inspection.status === "unreadable") {
-    return {
-      decision: "pause",
-      pause: pauseOf(deps, "session-unreadable", inspection.detail ?? "the session history is unreadable", link.sessionId),
-    };
-  }
-
-  const journal = readEffectJournal(deps.workDir);
-  if (!journal.intact) {
-    return {
-      decision: "pause",
-      pause: pauseOf(
-        deps,
-        "journal-unreadable",
-        "the effect journal has an incomplete or unparseable entry — it cannot prove which effects were attempted",
-        link.sessionId,
-      ),
-    };
+  const facts = readSessionFacts(deps);
+  if (!facts.readable) {
+    switch (facts.cause) {
+      case "association-missing":
+        // A claim whose worker never started (a death between the claim and the
+        // spawn) leaves ZERO attempt evidence: there is no session to lose, so
+        // the SAME attempt legitimately creates its first session. A legacy
+        // attempt that left any evidence but no association is a different
+        // case: its session cannot be identified and the work pauses.
+        return firstSessionOrPause(
+          deps,
+          effects.verdicts,
+          "link-missing",
+          `${facts.detail} — a fresh session would be a new execution, not a continuation`,
+        );
+      case "session-file-missing":
+        // The association exists but the file does not. A session Pi never
+        // started leaves no log, no journal record and no session file: nothing
+        // can be lost, so the SAME attempt starts its first session. Once any
+        // evidence exists (the session ran), its absence pauses the work.
+        return firstSessionOrPause(deps, effects.verdicts, "session-missing", facts.detail, facts.sessionId);
+      case "association-unreadable":
+        return { decision: "pause", pause: pauseOf(deps, "session-identity", facts.detail) };
+      case "session-identity":
+        return { decision: "pause", pause: pauseOf(deps, "session-identity", facts.detail, facts.sessionId) };
+      case "session-unreadable":
+        return { decision: "pause", pause: pauseOf(deps, "session-unreadable", facts.detail, facts.sessionId) };
+      case "journal-unreadable":
+        return {
+          decision: "pause",
+          pause: pauseOf(deps, "journal-unreadable", `${facts.detail} — it cannot prove which effects were attempted`, facts.sessionId),
+        };
+    }
   }
 
   // Every non-safe call the session ran must be accounted for before it is
   // reopened: the same rule the recheck of a paused work applies.
-  const doubt = missingIntentDoubt(deps, link.sessionId, file, inspection, journal);
+  const doubt = missingIntentDoubt(deps, facts.sessionId, facts.file, facts.inspection, facts.journal);
   if (doubt !== null) return { decision: "pause", pause: doubt };
 
-  writeGuardrailState(deps.workDir, guardrailState(deps, "resume", link.sessionId, effects.verdicts));
-  return { decision: "launch", mode: "resume", sessionId: link.sessionId, intactEntries: inspection.intactEntries };
+  writeGuardrailState(deps.workDir, guardrailState(deps, "resume", facts.sessionId, effects.verdicts));
+  return { decision: "launch", mode: "resume", sessionId: facts.sessionId, intactEntries: facts.inspection.intactEntries };
 }
 
 /**
@@ -168,25 +140,111 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
 export async function recheckPausedEffects(deps: ContinuityDeps, paused: PauseRecord): Promise<RecheckResult> {
   const effects = await settleOpenEffects(deps);
   if (!effects.settled) return { resolved: false, pause: effects.pause };
-  // The other doubt a session can settle: a non-safe call the guardrail never
-  // journaled. It stops being a doubt only when the transcript proves the call
-  // never ran, read by the same rule the resume plan applies.
+  // An effect the state could not confirm is settled BY that reconciliation,
+  // which already read the attempt's transcript (`sessionEvidenceFor`). The
+  // other doubts keep a read of their own: the transcript for missing evidence,
+  // the attempt's session and journal for a session cause. A
+  // `record-unreadable` pause is not rechecked at all (the loop asks
+  // `recheckablePause` first): its doubt is the record itself.
   if (paused.reason === "tool-evidence-missing") {
     const doubt = toolEvidenceDoubt(deps);
+    if (doubt !== null) return { resolved: false, pause: doubt };
+  }
+  if (SESSION_DOUBT_CAUSES.has(paused.reason)) {
+    const facts = readSessionFacts(deps);
+    // A doubt still there is not a resolution: the pause keeps the SAME reason
+    // with the detail this read gives it, and the loop decides whether that is
+    // worth telling.
+    if (!facts.readable) return { resolved: false, pause: pauseOf(deps, paused.reason, facts.detail, facts.sessionId) };
+    const doubt = missingIntentDoubt(deps, facts.sessionId, facts.file, facts.inspection, facts.journal);
     if (doubt !== null) return { resolved: false, pause: doubt };
   }
   return { resolved: true, pause: null };
 }
 
+/** The pause causes whose doubt is the attempt's own session, or the journal
+ *  that proves the guardrail ran: the facts the resume plan reads before it may
+ *  reopen the session. */
+const SESSION_DOUBT_CAUSES: ReadonlySet<PauseReason> = new Set<PauseReason>([
+  "link-missing",
+  "session-missing",
+  "session-identity",
+  "session-unreadable",
+  "journal-unreadable",
+]);
+
+/** Why the attempt's session cannot be read — one cause per read, so a caller
+ *  turns it into the pause reason that names ITS doubt. */
+type SessionDoubt =
+  | "association-unreadable"
+  | "association-missing"
+  | "session-file-missing"
+  | "session-identity"
+  | "session-unreadable"
+  | "journal-unreadable";
+
+type SessionFacts =
+  | {
+      readable: true;
+      sessionId: string;
+      file: string;
+      inspection: SessionInspection;
+      journal: EffectJournal;
+    }
+  | { readable: false; cause: SessionDoubt; detail: string; sessionId?: string };
+
 /**
- * Is this pause cause one a terminal Session result can settle on its own?
- * Only the effects the state could not confirm and the tool evidence the pause
- * could not read: a missing, unreadable or foreign session, an unreadable
- * journal and an unreadable record name a doubt no transcript can answer, so
- * re-evaluating them would only trade a pause for a guess.
+ * One read of the attempt's continuation facts: the session its association
+ * names, that file's inspection, and the effect journal that proves the session
+ * ran under the guardrail — or the single cause that stops the read. The resume
+ * plan, the tool-evidence recheck and the recheck of a session cause all read
+ * here, so no two of them can disagree about what the disk says.
  */
-export function settleableBySession(reason: PauseReason): boolean {
-  return reason === "effect-unsupported" || reason === "effect-ambiguous" || reason === "tool-evidence-missing";
+function readSessionFacts(deps: ContinuityDeps): SessionFacts {
+  const links = readSessionLinks(deps.workDir);
+  if (!links.intact) {
+    return { readable: false, cause: "association-unreadable", detail: "the session-association journal is unreadable" };
+  }
+  const link = linkForAttempt(links.links, deps.work, deps.attempt);
+  if (link === null) {
+    return { readable: false, cause: "association-missing", detail: `attempt ${deps.attempt} has no recorded Pi session` };
+  }
+  const file = findSessionFile(deps.sessionsDir, link.sessionId);
+  if (file === null) {
+    return {
+      readable: false,
+      cause: "session-file-missing",
+      detail: `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk`,
+      sessionId: link.sessionId,
+    };
+  }
+  const inspection = inspectSessionFile(file, link.sessionId);
+  if (inspection.status === "identity-mismatch" || inspection.status === "missing") {
+    return {
+      readable: false,
+      cause: "session-identity",
+      detail: inspection.detail ?? "the session identity does not match",
+      sessionId: link.sessionId,
+    };
+  }
+  if (inspection.status === "unreadable") {
+    return {
+      readable: false,
+      cause: "session-unreadable",
+      detail: inspection.detail ?? "the session history is unreadable",
+      sessionId: link.sessionId,
+    };
+  }
+  const journal = readEffectJournal(deps.workDir);
+  if (!journal.intact) {
+    return {
+      readable: false,
+      cause: "journal-unreadable",
+      detail: "the effect journal has an incomplete or unparseable entry",
+      sessionId: link.sessionId,
+    };
+  }
+  return { readable: true, sessionId: link.sessionId, file, inspection, journal };
 }
 
 /**
@@ -196,50 +254,16 @@ export function settleableBySession(reason: PauseReason): boolean {
  * the doubt itself, not a resolution.
  */
 function toolEvidenceDoubt(deps: ContinuityDeps): PauseRecord | null {
-  const links = readSessionLinks(deps.workDir);
-  if (!links.intact) {
+  const facts = readSessionFacts(deps);
+  if (!facts.readable) {
     return pauseOf(
       deps,
       "tool-evidence-missing",
-      "the session-association journal is unreadable — the calls the attempt ran cannot be read",
+      `${facts.detail} — the calls the attempt ran cannot be read`,
+      facts.sessionId,
     );
   }
-  const link = linkForAttempt(links.links, deps.work, deps.attempt);
-  if (link === null) {
-    return pauseOf(
-      deps,
-      "tool-evidence-missing",
-      `attempt ${deps.attempt} has no recorded Pi session — the calls it ran cannot be read`,
-    );
-  }
-  const file = findSessionFile(deps.sessionsDir, link.sessionId);
-  if (file === null) {
-    return pauseOf(
-      deps,
-      "tool-evidence-missing",
-      `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk — the calls it ran cannot be read`,
-      link.sessionId,
-    );
-  }
-  const inspection = inspectSessionFile(file, link.sessionId);
-  if (inspection.status !== "intact" && inspection.status !== "partial") {
-    return pauseOf(
-      deps,
-      "tool-evidence-missing",
-      `${inspection.detail ?? `the session history is ${inspection.status}`} — the calls it ran cannot be read`,
-      link.sessionId,
-    );
-  }
-  const journal = readEffectJournal(deps.workDir);
-  if (!journal.intact) {
-    return pauseOf(
-      deps,
-      "tool-evidence-missing",
-      "the effect journal is unreadable — it cannot prove which calls were journaled",
-      link.sessionId,
-    );
-  }
-  return missingIntentDoubt(deps, link.sessionId, file, inspection, journal);
+  return missingIntentDoubt(deps, facts.sessionId, facts.file, facts.inspection, facts.journal);
 }
 
 /**

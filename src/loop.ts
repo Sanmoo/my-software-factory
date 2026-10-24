@@ -107,8 +107,15 @@ import {
 } from "./pool/model-provider.js";
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
-import { planContinuity, recheckPausedEffects, settleableBySession, type ContinuityDeps } from "./runtime/continuity.js";
-import { clearPause, knownAttempt, readPause, writePause, type PauseRecord } from "./runtime/continuity-artifacts.js";
+import { planContinuity, recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
+import {
+  clearPause,
+  knownAttempt,
+  readPause,
+  recheckablePause,
+  writePause,
+  type PauseRecord,
+} from "./runtime/continuity-artifacts.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -862,10 +869,10 @@ export class SweepEngine {
           }
           // A pause the factory can settle by itself returns to the normal
           // cycle: the evidence it doubts is read again from the attempt's own
-          // session and the real state, WITHOUT another human answer (issue
-          // 173). Only a cause a terminal Session result can answer is read;
-          // the rest keep the pause and its request exactly as they are.
-          const verdict = settleableBySession(pause.reason)
+          // session, the journal and the real state, WITHOUT another human
+          // answer (issue 173). The one cause never re-read is a record it
+          // cannot read — that doubt IS the record.
+          const verdict = recheckablePause(pause.reason)
             ? await recheckPausedEffects(this.continuityDeps(decision.work, decision.dir, attempt), pause)
             : null;
           if (verdict !== null && verdict.resolved) {
@@ -875,7 +882,7 @@ export class SweepEngine {
           const current = verdict?.pause ?? pause;
           // A real change of cause is a new fact the operator must see, told
           // once by the same occurrence (issue 174); a pause whose request
-          // never landed is announced now. A steady pause is said once — `msf
+          // never landed is announced now. A steady cause is said once — `msf
           // status` keeps it visible — so a persistent doubt never becomes a
           // line per cycle.
           if (pause.announced !== true || current.reason !== pause.reason) {
@@ -885,9 +892,17 @@ export class SweepEngine {
             );
             await this.pauseForContinuity(decision.work, decision.dir, current, attempt);
           } else if (verdict !== null) {
+            // The cause did not change, but the evidence behind it may have:
+            // the fresher diagnosis is kept on the SAME occurrence (its id, its
+            // moment and its announcement) and said in the diagnostic line. No
+            // comment and no notice — the operator was asked once, and the
+            // request has not changed.
+            const fresher = current.detail !== pause.detail;
+            if (fresher) writePause(decision.dir, { ...pause, detail: current.detail });
             this.log(
               `continuity of ${renderWorkIdentity(decision.work)} is still unresolved (${current.reason}): ` +
-                `${current.detail} — no new help request, nothing relaunched`,
+                `${current.detail}${fresher ? " — the diagnosis was refreshed, the request stands" : ""} ` +
+                "— no new help request, nothing relaunched",
             );
           }
           break;
@@ -2138,12 +2153,15 @@ export class SweepEngine {
     parked: Launchable[],
   ): Promise<void> {
     const { tickets, pullRequests, config } = this.deps;
-    clearPause(dir);
     const comments = await tickets.readTicketComments(work.ticket);
     const answers = comments.known ? humanCommentsForPause(comments.value, pause) : [];
     const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work));
     const pr = feedback.known ? feedback.value.pr : null;
     if (answers.length > 0) {
+      // The clear lands first because the answer self-heals a death on either
+      // side of it: with the record still there the answer is read again, and
+      // with it cleared the resume launch swaps the block off.
+      clearPause(dir);
       this.log(
         `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
           "the human answer orients a NEW round (no recovery is spent)",
@@ -2154,7 +2172,12 @@ export class SweepEngine {
     }
     // The block leaves with the pause: the recover launch continues the SAME
     // attempt and the existing recovery ruler decides whether it may relaunch.
+    // The unblock lands BEFORE the record is cleared, and both are idempotent —
+    // a death in between leaves the pause for the next recheck to resolve again,
+    // while a death after the clear leaves an unblocked interrupted attempt,
+    // which derives to a recovery on its own.
     await tickets.resumeTicketClaim(work.ticket, config.labels);
+    clearPause(dir);
     this.log(
       `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
         `attempt ${attempt} continues (the recovery ruler applies)`,

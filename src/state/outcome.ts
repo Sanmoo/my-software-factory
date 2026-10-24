@@ -10,7 +10,7 @@ import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 import type { PauseReason } from "../runtime/continuity-artifacts.js";
-import { knownAttempt } from "../runtime/continuity-artifacts.js";
+import { effectUnverifiable, knownAttempt } from "../runtime/continuity-artifacts.js";
 import { pauseMarker } from "../tracker/port.js";
 
 /**
@@ -342,11 +342,6 @@ function blockedAttemptSentence(attempt: number, evidencedAttempt: number, reaso
   }
   const named = known === null ? "this work's current attempt" : `attempt ${known}`;
   return `${named} cannot be continued safely (${why}) — no attempt was consumed and nothing was relaunched.`;
-}
-
-/** The pause reasons whose effect the factory cannot establish at all. */
-function effectUnverifiable(reason: PauseReason): boolean {
-  return reason === "effect-unsupported" || reason === "effect-ambiguous" || reason === "tool-evidence-missing";
 }
 
 /** What would actually move the work, and what an answer cannot prove. */

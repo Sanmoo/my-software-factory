@@ -138,6 +138,27 @@ export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 const KNOWN_PAUSE_REASONS: ReadonlySet<string> = new Set(PAUSE_REASONS);
 
+/** The pause causes whose doubt is the effect an interrupted call may or may not
+ *  have produced (or the evidence that would prove it) — never the session's
+ *  identity, the journal, or a record the factory cannot read. What the factory
+ *  cannot verify here is why a generic answer authorizes no replay. */
+const EFFECT_UNVERIFIABLE_REASONS: ReadonlySet<PauseReason> = new Set<PauseReason>([
+  "effect-unsupported",
+  "effect-ambiguous",
+  "tool-evidence-missing",
+]);
+
+export function effectUnverifiable(reason: PauseReason): boolean {
+  return EFFECT_UNVERIFIABLE_REASONS.has(reason);
+}
+
+/** May the normal cycle re-read this pause and settle it on its own? Every cause
+ *  but `record-unreadable`: that one's doubt IS the record, so reading it again
+ *  would only report the same fabricated pause — it waits for the operator. */
+export function recheckablePause(reason: PauseReason): boolean {
+  return reason !== "record-unreadable";
+}
+
 /** The one narrowing used by every reader: a reason this version does not know
  *  is not a reason (and the caller decides what doubt to report instead). */
 function isPauseReason(value: unknown): value is PauseReason {
