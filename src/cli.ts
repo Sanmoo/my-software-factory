@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
-
-import { collectFinishedWorks } from "./retro/window.js";
+import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
 import { planManualRound, runRetroRound } from "./retro/round.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
@@ -356,15 +355,14 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const liveKeys =
-      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : new Set<string>();
-    const finished = await collectFinishedWorks(workspace, liveKeys);
+    const finished = await collectFinishedWorks(workspace, liveWorkKeys(observation));
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),
     });
     if ("empty" in plan) {
-      console.log(
+      writeOperationalLog(
+        workspace,
         utcStamp(
           plan.empty === "no-finished-works"
             ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"

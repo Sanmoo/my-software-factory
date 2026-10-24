@@ -459,7 +459,7 @@ export function buildRetroPrompt(request: RetroRequest): string {
     ``,
     `## Where this round writes`,
     ``,
-    `- report (dated Markdown, the marker of the next window): \`${request.reportContainerPath}\``,
+    `- report (dated Markdown; its file name is what every filed issue cites): \`${request.reportContainerPath}\``,
     `- result record (JSON, the machine contract): \`${request.resultContainerPath}\``,
     `- factory-axis items destination: \`${request.factoryItemsDestination}\``,
     `- target-repo items: the repository of the work they came from`,

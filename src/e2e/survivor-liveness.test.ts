@@ -5,8 +5,14 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY,
-  DEFAULT_RETRO, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import {
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
+  DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
+  type Config,
+} from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { runForever, runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/port.js";

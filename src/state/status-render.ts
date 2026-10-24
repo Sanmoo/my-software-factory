@@ -158,17 +158,20 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
-  // The retrospective job (issue 141): the last report IS the marker of the
-  // next window, and a round in flight is visible even with every slot busy —
-  // the lane is outside them.
+  // The retrospective job (issue 141): the last report that covered a window
+  // IS the marker of the next one, and a round in flight is visible even with
+  // every slot busy — the lane is outside them.
   if (view.retro !== null) {
     const retro = view.retro;
     lines.push(...section(
-      "retro (the last report marks the window's boundary; items are filed as needs-triage)",
+      "retro (a report that covers a window marks the next window's boundary; items are filed as needs-triage)",
       [
         retro.lastReport === null
           ? "no report yet — the first round covers the last 10 finished works"
           : `${retro.lastReport} — ${retro.filed} item(s) filed by the last round`,
+        retro.boundaryAt === null
+          ? "no window boundary yet — a single-work post-mortem never moves it"
+          : `window boundary: ${new Date(retro.boundaryAt).toISOString()} (newest finish the last window covered)`,
       ],
       cap,
     ));

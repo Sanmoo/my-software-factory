@@ -143,7 +143,7 @@ import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
-import { collectFinishedWorks } from "./retro/window.js";
+import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
 import { clearRetroInFlight } from "./retro/marker.js";
 import { planAutomaticRound, runRetroRound } from "./retro/round.js";
 import { describeError, formatDuration } from "./format.js";
@@ -1054,11 +1054,7 @@ export class SweepEngine {
 
   private async startRetroRound(): Promise<void> {
     const { config, runtime, workspace, notifier, now } = this.deps;
-    const liveKeys =
-      this.liveness.state === "known"
-        ? new Set(this.liveness.workers.map((worker) => worker.key))
-        : new Set<string>();
-    const finished = await collectFinishedWorks(workspace, liveKeys);
+    const finished = await collectFinishedWorks(workspace, liveWorkKeys(this.liveness));
     const plan = await planAutomaticRound(config, workspace, finished, now);
     if (plan === null) return;
     if ("empty" in plan) {
