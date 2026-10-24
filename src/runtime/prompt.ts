@@ -21,9 +21,9 @@ import type { RepairMaterial, WorkRequest } from "./port.js";
  * Every session that changes code (the initial implementation or a feedback
  * round — ticket 85) also follows the implementation procedure: the factory's
  * declared /implement and /code-review skills, provisioned INTO the worker
- * image (issue #159, ADR 0001). The prompt adapts those skills to Pi (there is no tool named
- * "Skill": loading a SKILL.md and executing its instructions IS using the
- * skill) and fixes the one-way order: pin the round's SHA, implement,
+ * image (issue #159, ADR 0001). The prompt adapts those skills to Pi (there is
+ * no tool named "Skill": loading a SKILL.md and executing its instructions IS
+ * using the skill) and fixes the one-way order: pin the round's SHA, implement,
  * validate, commit LOCALLY, review via two parallel subagents, fix, and only
  * then publish. The factory never reads this prose back — the review is the
  * worker's obligation, not the factory's inference.

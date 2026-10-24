@@ -14,7 +14,7 @@ import type {
 
 /** The image's agent dir; only `sessions/` is a host bind inside it. */
 export const AGENT_DIR = "/home/agent/.pi/agent";
-export const AGENT_SKILLS_DIR = `${AGENT_DIR}/skills`;
+const AGENT_SKILLS_DIR = `${AGENT_DIR}/skills`;
 
 export function agentSkillPath(name: string): string {
   return `${AGENT_SKILLS_DIR}/${name}`;

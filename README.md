@@ -66,10 +66,9 @@ factory's classification lives in code and reads only structured facts
 check results) — never LLM prose.
 
 The worker's agent environment is factory-owned and needs nothing of Pi on the
-host: only the resources declared in `agent-resources.json` load; target-project
-and host skills/packages are ignored, model credentials are supplied separately,
-and a launch refuses an image that does not match the declaration (ADR 0001;
-build and verification in the [RUNBOOK](docs/RUNBOOK.md)).
+host: only the resources declared in `agent-resources.json` load, target-project
+and host skills/packages are ignored, and model credentials are supplied
+separately (ADR 0001; build and verification in the [RUNBOOK](docs/RUNBOOK.md)).
 
 ## Tests
 
@@ -85,7 +84,7 @@ under one 240-second wall-clock ceiling. Docker and the worker image are
 mandatory prerequisites — a missing one fails the run, it never becomes a
 skip. Provisioning and image builds happen before the measured run; the suite
 includes a real container check of what the provisioned image actually loads
-(declared skills only, empty cache, no host profile). LLM reviews,
+(declared skills only, no package cache, no host profile). LLM reviews,
 `npm run proof:real` and `npm run smoke:github` stay outside it. At the deadline
 the running check and its subprocesses are killed and the interrupted check is
 named.
