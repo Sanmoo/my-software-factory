@@ -359,12 +359,14 @@ export function readPause(workDir: string): PauseRecord | null {
   };
 }
 
-/** Does a pause wait for the current attempt? A record whose own attempt is
- *  unreadable (0) matches any attempt: the doubt is not resolved by guessing
- *  one. Once the factory has rewritten it with the attempt it knows, the
- *  ordinary rule applies — a pause of an older attempt is history. */
+/** Does a pause wait for the attempt the ledger evidences? A record whose own
+ *  attempt is unreadable (0) matches any attempt: the doubt is not resolved by
+ *  guessing one. A record naming an attempt the ledger has not reached is a
+ *  launch continuity refused BEFORE the runtime wrote that attempt's log — the
+ *  operator is still being waited for, so it is current. Only a pause the
+ *  ledger has advanced BEYOND is history. */
 export function pauseWaits(pause: PauseRecord, attempt: number): boolean {
-  return pause.attempt < 1 || pause.attempt === attempt;
+  return pause.attempt < 1 || pause.attempt >= attempt;
 }
 
 /** The attempt an operator should be told about, or null when the record never

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli, installGhShim, type GhShim, type RestAnswer } from "./cli-harness.js";
+import { githubWork } from "./work-fixtures.js";
+import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-artifacts.js";
 import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 
 /**
@@ -20,10 +22,22 @@ import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from 
  * the registry-only view stands, and no work is ever called Orphaned by
  * absence of the service (ADR 0002). The Running/Orphaned split is covered
  * with controlled probes in state/status.test.ts.
+ *
+ * Issue 175: work #1 carries an ACTIVE continuity pause naming attempt 2 while
+ * the ledger evidences only attempt 1 (the launch planned it and continuity
+ * refused before the runtime spawned), so the report must name the cause, the
+ * work, the session and both attempts. Work #2 carries the `pausa.json.resolved`
+ * of a pause that is over: a resolved pause is never an active one.
  */
 
 const REPO = "Sanmoo/my-tasks";
 const ARCHIVED = 20;
+/** The active pause's own facts — distinctive strings, so an assertion cannot
+ *  pass on another pause's text. */
+const PAUSE_DETAIL = "the push to the work branch may or may not have landed";
+const PAUSE_SESSION = "sess-8f31";
+/** The resolved pause's detail: it must never reach the report. */
+const RESOLVED_DETAIL = "the resolved pause's own diagnosis";
 
 describe("e2e: msf status over the real adapter — complete report, read-only, REST-answered", () => {
   let dir: string;
@@ -51,13 +65,26 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
 
   /** The registry the operator's report describes: two interrupted attempts
    *  (one of them inside a repair cycle), one concluded attempt, one bare
-   *  reservation and 20 archived works. Only what status reads exists. */
+   *  reservation and 20 archived works, plus an active and a resolved
+   *  continuity pause (issue 175). Only what status reads exists. */
   function seedRegistry(): void {
     for (const number of [1, 4]) {
       const work = workDir(layout, REPO, number);
       mkdirSync(join(work, SESSIONS_SUBDIR), { recursive: true });
       writeFileSync(join(work, "log-1.jsonl"), "{}\n", "utf8");
     }
+    // Work #1 waits for the operator: the launch planned attempt 2 and
+    // continuity refused it before the runtime could write that attempt's log.
+    writePause(workDir(layout, REPO, 1), {
+      version: 1,
+      work: githubWork(REPO, 1),
+      attempt: 2,
+      reason: "effect-ambiguous",
+      detail: PAUSE_DETAIL,
+      at: "2026-02-01T00:00:00.000Z",
+      sessionId: PAUSE_SESSION,
+      announced: true,
+    });
     writeFileSync(
       join(workDir(layout, REPO, 4), "reparo.json"),
       JSON.stringify({
@@ -83,6 +110,17 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       JSON.stringify({ class: "pr-open", attempt: 1 }),
       "utf8",
     );
+    // A pause that was resolved keeps its evidence beside the work and is
+    // NEVER an active pause (issue 175).
+    writePause(concluded, {
+      version: 1,
+      work: githubWork(REPO, 2),
+      attempt: 4,
+      reason: "session-unreadable",
+      detail: RESOLVED_DETAIL,
+      at: "2026-02-01T00:00:00.000Z",
+    });
+    clearPause(concluded);
     mkdirSync(workDir(layout, REPO, 3), { recursive: true });
     for (let index = 0; index < ARCHIVED; index += 1) {
       mkdirSync(join(layout.archive, `${REPO}#${101 + index}-2026-02-01`), { recursive: true });
@@ -175,14 +213,14 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       "running (worker alive): liveness unknown (docker not reachable)",
       "duplicate workers (more than one container for the same work — a human decision is needed): liveness unknown (docker not reachable)",
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive): liveness unknown (docker not reachable)",
-      "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell): 2",
-      `  ${REPO}#1 (attempt 1 was interrupted — no outcome record on disk)`,
+      "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell): 1",
       `  ${REPO}#4 (attempt 1 was interrupted — no outcome record on disk)`,
       "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
       `  ${REPO}#3`,
       "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt): none",
       "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
-      "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator): none",
+      "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator): 1",
+      `  ${REPO}#1 (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
       "repair (unpublished attempts, local work, pending reconciliation): 1",
       `  ${REPO}#4 (rounds 1/2; falls 0/2; attempt 1: not published (the remote does not carry the attempt's commit); local work: the local work could not be read; evidence: reservation trabalhos/${REPO}#4/ present, event log trabalhos/${REPO}#4/log-1.jsonl present, sandcastle log trabalhos/${REPO}#4/sessao/sandcastle-1.log absent)`,
       "last outcome: 1",
@@ -213,6 +251,46 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       readdirSync(layout.root, { recursive: true }).sort(),
       before,
       "the read-only query leaves the workspace as it found it",
+    );
+  });
+
+  test("an active pause is shown with cause, work, session and both attempts — and status repairs nothing", () => {
+    const paused = workDir(layout, REPO, 1);
+    const resolvedDir = workDir(layout, REPO, 2);
+    const recordBefore = readFileSync(join(paused, PAUSE_FILENAME), "utf8");
+    const resolvedBefore = readFileSync(join(resolvedDir, `${PAUSE_FILENAME}.resolved`), "utf8");
+    const treeBefore = readdirSync(layout.root, { recursive: true }).sort();
+
+    const result = runStatus([]);
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(
+      result.stdout,
+      /continuity paused \(the interrupted attempt cannot be continued safely — waiting for the operator\): 1/,
+    );
+    assert.ok(
+      result.stdout.includes(
+        `${REPO}#1 (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
+      ),
+      `the pause's cause, work, session and BOTH attempts are named: ${result.stdout}`,
+    );
+    // The pause's own section owns the work: it is not also an interruption.
+    assert.ok(!result.stdout.includes(`${REPO}#1 (attempt 1 was interrupted`), "one line per wait, never two");
+    // A resolved pause is not an active one, and its diagnosis is not surfaced.
+    assert.ok(!result.stdout.includes(RESOLVED_DETAIL), "a resolved pause never reappears as active");
+
+    // Read-only, byte for byte. The tracker side is the shim's: an undeclared
+    // path — any mutation — fails the child loudly, and this run read only.
+    assert.equal(readFileSync(join(paused, PAUSE_FILENAME), "utf8"), recordBefore, "status never rewrites the pause");
+    assert.equal(
+      readFileSync(join(resolvedDir, `${PAUSE_FILENAME}.resolved`), "utf8"),
+      resolvedBefore,
+      "the resolved evidence is left exactly as it was",
+    );
+    assert.deepEqual(
+      readdirSync(layout.root, { recursive: true }).sort(),
+      treeBefore,
+      "no artifact was created, renamed, resolved or removed",
     );
   });
 

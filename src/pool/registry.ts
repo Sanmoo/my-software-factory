@@ -232,6 +232,10 @@ export interface ModelProviderViewEntry {
 export interface ContinuityPauseEntry {
   key: string;
   pause: PauseRecord;
+  /** The attempt the ledger evidences on disk — the pause's own number is the
+   *  attempt its launch planned (issue 175), so the view can say both instead
+   *  of rewriting either. */
+  lastAttempt: number;
 }
 
 /** The repair cycle of a work as `msf status` reads it (issue 112). */
@@ -334,11 +338,11 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }
     }
-    // Only THIS attempt's pause: one left by an attempt that has since
-    // advanced is history, and must not hide the current attempt's state. A
-    // record too unreadable to name its attempt still waits.
+    // A pause the ledger has not advanced beyond — the attempt it planned may
+    // be exactly the current one, or one no log evidences yet (issue 175):
+    // only a pause left BEHIND by a later attempt is history.
     const pause = readPause(dir);
-    if (pause !== null && pauseWaits(pause, lastAttempt)) continuityPauses.push({ key, pause });
+    if (pause !== null && pauseWaits(pause, lastAttempt)) continuityPauses.push({ key, pause, lastAttempt });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);
   const byEntryKey = <T extends { key: string }>(a: T, b: T): number => byKey(a.key, b.key);

@@ -36,12 +36,13 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt ended by a model provider failure (issue 144) or by
-  // the operator's requested stop (issue 146) is NOT an interruption: the
-  // section that owns the cause already names it, so it is not repeated under
-  // the liveness/interruption wording.
+  // A work whose attempt ended by a model provider failure (issue 144), by the
+  // operator's requested stop (issue 146) or by a continuity pause (issue 119)
+  // is NOT an interruption: the section that owns the cause already names it,
+  // so it is not repeated under the liveness/interruption wording.
   const explainedKeys = new Set([
     ...view.registry.modelProvider.map((entry) => entry.key),
+    ...view.registry.continuityPauses.map((entry) => entry.key),
     ...view.registry.recovery
       .filter(
         (entry) =>
@@ -178,14 +179,27 @@ function renderRunning(worker: RunningWorker): string {
   return `${renderWorkKey(worker.key)} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
 }
 
-/** One persisted continuity pause: the work, its attempt and why it waits.
- *  A record too unreadable to name its attempt says so instead of printing a
- *  fabricated `attempt 0`.
+/** One persisted continuity pause: the work, the attempt it waits for, its
+ *  session and why it waits. The attempt is the one the pause's launch PLANNED;
+ *  when the ledger evidences a different one, both are named — the divergence
+ *  is the operator's fact, never repaired here (issue 175). A record too
+ *  unreadable to name its attempt or its work says so instead of printing a
+ *  fabricated `attempt 0` or an identity it does not carry.
  */
 function renderContinuityPause(entry: ContinuityPauseEntry): string {
-  const known = knownAttempt(entry.pause.attempt);
-  const attempt = known === null ? "attempt unknown" : `attempt ${known}`;
-  return `${renderWorkKey(entry.key)} (${attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
+  const work = entry.pause.work === undefined ? renderWorkKey(entry.key) : renderWorkIdentity(entry.pause.work);
+  const facts = [describePauseAttempt(knownAttempt(entry.pause.attempt), knownAttempt(entry.lastAttempt))];
+  if (entry.pause.sessionId !== undefined) facts.push(`session ${entry.pause.sessionId}`);
+  return `${work} (${facts.join("; ")}: ${entry.pause.reason} — ${entry.pause.detail})`;
+}
+
+/** The attempt a pause waits for, against the one the ledger evidences: one
+ *  number when they agree (or nothing is evidenced), both when the launch
+ *  planned an attempt the runtime never got to write. */
+function describePauseAttempt(planned: number | null, evidenced: number | null): string {
+  if (planned === null) return "attempt unknown";
+  if (evidenced === null || evidenced === planned) return `attempt ${planned}`;
+  return `planned attempt ${planned}; last evidenced attempt ${evidenced}`;
 }
 
 /** The duplicate anomaly: the count per work, with no owner chosen. */

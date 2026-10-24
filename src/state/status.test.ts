@@ -1,8 +1,8 @@
-import { githubTicketNumber } from "../e2e/work-fixtures.js";
+import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
 import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ import {
 } from "../pool/recovery.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
+import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-artifacts.js";
 import { deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import { fakeDocker, inspectedContainer } from "./fake-docker.js";
@@ -371,6 +372,147 @@ describe("status — derivation on demand + local registry scan", () => {
       renderStatus(view),
       new RegExp(`continuity paused[\\s\\S]*${REPO}#21 \\(attempt 1: session-missing — the session recorded for attempt 1 is not on disk\\)`),
     );
+  });
+
+  test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt (issue 175)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1);
+    // The launch planned attempt 2 and continuity refused it before the runtime
+    // spawned: the record names 2, the ledger evidences 1.
+    writePause(dir, {
+      version: 1,
+      work: githubWork(REPO, 21),
+      attempt: 2,
+      reason: "effect-ambiguous",
+      detail: "the push to the work branch may or may not have landed",
+      at: "2026-02-01T00:00:00.000Z",
+      sessionId: "sess-4f2a",
+      announced: true,
+    });
+    const before = readFileSync(join(dir, PAUSE_FILENAME), "utf8");
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(
+      view.registry.continuityPauses.map((entry) => ({
+        key: entry.key,
+        planned: entry.pause.attempt,
+        evidenced: entry.lastAttempt,
+      })),
+      [{ key: `${REPO}#21`, planned: 2, evidenced: 1 }],
+      "the pause is current AND the ledger's own number is carried beside it",
+    );
+    assert.match(
+      renderStatus(view),
+      new RegExp(
+        `continuity paused[\\s\\S]*${REPO}#21 \\(planned attempt 2; last evidenced attempt 1; session sess-4f2a: ` +
+          `effect-ambiguous — the push to the work branch may or may not have landed\\)`,
+      ),
+    );
+    assert.equal(readFileSync(join(dir, PAUSE_FILENAME), "utf8"), before, "the record is read, never rewritten");
+    assert.ok(!existsSync(join(dir, `${PAUSE_FILENAME}.resolved`)), "status resolves nothing");
+  });
+
+  test("with liveness unknown, a paused work is listed once — under the pause, not as an interruption", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1);
+    writePause(dir, {
+      version: 1,
+      work: githubWork(REPO, 21),
+      attempt: 2,
+      reason: "effect-ambiguous",
+      detail: "the push may or may not have landed",
+      at: "2026-02-01T00:00:00.000Z",
+    });
+
+    const unreachable: LivenessProbe = () => Promise.reject(new Error("docker: command not found"));
+    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, unreachable));
+
+    assert.match(
+      text,
+      /interrupted attempts without their own outcome \(Running or Orphaned — only Docker can tell\): none/,
+      "the pause's own section owns the work — never two lines for one wait",
+    );
+    assert.match(text, new RegExp(`continuity paused[\\s\\S]*${REPO}#21 \\(planned attempt 2`));
+  });
+
+  test("a pause on the attempt the ledger evidences shows one number", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1, 2);
+    writePause(dir, {
+      version: 1,
+      work: githubWork(REPO, 21),
+      attempt: 2,
+      reason: "journal-unreadable",
+      detail: "the effect journal could not be read",
+      at: "2026-02-01T00:00:00.000Z",
+    });
+
+    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS));
+
+    assert.match(text, new RegExp(`${REPO}#21 \\(attempt 2: journal-unreadable — the effect journal could not be read\\)`));
+  });
+
+  test("a pause the ledger advanced beyond is history, not an active pause", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1, 2);
+    writePause(dir, {
+      version: 1,
+      work: githubWork(REPO, 21),
+      attempt: 1,
+      reason: "session-missing",
+      detail: "the session recorded for attempt 1 is not on disk",
+      at: "2026-02-01T00:00:00.000Z",
+    });
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(view.registry.continuityPauses, [], "attempt 2 is evidenced: attempt 1's pause is over");
+    assert.match(renderStatus(view), /continuity paused[^\n]*: none/);
+  });
+
+  test("a resolved pause is not an active pause", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1);
+    writePause(dir, {
+      version: 1,
+      work: githubWork(REPO, 21),
+      attempt: 2,
+      reason: "effect-ambiguous",
+      detail: "the push may or may not have landed",
+      at: "2026-02-01T00:00:00.000Z",
+    });
+    clearPause(dir);
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.ok(existsSync(join(dir, `${PAUSE_FILENAME}.resolved`)), "the resolved evidence stays on disk");
+    assert.deepEqual(view.registry.continuityPauses, []);
+    assert.match(renderStatus(view), /continuity paused[^\n]*: none/);
+  });
+
+  test("an unreadable pause is still shown — the attempt unknown, never an invented one", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(21, 1);
+    writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
+
+    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(
+      view.registry.continuityPauses.map((entry) => ({
+        key: entry.key,
+        reason: entry.pause.reason,
+        planned: entry.pause.attempt,
+        evidenced: entry.lastAttempt,
+      })),
+      [{ key: `${REPO}#21`, reason: "record-unreadable", planned: 0, evidenced: 1 }],
+    );
+    const text = renderStatus(view);
+    assert.match(
+      text,
+      new RegExp(`${REPO}#21 \\(attempt unknown: record-unreadable — the pause record at pausa\\.json could not be read`),
+    );
+    assert.doesNotMatch(text, /attempt 0/, "a number the record never named is not printed");
   });
 
   test("a fallen attempt is named even when an older outcome record sits on disk (issue 112)", async () => {
@@ -756,7 +898,35 @@ describe("status — derivation on demand + local registry scan", () => {
         repair: [],
         recovery: [],
         modelProvider: [],
-        continuityPauses: [],
+        continuityPauses: [
+          // The record's own Work is the identity a pause names: the readable
+          // Jira key lives in the record, never in the registry key.
+          {
+            key: "jira@acme.atlassian.net@10042@Sanmoo%2Fmy-tasks",
+            lastAttempt: 1,
+            pause: {
+              version: 1,
+              work: jiraWork,
+              attempt: 2,
+              reason: "session-missing",
+              detail: "the session recorded for attempt 2 is not on disk",
+              at: "2026-02-01T00:00:00.000Z",
+            },
+          },
+          // A record unreadable as a whole has no Work of its own: the
+          // directory's key names it, and the attempt stays unknown.
+          {
+            key: "jira@acme.atlassian.net@99999@Sanmoo%2Fmy-tasks",
+            lastAttempt: 2,
+            pause: {
+              version: 1,
+              attempt: 0,
+              reason: "record-unreadable",
+              detail: "the pause record could not be read",
+              at: "",
+            },
+          },
+        ],
         archived: [],
       },
       liveness: { state: "known", running: [], duplicates: [], orphaned: [] },
@@ -773,5 +943,15 @@ describe("status — derivation on demand + local registry scan", () => {
     );
     assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira source");
     assert.doesNotMatch(text, /10042 \(jira/, "the stable id is never fabricated into a readable key");
+    assert.match(
+      text,
+      /continuity paused[\s\S]*ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks \(planned attempt 2; last evidenced attempt 1: session-missing/,
+      "a pause names the Work its own record carries",
+    );
+    assert.match(
+      text,
+      /jira:acme\.atlassian\.net:99999 → Sanmoo\/my-tasks \(attempt unknown: record-unreadable/,
+      "without a recorded Work the directory key names it — the key is not invented, its readable ticket is simply absent",
+    );
   });
 });

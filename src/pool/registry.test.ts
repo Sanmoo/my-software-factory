@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { archiveDoneWorkFor, parseWorkKey, readLaunchFacts, scanRegistry } from "./registry.js";
+import { readPause, writePause } from "../runtime/continuity-artifacts.js";
 import { githubRepository, githubTicket, type WorkIdentity } from "../tracker/identity.js";
 import { scanReservations } from "./reservation.js";
 
@@ -250,6 +251,29 @@ describe("workspace registry — the reservations on disk and the done archive (
     assert.ok(existsSync(join(dest, "log-1.jsonl")), "the logs survived the move");
     const view = await scanRegistry(layout);
     assert.deepEqual(view.archived, [dest]);
+  });
+
+  test("scanRegistry carries a pause's own attempt beside the attempt the ledger evidences — read-only (issue 175)", async () => {
+    const paused = join(layout.works, "Sanmoo/a#5");
+    mkdirSync(paused, { recursive: true });
+    writeFileSync(join(paused, "log-4.jsonl"), "{}\n", "utf8");
+    writePause(paused, {
+      version: 1,
+      work: workOf("Sanmoo/a", 5),
+      attempt: 5,
+      reason: "effect-ambiguous",
+      detail: "the push may or may not have landed",
+      at: "2026-02-01T00:00:00.000Z",
+    });
+
+    const view = await scanRegistry(layout);
+
+    assert.deepEqual(
+      view.continuityPauses.map((entry) => ({ key: entry.key, planned: entry.pause.attempt, evidenced: entry.lastAttempt })),
+      [{ key: "Sanmoo/a#5", planned: 5, evidenced: 4 }],
+      "the planned attempt is the record's; the evidenced one is the ledger's — both are read, neither is written",
+    );
+    assert.equal(readPause(paused)?.attempt, 5, "the scan leaves the record exactly as it found it");
   });
 
   test("archiveDoneWorkFor of a work with no dir is a no-op (nothing to archive)", async () => {

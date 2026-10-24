@@ -106,23 +106,36 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(readPause(dir)?.id, undefined);
   });
 
-  test("rewriting an unreadable pause copies the original aside instead of overwriting it", () => {
-    writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
-    writePause(dir, {
-      version: 1,
-      work: REF,
-      attempt: 2,
-      reason: "session-missing",
-      detail: "the recorded session is gone",
-      at: "2026-01-01T00:00:00.000Z",
-    });
-    assert.equal(readPause(dir)?.reason, "session-missing");
-    assert.equal(
-      readFileSync(join(dir, `${PAUSE_FILENAME}.unreadable`), "utf8"),
-      "{not json",
-      "the corrupt evidence is preserved for the operator",
-    );
+  test("a pause waits until the ledger advances beyond its attempt — a planned attempt is not history", () => {
+    writePauseFile(validPause());
+    const planned = readPause(dir)!;
+    assert.equal(planned.attempt, 2);
+    // The launch names the attempt it is about to start (N+1) and the runtime
+    // only writes that attempt's log when it spawns: a pause refused before
+    // the spawn is waiting for an attempt no evidence numbers YET.
+    assert.equal(pauseWaits(planned, 1), true, "a planned attempt the ledger has not reached is not history");
+    assert.equal(pauseWaits(planned, 0), true, "no evidenced attempt at all: the pause is the whole record");
+    assert.equal(pauseWaits(planned, 2), true);
+    assert.equal(pauseWaits(planned, 3), false, "an attempt the ledger advanced beyond leaves the pause history");
   });
+
+  test("rewriting an unreadable pause copies the original aside instead of overwriting it", () => {
+  writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
+  writePause(dir, {
+    version: 1,
+    work: REF,
+    attempt: 2,
+    reason: "session-missing",
+    detail: "the recorded session is gone",
+    at: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(readPause(dir)?.reason, "session-missing");
+  assert.equal(
+    readFileSync(join(dir, `${PAUSE_FILENAME}.unreadable`), "utf8"),
+    "{not json",
+    "the corrupt evidence is preserved for the operator",
+  );
+});
 
   test("clearing keeps the resolved pause as evidence beside the work", () => {
     writePauseFile(validPause());

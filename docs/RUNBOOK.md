@@ -175,9 +175,11 @@ alive (**orphaned**), the reservations, the **recovery** ledger (was the last
 stop the operator's requested stop, still unconfirmed, an interruption absorbed
 by its budget, or a failure that consumed the attempt), the **model provider**
 ledger (its retries, the provider's message, and whether the work is
-**awaiting model provider**), the works **continuity paused** (the interrupted
-attempt that cannot be continued safely, with its reason), the **repair**
-cycles, last outcomes, the pool, archived dones — and the two reconciliation
+**awaiting model provider**), the works **continuity paused** (the attempt that
+cannot be continued safely, with its reason, the attempt it waits for — its own
+planned number beside the ledger's last evidenced one when they differ — and
+its session when known), the **repair** cycles, last outcomes, the pool,
+archived dones — and the two reconciliation
 leftovers when tracker and workspace disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns a
