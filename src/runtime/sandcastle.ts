@@ -39,7 +39,7 @@ import {
   verifyAgentInventory,
   type LoadedAgentResources,
 } from "./inventory.js";
-import { agentFileProblem, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
+import { agentFileProblem, MODEL_AUTH_SOURCES, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
@@ -47,19 +47,18 @@ import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 const execFile = promisify(execFileCallback);
 
 /**
- * The real runtime (ticket 17): worker sessions ARE Sandcastle — the `run()`
- * API of `@ai-hero/sandcastle` with the Pi headless template in print mode —
- * behind the same WorkerRuntime port the fake mirrors. The proven mechanics
- * of the v1 (research 01-sandcastle-sessao-headless):
+ * The real runtime: worker sessions ARE Sandcastle — the `run()` API of
+ * `@ai-hero/sandcastle` with the Pi headless template in print mode — behind
+ * the same WorkerRuntime port the fake mirrors.
  *
- *   - the image carries every skill, extension and reviewer agent the
- *     factory declares: the launch loads exactly those paths with discovery
- *     and project trust disabled — no host profile, no target-project
- *     resource, no startup install;
+ *   - the image carries every skill, extension and reviewer agent the factory
+ *     declares: the launch loads exactly those paths with discovery and
+ *     project trust disabled — no host profile, no target-project resource,
+ *     no startup install;
  *   - the work's session dir (<workDir>/sessao/) is bind-mounted read-write
  *     at the agent's session path: the session is persisted on the HOST;
  *   - GH_TOKEN rides the container env: `gh` inside authenticates as the
- *     factory's worker account (scan goes through the keyring — ticket 09);
+ *     factory's worker account;
  *   - no `network` option: Docker's default bridge, open egress;
  *   - the work branch strategy is the named branch the git host prepared,
  *     born from the base it reported — Sandcastle reuses the existing
@@ -67,13 +66,13 @@ const execFile = promisify(execFileCallback);
  *   - one full agent run per launch (`maxIterations: 1`); the session ends
  *     its turn with the completion signal after writing its outcome record.
  *
- * The artifact contract (ticket 13) is written around the session: sessao/
- * and log-<n>.jsonl at launch time — BEFORE any outcome, so an abrupt death
+ * The artifact contract is written around the session: sessao/ and
+ * log-<n>.jsonl at launch time — BEFORE any outcome, so an abrupt death
  * leaves the footprint the registry reads — and desfecho.json whenever the
  * session manages (the worker writes it through the /msf-work mount; its
- * absence is the class "abrupt-death" and nothing writes it for it). Only the
- * record OF THIS ATTEMPT is read as the session's outcome: an earlier
- * attempt's record on disk is history and is logged as rejected (issue 143).
+ * absence is the class "abrupt-death"). Only the record OF THIS ATTEMPT is
+ * read as the session's outcome: an earlier attempt's record on disk is
+ * history and is logged as rejected.
  */
 
 /** One running session of this runtime: its cooperative request and the
@@ -89,8 +88,8 @@ export const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 export const SESSIONS_CONTAINER_DIR = `${AGENT_DIR}/sessions`;
 
 /**
- * The toolchain convergence layer (ticket 18): the workspace subpaths bound
- * read-write over the container's toolchain homes. Tools installed by `mise`
+ * The toolchain convergence layer: the workspace subpaths bound read-write
+ * over the container's toolchain homes. Tools installed by `mise`
  * inside these host dirs persist ACROSS launches — the container is recreated
  * per work, the volume survives — so the first launch of a new toolchain pays
  * the install and every later launch reuses it. The image's agent resources
@@ -833,28 +832,28 @@ export async function dockerAuthProbe(deps: {
       );
       args.push("--env-file", envFile);
     }
+    // The probe receives EXACTLY the sources the worker will: the supplied
+    // files in the same agent dir, so an auth.json AND a models.json both
+    // resolve. The model id rides as a positional argument, never interpolated.
+    const script = [
+      "mkdir -p /tmp/msf-agent && chmod 700 /tmp/msf-agent",
+      ...(agentFiles.length === 0
+        ? []
+        : [
+            agentFiles
+              .map(
+                (file) =>
+                  `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} /tmp/msf-agent/${file.name}`,
+              )
+              .join(" && "),
+          ]),
+      'PI_CODING_AGENT_DIR=/tmp/msf-agent exec pi auth check --model "$1" --json --no-refresh',
+    ].join(" && ");
     if (agentFiles.length > 0) {
-      // The probe receives EXACTLY the sources the worker will: the same files
-      // in the same agent dir, so an auth.json AND a models.json both resolve.
       filesDir = stageAgentFiles(agentFiles);
       args.push("-v", `${filesDir}:${AGENT_FILES_MOUNT_DIR}:ro`);
-      const copies = agentFiles
-        .map((file) => `cp ${AGENT_FILES_MOUNT_DIR}/${file.name} /tmp/msf-agent/${file.name}`)
-        .join(" && ");
-      args.push(
-        "--entrypoint",
-        "sh",
-        deps.image,
-        "-c",
-        `mkdir -p /tmp/msf-agent && chmod 700 /tmp/msf-agent && ${copies} && ` +
-          `chmod 600 /tmp/msf-agent/* && PI_CODING_AGENT_DIR=/tmp/msf-agent ` +
-          'exec pi auth check --model "$1" --json --no-refresh',
-        "msf-auth-probe",
-        deps.model,
-      );
-    } else {
-      args.push("-e", "PI_CODING_AGENT_DIR=/tmp", "--entrypoint", "pi", deps.image, "auth", "check", "--model", deps.model, "--json", "--no-refresh");
     }
+    args.push("--entrypoint", "sh", deps.image, "-c", script, "msf-auth-probe", deps.model);
     return await execFileResult("docker", args);
   } finally {
     if (filesDir !== undefined) rmSync(filesDir, { recursive: true, force: true });
@@ -1043,9 +1042,10 @@ async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
     status = "";
   }
   if (status !== "ready") {
+    const answer = status === "" ? "the probe returned no readable status" : status;
     throw new Error(
-      `model credentials for ${deps.model} are not ready (${status === "" ? "the probe returned no readable status" : status}${reason === "" ? "" : `: ${reason}`}). ` +
-        "Supply a valid provider API key in the factory's environment or a valid worker-auth-file; nothing is read from a personal Pi profile.",
+      `model credentials for ${deps.model} are not ready (${answer}${reason === "" ? "" : `: ${reason}`}): ` +
+        `${MODEL_AUTH_SOURCES} — nothing is read from a personal Pi profile.`,
     );
   }
 }
