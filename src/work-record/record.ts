@@ -1,3 +1,7 @@
+import {
+  readTurnModelProviderError,
+  type ModelProviderFailure,
+} from "../runtime/model-provider-error.js";
 import { attemptNumbers } from "./attempts.js";
 import {
   appendJournalIntent,
@@ -58,10 +62,17 @@ import { readRepairCycle, writeRepairCycle, type RepairCycle } from "./repair.js
  * it is, never repaired into an invented fact.
  */
 
+export type { ModelProviderFailure };
+
 export interface WorkRecord {
   readonly workDir: string;
   /** Every part as the disk states it, in one read. */
   read(): Promise<WorkRecordSnapshot>;
+  /** The model provider failure that ended an attempt's own turn, read from
+   *  its event stream; null when that turn ended otherwise or left no stream.
+   *  Kept off {@link read} because parsing a large attempt log belongs only to
+   *  the derivation that asks the question, not to every record read. */
+  readModelProviderFailure(attempt: number): Promise<ModelProviderFailure | null>;
   /** Persist one part; a write that would break a cross-reference is refused. */
   write(part: WorkRecordWrite): Promise<void>;
 }
@@ -134,6 +145,9 @@ export function openWorkRecord(workDir: string): WorkRecord {
         repair,
         attempts,
       };
+    },
+    async readModelProviderFailure(attempt: number): Promise<ModelProviderFailure | null> {
+      return readTurnModelProviderError(workDir, attempt);
     },
     async write(part: WorkRecordWrite): Promise<void> {
       switch (part.part) {
