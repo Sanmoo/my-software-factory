@@ -90,9 +90,6 @@ export interface JiraTicketFacts {
  *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
 export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
-  /** An unreadable selection on this site may hide a candidate that would
-   *  interleave with this one, or another destination for it. */
-  unverified: boolean;
 }
 
 /** A ticket the configured selections promise to more than one destination: its
@@ -102,9 +99,6 @@ export interface AmbiguousJiraTicket extends JiraTicketFacts {
   ticket: TicketIdentity;
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
-  /** An unreadable selection on this site may name a further destination, so
-   *  the conflict itself is not verified. */
-  unverified: boolean;
 }
 
 /** One configured selection's read, kept for diagnosis: a site's ordered set is
@@ -237,6 +231,16 @@ async function readJiraSites(readers: readonly JiraSelectionReader[]): Promise<J
  *  query defines the order, and the readable membership routes each ticket. */
 async function readJiraSite(site: string, readers: readonly JiraSelectionReader[]): Promise<JiraSiteView> {
   const destinations = distinctDestinations(readers.map((reader) => reader.selection.destination));
+  if (new Set(readers.map((reader) => reader.tickets)).size > 1) {
+    const reason = "the site's selections do not share one tracker";
+    return unknownSite(
+      site,
+      destinations,
+      reason,
+      readers.map((reader) => ({ reader, state: "unknown", reason })),
+    );
+  }
+
   const readings = await Promise.all(
     readers.map(async (reader): Promise<SelectionRead> => {
       try {
@@ -247,15 +251,19 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     }),
   );
   const known = readings.filter(isKnownRead);
-  if (new Set(readers.map((reader) => reader.tickets)).size > 1) {
-    return unknownSite(site, destinations, "the site's selections do not share one tracker", readings);
-  }
-
   if (known.length === 0) {
     return unknownSite(
       site,
       destinations,
       readings[0]?.state === "unknown" ? readings[0].reason : "no selection could be read",
+      readings,
+    );
+  }
+  if (readings.some(isUnknownRead)) {
+    return unknownSite(
+      site,
+      destinations,
+      "a selection on this site could not be read, so no candidate's destination is exclusive",
       readings,
     );
   }
@@ -265,17 +273,16 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   // against each other.
   let ordered: OpenTicket[];
   if (known.length === 1) {
-    ordered = known[0]?.tickets ?? [];
+    ordered = known[0]!.tickets;
   } else {
-    const orderedRead = await readSiteOrder(known[0]!, known);
-    if (orderedRead.state === "unknown") {
-      return unknownSite(site, destinations, orderedRead.reason, readings);
+    try {
+      ordered = await known[0]!.reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection));
+    } catch (error) {
+      return unknownSite(site, destinations, describeError(error), readings);
     }
-    ordered = orderedRead.tickets;
   }
 
   const membership = ticketMemberships(known);
-  const hasUnreadableSelection = readings.some(isUnknownRead);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
   if ([...membership.keys()].some((key) => !orderedKeys.has(key))) {
     // The two reads disagree, so no reliable site order exists for that ticket.
@@ -309,7 +316,6 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
         title: ticket.title,
         assignees: ticket.assignees,
         destinations: destinationsForTicket,
-        unverified: hasUnreadableSelection,
       });
       continue;
     }
@@ -319,7 +325,6 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       work: workIdentity(ticket.ticket, destination),
       title: ticket.title,
       assignees: ticket.assignees,
-      unverified: hasUnreadableSelection,
     });
   }
 
@@ -331,21 +336,6 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     candidates,
     ambiguous,
   };
-}
-
-/** The site's union query, read only after its readable selections are known. */
-async function readSiteOrder(
-  first: KnownSelectionRead,
-  known: readonly KnownSelectionRead[],
-): Promise<{ state: "known"; tickets: OpenTicket[] } | { state: "unknown"; reason: string }> {
-  try {
-    return {
-      state: "known",
-      tickets: await first.reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection)),
-    };
-  } catch (error) {
-    return { state: "unknown", reason: describeError(error) };
-  }
 }
 
 /** Which readable selections select each ticket, by stable ticket identity. */
@@ -406,7 +396,6 @@ function distinctDestinations(destinations: readonly RepositoryIdentity[]): Repo
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, destination]) => destination);
 }
-
 
 /**
  * The two states, from the registry and the probe together (issue 102): a work
