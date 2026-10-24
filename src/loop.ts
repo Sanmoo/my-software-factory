@@ -156,14 +156,14 @@ import { join } from "node:path";
  * boundary and of waking by event (end of worker vs tick). It interlaces the
  * four phases deciding nothing of the domain: the states live in state/, the
  * liveness policy and the survivor ledger in state/ + pool/, and IO in
- * tracker/ + pool/ + git/ + runtime/ — the loop only reads the
- * facts and applies what they decide.
+ * tracker/ + pool/ + git/ + runtime/ — the loop only reads the facts and
+ * applies what they decide.
  *
  * The derivation of the tick covers the states of ALL reserved works (done ·
  * done-fallback · rejected · feedback · resumable — state/ decides, the loop
- * executes the tracker and disk writes), the launches
- * prioritize the parked reserved works before new claims by age, and the
- * continuous run wakes by event (end of worker), not only by the clock.
+ * executes the tracker and disk writes), the launches prioritize the parked
+ * reserved works before new claims by age, and the continuous run wakes by
+ * event (end of worker), not only by the clock.
  */
 
 export const TICK_MS = 60_000;
@@ -1832,8 +1832,8 @@ export class SweepEngine {
     if (kind === "claim") {
       logClaim(this.log, key);
       // The dir is the safety footprint and lands before the claim; the record
-      // is the Work's own facts. An unknown or unwritable record is reported and
-      // never blocks the claim — nor is it overwritten.
+      // is the Work's own facts. An unknown or unwritable record is reported
+      // and never blocks the claim — nor is it overwritten.
       mkdirSync(dir, { recursive: true });
       const url = ticketUrl(work.ticket);
       const presentation = {
