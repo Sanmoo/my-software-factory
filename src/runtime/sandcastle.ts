@@ -753,7 +753,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           imageName: this.image,
           // The acting account files the items; no Docker socket is bound —
           // analysis needs no daemon and the round must not build anything.
-          env: { GH_TOKEN: this.token, MSF_WORK_MOUNT: WORK_MOUNT },
+          env: { GH_TOKEN: this.token },
           mounts: [
             ...(agentFilesDir === undefined
               ? []
@@ -896,8 +896,6 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 }
 
-/** The container's name: the GitHub ticket number keeps its historical shape;
- *  another source names the Work's stable key instead of inventing a number. */
 /**
  * The clone a round anchors its sandbox in: Sandcastle needs a git repository,
  * and the round writes nothing there — so any clone of the window the factory
@@ -925,6 +923,8 @@ export function retroAnchorDir(reposDir: string, repos: Iterable<string>): strin
   return null;
 }
 
+/** The container's name: the GitHub ticket number keeps its historical shape;
+ *  another source names the Work's stable key instead of inventing a number. */
 function containerNameOf(work: WorkIdentity, attempt: number): string {
   const name =
     work.ticket.provider === "github" && work.ticket.site === GITHUB_SITE
@@ -932,8 +932,6 @@ function containerNameOf(work: WorkIdentity, attempt: number): string {
       : workKeyOf(work).replace(/[^A-Za-z0-9_.-]/g, "-");
   return `work-${name}-attempt-${attempt}`;
 }
-
-
 
 export async function workerToken(account: string): Promise<string> {
   const env = { ...process.env };

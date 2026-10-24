@@ -1,5 +1,5 @@
 /**
- * The identities the protocol exchanges through the tracker (issue #168).
+ * The identities the protocol exchanges through the tracker.
  *
  * A Ticket identity is provider + site + the provider's stable id (+ repo for
  * GitHub). The Destination is NOT part of it: two factories configured with

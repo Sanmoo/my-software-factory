@@ -5,11 +5,12 @@ import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../work-record/outcome.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
+import { basename } from "node:path";
+
 import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "../work-record/logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import { basename } from "node:path";
 import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**

@@ -21,6 +21,20 @@ indexes the last one (its boundary, the works a single-work post-mortem
 analyzed, how many items it filed); a lost index degrades to the first round's
 rule — the last ten finished works, re-analyzed — never to a skipped window.
 
+## Consequences
+
+- The analysis instructions are factory code, not an image resource: they live
+  in `src/retro/instructions.ts`, carry their own version constant and credit
+  the upstream skill at an immutable revision. `agent-resources.yaml` declares
+  only what the image provisions, so it does not list them.
+- The round launches without the continuity guardrail. A round owns no
+  attempt, session association or effect journal for the guardrail to
+  reconcile, and with it loaded every external effect — the `gh issue create`
+  the round exists to run — would be refused.
+- A failed round spends nothing: it is not a Work, so it consumes no attempt,
+  no recovery and no worker slot; its own report is the only marker it can
+  advance.
+
 ## Considered options
 
 - An operator-invoked skill on the host reading the workspace: rejected — the

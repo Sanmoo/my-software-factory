@@ -404,9 +404,11 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   const running = await liveRoundInFlight(workspace);
   if (running !== null) throw new RetroBusyError(running.round);
 
-  // The window is planned BEFORE any credential, runtime or liveness answer is
-  // demanded: an empty window is a notice, and the operator's command must not
-  // need Docker or the keyring to say there is nothing to analyze.
+  // The window is planned before any credential or runtime is demanded: an
+  // empty window is a notice, so the operator's command answers without the
+  // keyring. The liveness answer is read once here — it feeds the window and
+  // gates a window that has work to analyze — and an empty window still wins
+  // over it: nothing is launched, so nothing needs the premise.
   const observation = await probeLiveness(workspaceLivenessProbe(workspace));
   const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
   const plan = await planManualRound(config, workspace, finished, {
