@@ -13,6 +13,7 @@ import {
   interruptionPausedCommentBody,
   isRecordedFailure,
   ownWrittenOutcome,
+  continuityPausedCommentBody,
   DESFECHO_FILENAME,
 } from "./outcome.js";
 import { DEFAULT_RECOVERY_BUDGET } from "../config.js";
@@ -447,5 +448,64 @@ describe("issue 103 — the outcome record belongs to an attempt; the comment po
     );
 
     assert.deepEqual(await readOutcomeRecord(dir), onDisk, "history reading still sees the old record");
+  });
+});
+
+describe("issue 174 — the continuity pause asks for evidence the factory verifies", () => {
+  const PAUSE_ID = "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1111";
+  const input = (overrides: Partial<Parameters<typeof continuityPausedCommentBody>[0]> = {}) => ({
+    attempt: 2,
+    evidencedAttempt: 2,
+    reason: "effect-ambiguous" as const,
+    id: PAUSE_ID,
+    detail: "push branch agent-issue-7: the remote branch is at def456, not at the intended abc123",
+    workDir: "/nowhere/trabalhos/Sanmoo/a#1",
+    workspace: FAKE_WORKSPACE,
+    ...overrides,
+  });
+
+  test("the request carries the pause identity and says what settles it — never an internal position", async () => {
+    const comment = await continuityPausedCommentBody(input());
+
+    assert.ok(comment.includes(`<!-- msf:pause:${PAUSE_ID} -->`), "the request is identifiable");
+    assert.match(comment, /attempt 2 cannot be continued safely/);
+    assert.match(comment, /no attempt was consumed/);
+    assert.match(comment, /the pushed commit, the comment, the label/, "the evidence the resolver reads is named");
+    assert.match(comment, /resolve the situation on the tracker/);
+    assert.doesNotMatch(comment, /after the marker/, "the operator cannot see an internal marker");
+  });
+
+  test("an unverifiable effect says the factory cannot verify it and will not replay it", async () => {
+    for (const reason of ["effect-unsupported", "effect-ambiguous", "tool-evidence-missing"] as const) {
+      const comment = await continuityPausedCommentBody(input({ reason }));
+      assert.match(comment, /cannot verify what that command did/, reason);
+      assert.match(comment, /will not replay it/, reason);
+      assert.match(comment, /a generic answer cannot authorize a retry/, reason);
+      assert.match(comment, /never proof that an effect did not happen/, reason);
+    }
+  });
+
+  test("a cause that is not an effect does not promise more than it can", async () => {
+    const comment = await continuityPausedCommentBody(input({ reason: "session-missing" }));
+
+    assert.match(comment, /the recorded session is gone/);
+    assert.match(comment, /the facts are read again before any new round/i);
+    assert.doesNotMatch(comment, /will not replay it/, "no replay promise where no effect is at stake");
+  });
+
+  test("a planned attempt that never started is not presented as the blocked one", async () => {
+    const comment = await continuityPausedCommentBody(input({ attempt: 3, evidencedAttempt: 2 }));
+
+    assert.match(comment, /the interrupted attempt 2 cannot be continued safely/);
+    assert.match(comment, /the planned attempt 3 was never started/);
+    assert.match(comment, /no attempt was consumed/);
+    assert.doesNotMatch(comment, /attempt 3 cannot be continued safely/, "a phantom attempt is never blamed");
+  });
+
+  test("an attempt the record never named is not printed as attempt 0", async () => {
+    const comment = await continuityPausedCommentBody(input({ attempt: 0, evidencedAttempt: 0 }));
+
+    assert.match(comment, /this work's current attempt cannot be continued safely/);
+    assert.doesNotMatch(comment, /attempt 0/);
   });
 });

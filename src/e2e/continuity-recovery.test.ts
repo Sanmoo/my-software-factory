@@ -350,25 +350,24 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     const asked = (await agentComments(7)).length;
 
     // The human answers — the effect is still ambiguous: the work stays paused,
-    // no new attempt, no new session, no repeated request.
+    // no new attempt, no new session, and NOTHING is repeated. The question was
+    // already asked; an answer that resolves nothing adds no information
+    // (issue 174 removed the "your answer was read" reply).
     tracker.addComment(ref, "operator", "I did not push anything, check again.");
     git.remoteHead = "def456";
     const answered = await runOnce(deps(cfg));
     assert.equal(answered.launched.length, 0);
     assert.equal(readPause(workDir(layout, REPO, 7))?.reason, "effect-ambiguous");
-    assert.equal(
-      (await agentComments(7)).length,
-      asked + 1,
-      "the answer gets ONE reply saying the facts are still unsettled — not a request per cycle",
-    );
+    assert.equal((await agentComments(7)).length, asked, "no repeated question, no 'still ambiguous' reply");
 
     // A restart with no further answer changes nothing: no launch, no comment.
     const restart = await runOnce(deps(cfg));
     assert.equal(restart.launched.length, 0);
-    assert.equal((await agentComments(7)).length, asked + 1);
+    assert.equal((await agentComments(7)).length, asked);
 
-    // The facts change AND the operator says so (the remote now proves the
-    // push): the next round is a NEW session with the CURRENT orientation.
+    // The facts change (the remote now proves the push): the next round is a
+    // NEW session with the CURRENT orientation, and the answer already given is
+    // still there — the operator does not repeat it.
     tracker.addComment(ref, "operator", "I pushed it; the head is abc123.");
     git.remoteHead = "abc123";
     git.diff = "diff --git a/current b/current";
@@ -378,9 +377,99 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(request.session?.mode, "new", "a new orientation round, not a blind replay of the old session");
     assert.notEqual(request.session?.sessionId, session.sessionId);
     assert.equal(request.attempt, 3, "the human answer opens the next attempt");
-    assert.deepEqual(request.material.ticketReplies?.map((comment) => comment.body), ["I pushed it; the head is abc123."]);
+    assert.deepEqual(
+      request.material.ticketReplies?.map((comment) => comment.body),
+      ["I did not push anything, check again.", "I pushed it; the head is abc123."],
+      "both answers answer the SAME request; neither is discarded",
+    );
     assert.equal(request.material.diff, "diff --git a/current b/current", "the current diff, not the old one");
     assert.equal(readPause(workDir(layout, REPO, 7)), null, "the resolved pause is cleared");
+  });
+
+  test("issue 174 — the answer survives an inconclusive recheck, a later factory comment and a restart; a changed cause posts one diagnostic", async () => {
+    const { ref } = interruptedAttempt2({ pending: "push", remote: "def456" });
+    seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
+    const cfg = config(2);
+    const target = workDir(layout, REPO, 7);
+    const journal = readFileSync(join(target, "efeitos.jsonl"), "utf8");
+
+    // 1. The pause request: one comment, one notification, the blocked label.
+    const first = await runOnce(deps(cfg));
+    assert.equal(first.launched.length, 1, "the other work keeps progressing");
+    assert.equal(launchedNumber(first.launched[0]!.request), 8);
+    const request = readPause(target);
+    assert.equal(request?.reason, "effect-ambiguous");
+    assert.ok(request?.id, "the occurrence has a stable identity");
+    const marked = `<!-- msf:pause:${request!.id!} -->`;
+    assert.ok((await agentComments(7))[0]?.includes(marked), "the request carries the occurrence's identity");
+    assert.equal((await agentComments(7)).length, 1, "one request");
+    // The pause notified once (the other work's launch notified too).
+    const notified = notifier.notifications.length;
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.blocked]);
+
+    // 2. The human answers; the recheck is inconclusive: nothing new is posted.
+    tracker.addComment(ref, "operator", "I pushed the commit abc123, it may not be visible to you.");
+    const answered = await runOnce(deps(cfg));
+    assert.equal(answered.launched.length, 0, "no launch while the evidence is unresolved");
+    assert.equal((await agentComments(7)).length, 1, "the question is not asked again");
+    assert.equal(notifier.notifications.length, notified, "no repeated notification");
+
+    // 3. More sweeps and a later factory comment about the SAME pause: the
+    //    answer stays bound to the request, never to the last factory voice.
+    for (let sweep = 0; sweep < 2; sweep += 1) {
+      const later = await runOnce(deps(cfg));
+      assert.equal(later.launched.length, 0);
+      assert.equal((await agentComments(7)).length, 1, `sweep ${sweep}: no repeated request`);
+    }
+    await tracker.comment(ref, `${marked}\nthe pause is still current`);
+    const afterComment = await runOnce(deps(cfg));
+    assert.equal(afterComment.launched.length, 0, "the answer is still bound after a later factory comment");
+    assert.equal((await agentComments(7)).length, 2, "only the factory's own later comment is new");
+    assert.equal(notifier.notifications.length, notified, "a factory comment is not a new help request");
+    assert.equal((await readRecoveryLedger(target)).consumed, 0, "pausing and rechecking spend no recovery");
+
+    // A restart reads the same artifacts: same identity, same binding.
+    const restarted = await runOnce(deps(cfg));
+    assert.equal(restarted.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 2);
+    assert.equal(readPause(target)?.id, request?.id, "the identity survives a restart");
+    assert.equal(readPause(target)?.announced, true);
+
+    // 4. A REAL cause change (the journal can no longer be read): exactly one
+    //    diagnostic, carrying the same identity, so the prior answer still
+    //    answers the same request.
+    writeFileSync(join(target, "efeitos.jsonl"), "{\"type\":\"intent\",\"seq\":99", "utf8");
+    const changed = await runOnce(deps(cfg));
+    assert.equal(changed.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 3, "a changed cause is worth exactly one diagnostic");
+    assert.ok((await agentComments(7))[2]?.includes(marked), "the diagnostic keeps the occurrence's identity");
+    assert.equal(readPause(target)?.reason, "journal-unreadable");
+    assert.equal(readPause(target)?.id, request?.id);
+    assert.equal(notifier.notifications.length, notified + 1, "the new diagnosis is announced once");
+
+    // Nothing new: the diagnostic is not repeated either.
+    const again = await runOnce(deps(cfg));
+    assert.equal(again.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 3);
+    assert.equal(notifier.notifications.length, notified + 1);
+
+    // 5. The facts settle: the journal is readable again and the remote proves
+    //    the push. The preserved answer orients the new round — no repetition.
+    writeFileSync(join(target, "efeitos.jsonl"), journal, "utf8");
+    git.remoteHead = "abc123";
+    git.diff = "diff --git a/current b/current";
+    const resolved = await runOnce(deps(cfg));
+    assert.equal(resolved.launched.length, 1, "the settlement allows the new round");
+    const launched = resolved.launched[0]!.request;
+    assert.equal(launched.attempt, 3);
+    assert.equal(launched.session?.mode, "new");
+    assert.deepEqual(
+      launched.material.ticketReplies?.map((comment) => comment.body),
+      ["I pushed the commit abc123, it may not be visible to you."],
+      "the answer given to the request is still available to the resume",
+    );
+    assert.equal(readPause(target), null, "the pause clears on the evidence, not on the answer");
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the retomada took the block back off");
   });
 
   test("an effect proven absent may run once: the session is reopened with the absent verdict", async () => {

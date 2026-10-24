@@ -31,6 +31,21 @@ export function isAgentSpeech(body: string): boolean {
   return body.includes(AGENT_MARKER);
 }
 
+/** The identity ONE continuity pause occurrence carries in every factory
+ *  comment about it (issue 174). The request, a re-assertion and a diagnostic
+ *  for a changed cause share it, so a human answer stays bound to the request
+ *  it answered instead of to the last thing the factory said. */
+export function pauseMarker(id: string): string {
+  return `<!-- msf:pause:${id} -->`;
+}
+
+/** The pause id a comment carries, or null. Only agent speech can carry one:
+ *  the marker is the factory's, and a human quoting it is not the factory. */
+export function pauseMarkerId(body: string): string | null {
+  if (!isAgentSpeech(body)) return null;
+  return /<!-- msf:pause:([^\s>]+) -->/.exec(body)?.[1] ?? null;
+}
+
 /** Unknown is never absent: a value not consulted is `known: false`. */
 export type Known<T> = { known: true; value: T } | { known: false };
 

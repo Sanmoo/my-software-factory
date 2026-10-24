@@ -943,3 +943,118 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     });
   });
 });
+
+describe("issue 174 — a human answer stays bound to the pause it answered", () => {
+  let adapter: FakeTrackerAdapter;
+  let root: string;
+  let layout: WorkspaceLayout;
+  const REPO = "Sanmoo/a";
+  const PAUSE_ID = "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1111";
+  const marker = `<!-- msf:pause:${PAUSE_ID} -->`;
+  const ref = (number: number) => ({ repo: REPO, number });
+  const work = (number: number) => ({
+    ticket: githubTicket(REPO, number),
+    destination: githubRepository(REPO),
+  });
+
+  beforeEach(() => {
+    adapter = new FakeTrackerAdapter({ workerAccount: "bot" });
+    root = mkdtempSync(join(tmpdir(), "msf-derive-pause-"));
+    layout = ensureWorkspace(join(root, "ws"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** The pause the loop persisted for the blocked work (a real artifact). */
+  function persistPause(number: number, overrides: Record<string, unknown> = {}): string {
+    const dir = workDir(layout, REPO, number);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "log-1.jsonl"), "{}\n", "utf8");
+    writeFileSync(
+      join(dir, "pausa.json"),
+      JSON.stringify({
+        version: 1,
+        work: ref(number),
+        attempt: 1,
+        reason: "effect-ambiguous",
+        detail: "an interrupted external effect is ambiguous",
+        at: "2026-01-01T00:00:00.000Z",
+        id: PAUSE_ID,
+        announced: true,
+        ...overrides,
+      }),
+      "utf8",
+    );
+    return dir;
+  }
+
+  async function deriveOne(number: number) {
+    const [derived] = await deriveReserved(
+      adapter,
+      adapter,
+      [{ work: work(number), dir: workDir(layout, REPO, number) }],
+      DEFAULT_LABELS,
+      "bot",
+      layout,
+      DEFAULT_RECOVERY_BUDGET,
+      DEFAULT_MODEL_PROVIDER_BUDGET,
+    );
+    assert.ok(derived, "the work was derived");
+    return derived;
+  }
+
+  test("a later factory comment about the same pause does not displace the answer", async () => {
+    seedIssue(adapter, { repo: REPO, number: 40, labels: [DEFAULT_LABELS.blocked] });
+    persistPause(40);
+    await adapter.comment(ref(40), `${marker}\nthe interrupted attempt 1 cannot be continued safely`);
+    adapter.addComment(ref(40), "operator", "I pushed the commit abc123");
+    // The factory speaks again about the SAME pause (a diagnostic, a
+    // re-assertion): the answer is still the answer to the request.
+    await adapter.comment(ref(40), `${marker}\nthe facts were checked again`);
+
+    const derived = await deriveOne(40);
+
+    assert.equal(derived.state, "resumable");
+    assert.equal(derived.state === "resumable" && derived.issueReplies.length, 1);
+    assert.deepEqual(
+      derived.state === "resumable" && derived.issueReplies.map((comment) => comment.body),
+      ["I pushed the commit abc123"],
+    );
+  });
+
+  test("an answer posted before the pause request is not an answer to it", async () => {
+    seedIssue(adapter, { repo: REPO, number: 41, labels: [DEFAULT_LABELS.blocked] });
+    persistPause(41);
+    adapter.addComment(ref(41), "operator", "context: the key was rotated");
+    await adapter.comment(ref(41), `${marker}\nthe interrupted attempt 1 cannot be continued safely`);
+
+    const derived = await deriveOne(41);
+
+    assert.equal(derived.state, "idle", "the pause asked AFTER the answer: nothing answers it yet");
+  });
+
+  test("a pause whose request never landed consumes no answer — it is not on the issue to answer", async () => {
+    seedIssue(adapter, { repo: REPO, number: 42, labels: [DEFAULT_LABELS.blocked] });
+    persistPause(42);
+    await adapter.comment(ref(42), "an earlier factory message that carries no pause marker");
+    adapter.addComment(ref(42), "operator", "I think this is fine?");
+
+    const derived = await deriveOne(42);
+
+    assert.equal(derived.state, "idle", "an answer to an older message is never read as the answer to this pause");
+  });
+
+  test("another blocked cause keeps the generic rule: a later factory comment parks the answer", async () => {
+    seedIssue(adapter, { repo: REPO, number: 43, labels: [DEFAULT_LABELS.blocked] });
+    mkdirSync(workDir(layout, REPO, 43), { recursive: true });
+    await adapter.comment(ref(43), "worker blocked after 2 consecutive falls (attempt 1)");
+    adapter.addComment(ref(43), "operator", "try again");
+    await adapter.comment(ref(43), "the fall was recorded");
+
+    const derived = await deriveOne(43);
+
+    assert.equal(derived.state, "idle", "a fall block has no request identity: the last marker still rules");
+  });
+});

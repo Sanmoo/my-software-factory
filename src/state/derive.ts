@@ -15,7 +15,7 @@ import type {
   RepairReason,
   RequiredCheckResult,
 } from "../tracker/port.js";
-import { isAgentSpeech } from "../tracker/port.js";
+import { isAgentSpeech, pauseMarkerId } from "../tracker/port.js";
 import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
@@ -506,7 +506,16 @@ async function deriveReservedWork(
   // short-circuit also keeps a handled rejection from being re-derived forever.
   if (issue.value.labels.includes(labels.blocked)) {
     const comments = await tickets.readTicketComments(work.ticket);
-    const issueReplies = comments.known ? humanCommentsAfterLastMarker(comments.value) : [];
+    // The operator's answer is bound to the question it answered (issue 174):
+    // with a CURRENT continuity pause the boundary is the pause's own request,
+    // never the last thing the factory said. Every other blocked cause (a
+    // fall, a repair, a rejection) keeps the generic last-marker rule.
+    const pause = await currentPause(dir);
+    const issueReplies = comments.known
+      ? pause === null
+        ? humanCommentsAfterLastMarker(comments.value)
+        : humanCommentsForPause(comments.value, pause)
+      : [];
     if (issueReplies.length > 0) {
       // A pending reconciliation outranks the human answer (issue 112, story
       // 21): the remote may already carry this attempt's commit, so starting a
@@ -752,6 +761,16 @@ function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
   return pause !== null && pauseWaits(pause, attempt) ? pause : null;
 }
 
+/** The pause the operator could be answering right now, if any: the same
+ *  "current" rule the interrupted branch applies, read only when a record
+ *  exists (a blocked work without one never touches the ledger for this). */
+async function currentPause(dir: string): Promise<PauseRecord | null> {
+  const pause = readPause(dir);
+  if (pause === null) return null;
+  const ledger = await readAttemptLedger(dir);
+  return pauseWaits(pause, ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt) ? pause : null;
+}
+
 /**
  * The model provider failure derivation of an INTERRUPTED attempt (issue 144),
  * or null when the attempt's stream carries no model provider error. One
@@ -875,6 +894,23 @@ export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueCom
 
 export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
   return humanCommentsAfterLastMarker(comments).length > 0;
+}
+
+/**
+ * The human replies that answer ONE continuity pause (issue 174): every
+ * non-agent comment after the FIRST factory comment carrying that pause's
+ * marker. A later factory comment about the same pause — a re-assertion or a
+ * diagnostic for a changed cause — never displaces an answer already given.
+ *
+ * Before the request lands there is nothing to answer, and an answer given to
+ * an earlier question is never consumed. A record written before the identity
+ * existed keeps the generic rule, so old pauses still resume.
+ */
+export function humanCommentsForPause(comments: IssueComment[], pause: PauseRecord): IssueComment[] {
+  if (pause.id === undefined) return humanCommentsAfterLastMarker(comments);
+  const request = comments.findIndex((comment) => pauseMarkerId(comment.body) === pause.id);
+  if (request < 0) return [];
+  return comments.slice(request + 1).filter((comment) => !isAgentSpeech(comment.body));
 }
 
 /** The fallback-done comment: short, by decision (ticket 04 Q11). */

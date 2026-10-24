@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { Config } from "./config.js";
 import type { IssueComment } from "./tracker/port.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
@@ -376,9 +378,29 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
 /**
  * The pause as it is PERSISTED and announced, now that the factory knows which
- * work and attempt it is pausing. An unreadable record carries no work and no
- * attempt (0); writing those into the file and the operator's comment would
- * fabricate facts the record never held. Every other reason keeps its own.
+ * work and attempt it is pausing, and with its occurrence identity (issue 174).
+ * An unreadable record carries no work and no attempt (0); writing those into
+ * the file and the operator's comment would fabricate facts the record never
+ * held. Every other reason keeps its own.
+ */
+function pauseOccurrence(
+  pending: PauseRecord,
+  work: WorkIdentity,
+  attempt: number,
+  previous: PauseRecord | null,
+): PauseRecord & { id: string } {
+  const pause = persistedPause(pending, work, attempt);
+  const id = pause.id ?? previous?.id ?? randomUUID();
+  // A record of the SAME occurrence keeps the moment it started; a new one
+  // starts now (the pause itself carries the time it was created).
+  const at = previous !== null && previous.id === id ? previous.at : pause.at;
+  return { ...pause, id, at };
+}
+
+/**
+ * The work and attempt a pause is persisted with. An unreadable record carries
+ * neither; every other reason keeps its own, so the attempt the launch planned
+ * is not rewritten into one the disk evidences.
  */
 function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number): PauseRecord {
   if (pause.reason !== "record-unreadable") return pause;
@@ -1884,15 +1906,11 @@ export class SweepEngine {
             `the human answered ${key}, but the interrupted effect is still unresolved — ` +
               "the work stays paused; nothing is relaunched",
           );
-          await this.pauseForContinuity(
-            work,
-            dir,
-            recheck.pause,
-            facts.attempt,
-            "Your answer was read and the facts were checked again: the interrupted effect is still ambiguous. " +
-              "Give the concrete evidence (the pushed head, the comment, the label) or resolve it on the tracker — " +
-              "the factory will not replay the action on a promise.",
-          );
+          // No new information and no changed cause: the answer does not
+          // authorize a replay and the same question is not asked again. The
+          // pause keeps its identity and its binding to the answer (issue 174);
+          // a real cause change posts exactly one diagnostic.
+          await this.pauseForContinuity(work, dir, recheck.pause, facts.attempt);
           return null;
         }
         // The fresh read settled it: the answer becomes the updated context
@@ -2046,37 +2064,33 @@ export class SweepEngine {
    * safely, so the work stops and asks for help instead of pretending a fresh
    * session is a continuation. The record is written FIRST and survives a
    * restart; the issue comment, the blocked label and the notice happen only
-   * once per pause, never on every cycle.
+   * once per occurrence — a recheck that learned nothing new, a later sweep and
+   * a restart never re-ask (issue 174). Only a changed REASON is a new fact
+   * worth a diagnostic, and it keeps the occurrence's identity, so the answers
+   * already on the issue stay bound to it.
    */
   private async pauseForContinuity(
     work: WorkIdentity,
     dir: string,
     pending: PauseRecord,
     attempt: number,
-    note?: string,
   ): Promise<void> {
     const { tickets, config, workspace } = this.deps;
+    const previous = readPause(dir);
     // By now the factory knows which work and attempt it is pausing, whatever
     // the record could say: an unreadable record's unknown work/attempt is
     // replaced here, so the persisted pause and the operator's comment name the
-    // real attempt instead of a fabricated zero.
-    const pause = persistedPause(pending, work, attempt);
-    const previous = readPause(dir);
-    const alreadyAnnounced =
-      note === undefined &&
-      previous !== null &&
-      previous.attempt === pause.attempt &&
-      previous.reason === pause.reason &&
-      previous.announced === true;
-    // The record lands FIRST (a restart must know the work waits), marked
-    // unannounced until the block and the request really landed: a death in
-    // between leaves the fact that the operator was never told.
-    writePause(dir, { ...pause, announced: false });
+    // real attempt instead of a fabricated zero. The occurrence keeps its id
+    // and its start time for as long as the record lives; only a resolved
+    // pause (its record cleared) makes the next one a different occurrence.
+    const pause = pauseOccurrence(pending, work, attempt, previous);
     this.announce(work, "reserved");
-    if (alreadyAnnounced) {
+    if (previous !== null && previous.id === pause.id && previous.reason === pause.reason && previous.announced === true) {
       // The same pause was already announced: re-assert the blocked label
       // without repeating the request (a failed retomada swapped it), so the
-      // work stays out of every launch and the human sees one request.
+      // work stays out of every launch and the human sees one request. Only the
+      // detail may carry fresher evidence. The record is not marked
+      // unannounced on the way: the request DID land.
       await tickets.blockTicketClaim(work.ticket, config.labels);
       writePause(dir, { ...pause, announced: true });
       this.log(
@@ -2084,6 +2098,10 @@ export class SweepEngine {
       );
       return;
     }
+    // The record lands FIRST (a restart must know the work waits), marked
+    // unannounced until the block and the request really landed: a death in
+    // between leaves the fact that the operator was never told.
+    writePause(dir, { ...pause, announced: false });
     this.log(
       `continuity of ${renderWorkIdentity(work)} paused (${pause.reason}): ${pause.detail} — ` +
         "the work waits for the operator; files and evidence are preserved",
@@ -2092,12 +2110,13 @@ export class SweepEngine {
       work,
       await continuityPausedCommentBody({
         attempt: pause.attempt,
+        evidencedAttempt: (await readAttemptLedger(dir)).lastAttempt,
         reason: pause.reason,
+        id: pause.id,
         detail: pause.detail,
         workDir: dir,
         workspace,
         ...(pause.sessionId === undefined ? {} : { sessionId: pause.sessionId }),
-        ...(note === undefined ? {} : { note }),
       }),
     );
     writePause(dir, { ...pause, announced: true });

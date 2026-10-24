@@ -146,6 +146,12 @@ export interface PauseRecord {
   detail: string;
   at: string;
   sessionId?: string;
+  /** The occurrence this record belongs to (issue 174): generated once when
+   *  the pause is first persisted and kept through rechecks, re-announcements
+   *  and a changed reason. The factory's comments about the occurrence carry
+   *  it, so an answer is bound to its request. Absent on records written
+   *  before the identity existed. */
+  id?: string;
   /** The block and the help request landed. A pause persisted without this is
    *  a pause the factory died before announcing: the next cycle must ask. */
   announced?: boolean;
@@ -394,6 +400,9 @@ function readValidPause(workDir: string): PauseRecord | null {
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
     at: typeof record["at"] === "string" ? record["at"] : "",
     ...(typeof record["sessionId"] === "string" ? { sessionId: record["sessionId"] } : {}),
+    // An identity this version cannot read is dropped, not guessed: the record
+    // still says wait, and the next announcement generates a fresh one.
+    ...(typeof record["id"] === "string" && record["id"] !== "" ? { id: record["id"] } : {}),
     ...(record["announced"] === true ? { announced: true } : {}),
   };
 }

@@ -91,6 +91,21 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(pauseWaits(readable, 3), false, "an older attempt's pause is history");
   });
 
+  test("issue 174 — the pause identity is read back; an old record without one stays readable", () => {
+    writePauseFile({ ...validPause(), id: "pause-1", announced: true });
+    assert.equal(readPause(dir)?.id, "pause-1", "the occurrence identity survives a restart");
+
+    // A record written before the identity existed keeps working unchanged.
+    writePauseFile(validPause());
+    const legacy = readPause(dir);
+    assert.equal(legacy?.reason, "session-missing");
+    assert.equal(legacy?.id, undefined, "no identity is fabricated for an old record");
+
+    // An identity this version cannot read is dropped, never invented.
+    writePauseFile({ ...validPause(), id: 7 });
+    assert.equal(readPause(dir)?.id, undefined);
+  });
+
   test("rewriting an unreadable pause copies the original aside instead of overwriting it", () => {
     writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
     writePause(dir, {

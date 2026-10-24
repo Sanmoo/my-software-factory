@@ -11,6 +11,7 @@ import { describePublication, describeRemoteChange, renderLocalWork } from "./re
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 import type { PauseReason } from "../runtime/continuity-artifacts.js";
 import { knownAttempt } from "../runtime/continuity-artifacts.js";
+import { pauseMarker } from "../tracker/port.js";
 
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
@@ -258,11 +259,15 @@ export interface ModelProviderAwaitingInput {
 /** What the continuity pause of issue 119 says to the operator. */
 export interface ContinuityPausedInput {
   attempt: number;
+  /** The last attempt the disk evidences (the attempt ledger): the launch path
+   *  numbers the NEXT attempt before any evidence of it exists, and that
+   *  planned number must never be presented as an interrupted one. */
+  evidencedAttempt: number;
   reason: PauseReason;
+  /** The occurrence's identity, carried into the comment (issue 174). */
+  id: string;
   detail: string;
   sessionId?: string;
-  /** A note replacing nothing: an answer was read and did not settle the facts. */
-  note?: string;
   workDir: string;
   workspace: WorkspaceLayout;
 }
@@ -296,31 +301,66 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
  * stopped instead of relaunching. The reason and the attempt's evidence are
  * shown; the session file is never rewritten or deleted to look usable, and
  * no attempt was consumed.
+ *
+ * The request is honest about what it can offer (issue 174): it names the
+ * attempt that is REALLY blocked (a planned attempt that never started is said
+ * to be exactly that), and it asks for the evidence the resolver actually
+ * reads — never for an answer at an internal position in the conversation.
  */
 export async function continuityPausedCommentBody(input: ContinuityPausedInput): Promise<string> {
   const evidence = await readWorkEvidence(input.workspace, input.workDir, input.attempt);
-  // An attempt the record never named is said so, not printed as "attempt 0".
-  const known = knownAttempt(input.attempt);
-  const attempt = known === null ? "this work's current attempt" : `attempt ${known}`;
-  const header =
-    `${attempt} cannot be continued safely (${describePauseReason(input.reason)}) — ` +
-    "no attempt was consumed and nothing was relaunched.";
-  const session = input.sessionId === undefined ? [] : [`session: ${input.sessionId}`];
-  const ask =
-    input.note ??
-    "Answer on this issue after the marker once the situation is clarified: the factory verifies the facts again " +
-      "before any new mutation — your answer is orientation, not confirmation that an effect did not happen.";
   return [
-    header,
+    pauseMarker(input.id),
+    blockedAttemptSentence(input.attempt, input.evidencedAttempt, input.reason),
     input.detail,
-    ...session,
+    ...(input.sessionId === undefined ? [] : [`session: ${input.sessionId}`]),
     "",
-    ask,
+    pauseAsk(input.reason),
     "",
     describeOutcome({ attempt: input.attempt, record: null, workDir: input.workDir, workspace: input.workspace }),
     "",
     renderWorkEvidence(evidence),
   ].join("\n");
+}
+
+/**
+ * The attempt the operator must reason about. A pause written by the launch
+ * path names the attempt it was about to open; when the disk evidences a
+ * lower one, that planned attempt was never started and claiming it cannot be
+ * continued would be a fabricated fact (issues 174/175). An attempt the record
+ * never named is said so, not printed as "attempt 0".
+ */
+function blockedAttemptSentence(attempt: number, evidencedAttempt: number, reason: PauseReason): string {
+  const known = knownAttempt(attempt);
+  const evidenced = knownAttempt(evidencedAttempt);
+  const why = describePauseReason(reason);
+  if (known !== null && evidenced !== null && known > evidenced) {
+    return (
+      `the interrupted attempt ${evidenced} cannot be continued safely (${why}) — ` +
+      `the planned attempt ${known} was never started; no attempt was consumed and nothing was relaunched.`
+    );
+  }
+  const named = known === null ? "this work's current attempt" : `attempt ${known}`;
+  return `${named} cannot be continued safely (${why}) — no attempt was consumed and nothing was relaunched.`;
+}
+
+/** The pause reasons whose effect the factory cannot establish at all. */
+function effectUnverifiable(reason: PauseReason): boolean {
+  return reason === "effect-unsupported" || reason === "effect-ambiguous" || reason === "tool-evidence-missing";
+}
+
+/** What would actually move the work, and what an answer cannot prove. */
+function pauseAsk(reason: PauseReason): string {
+  const limit = effectUnverifiable(reason)
+    ? "The factory cannot verify what that command did, so it will not replay it: a generic answer " +
+      "cannot authorize a retry. "
+    : "";
+  return (
+    limit +
+    "Reply with the concrete evidence the factory verifies — the pushed commit, the comment, the label — " +
+    "or resolve the situation on the tracker. The facts are read again before any new round; " +
+    "a free-form answer is orientation, never proof that an effect did not happen."
+  );
 }
 
 /** The pause reasons in the operator's words. */
