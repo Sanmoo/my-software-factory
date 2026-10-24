@@ -442,8 +442,8 @@ export type ReservedDerivation = ReservedWorkInput &
       }
     /** The work waits for the operator because its interrupted attempt cannot be
      *  continued safely: its session is missing/unreadable, its identity does
-     *  not match, or an external effect stayed ambiguous. The
-     *  pause is persisted, so no cycle re-attempts the recovery. */
+     *  not match, or an external effect stayed ambiguous. The pause is
+     *  persisted, so no cycle re-attempts the recovery. */
     | { state: "continuity-paused"; attempt: number; pause: PauseRecord }
     /** Never acted on: the issue is gone, or closed as not-planned (not done). */
     | { state: "unknown"; because: "issue-not-found" | "not-planned" }
@@ -693,8 +693,8 @@ async function deriveReservedWork(
 
 /**
  * The claimed work whose attempt the factory did not settle — orphans and the
- * interruption-vs-failure distinction included. The registry
- * decides which question is being asked:
+ * interruption-vs-failure distinction included. The registry decides which
+ * question is being asked:
  *
  *  - the last attempt wrote NO outcome record: an INTERRUPTION. Absence is not
  *    a failure, so the 1st/2nd-fall ruler never applies — the attempt keeps its

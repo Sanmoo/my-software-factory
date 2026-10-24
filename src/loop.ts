@@ -2807,8 +2807,9 @@ export class SweepEngine {
   /**
    * The ruler at the act of an end — the survivor ends included — on structured
    * facts alone: the outcome record (absence = an interruption), the PR fact
-   * and the label facts from the port, and the registry's consecutiveness. The decided transition is applied here; an
-   * interruption returns the SAME attempt as the next launch.
+   * and the label facts from the port, and the registry's consecutiveness. The
+   * decided transition is applied here; an interruption returns the SAME
+   * attempt as the next launch.
    * `origin` only names the actor in the operator's log: a survivor's end is
    * reconciled by these same facts, never by the launch object this process
    * never had.
