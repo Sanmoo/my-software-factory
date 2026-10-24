@@ -9,7 +9,7 @@ import { ensureWorkspace, workDir } from "../layout.js";
 import { consumeRecovery, readRecoveryLedger } from "../pool/recovery.js";
 import { githubRepository, githubTicket, workIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
-import type { LiveWorker } from "../state/liveness.js";
+import type { LiveWorker, LivenessObservation } from "../state/liveness.js";
 import {
   beginOperatorStop,
   reconcileUnconfirmedStops,
@@ -51,7 +51,7 @@ interface Harness {
  * the runtime's forced end.
  */
 function harness(options: {
-  probe: (call: number) => LiveWorker[];
+  probe: (call: number) => LivenessObservation;
   force?: (key: string) => Promise<void>;
   settled?: () => Promise<void>;
   escalated?: () => { readonly promise: Promise<void>; dispose: () => void };
@@ -87,7 +87,7 @@ function harness(options: {
         await options.force?.(workKeyOf(work));
       },
     },
-    probe: async () => {
+    observe: async () => {
       calls += 1;
       return options.probe(calls);
     },
@@ -112,7 +112,7 @@ function harness(options: {
 }
 
 test("the evidence of the stop is persisted before the worker is asked, and the recovery it cancels is returned", async () => {
-  const h = harness({ probe: () => [] });
+  const h = harness({ probe: () => ({ state: "known", workers: [] }) });
   try {
     const grant = await consumeRecovery(h.dir, DEFAULT_RECOVERY_BUDGET, 2);
     assert.equal(grant.decision, "recover");
@@ -143,7 +143,7 @@ test("the second signal ends the cooperative window and forces what remains", as
   });
   const h = harness({
     // The worker is alive until it is forced: the probe only answers empty after.
-    probe: () => (alive ? [liveWorker()] : []),
+    probe: () => ({ state: "known", workers: alive ? [liveWorker()] : [] }),
     force: async () => {
       alive = false;
     },
@@ -169,7 +169,7 @@ test("the second signal ends the cooperative window and forces what remains", as
 test("a worker that survives the forced stop is persisted unconfirmed, and the sweep holds it by the same reading", async () => {
   const h = harness({
     // Docker always lists the worker: forcing it did not prove it gone.
-    probe: () => [liveWorker()],
+    probe: () => ({ state: "known", workers: [liveWorker()] }),
     force: async () => {},
   });
   try {
@@ -207,9 +207,7 @@ test("a worker that survives the forced stop is persisted unconfirmed, and the s
 
 test("an unreadable probe is uncertainty, never an empty factory", async () => {
   const h = harness({
-    probe: () => {
-      throw new Error("docker did not answer");
-    },
+    probe: () => ({ state: "unknown", reason: "docker did not answer" }),
   });
   try {
     const report = await beginOperatorStop(h.admissions, h.deps);

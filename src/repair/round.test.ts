@@ -74,8 +74,6 @@ function cycle(overrides: Partial<RepairCycle> = {}): RepairCycle {
   return { ...EMPTY_REPAIR_CYCLE, ...overrides };
 }
 
-// ---- opening ----
-
 test("a confirmed trigger opens a round pinned to the head its evidence was read on", () => {
   const reading = readRepairPremise(known(prFacts()));
   assert.equal(reading.premise, "persisting");
@@ -139,8 +137,6 @@ test("a clean PR with a repair cycle recovers the budget", () => {
   assert.deepEqual(verdict, { kind: "recovered" });
 });
 
-// ---- the launch's gate ----
-
 test("an obsolete premise returns the round unspent", () => {
   const reading = readRepairPremise(known(prFacts({ mergeState: "mergeable", requiredChecks: [] })));
   const verdict = confirmRepairRound({
@@ -197,8 +193,6 @@ test("a fresh round follows the facts to the current head; a resumption keeps it
   });
   assert.equal(held.kind, "hold");
 });
-
-// ---- settling ----
 
 test("the remote carrying the produced commit is a publication, charged once", () => {
   const decision = settleRepairRound(cycle({ usedRounds: 1, attempt: attempt() }), {
@@ -272,8 +266,6 @@ test("a settled attempt is never settled again", () => {
   });
   assert.deepEqual(decision, { kind: "none" });
 });
-
-// ---- a round that never started ----
 
 test("a round that never reached the runtime returns its charge; one that started does not", () => {
   const unstarted = returnUnstartedRound(cycle({ usedRounds: 1, lastEvidence: "sig", attempt: attempt() }), {

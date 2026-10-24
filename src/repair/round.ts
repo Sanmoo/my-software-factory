@@ -40,8 +40,6 @@ import {
  * the pool (pool/repair.ts): this module decides, the pool persists.
  */
 
-// ---- the premise: one reading, one verdict ----
-
 /** A confirmed impediment of an open PR, read from structured facts alone. */
 export interface RepairTrigger {
   reasons: RepairReason[];
@@ -109,8 +107,6 @@ export function repairSignature(work: WorkIdentity, trigger: RepairTrigger): str
     failingChecks: trigger.failingChecks,
   });
 }
-
-// ---- opening a round ----
 
 /** The context a round opens with: the confirmed trigger, the unpublished
  *  attempt it takes over (when resuming) and the head it is pinned to — the
@@ -213,8 +209,6 @@ export function repairOpening(trigger: RepairTrigger, resuming: RepairAttempt | 
   };
 }
 
-// ---- the launch's gate ----
-
 /** What the launch decided about a round the derivation opened. */
 export type RepairLaunchVerdict =
   /** The premise is confirmed and the remote is where the round was pinned: go. */
@@ -272,8 +266,6 @@ export function confirmRepairRound(input: {
   }
   return { kind: "launch", round: pinned };
 }
-
-// ---- settling an unfinished round ----
 
 /** The reconciliation of one attempt: what the settlement concluded and the
  *  cycle it persists. */

@@ -32,11 +32,17 @@ const modules = [
   "pool/work-key.js",
   "runtime/json-line.js",
   "work-record/files.js",
+  "work-record/outcome.js",
   "work-record/continuity.js",
+  "work-record/record.js",
   "runtime/guardrail/extension.js",
   "runtime/guardrail/delegation.js",
   "runtime/guardrail/journal-lock.js",
   "work-record/stop-request.js",
+  // The image's preflight (runtime/sandcastle.ts) names this path: the record's
+  // own module is staged above, and the runtime's re-export keeps the layout the
+  // image was already validated with (issue #186's incremental migration).
+  "runtime/stop-request.js",
   "tracker/identity.js",
 ];
 const files = modules.map((module) => ({ from: join(root, "dist", module), to: join(stage, module) }));

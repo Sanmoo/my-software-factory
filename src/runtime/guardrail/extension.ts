@@ -19,7 +19,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { parseJsonObject } from "../json-line.js";
-import { watchWorkerStop, workerStopRequested } from "../../work-record/stop-request.js";
+import { watchWorkerStop } from "../../work-record/stop-request.js";
+import { openWorkRecord } from "../../work-record/record.js";
 import { tryJournalLock } from "./journal-lock.js";
 import { childGuardrailRegistrar, guardedDelegation, type RegisterChildGuardrail, type ChildGuardrailRegistration } from "./delegation.js";
 
@@ -30,8 +31,6 @@ import {
   appendJournalResult,
   appendJournalStart,
   callKey,
-  readEffectJournal,
-  readGuardrailState,
   type GuardrailState,
 } from "../../work-record/continuity.js";
 
@@ -100,6 +99,9 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
   // image on its own (`scripts/stage-guardrail.mjs` follows relative imports
   // only) and must not drag the runtime's prompt in.
   const workMount = options.workMount ?? process.env["MSF_WORK_MOUNT"] ?? "/msf-work";
+  // The container reads the Work's record through the same interface the host
+  // uses (issue #186): one owner of the file layout and the schemas.
+  const record = openWorkRecord(workMount);
   const observeRef = options.observeRef ?? observeWorktree;
   // Per-process memory of "allowed exactly once" verdicts and the state read
   // at session start; both are process facts, never persisted.
@@ -114,7 +116,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     stopWatching?.();
     children?.dispose();
     children = undefined;
-    state = readGuardrailState(workMount);
+    state = record.guardrailState();
     if (state === null) return;
     rootSessionId = state.sessionId;
     const actualSession = ctx?.sessionManager?.getSessionId() ?? state.sessionId;
@@ -134,7 +136,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
   });
 
   pi.on("tool_call", (event) => {
-    if (state === null) state = readGuardrailState(workMount);
+    if (state === null) state = record.guardrailState();
     // The state is the contract that makes a resumed effect safe: the verdicts
     // of the host's reconciliation, the attempt and the session this call
     // belongs to. Absent or unreadable, nothing can be authorized — a resumed
@@ -144,7 +146,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // (the branch is that record) and they are how a worker writes its outcome
     // record, including the blocked self-report this refusal asks for.
     if (state === null) return refuseWithoutState(event, workMount);
-    if (workerStopRequested(workMount, rootSessionId ?? state.sessionId)) {
+    if (record.stopRequested(rootSessionId ?? state.sessionId)) {
       return { block: true, reason: `${BLOCKED_PREAMBLE} the operator requested a stop; do not start another tool` };
     }
     const release = state.generation === undefined ? () => {} : tryJournalLock(workMount, state.generation);
@@ -152,7 +154,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     try {
       const needsJournal = event.toolName === "subagent" || event.toolName === "subagents_enable" ||
         (event.toolName === "bash" && classifyCommand(typeof event.input["command"] === "string" ? event.input["command"] : "").safety !== "safe");
-      if (needsJournal && !readEffectJournal(workMount).intact) {
+      if (needsJournal && !record.effects().intact) {
         return { block: true, reason: `${BLOCKED_PREAMBLE} effect journal is unreadable; no effect may run` };
       }
       const retry = guardCallRetry(workMount, state, event);
@@ -204,7 +206,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
 
   pi.on("tool_result", (event) => {
     if (state === null) return;
-    const journal = readEffectJournal(workMount);
+    const journal = record.effects();
     // The call id belongs to the session that issued it; another round's
     // "call-1" is not this one.
     if (!journal.intents.some((intent) => intent.sessionId === state!.sessionId && intent.callId === event.toolCallId && intent.tool === event.toolName)) return;
@@ -224,7 +226,7 @@ function guardCallRetry(workMount: string, state: GuardrailState, event: ToolCal
   try {
     const recoveries = readCallRecoveries(workMount);
     if (recoveries.length === 0) return null;
-    const journal = readEffectJournal(workMount);
+    const journal = openWorkRecord(workMount).effects();
     if (!journal.intact) return block("cannot establish call retry consumption: effect journal is unreadable");
     const current = recoveries.filter((entry) => (entry.executorSessionId ?? entry.sessionId) === state.sessionId && entry.attempt === state.attempt);
     for (const entry of current) {
@@ -303,7 +305,7 @@ function blockedAction(
   actions: readonly EffectAction[],
   consumedAbsent: Set<string>,
 ): Blocked | null {
-  const journal = readEffectJournal(workMount);
+  const journal = openWorkRecord(workMount).effects();
   // Scoped to the session: a call id repeats across the attempt's rounds.
   const failed = new Set(
     journal.results.filter((result) => !result.ok).map((result) => callKey(result.sessionId, result.callId)),

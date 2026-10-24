@@ -497,7 +497,7 @@ async function deriveReservedWork(
         issue.value.labels.includes(labels.claimed) && !inFlight?.has(workKeyOf(work))) {
       const ledger = await readAttemptLedger(dir);
       if (stop.attempt >= Math.max(1, ledger.lastAttempt) && stop.attempt <= ledger.lastAttempt + 1 &&
-          ownWrittenOutcome(await readOutcomeRecord(dir), stop.attempt) === null) {
+          (await openWorkRecord(dir).writtenOutcome(stop.attempt)) === null) {
         return stop.kind === "stop-requested"
           ? { work, dir, state: "stop-resume", attempt: stop.attempt }
           : { work, dir, state: "stop-unconfirmed", attempt: stop.attempt, because: stop.because };

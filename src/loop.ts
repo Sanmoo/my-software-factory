@@ -1438,8 +1438,7 @@ export class SweepEngine {
     return beginOperatorStop([...this.inFlight.values()], {
       workspace: this.deps.workspace,
       runtime: this.deps.runtime,
-      ...(this.deps.probe === undefined ? {} : { probe: this.deps.probe }),
-      ...(this.deps.probeTimeoutMs === undefined ? {} : { probeTimeoutMs: this.deps.probeTimeoutMs }),
+      observe: () => this.observeLiveness().then(() => this.liveness),
       survivors: () => this.survivors.keys(),
       isCarried: (key) => this.inFlight.has(key),
       launchesSettled: () => this.waitPending(),
@@ -1678,7 +1677,6 @@ export class SweepEngine {
       }
       repair.trigger = verdict.round.trigger;
       repair.pinnedHeadSha = verdict.round.pinnedHeadSha;
-      repair.baseBranch = verdict.round.baseBranch;
       baseBranch = verdict.round.baseBranch;
       this.log(
         `repair round for ${key}: ${repair.trigger.reasons.join(" + ")} reactivated the worker — ` +
@@ -1772,7 +1770,7 @@ export class SweepEngine {
         }
         // The fresh read settled it: the answer becomes the updated context
         // of a NEW round (the material above already carries it).
-        openWorkRecord(dir).settle(facts.attempt);
+        openWorkRecord(dir).settlePause();
         this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
       }
     }
@@ -1867,7 +1865,7 @@ export class SweepEngine {
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
 
-    if (launchable.callRecovery !== undefined) openWorkRecord(dir).settle(facts.attempt);
+    if (launchable.callRecovery !== undefined) openWorkRecord(dir).settlePause();
     // Charge only after continuity allowed the launch. A pause before a worker
     // exists is not an unpublished Repair and cannot consume a round or fall.
     if (repair !== undefined) {
@@ -1897,7 +1895,7 @@ export class SweepEngine {
       });
     } catch (error) {
       if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
-          ownWrittenOutcome(await openWorkRecord(dir).outcome(), facts.attempt) === null &&
+          (await openWorkRecord(dir).writtenOutcome(facts.attempt)) === null &&
           (await readRecoveryLedger(dir)).lastStop === null) {
         await recordStopEvidence(dir, facts.attempt);
       }
@@ -1954,7 +1952,7 @@ export class SweepEngine {
       // The clear lands first because the answer self-heals a death on either
       // side of it: with the record still there the answer is read again, and
       // with it cleared the resume launch swaps the block off.
-      openWorkRecord(dir).settle(attempt);
+      openWorkRecord(dir).settlePause();
       this.log(
         `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
           "the human answer orients a NEW round (no recovery is spent)",
@@ -1970,7 +1968,7 @@ export class SweepEngine {
     // while a death after the clear leaves an unblocked interrupted attempt,
     // which derives to a recovery on its own.
     await tickets.resumeTicketClaim(work.ticket, config.labels);
-    openWorkRecord(dir).settle(attempt);
+    openWorkRecord(dir).settlePause();
     this.log(
       `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
         `attempt ${attempt} continues (the recovery ruler applies)`,
@@ -2239,7 +2237,7 @@ export class SweepEngine {
         }
       }
       if (stored.attempt !== null && requestedStop &&
-          ownWrittenOutcome(await openWorkRecord(work.dir).outcome(), stored.attempt.attempt) === null) {
+          (await openWorkRecord(work.dir).writtenOutcome(stored.attempt.attempt)) === null) {
         continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
       }
       if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
@@ -2528,7 +2526,7 @@ export class SweepEngine {
     // A settled attempt makes any continuity pause of its own history (issue
     // 119): the new record (or block) is the current fact, and a stale pause
     // must not keep the work out of later rounds. An interruption keeps it.
-    if (ruling.decision !== "interrupt") openWorkRecord(dir).settle(attempt);
+    if (ruling.decision !== "interrupt") openWorkRecord(dir).settlePause();
 
     // A known PR — open, merged or closed — is persisted beside the Work
     // (issue 125): the facts survive a restart, and a later attempt appends

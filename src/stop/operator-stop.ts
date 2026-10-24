@@ -11,32 +11,21 @@ import {
   recordUnconfirmedStop,
   refundRecovery,
 } from "../pool/recovery.js";
-import {
-  DEFAULT_PROBE_TIMEOUT_MS,
-  probeLiveness,
-  type LivenessObservation,
-  type LivenessProbe,
-} from "../state/liveness.js";
+import type { LivenessObservation } from "../state/liveness.js";
 import { describeError, formatDuration } from "../format.js";
 
 /**
  * The operator's requested stop (issue #146, ADR 0008) — the whole protocol of
- * ONE execution's stop, in one module. The ordering is the module's, not the
- * sweep's: the evidence of the stop is persisted BEFORE any worker is asked to
- * end, the cooperative request precedes the window, the second signal (or the
- * window's end) precedes the forced stop, and nothing is called stopped before
- * a fresh probe confirms that no worker survives.
- *
- * Inputs: the launches in flight, the survivors a previous process left, the
- * liveness probe and the registry. Outputs: the {@link StopReport} and the
- * persisted evidence (the stop on the attempt's ledger, the unconfirmed stop on
- * the works whose end could not be proven). The recovery ledger's own writes
- * stay in the pool — this module sequences them.
+ * ONE execution's stop. The ordering is this module's: the evidence of the stop
+ * is persisted BEFORE any worker is asked to end, the cooperative request
+ * precedes the window, the second signal (or the window's end) precedes the
+ * forced stop, and nothing is called stopped before a fresh read confirms that
+ * no worker survives. The recovery ledger's writes stay in the pool — this
+ * module sequences them.
  *
  * The sweep's reconciliation of an unconfirmed stop reads the SAME verdict
- * ({@link stopHoldReason}) over the SAME persisted ledger, so the stop and the
- * sweep can never hold two different opinions about whether a worker of a work
- * is still alive (issue #186, story 2).
+ * ({@link stopHoldReason}) over the SAME ledger, so the stop and the sweep
+ * cannot hold two opinions about whether a worker of a work is still alive.
  */
 
 /**
@@ -46,10 +35,16 @@ import { describeError, formatDuration } from "../format.js";
  */
 export interface StopReport {
   forced: string[];
-  unconfirmed: Array<{ key: string; because: string }>;
+  unconfirmed: UnconfirmedStop[];
   /** Why the liveness probe could not answer: the factory cannot say that no
    *  worker survives, and never calls a stop safe on a guess. */
   unreadBecause: string | null;
+}
+
+/** A work whose worker's end the stop could not prove, and why. */
+export interface UnconfirmedStop {
+  key: string;
+  because: string;
 }
 
 /** The one verdict of a stop: safe only when every worker's end was confirmed
@@ -87,9 +82,9 @@ export interface StopDeps {
     requestStop: (work: WorkIdentity) => void;
     forceStop: (work: WorkIdentity) => Promise<unknown>;
   };
-  /** The liveness read; absent means this process sees only its own launches. */
-  probe?: LivenessProbe;
-  probeTimeoutMs?: number;
+  /** The liveness reading, taken freshly at each moment the protocol needs it
+   *  (the sweep's own observation, so the stop's facts and the sweep's agree). */
+  observe: () => Promise<LivenessObservation>;
   /** The survivors a previous factory process left: this process has no session
    *  to ask, so they are only waited for and then forced. */
   survivors: () => Iterable<string>;
@@ -136,15 +131,6 @@ export async function operatorStoppedAttempt(dir: string, attempt: number): Prom
     return true;
   }
   return lastStop.kind === "stop-requested";
-}
-
-/** The stop's own probe read — bounded, never throwing, and taken freshly
- *  because the workers it asks about just ended or were forced. */
-async function observe(deps: StopDeps): Promise<LivenessObservation> {
-  return probeLiveness(
-    deps.probe ?? (() => Promise.resolve([])),
-    deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-  );
 }
 
 /**
@@ -268,7 +254,7 @@ async function stopWorkers(
     if (admission.launched) workers.set(workKeyOf(admission.work), admission.attempt);
   }
   for (const key of deps.survivors()) if (!workers.has(key)) workers.set(key, null);
-  const observation = await observe(deps);
+  const observation = await deps.observe();
   if (observation.state === "known") {
     for (const worker of observation.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
   }
@@ -332,7 +318,7 @@ async function confirmStop(
 ): Promise<{ unconfirmed: Array<{ key: string; because: string }>; observation: LivenessObservation }> {
   const { workers: answerable, observation } = await stopWorkers(admissions, deps);
 
-  const unconfirmed: Array<{ key: string; because: string }> = [];
+  const unconfirmed: UnconfirmedStop[] = [];
   for (const [key, knownAttempt] of answerable) {
     const because = stopHoldReason(observation, key);
     if (because === null) continue;
@@ -398,7 +384,7 @@ async function plannedAttempt(admission: StopAdmission): Promise<number | null> 
 /** The sweep's view of an unconfirmed stop it may now be able to promote. */
 export interface UnconfirmedStopReconciliation {
   /** Works whose previous stop stays unconfirmed, with the reason to report. */
-  held: Array<{ key: string; because: string; previous: string }>;
+  held: Array<UnconfirmedStop & { previous: string }>;
   /** Works whose previous worker is now confirmed gone: the attempt resumes. */
   resumed: Array<{ key: string; attempt: number }>;
 }

@@ -72,25 +72,20 @@ test(
     });
     assert.equal(record.pausedAttempt(), 3);
 
-    record.settle(3);
+    record.settlePause();
     assert.equal(record.pause(), null, "the settled attempt's pause is history");
   }),
 );
 
 test(
-  "a pause naming a LATER attempt is not settled by this attempt's end",
+  "the written outcome of an attempt is the record's, never another attempt's",
   withRecord(async (record) => {
-    record.writePause({
-      version: 1,
-      work: WORK,
-      attempt: 5,
-      reason: "session-missing",
-      detail: "no session file",
-      at: "2026-01-01T00:00:00.000Z",
-    });
-
-    record.settle(4);
-    assert.equal(record.pausedAttempt(), 5, "a later attempt still waits for the operator");
+    record.writeOutcome({ class: "blocked-self-report", attempt: 6 });
+    assert.equal(await record.writtenOutcome(6), null, "the record-only ruling owns a self-report");
+    assert.equal((await record.ownOutcome(6))?.class, "blocked-self-report");
+    record.writeOutcome({ class: "clean-without-pr", attempt: 6 });
+    assert.equal((await record.writtenOutcome(6))?.class, "clean-without-pr");
+    assert.equal(await record.writtenOutcome(5), null);
   }),
 );
 
