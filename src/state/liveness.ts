@@ -184,8 +184,8 @@ export interface ScreenedListing {
  * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"`
  * listing. A row whose rendered mounts name a path under the works root is
  * inspected, as is a row whose mounts column rendered nothing usable — a
- * column that never showed the paths cannot show their absence. A row whose rendered
- * mounts place it elsewhere is dropped without an inspect. The column is
+ * column that never showed the paths cannot show their absence. A row whose
+ * rendered mounts place it elsewhere is dropped without an inspect. The column is
  * searched whole, not split on its comma separator, so a source containing a
  * comma stays visible; Docker marks a truncated column with `…`.
  */

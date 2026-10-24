@@ -10,7 +10,7 @@ import { join } from "node:path";
  *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs
  *                             (sessao/, log-<n>.jsonl, desfecho.json)
  *   <workspace>/arquivo/    — works moved here on done; nothing is deleted
- *   <workspace>/retros/     — the retrospective reports (the next window's marker)
+ *   <workspace>/retros/     — the retrospective reports (the next marker)
  */
 
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */
