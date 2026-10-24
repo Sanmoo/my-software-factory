@@ -571,6 +571,50 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.match(rendered, /window boundary: 2026-02-01T12:00:00\.000Z/);
   });
 
+  test("a threshold met only by work a post-mortem already covered is a notice, not a report", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps, logs } = makeLoggedFactory(config);
+    seedArchived(1, at(1));
+    const finished = await collectFinishedWorks(layout);
+    const single = await planManualRound(config, layout, finished, { work: { repo: REPO, number: 1 } });
+    assert.ok(!("empty" in single));
+    await runRetroRound(
+      { config, runtime, workspace: layout, log: () => {}, notifier: new FakeNotifier() },
+      single as RetroPlan,
+    );
+    assert.equal(runtime.retroLaunched.length, 1);
+
+    await runOnce(deps);
+
+    assert.equal(runtime.retroLaunched.length, 1, "no second round: nothing is left to analyze");
+    assert.ok(
+      logs.some((line) => line.includes("nothing new since the last report")),
+      "the sweep says the window is empty instead of writing an empty report",
+    );
+    assert.equal(
+      readdirSync(layout.retros).filter((name) => name.endsWith("-retro.md")).length,
+      1,
+      "the post-mortem's report stays the only artifact",
+    );
+  });
+
+  test("an in-flight record that names no owner never holds the lane", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps } = makeFactory(config);
+    seedArchived(1, at(1));
+    mkdirSync(layout.retros, { recursive: true });
+    writeFileSync(
+      join(layout.retros, RETRO_IN_FLIGHT_FILENAME),
+      JSON.stringify({ round: "2026-03-01T00-00-00-000Z", startedAt: at(1), window: [], manual: false, pid: 0 }),
+      "utf8",
+    );
+
+    await runOnce(deps);
+
+    // pid 0 is the caller's own process group: `kill(0, 0)` always answers.
+    assert.equal(runtime.retroLaunched.length, 1, "an ownerless record is stale, never a live round");
+  });
+
   test("one round at a time: a live round's marker keeps the lane, and a dead owner's is cleared", async () => {
     const config = makeConfig({ threshold: 1 });
     const { runtime, deps, logs } = makeLoggedFactory(config);

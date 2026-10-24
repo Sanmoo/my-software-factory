@@ -73,7 +73,7 @@ export type Liveness =
     };
 
 /** The retrospective job as `msf status` names it (issue 141, ADR 0006): the
- *  last report that moved the marker, and the round in flight — if any. */
+ *  last report written, the boundary it advanced, and the round in flight. */
 export interface RetroStatus {
   /** The file name of the last report written; null before any. */
   lastReport: string | null;
