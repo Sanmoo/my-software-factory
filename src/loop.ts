@@ -132,6 +132,7 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   capacityExcess,
+  carriedKeys,
   duplicateWorkers,
   occupiedSlots,
   probeLiveness,
@@ -143,9 +144,9 @@ import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
-import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
+import { collectFinishedWorks } from "./retro/window.js";
 import { clearRetroInFlight } from "./retro/marker.js";
-import { planAutomaticRound, runRetroRound } from "./retro/round.js";
+import { emptyWindowNotice, planAutomaticRound, runRetroRound } from "./retro/round.js";
 import { describeError, formatDuration } from "./format.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -1056,13 +1057,11 @@ export class SweepEngine {
 
   private async startRetroRound(): Promise<void> {
     const { config, runtime, workspace, notifier, now } = this.deps;
-    const finished = await collectFinishedWorks(workspace, liveWorkKeys(this.liveness));
+    const finished = await collectFinishedWorks(workspace, this.carriedKeys);
     const plan = await planAutomaticRound(config, workspace, finished, now);
     if (plan === null) return;
     if ("empty" in plan) {
-      this.log(
-        "retro: nothing new since the last report — no round is launched and no report is written",
-      );
+      this.log(emptyWindowNotice(plan.empty));
       return;
     }
     await runRetroRound(
@@ -1128,7 +1127,7 @@ export class SweepEngine {
    *  launch and capacity decisions never ask Docker a second question. */
   private get carriedKeys(): ReadonlySet<string> {
     if (this.liveness.state !== "known") return EMPTY_KEYS;
-    return new Set(this.liveness.workers.map((worker) => worker.key));
+    return carriedKeys(this.liveness);
   }
 
   /** Record the class an action/event lands a work in (`null` = it leaves). */
@@ -1594,8 +1593,7 @@ export class SweepEngine {
    */
   private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
     const { workers, observation } = await this.stopWorkers(entries);
-    const live =
-      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : EMPTY_KEYS;
+    const live = carriedKeys(observation);
     for (const entry of entries) {
       const key = workKeyOf(entry.work);
       if (this.inFlight.has(key) || live.has(key)) continue;

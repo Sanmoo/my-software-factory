@@ -15,6 +15,7 @@ import type { WorkEvidence } from "./evidence.js";
 import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
+import { FIRST_WINDOW_SIZE } from "../retro/window.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -164,10 +165,10 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   if (view.retro !== null) {
     const retro = view.retro;
     lines.push(...section(
-      "retro (a report that covers a window marks the next window's boundary; items are filed as needs-triage)",
+      "retro (window reports mark the next window; items land as needs-triage)",
       [
         retro.lastReport === null
-          ? "no report yet — the first round covers the last 10 finished works"
+          ? `no report yet — the first round covers the last ${FIRST_WINDOW_SIZE} finished works`
           : `${retro.lastReport} — ${retro.filed} item(s) filed by the last round`,
         retro.boundaryAt === null
           ? "no window boundary yet — a single-work post-mortem never moves it"

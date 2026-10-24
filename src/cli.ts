@@ -1,20 +1,20 @@
 #!/usr/bin/env node
-import { appendFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
-import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
-import { planManualRound, runRetroRound } from "./retro/round.js";
+import { collectFinishedWorks } from "./retro/window.js";
+import { emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
-import { OPERATIONAL_LOG_FILENAME, operationalLog, utcStamp } from "./log.js";
+import { appendOperationalLog, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
-import { probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+import { carriedKeys, probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -160,11 +160,7 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
  */
 function writeOperationalLog(workspace: WorkspaceLayout, message: string): void {
   console.log(message);
-  try {
-    appendFileSync(join(workspace.root, OPERATIONAL_LOG_FILENAME), `${message}\n`, "utf8");
-  } catch (error) {
-    console.error(utcStamp(`operational log not written: ${describeError(error)}`));
-  }
+  appendOperationalLog(workspace.root, message);
 }
 
 /** `--runtime fake`: the placeholder that never launches — tests only; the
@@ -355,20 +351,13 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const finished = await collectFinishedWorks(workspace, liveWorkKeys(observation));
+    const finished = await collectFinishedWorks(workspace, carriedKeys(observation));
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),
     });
     if ("empty" in plan) {
-      writeOperationalLog(
-        workspace,
-        utcStamp(
-          plan.empty === "no-finished-works"
-            ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"
-            : "retro: nothing new since the last report — nothing was launched and no report was written",
-        ),
-      );
+      writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
       return;
     }
 

@@ -845,7 +845,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         logging: { type: "file", path: join(sessionsDir, "sandcastle.log") },
       });
 
-      return { request, outcome: existsSync(request.reportPath) ? "report-written" : "no-report" };
+      return { outcome: existsSync(request.reportPath) ? "report-written" : "no-report" };
     } finally {
       if (agentFilesDir !== undefined) rmSync(agentFilesDir, { recursive: true, force: true });
     }
