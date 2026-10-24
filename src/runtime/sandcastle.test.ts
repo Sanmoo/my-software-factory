@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -88,22 +88,14 @@ describe("the clone a retrospective anchors in (issue 141)", () => {
     assert.equal(retroAnchorDir(join(reposDir, "absent"), ["Sanmoo/my-tasks"]), null);
   });
 
-  // An owner that is root can read anything, so the denial this test needs is
-  // impossible: the host's privilege model decides, and the skip says so.
-  test(
-    "a repos dir the host cannot read is the host's error, never a silent 'no clone'",
-    { skip: process.getuid?.() === 0 ? "running as root: no directory is unreadable" : false },
-    () => {
-      const unreadable = join(reposDir, "unreadable");
-      mkdirSync(unreadable);
-      chmodSync(unreadable, 0o000);
-      try {
-        assert.throws(() => retroAnchorDir(unreadable, ["Sanmoo/my-tasks"]), /EACCES|EPERM/);
-      } finally {
-        chmodSync(unreadable, 0o755);
-      }
-    },
-  );
+  test("a path that is not a directory is the host's error, never a silent 'no clone'", () => {
+    // A regular file as the repos dir is a failure no privilege model can
+    // forgive (ENOTDIR): the absence of the dir is the only "no clone yet".
+    const notADir = join(reposDir, "not-a-dir");
+    writeFileSync(notADir, "", "utf8");
+
+    assert.throws(() => retroAnchorDir(notADir, ["Sanmoo/my-tasks"]), /ENOTDIR/);
+  });
 });
 
 /** The daemon socket the launch binds (ADR 0003) — pinned like the token:
