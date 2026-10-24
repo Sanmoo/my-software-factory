@@ -43,6 +43,11 @@ repos:
 #     token-env: MSF_JIRA_ACME_TOKEN  # the NAME of the local variable holding the token
 #     jql: project = ABC AND assignee = currentUser()
 #     destination: Sanmoo/my-tasks   # explicit GitHub destination, never guessed
+#   - site: acme.atlassian.net    # one project may feed more repos: one source
+#     account: bot@acme.example   # per selection rule, same account and token-env
+#     token-env: MSF_JIRA_ACME_TOKEN
+#     jql: project = ABC AND labels = backend
+#     destination: Sanmoo/backend
 ```
 
 A Jira source is selected by its own JQL and always read in native **Rank
@@ -50,9 +55,14 @@ ascending** order; a conflicting `ORDER BY` is a configuration error. The JQL
 is the whole selection. `currentUser()` means the authenticated account named
 by `account` — the API token's owner, not an implicitly different human
 operator. The token is never a YAML value: `token-env` names the local
-environment variable that holds it. This release only reads Jira: `msf status`
-lists the candidates (no claim, comment or launch), and `msf run` refuses a
-Jira configuration before any claim. A Jira-only factory writes `repos: []`.
+environment variable that holds it. One Jira project may feed several
+repositories: configure one source per selection rule, each with its own JQL
+and destination, so every ticket still has exactly one destination. A ticket
+that rules promise to different destinations is ambiguous: `msf status` holds
+it with a diagnosis instead of presenting it as a candidate. This release only
+reads Jira: `msf status` lists the candidates (no claim, comment or launch),
+and `msf run` refuses a Jira configuration before any claim. A Jira-only
+factory writes `repos: []`.
 
 ## Usage
 

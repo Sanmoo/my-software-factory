@@ -3,7 +3,7 @@ import {
   renderUnmarkedReservation,
 } from "./derive.js";
 import { renderWorkKey } from "../pool/work-key.js";
-import { renderWorkIdentity } from "../tracker/identity.js";
+import { renderWorkIdentity, renderTicketIdentity } from "../tracker/identity.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
@@ -12,7 +12,7 @@ import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
 import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
-import type { JiraSourceView, OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
+import type { JiraAmbiguousTicket, JiraSourceView, OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
@@ -159,7 +159,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   // Jira candidates are read-only in this release (issue 128): the section
   // never claims, comments or launches, and a source that could not be read
   // says unknown instead of "none" — a candidate is not a reservation.
-  lines.push(...renderJiraSources(view.jira, cap));
+  lines.push(...renderJiraSources(view.jira, view.jiraAmbiguous, cap));
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
@@ -178,8 +178,13 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 }
 
 /** The Jira candidates, one block per configured selection (issue 128): native
- *  Rank order, no claim, and unknown when the source could not be read. */
-function renderJiraSources(sources: readonly JiraSourceView[], cap: number): string[] {
+ *  Rank order, no claim, and unknown when the source could not be read. A
+ *  ticket two selections promise to different destinations is held apart. */
+function renderJiraSources(
+  sources: readonly JiraSourceView[],
+  ambiguous: readonly JiraAmbiguousTicket[],
+  cap: number,
+): string[] {
   if (sources.length === 0) return [];
   const lines = [
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ${sources.length}`,
@@ -204,6 +209,17 @@ function renderJiraSources(sources: readonly JiraSourceView[], cap: number): str
     }
     if (source.candidates.length > shown.length) {
       lines.push(`    … and ${source.candidates.length - shown.length} more`);
+    }
+  }
+  if (ambiguous.length > 0) {
+    lines.push(`  ambiguous (more than one destination — held, no destination chosen): ${ambiguous.length}`);
+    for (const entry of ambiguous.slice(0, cap)) {
+      lines.push(
+        `    ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${entry.destinations.join(", ")}`,
+      );
+    }
+    if (ambiguous.length > cap) {
+      lines.push(`    … and ${ambiguous.length - cap} more`);
     }
   }
   return lines;
