@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
-import { githubRepository, githubSelections, githubTicket } from "../tracker/identity.js";
+import { githubRepository, githubSelections, githubTicket, jiraTicket, workIdentity } from "../tracker/identity.js";
 import { githubTicketNumber, githubTicketRepo } from "../e2e/work-fixtures.js";
 import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
@@ -245,6 +245,18 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
 
   beforeEach(() => {
     adapter = new FakeTrackerAdapter({ workerAccount: "bot" });
+  });
+
+  test("an unbacked claim on a non-GitHub ticket offers no fictional GitHub command", () => {
+    const jira = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      githubRepository("Sanmoo/a"),
+    );
+    const line = renderUnbackedClaim({ work: jira, command: null });
+
+    assert.match(line, /ABC-1/);
+    assert.match(line, /not a GitHub issue/);
+    assert.doesNotMatch(line, /gh issue edit/, "a Jira ticket gets no GitHub issue command");
   });
 
   test("an open issue with the claim label and no reservation is an unbacked claim, with a copyable release command", async () => {
