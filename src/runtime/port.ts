@@ -92,6 +92,20 @@ export interface SessionResult {
   outcome: "pr-open" | "clean-without-pr" | "blocked-self-report" | "abrupt-death";
 }
 
+/**
+ * A launch this runtime refused before any worker existed: a precondition of
+ * the environment (Docker, the image and its inventory, the git credential
+ * helper, the model credential) rejected it before the attempt's footprint was
+ * written, so no worker ran (issue 178). Any other failure may have left a
+ * worker behind and is never this type.
+ */
+export class LaunchPreconditionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "LaunchPreconditionError";
+  }
+}
+
 export interface WorkerRuntime {
   launch(request: WorkRequest): Promise<SessionResult>;
   /**

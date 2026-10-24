@@ -42,7 +42,7 @@ import {
 } from "./inventory.js";
 import { agentFileProblem, modelAuthSources } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { LaunchPreconditionError, type SessionResult, type WorkRequest, type WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
 const execFile = promisify(execFileCallback);
@@ -424,8 +424,9 @@ export class SandcastleRuntime implements WorkerRuntime {
   private async launchRegistered(request: WorkRequest, session: RunningSession): Promise<SessionResult> {
     const stopSignal = session.stop.signal;
     // Preconditions BEFORE any footprint: infra and config failures are not
-    // work falls — the factory fails fast with the reason (the v1's refusal).
-    await this.preflight();
+    // work falls — the factory fails fast with the reason — and, being before
+    // the footprint, their refusal proves no worker existed.
+    await launchPrecondition(() => this.preflight());
 
     // Stopped while the preconditions ran: no footprint, no worker. The
     // requested stop is not a session this runtime has to report, and the
@@ -435,16 +436,18 @@ export class SandcastleRuntime implements WorkerRuntime {
       return { request, outcome: "abrupt-death" };
     }
 
-    // The Docker socket the container inherits (ADR 0003), resolved with the
-    // preconditions: a socket that vanished between the two is the factory's
-    // failure to refuse out loud, never a work-level fall.
-    const dockerSocket = this.resolveDockerSocket();
+    // The Docker socket the container inherits (ADR 0003): a socket that
+    // vanished between the preconditions and here is the factory's failure to
+    // refuse out loud, never a work-level fall.
+    const dockerSocket = await launchPrecondition(() => this.resolveDockerSocket());
 
     // An explicitly supplied auth file is staged into a private host dir for
     // the read-only mount — never written to the image, never read from a
     // personal profile. Staged BEFORE the footprint so a vanished file is a
     // factory failure, not a half-written attempt. The dir dies with the launch.
-    const agentFilesDir = this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles);
+    const agentFilesDir = await launchPrecondition(() =>
+      this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles),
+    );
     try {
       // The footprint comes first (ticket 13): sessao/ and the attempt's log
       // exist before any outcome can exist. An abrupt death leaves exactly
@@ -746,6 +749,19 @@ export class SandcastleRuntime implements WorkerRuntime {
           ? { event: "agent-tool", tool: event.name, args: event.formattedArgs }
           : { event: "agent-raw", line: event.line };
     appendAttemptEvent(request.workDir, request.attempt, { iteration: event.iteration, ...payload });
+  }
+}
+
+/**
+ * Run one launch step that happens BEFORE the attempt's footprint; its refusal
+ * is typed as proof that no worker existed (issue 178). Never wrap a step that
+ * runs after the footprint: the worker may exist.
+ */
+async function launchPrecondition<T>(step: () => T | Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    throw new LaunchPreconditionError(describeError(error), error);
   }
 }
 

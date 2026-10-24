@@ -25,6 +25,7 @@ import {
   recordFailure,
   recordStopRequest,
   recordUnconfirmedStop,
+  refundRecovery,
 } from "../pool/recovery.js";
 import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../runtime/attempt-logs.js";
@@ -628,6 +629,25 @@ describe("status — derivation on demand + local registry scan", () => {
       /#31 \(attempt 1: last stop was a failure \(clean-without-pr\) — the attempt was consumed\)/,
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
+  });
+
+  test("a refunded recovery shows the real budget in the section (issue 178)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const dir = seedAttempt(35, 1);
+    const now = () => new Date("2026-01-01T00:00:00Z");
+    // Two grants were persisted before their relaunches; the second was
+    // refused by the environment before any worker existed and refunded.
+    await consumeRecovery(dir, DEFAULT_RECOVERY_BUDGET, 1, now);
+    await consumeRecovery(dir, DEFAULT_RECOVERY_BUDGET, 1, now);
+    assert.equal(await refundRecovery(dir, 1, 1), true);
+
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
+
+    assert.match(
+      text,
+      /#35 \(attempt 1: last stop was an interruption — no attempt consumed; 1\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
+      "the section shows the budget the ledger really holds after the refund",
+    );
   });
 
   /** The attempt's current session ended by a model provider error at `at`. */

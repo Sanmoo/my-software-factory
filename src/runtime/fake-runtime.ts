@@ -9,7 +9,7 @@ import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { LaunchPreconditionError, type SessionResult, type WorkRequest, type WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -39,6 +39,10 @@ export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
   /** Needed so the fake can actually open the PR the script promises. */
   tracker?: FakeTrackerAdapter;
+  /** Reject a launch (at its index in `launched`). The error's type carries
+   *  the fact the factory reads: a LaunchPreconditionError refuses before any
+   *  footprint; any other error leaves the worker's session started. */
+  rejectLaunch?: (request: WorkRequest, index: number) => Error | null;
   /** Deterministic timing control for scenario tests: each launch awaits the
    * returned promise (before applying its outcome) — a worker can be parked
    * mid-flight, or a signal fired at the act of its launch, without sleeps. */
@@ -78,6 +82,9 @@ export function launchOf(
 }
 
 export class FakeWorkerRuntime implements WorkerRuntime {
+  /** Every launch the runtime was asked for, in order — a refused one
+   *  included: the request is evidence of the attempt even when no session
+   *  started. */
   readonly launched: WorkRequest[] = [];
   /** The works a cooperative stop was requested for, in order. */
   readonly stopRequests: string[] = [];
@@ -98,6 +105,14 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
+    const rejection = this.options.rejectLaunch?.(request, index) ?? null;
+    // A proven pre-worker refusal (the real preconditions run before the
+    // footprint): no session is started. The hold still applies — a slow
+    // precondition can keep refusing while the factory asks it to stop.
+    if (rejection instanceof LaunchPreconditionError) {
+      await this.holdFor(request, index);
+      throw rejection;
+    }
     const key = workKeyOf(request.work);
     const session: FakeSession = {
       work: request.work,
@@ -108,8 +123,14 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     this.sessions.set(key, session);
 
     try {
-      const hold = this.hold ?? this.options.hold;
-      const work = hold === undefined ? Promise.resolve("work") : Promise.resolve(hold(request, index)).then(() => "work");
+      if (rejection !== null) {
+        // Any other failure may have left a worker: the session is born before
+        // the launch rejects.
+        this.startSession(request);
+        await this.holdFor(request, index);
+        throw rejection;
+      }
+      const work = Promise.resolve(this.holdFor(request, index)).then(() => "work");
       // A hung worker ignores the cooperative request: only its own hold or
       // the forced stop ends it. The race is honest: a worker that finished
       // before reacting to the stop still has its confirmed outcome.
@@ -161,6 +182,11 @@ export class FakeWorkerRuntime implements WorkerRuntime {
    *  test's hold awaits to end voluntarily inside the cooperative window. */
   whenStopRequested(work: WorkIdentity): Promise<void> {
     return this.sessions.get(workKeyOf(work))?.cooperative.promise ?? Promise.resolve();
+  }
+
+  /** The scripted hold of this launch, wherever the launch ends. */
+  private holdFor(request: WorkRequest, index: number): Promise<void> | void {
+    return (this.hold ?? this.options.hold)?.(request, index);
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's
