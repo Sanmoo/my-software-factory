@@ -86,6 +86,10 @@ A reservation whose work carries no factory mark at all.
 **Reserved without attempt**:
 A reservation with no attempt evidence yet: the claim landed, but the worker has not.
 
+**Work record**:
+The complete on-disk record of a Work: its files, their schemas and the cross-references that bind them — the outcome, the continuity pause, the effect journal, the session links, the guardrail state, the recovery and model-provider ledgers, the Repair cycle, the attempt logs and sessions, and the evidence locations. One module owns it; the policy that reads it (the outcome ruler, the recovery, model-provider and Repair decisions) stays in its own domain.
+_Avoid_: Reservation, when the whole record is meant; a Reservation names only the registry facts of a Work.
+
 **Attempt**:
 One logical try by a worker to carry out a work, counted per work. It survives infrastructure interruptions: recovering an interrupted attempt does not start or consume another.
 
