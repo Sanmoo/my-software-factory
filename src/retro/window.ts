@@ -16,9 +16,10 @@ import { OPERATIONAL_LOG_FILENAME } from "../log.js";
 
 /**
  * The retrospective window (issue 141): the finished works a round analyzes —
- * delivered, cancelled and blocked alike, anything with attempt history and no
- * live worker. Works whose current attempt has no outcome record of its own
- * (pending reconciliation) are deferred, never analyzed as if they had ended.
+ * pr-open, clean-without-pr and blocked-self-report alike, anything with
+ * attempt history and no live worker. Works whose current attempt has no
+ * outcome record of its own (pending reconciliation) are deferred, never
+ * analyzed as if they had ended.
  *
  * Finish time is the outcome record's own mtime: it orders the window and it
  * is the boundary the report marker advances.

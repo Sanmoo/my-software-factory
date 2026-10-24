@@ -6,10 +6,11 @@ import type { Config } from "../config.js";
 import type { Notifier } from "../notify/port.js";
 import { retroItemsNotice } from "../notify/port.js";
 import { RETRO_MOUNT_PATHS, type WorkspaceLayout } from "../layout.js";
-import type { RetroRequest, RetroResult, RetroWorkInput, WorkerRuntime } from "../runtime/port.js";
+import type { RetroRequest, RetroWorkInput, WorkerRuntime } from "../runtime/port.js";
 import { RETRO_INSTRUCTIONS, RETRO_INSTRUCTIONS_VERSION } from "./instructions.js";
 import {
   clearRetroInFlight,
+  liveRoundInFlight,
   readRetroState,
   retroReportPath,
   writeRetroInFlight,
@@ -209,15 +210,30 @@ function newestFinish(works: readonly FinishedWork[]): number | null {
   );
 }
 
+/** A round asked to start while another one still owns the lane. */
+export class RetroBusyError extends RetroError {
+  constructor(readonly inFlight: string) {
+    super(
+      `a retrospective round is already in flight (${inFlight}) — the lane runs one round at a time, ` +
+        "and the next one starts after the marker the last report writes",
+    );
+    this.name = "RetroBusyError";
+  }
+}
+
 /**
- * Run one planned round: the in-flight marker (status visibility), the launch
- * through the runtime port, and the two artifacts read back. The report's
- * existence is the marker — a round that produced no report advances nothing,
- * so the same window is retried by the next sweep.
+ * Run one planned round: the lane's in-flight marker (its exclusivity and its
+ * visibility in `status`), the launch through the runtime port, and the two
+ * artifacts read back. The report's existence is the marker — a round that
+ * produced no report advances nothing, so the same window is retried by the
+ * next sweep.
  */
 export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<RetroRoundFacts> {
   const { workspace: layout } = deps;
   const log = deps.log ?? (() => {});
+  const running = await liveRoundInFlight(layout);
+  if (running !== null) throw new RetroBusyError(running.round);
+
   const reportPath = retroReportPath(layout, plan.round);
   const resultPath = join(layout.retros, resultFileName(plan.round));
   const windowKeys = plan.works.map((work) => work.key);
@@ -227,6 +243,7 @@ export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<R
     startedAt: deps.now === undefined ? Date.now() : deps.now(),
     window: windowKeys,
     manual: plan.manual,
+    pid: process.pid,
   });
 
   try {
@@ -256,8 +273,8 @@ export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<R
       instructionsVersion: RETRO_INSTRUCTIONS_VERSION,
     };
 
-    const result = await deps.runtime.launchRetro(request);
-    return await settleRound(deps, plan, request, result);
+    await deps.runtime.launchRetro(request);
+    return await settleRound(deps, plan, request);
   } finally {
     clearRetroInFlight(layout);
   }
@@ -268,7 +285,6 @@ async function settleRound(
   deps: RetroDeps,
   plan: RetroPlan,
   request: RetroRequest,
-  result: RetroResult,
 ): Promise<RetroRoundFacts> {
   const log = deps.log ?? (() => {});
   const { workspace: layout } = deps;
@@ -279,8 +295,8 @@ async function settleRound(
 
   if (!existsSync(request.reportPath)) {
     log(
-      `retro round ${plan.round}: the runtime reported "${result.outcome}" and no report was written — ` +
-        "the marker does not move and the next sweep retries the same window",
+      `retro round ${plan.round}: the round ended and no report was written — the marker does not move ` +
+        "and the next sweep retries the same window",
     );
     return { round: plan.round, window, reportPath: null, filed: [], discarded: [] };
   }

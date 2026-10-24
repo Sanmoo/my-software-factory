@@ -307,13 +307,11 @@ address, with no window opened and no focus taken.
 
 ## (e) Retrospective (issue 141)
 
-The retrospective is a factory job on its own lane (ADR 0006): the orchestrator
-checks the trigger at each sweep and starts a round once `retro.threshold`
-works were archived since the last report. The round runs the same Sandcastle
-runtime outside the worker slots, over a window of finished works (a work
-pending reconciliation waits). It writes `<workspace>/retros/<instant>-retro.md`
-and `<instant>-resultado.json`, and files the candidates its judgment finds
-worthy as `needs-triage` issues.
+The retrospective is a factory job on its own lane (ADR 0006): enable the
+`retro:` block and the orchestrator starts a round at a sweep once
+`retro.threshold` works were archived since the last report, over a window of
+finished works (a work pending reconciliation waits). The round writes
+`<workspace>/retros/<instant>-retro.md` and `<instant>-resultado.json`.
 
 Manual triggers (never waiting for the threshold):
 
@@ -322,12 +320,12 @@ node dist/cli.js retro              # the full window since the last report
 node dist/cli.js retro <owner>/<name>#<n> --language pt-BR  # one finished work
 ```
 
-Live proof: enable the block in `msf.yaml`, let `retro.threshold` works be
-archived, run one sweep — the log names the round, the report exists in
-`retros/`, the filed issues carry `needs-triage` and reference the report, a
-retro-items notice points at each destination, `msf status` shows the round in
-flight and then the last report with the window boundary it advanced, and the
-next round's window starts after that boundary.
+Live proof: let `retro.threshold` works be archived, run one sweep — the log
+names the round, the report exists in `retros/`, the filed issues carry
+`needs-triage` and reference the report, a retro-items notice points at each
+destination, `msf status` shows the round in flight and then the last report
+with the window boundary it advanced, and the next round's window starts after
+that boundary.
 
 ## What the human does in the proof
 

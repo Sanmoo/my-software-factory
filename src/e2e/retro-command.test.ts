@@ -116,6 +116,26 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     assert.match(result.stderr, /unknown flag "--language"/);
   });
 
+  test("a round another live process owns keeps the lane: the manual trigger refuses", () => {
+    writeConfig(["retro:", "  enabled: true", "  factory-items-destination: Sanmoo/my-software-factory"]);
+    mkdirSync(join(workspace, "retros"), { recursive: true });
+    writeFileSync(
+      join(workspace, "retros", RETRO_IN_FLIGHT_FILENAME),
+      JSON.stringify({ round: "2026-03-01T00-00-00-000Z", startedAt: 0, window: [], manual: false, pid: process.pid }),
+      "utf8",
+    );
+
+    const result = run(["retro"]);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /a retrospective round is already in flight/);
+    assert.equal(
+      existsSync(join(workspace, "retros", RETRO_IN_FLIGHT_FILENAME)),
+      true,
+      "the live owner's record is never wiped",
+    );
+  });
+
   test("the manual trigger keeps the run exclusivity and leaves no round file behind", () => {
     writeConfig(["retro:", "  enabled: true", "  factory-items-destination: Sanmoo/my-software-factory"]);
     mkdirSync(join(workspace, "retros"), { recursive: true });
