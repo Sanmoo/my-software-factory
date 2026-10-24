@@ -75,7 +75,7 @@ interface EndingMessage {
  * the last one seen is the turn's ending. Only the CURRENT session counts: the
  * attempt's log accumulates across retries, and an earlier session's error
  * must not be read as this session's ending (a retry killed before writing
- * anything is an interruption, not the old outage again).
+ * anything is an interruption, not an earlier outage).
  */
 function lastAssistantMessage(raw: string): EndingMessage | null {
   const lines = raw.split("\n");

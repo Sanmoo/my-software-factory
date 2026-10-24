@@ -77,7 +77,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     assert.deepEqual(parseWorkerContainers(ps, JSON.stringify(auxiliary), WORKS, NOW), []);
   });
 
-  test("a work mount under our root that cannot be named is unknown liveness, never 'no worker' ", () => {
+  test("a work mount under our root that cannot be named is unknown liveness, never 'no worker'", () => {
     const ps = "ccc333\n";
     const stranger = [
       {

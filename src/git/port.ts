@@ -2,11 +2,11 @@ import { join } from "node:path";
 import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../tracker/identity.js";
 
 /**
- * The git host side of the factory: one clone per
- * target repo shared by all its parallel works, a work branch born from the
- * default branch the clone itself reveals — no API call — and cleanup only
- * on done. This is a host-side module, not a port to the external world: git
- * on the local disk, exercised with local bare fixtures, no network.
+ * The git host side of the factory: one clone per target repo shared by all
+ * its parallel works, a work branch born from the default branch the clone
+ * itself reveals — no API call — and cleanup only on done. This is a
+ * host-side module, not a port to the external world: git on the local disk,
+ * exercised with local bare fixtures, no network.
  *
  * Branch and worktree decisions baked here:
  *   - clone at `<workspace>/repos/<owner>#<nome>/`, created on the first
