@@ -110,6 +110,28 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     assert.match(unknownWork.stderr, /not a finished work/);
   });
 
+  test("a window with works waits for Docker: the premise (no live worker) cannot be confirmed", () => {
+    writeConfig(["retro:", "  enabled: true", "  factory-items-destination: Sanmoo/my-software-factory"]);
+    // One finished work on disk: the archive layout the factory writes, with
+    // the attempt's log and its outcome record.
+    const archived = join(workspace, "arquivo", `${REPO}#1-2026-02-01`);
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, "log-1.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(archived, "desfecho.json"), JSON.stringify({ class: "pr-open", attempt: 1 }), "utf8");
+
+    const result = run(["retro"]);
+
+    assert.equal(result.status, 1, `stdout: ${result.stdout}`);
+    assert.match(result.stderr, /Docker did not answer/);
+    assert.match(result.stderr, /cannot confirm that no live worker carries its works/);
+    assert.equal(existsSync(join(workspace, "retros", RETRO_STATE_FILENAME)), false, "nothing was consumed");
+    assert.deepEqual(
+      readdirSync(join(workspace, "retros")).filter((name) => name.endsWith("-retro.md")),
+      [],
+      "no report was written on an unverifiable window",
+    );
+  });
+
   test("--language belongs to the retro command only", () => {
     const result = run(["status", "--language", "pt-BR"]);
     assert.equal(result.status, 1);
