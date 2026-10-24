@@ -7,6 +7,9 @@ import {
   type RecoveryLedger,
   type RecoveryStop,
 } from "../work-record/recovery.js";
+import { renderWaits } from "./waits.js";
+
+export { renderWaits } from "./waits.js";
 
 /**
  * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
@@ -253,10 +256,4 @@ export function exhaustedReason(budget: RecoveryBudget): string {
     `the recovery budget is exhausted: ${budget.maxRecoveries} automatic recoveries ` +
     `(waits ${renderWaits(budget.waitsMs)}) were already used for this attempt`
   );
-}
-
-/** The waits in the operator's words: 1s/4s/16s — sub-second waits keep their
- *  milliseconds, so a configured 250 ms is never reported as "0s". */
-export function renderWaits(waitsMs: readonly number[]): string {
-  return waitsMs.map((wait) => (wait % 1000 === 0 ? `${wait / 1000}s` : `${wait}ms`)).join("/");
 }
