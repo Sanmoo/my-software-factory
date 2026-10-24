@@ -24,6 +24,7 @@ import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port
 import { AGENT_MARKER } from "../tracker/port.js";
 import { classifyCommand, type EffectAction } from "./effects.js";
 import { eventLogName } from "./attempt-logs.js";
+import { pendingCallRecovery, readCallRecoveries, recoveryForIntent, recoveryConsumption } from "./call-recovery.js";
 import {
   appendJournalResult,
   appendSessionLink,
@@ -85,6 +86,10 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
   const effects = await settleOpenEffects(deps);
   if (!effects.settled) return { decision: "pause", pause: effects.pause };
 
+  const retry = pendingCallRecovery(deps.workDir, deps.work);
+  if (retry !== undefined && (mode !== "resume" || deps.attempt !== retry.attempt)) {
+    return { decision: "pause", pause: pauseOf(deps, "effect-unsupported", "the authorized call retry must continue its own attempt and session", retry.sessionId) };
+  }
   if (mode === "new") return startFirstSession(deps, effects.verdicts);
 
   const facts = readSessionFacts(deps);
@@ -399,6 +404,13 @@ async function settleOpenEffects(deps: ContinuityDeps): Promise<SettledEffects> 
   if (!journal.intact) {
     return { settled: false, pause: pauseOf(deps, "journal-unreadable", "the effect journal is incomplete or unparseable") };
   }
+  let recoveries: ReturnType<typeof readCallRecoveries>;
+  try {
+    recoveries = readCallRecoveries(deps.workDir);
+    pendingCallRecovery(deps.workDir, deps.work);
+  } catch (error) {
+    return { settled: false, pause: pauseOf(deps, "journal-unreadable", reasonOf(error)) };
+  }
   const verdicts: Record<string, EffectVerdict> = {};
   const closedResults = new Map(journal.results.map((result) => [callKey(result.sessionId, result.callId), result]));
   // What a session's guardrail was already handed for THIS attempt: an effect
@@ -416,6 +428,13 @@ async function settleOpenEffects(deps: ContinuityDeps): Promise<SettledEffects> 
     const evidence: SessionEvidence =
       closed === undefined ? sessionEvidenceFor(deps, intent) : { kind: "none", detail: "the conclusion is recorded" };
     if (intent.actions.length === 0) {
+      const authorization = recoveryForIntent(recoveries, intent);
+      if (authorization !== undefined && evidence.kind !== "result") {
+        // Consent accepts uncertainty, never invents the original result.
+        // The consuming retry remains an independent intent below.
+        recoveryConsumption(journal, authorization);
+        continue;
+      }
       if (evidence.kind !== "result") {
         return {
           settled: false,

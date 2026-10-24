@@ -1,5 +1,9 @@
 export interface CliArgs {
-  command: "run" | "status";
+  command: "run" | "status" | "recover";
+  workKey?: string;
+  retry?: string;
+  reason?: string;
+  acceptDuplicateRisk?: boolean;
   once: boolean;
   /** `msf status --all`: no caps. */
   all: boolean;
@@ -7,11 +11,12 @@ export interface CliArgs {
   runtime?: string;
 }
 
-const usage = 'usage: msf run [--once] [--config <path>] [--runtime <name>]\n       msf status [--all] [--config <path>]';
+const usage = 'usage: msf run [--once] [--config <path>] [--runtime <name>]\n       msf status [--all] [--config <path>]\n       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]';
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const [command, ...args] = argv;
-  if (command !== "run" && command !== "status") throw new Error(usage);
+  if (command !== "run" && command !== "status" && command !== "recover") throw new Error(usage);
+  if (command === "recover") return parseRecoveryArgs(args);
   let once = false;
   let all = false;
   let configPath: string | undefined;
@@ -39,4 +44,28 @@ export function parseCliArgs(argv: string[]): CliArgs {
     throw new Error(`unexpected argument "${arg}"\n${usage}`);
   }
   return { command, once, all, ...(configPath ? { configPath } : {}), ...(runtime ? { runtime } : {}) };
+}
+
+function parseRecoveryArgs(args: string[]): CliArgs {
+  const [workKey, ...flags] = args;
+  if (!workKey || workKey.startsWith("--")) throw new Error(usage);
+  const parsed: CliArgs = { command: "recover", once: false, all: false, workKey };
+  const seen = new Set<string>();
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index]!;
+    if (seen.has(flag)) throw new Error(`duplicate flag ${flag}`);
+    seen.add(flag);
+    if (flag === "--accept-duplicate-risk") { parsed.acceptDuplicateRisk = true; continue; }
+    if (flag !== "--config" && flag !== "--retry" && flag !== "--reason") throw new Error(`unknown recovery flag ${flag}\n${usage}`);
+    const value = flags[++index];
+    if (!value || value.startsWith("--") || !value.trim()) throw new Error(`missing value for ${flag}`);
+    if (flag === "--config") parsed.configPath = value;
+    else if (flag === "--retry") parsed.retry = value;
+    else parsed.reason = value;
+  }
+  if ((parsed.retry !== undefined || parsed.reason !== undefined || parsed.acceptDuplicateRisk === true) &&
+      (parsed.retry === undefined || parsed.reason === undefined || parsed.acceptDuplicateRisk !== true)) {
+    throw new Error("retry requires --retry <review>, --accept-duplicate-risk and --reason <text> together");
+  }
+  return parsed;
 }

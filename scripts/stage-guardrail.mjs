@@ -27,6 +27,9 @@ const stage = join(root, "docker", "guardrail");
 
 const modules = [
   "runtime/effects.js",
+  "runtime/call-recovery.js",
+  "runtime/session-log.js",
+  "pool/work-key.js",
   "runtime/json-line.js",
   "runtime/continuity-artifacts.js",
   "runtime/guardrail/extension.js",

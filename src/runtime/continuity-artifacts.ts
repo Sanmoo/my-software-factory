@@ -67,6 +67,8 @@ export interface JournalIntent {
   safety: "effect" | "unknown";
   actions: EffectAction[];
   reason?: string;
+  /** Consumes this operator authorization BEFORE the exact retry dispatch. */
+  retryAuthorization?: string;
 }
 
 /** Written after the action reported back; its absence is the interrupted window. */
@@ -513,7 +515,8 @@ function isJournalLine(value: unknown): value is JournalLine {
       typeof record["sessionId"] === "string" &&
       typeof record["callId"] === "string" &&
       (record["safety"] === "effect" || record["safety"] === "unknown") &&
-      Array.isArray(record["actions"])
+      Array.isArray(record["actions"]) &&
+      (record["retryAuthorization"] === undefined || (typeof record["retryAuthorization"] === "string" && record["retryAuthorization"] !== ""))
     );
   }
   if (type === "result") {

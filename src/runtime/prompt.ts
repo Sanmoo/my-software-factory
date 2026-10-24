@@ -273,6 +273,15 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
         ]
       : []),
     ``,
+    ...(material.callRetry === undefined ? [] : [
+      `## Operator-authorized exact retry ${material.callRetry.id}`,
+      `The original call has NO known outcome and may have executed partially. The operator explicitly accepted the risk of duplicate effects. This is NOT evidence that it failed or did nothing.`,
+      `Reason: ${material.callRetry.reason}`,
+      `Execute the following EXACT command once through bash before other external effects. Do not rewrite it, wrap it, split it, or change its working directory. The guardrail consumes permission before dispatch; another interruption requires a new operator decision.`,
+      `Original working directory: ${material.callRetry.cwd}`,
+      `--- exact command ---`, material.callRetry.command, `--- end command ---`,
+      `Then inspect the actual result and continue the same attempt. All validation and publication obligations still apply.`, ``,
+    ]),
     `## The ticket: ${material.ticket.title}`,
     ``,
     ...(ticketLink === undefined ? [] : [`Ticket link: ${ticketLink}`, ``]),
@@ -307,7 +316,9 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           `## The pull request`,
           ``,
           `PR #${pr.number} is already open for this work (same branch, same PR — never open another).`,
-          ...(material.repair === undefined
+          ...(material.callRetry !== undefined
+            ? [`Continue the original attempt and its existing procedure and publication lease; this is not a new feedback or repair round.`]
+            : material.repair === undefined
             ? [
                 `This session is a feedback round: read every comment below, judge each one before acting (policy below), push to ${request.branch} (the PR updates itself), and obey the obligations.`,
               ]

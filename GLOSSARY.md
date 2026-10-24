@@ -135,6 +135,9 @@ The recorded intention to perform a tool call that may produce an external effec
 Reading the real state (the remote branch, the PR, the conversation, the labels) to decide whether an interrupted effect happened: realized (do not repeat), absent (may run once), or unknown (pause and ask).
 _Avoid_: Verification, when no external state is read.
 
+**Retry authorization**:
+The operator's explicit acceptance of duplicate-effect risk for one exact interrupted command whose outcome remains unknown. It permits at most one repetition, preserves the original uncertainty, and is neither Reconciliation nor evidence that an effect was absent.
+
 **Continuity pause**:
 The persisted hold on a work whose attempt cannot safely continue because its session or an external effect remains unresolved; it survives restarts, marks the ticket blocked and asks for help once. It spends no attempt or recovery and clears when reliable evidence resolves the cause, without requiring another human answer.
 _Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt; Docker-unavailability suspension, which is not a continuity pause.

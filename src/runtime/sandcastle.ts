@@ -967,6 +967,7 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
         deps.image,
         "-f",
         GUARDRAIL_CONTAINER_FILE,
+        "-a", "-f", "/opt/msf/runtime/call-recovery.js",
       ]);
     } catch {
       throw new Error(

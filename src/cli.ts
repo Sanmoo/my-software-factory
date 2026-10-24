@@ -15,6 +15,7 @@ import { deriveStatus } from "./state/status.js";
 import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
+import { recoverCall } from "./recover.js";
 import { SandcastleRuntime, requireModelCredentials, workerToken, type SandcastleRuntimeOptions } from "./runtime/sandcastle.js";
 import { WORKER_IMAGE } from "./worker-image.js";
 import { modelAuthEnv } from "./runtime/model-auth.js";
@@ -166,6 +167,13 @@ async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
   if (args.command === "run") {
     await runCommand(args);
+    return;
+  }
+  if (args.command === "recover") {
+    const config = loadConfigFrom(process.cwd(), args.configPath);
+    console.log(await recoverCall(config, args.workKey!, args.retry === undefined ? undefined : {
+      retry: args.retry, reason: args.reason!, acceptDuplicateRisk: args.acceptDuplicateRisk === true,
+    }));
     return;
   }
   await statusCommand(args);

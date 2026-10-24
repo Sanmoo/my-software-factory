@@ -12,7 +12,7 @@ import {
   type Config,
 } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { runOnce, type LoopDeps } from "../loop.js";
+import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
@@ -125,6 +125,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
   function interruptedAttempt2(
     options: {
       pending?: "push" | "unknown";
+      command?: string;
       remote?: string | null;
       labels?: string[];
       result?: SeededCallResult;
@@ -149,7 +150,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
 
     const session = seedSession(target, ref, 2);
     const callId = options.pending === "push" ? "call-push" : "call-unknown";
-    const command = options.pending === "push" ? "git push origin agent-issue-7" : "curl -X POST https://example.com";
+    const command = options.command ?? (options.pending === "push" ? "git push origin agent-issue-7" : "curl -X POST https://example.com");
     seedSessionToolCall(session, {
       callId,
       command,
@@ -329,7 +330,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(sweep.reserved.find((entry) => entry.state === "continuity-paused")?.attempt, 1);
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
     assert.ok(
-      logs.some((line) => line.includes("paused for help") && line.includes("link-missing")),
+      logs.some((line) => line.includes("paused (link-missing)")),
       "the diagnosis names the pause the disk now gives (the attempt has no recorded session at all)",
     );
     // The death landed before the block and the request: the operator is told now.
@@ -679,7 +680,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
 
     assert.equal(sweep.launched.length, 0, "the answer re-reads the facts; it authorizes no replay");
     assert.ok(
-      logs.some((line) => line.includes("the interrupted effect is still unresolved")),
+      logs.some((line) => line.includes("paused (effect-ambiguous)")),
       "the answer really resumed the pause and was re-read — the work is not parked unanswered",
     );
     const upgraded = readPause(target);
@@ -993,7 +994,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.match(kept?.detail ?? "", /discarded tail/, "the persisted diagnosis is the fresher one");
     assert.equal(existsSync(join(target, "efeitos.jsonl")), false, "the recheck writes no journal");
     assert.equal((await agentComments(7)).length, 0, "the announced pause is not asked again");
-    assert.match(logs.join("\n"), /discarded tail/, "and the diagnostic line names the fresh doubt");
+    assert.match(logs.join("\n"), /paused \(tool-evidence-missing\).*pausa\.json/, "the compact diagnostic points at the fresh evidence");
 
     // 2. The session-start proves the guardrail ran: the intact prefix has no
     //    unjournaled non-safe call, so the normal cycle settles the pause.
@@ -1005,6 +1006,29 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(readPause(target), null, "the pause is resolved");
     assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the block left with the pause");
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the recovery ruler applies");
+  });
+
+  test("continuity logs keep multiline commands on disk and report only changes across ticks", async () => {
+    const script = "cat > /tmp/probe <<\u0027EOF\u0027\nSENSITIVE_SCRIPT_BODY\nEOF\nnode /tmp/probe";
+    const interrupted = interruptedAttempt2({ pending: "unknown", command: script });
+    const target = persistAnnouncedPause(interrupted.ref, 2, "logging-pause", { reason: "effect-unsupported", sessionId: interrupted.session.sessionId });
+    const engine = new SweepEngine(deps());
+    for (let tick = 0; tick < 4; tick += 1) { await engine.deriveAndAct(); await engine.settle(); }
+    const paused = () => logs.filter((line) => line.includes("continuity of") && line.includes("paused ("));
+    assert.equal(paused().length, 1, "one diagnostic, not one per tick");
+    assert.ok(paused()[0]!.includes("msf recover"));
+    assert.ok(paused()[0]!.includes("pausa.json"));
+    assert.ok(logs.every((line) => !line.includes("SENSITIVE_SCRIPT_BODY") && !line.includes("/tmp/probe")), "no raw command in any operational log");
+    assert.ok(readPause(target)!.detail.includes(script), "full diagnosis is preserved");
+    writeFileSync(join(target, "efeitos.jsonl"), "{partial", "utf8");
+    await engine.deriveAndAct();
+    await engine.deriveAndAct();
+    assert.equal(paused().length, 2, "a changed cause is reported once");
+    assert.ok(paused()[1]!.includes("journal-unreadable"));
+    assert.ok(paused().every((line) => !line.includes("\n")));
+    const restarted = new SweepEngine(deps());
+    await restarted.deriveAndAct();
+    assert.equal(paused().length, 3, "a restart reports the current pause once");
   });
 
   test("issue 173 — without a terminal result the pause stands sweep after sweep, spending nothing", async () => {

@@ -196,6 +196,31 @@ next tick` and the factory keeps sweeping: it acts on nothing, spends no
 attempt, and the next tick derives from disk + tracker again. Only `--once` and
 `msf status` fail out loud, since a single sweep has no next tick.
 
+### Interrupted command: explicit exact retry
+
+Continuity logs report a pause once per change (and once after a restart), never
+print the script, and point to pausa.json for the full diagnosis. Rechecks keep
+running on every tick even when the log stays silent.
+
+For an effect-unsupported pause, inspect the exact command and working directory,
+including any effects already produced, then decide whether repeating it is
+acceptable:
+
+    msf recover '<work-key from msf status>'   # read-only; prints a review token
+    # Stop msf run first; inspect again if the token is stale.
+    msf recover '<work-key>' --retry '<review token>' --accept-duplicate-risk --reason '<why repeating is acceptable>'
+    msf run
+
+Pass the same --config to all three when not using msf.yaml. Approval refuses an
+active run, a surviving worker or unknown Docker liveness. It records consent
+only: the next run continues the original attempt and session, and the guardrail
+permits one exact repetition before other external effects. The original outcome
+stays unknown, no result is invented, no budget is reset and validation still
+applies. The audit file records who approved, when, why, and whether permission
+was consumed. A crash after consumption does not restore permission even if the
+command never began; inspect and approve a newly interrupted call separately.
+This is not a guarantee against rewritten commands or effects hidden in scripts.
+
 ## (c) Status — the trail, factory stopped
 
 ```sh

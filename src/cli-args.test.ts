@@ -13,6 +13,14 @@ test("CLI accepts documented command forms", () => {
   assert.deepEqual(parseCliArgs(["status", "--all"]), { command: "status", once: false, all: true });
 });
 
+test("recover parses inspection and requires all explicit consent fields together", () => {
+  assert.deepEqual(parseCliArgs(["recover", "Sanmoo/repo#7"]), { command: "recover", once: false, all: false, workKey: "Sanmoo/repo#7" });
+  assert.equal(parseCliArgs(["recover", "Sanmoo/repo#7", "--retry", "review", "--accept-duplicate-risk", "--reason", "reviewed"]).retry, "review");
+  for (const args of [[], ["--force"], ["Sanmoo/repo#7", "--retry", "hash"], ["Sanmoo/repo#7", "--reason", "why"], ["Sanmoo/repo#7", "--accept-duplicate-risk"], ["Sanmoo/repo#7", "--config", "a", "--config", "b"], ["Sanmoo/repo#7", "--runtime", "fake"]]) {
+    assert.throws(() => parseCliArgs(["recover", ...args]));
+  }
+});
+
 test("CLI rejects model, unknown flags, extra positionals, missing values, and once values", () => {
   // One table: the rejected argv and the error it must carry.
   const rejected: Array<[string[], RegExp]> = [

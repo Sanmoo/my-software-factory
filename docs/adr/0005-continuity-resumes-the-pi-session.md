@@ -51,7 +51,9 @@ Consequences, stated so nobody rediscovers them as bugs:
   three duplicated mutations in three runs) and, facing ambiguous evidence,
   continues blind instead of asking. Guarding every mutating action — push, PR,
   comment, label — by consulting real state is a requirement of the resume, not
-  an optional nicety.
+  an optional nicety. [ADR 0007](0007-operator-authorized-exact-retry.md)
+  adds an explicit, scoped acceptance of duplication risk; it changes neither
+  automatic reconciliation nor the rule that consent is not evidence.
 - **Neither candidate supplies ownership.** Durable's storage assumes one
   process at a time; a Pi session has no notion of an owner. Exclusive launch
   comes from the factory's own design (#90), and recognising a surviving worker

@@ -146,6 +146,7 @@ export interface SessionToolCall {
   callId: string;
   tool: string;
   command: string;
+  cwd?: string;
   /** True when the transcript holds a tool result for this call. */
   answered: boolean;
 }
@@ -190,7 +191,8 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
             ? (args["command"] as string)
             : "";
         if (callId === null || name === null) continue;
-        calls.push({ callId, tool: name, command, answered: false });
+        const cwd = args !== null && typeof args === "object" && !Array.isArray(args) && typeof args?.["cwd"] === "string" ? args["cwd"] : undefined;
+        calls.push({ callId, tool: name, command, ...(cwd === undefined ? {} : { cwd }), answered: false });
       }
     } else if (role === "toolResult" && typeof message["toolCallId"] === "string") {
       answered.add(message["toolCallId"]);

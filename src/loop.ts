@@ -108,6 +108,8 @@ import {
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
 import { planContinuity, recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
+import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
+import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
 import {
   clearPause,
   knownAttempt,
@@ -288,6 +290,24 @@ interface InFlightLaunch {
 }
 
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
+
+/** The derivation states where an authorized call retry may take over the
+ *  planned round; a closed, merged, rejected or unconfirmed work is never
+ *  reopened by consent. */
+const STATE_OF_CONSENT: ReadonlySet<ReservedDerivation["state"]> = new Set([
+  "idle",
+  "fall",
+  "interrupted",
+  "model-provider-failure",
+  "stop-resume",
+  "continuity-paused",
+  "feedback",
+  "resumable",
+  "repair",
+  "repair-recovered",
+  "repair-blocked",
+  "unknown",
+]);
 
 /**
  * The class each reserved derivation state contributes to the observed state;
@@ -511,6 +531,7 @@ interface Launchable {
   /** The attempt was ended by the operator's requested stop (issue #146): it
    *  resumes now, spending no recovery. */
   requestedStop?: boolean;
+  callRecovery?: CallRecovery;
 }
 
 /**
@@ -523,6 +544,7 @@ interface Launchable {
  */
 export class SweepEngine {
   private readonly slots: Slots;
+  private readonly continuityDiagnostics = new ContinuityDiagnostics();
   /** The full pool of the latest derivation — what `runOnce` reports. */
   lastPool: PoolEntry[] = [];
   /** The working copy the launches drain (parked reserved first). */
@@ -728,6 +750,7 @@ export class SweepEngine {
         continue;
       }
       const key = workKeyOf(decision.work);
+      if (await this.parkAuthorizedCallRetry(decision, parked)) continue;
       switch (decision.state) {
         case "done": {
           this.log(`derived ${key}: issue closed — done; archiving artifacts, cleaning branches`);
@@ -886,10 +909,6 @@ export class SweepEngine {
           // status` keeps it visible — so a persistent doubt never becomes a
           // line per cycle.
           if (pause.announced !== true || current.reason !== pause.reason) {
-            this.log(
-              `derived ${renderWorkIdentity(decision.work)}: attempt ${attempt} is paused for help ` +
-                `(${current.reason}) — no recovery is spent and nothing is relaunched`,
-            );
             await this.pauseForContinuity(decision.work, decision.dir, current, attempt);
           } else if (verdict !== null) {
             // The cause did not change, but the evidence behind it may have:
@@ -899,11 +918,9 @@ export class SweepEngine {
             // request has not changed.
             const fresher = current.detail !== pause.detail;
             if (fresher) writePause(decision.dir, { ...pause, detail: current.detail });
-            this.log(
-              `continuity of ${renderWorkIdentity(decision.work)} is still unresolved (${current.reason}): ` +
-                `${current.detail}${fresher ? " — the diagnosis was refreshed, the request stands" : ""} ` +
-                "— no new help request, nothing relaunched",
-            );
+            this.reportContinuityPause(decision.work, decision.dir, { ...pause, detail: current.detail });
+          } else {
+            this.reportContinuityPause(decision.work, decision.dir, pause);
           }
           break;
         }
@@ -1789,6 +1806,7 @@ export class SweepEngine {
       // The claim swap itself may have been interrupted (issue 98) — or the
       // outage of issue 144 killed it: re-asserting the idempotent claim heals
       // it without releasing the work to the pool.
+      if (launchable.callRecovery !== undefined) await tickets.resumeTicketClaim(work.ticket, config.labels);
       await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
     } else if (kind === "feedback") {
       this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
@@ -1973,10 +1991,6 @@ export class SweepEngine {
           pause,
         );
         if (!recheck.resolved && recheck.pause !== null) {
-          this.log(
-            `the human answered ${key}, but the interrupted effect is still unresolved — ` +
-              "the work stays paused; nothing is relaunched",
-          );
           // No new information and no changed cause: the answer does not
           // authorize a replay and the same question is not asked again. The
           // pause keeps its identity and its binding to the answer (issue 174);
@@ -1989,6 +2003,9 @@ export class SweepEngine {
         clearPause(dir);
         this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
       }
+    }
+    if (launchable.callRecovery !== undefined) {
+      material.callRetry = { id: launchable.callRecovery.id, command: launchable.callRecovery.command, cwd: launchable.callRecovery.cwd, reason: launchable.callRecovery.reason };
     }
     // Every relaunch of the same attempt continues ITS session (ADR 0005):
     // a recovery, a model provider retry and the resume after the operator's
@@ -2072,6 +2089,7 @@ export class SweepEngine {
     // interruption of this attempt.
     await consumeStopRequest(dir, facts.attempt);
 
+    if (launchable.callRecovery !== undefined) clearPause(dir);
     entry.launched = true;
     const result = await runtime.launch({
       work,
@@ -2153,6 +2171,7 @@ export class SweepEngine {
     parked: Launchable[],
   ): Promise<void> {
     const { tickets, pullRequests, config } = this.deps;
+    this.continuityDiagnostics.resolved(workKeyOf(work));
     const comments = await tickets.readTicketComments(work.ticket);
     const answers = comments.known ? humanCommentsForPause(comments.value, pause) : [];
     const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work));
@@ -2229,19 +2248,14 @@ export class SweepEngine {
       // unannounced on the way: the request DID land.
       await tickets.blockTicketClaim(work.ticket, config.labels);
       writePause(dir, reassertedPause(pause, previous));
-      this.log(
-        `continuity of ${renderWorkIdentity(work)} still paused (${pause.reason}) — no new help request, no recovery spent`,
-      );
+      this.reportContinuityPause(work, dir, pause);
       return;
     }
     // The record lands FIRST (a restart must know the work waits), marked
     // unannounced until the block and the request really landed: a death in
     // between leaves the fact that the operator was never told.
     writePause(dir, { ...pause, announced: false });
-    this.log(
-      `continuity of ${renderWorkIdentity(work)} paused (${pause.reason}): ${pause.detail} — ` +
-        "the work waits for the operator; files and evidence are preserved",
-    );
+    this.reportContinuityPause(work, dir, pause);
     await this.applyBlockWithComment(
       work,
       await continuityPausedCommentBody({
@@ -2256,6 +2270,53 @@ export class SweepEngine {
       }),
     );
     writePause(dir, { ...pause, announced: true });
+  }
+
+  /**
+   * Consent may be discovered on the sweep after the host cleared the pause and
+   * died before dispatch: the journal, not the derivation state, says which
+   * attempt the retry continues. Anything else about the work is unchanged, so
+   * every gate below still applies. Unreadable recovery evidence launches
+   * nothing and stays discoverable.
+   */
+  private async parkAuthorizedCallRetry(
+    decision: ReservedDerivation,
+    parked: Launchable[],
+  ): Promise<boolean> {
+    const key = workKeyOf(decision.work);
+    if (this.carriedKeys.has(key) || this.slots.workKeys.includes(key)) return false;
+    if (!STATE_OF_CONSENT.has(decision.state)) return false;
+    let retry: CallRecovery | undefined;
+    let ledger: Awaited<ReturnType<typeof readAttemptLedger>>;
+    try {
+      retry = pendingCallRecovery(decision.dir, decision.work);
+      if (retry === undefined) return false;
+      ledger = await readAttemptLedger(decision.dir);
+    } catch (error) {
+      this.log(`call recovery of ${key} cannot be read — ${describeError(error)}; nothing relaunched`);
+      return true;
+    }
+    if (ledger.lastAttempt !== retry.attempt || ledger.recordedAttempt === retry.attempt) return false;
+    const feedback = await this.deps.pullRequests.readPullRequestFeedback(workPullRequest(decision.work));
+    if (!feedback.known) return false;
+    if (feedback.value.pr !== null && feedback.value.pr.state !== "open") return false;
+    parked.push({
+      work: decision.work,
+      dir: decision.dir,
+      kind: "recover",
+      createdAt: null,
+      pr: feedback.value.pr,
+      attempt: retry.attempt,
+      callRecovery: retry,
+      requestedStop: await this.operatorStoppedAttempt(decision.dir, retry.attempt),
+    });
+    this.announce(decision.work, "reserved");
+    return true;
+  }
+
+  private reportContinuityPause(work: WorkIdentity, dir: string, pause: PauseRecord): void {
+    const message = this.continuityDiagnostics.paused(workKeyOf(work), dir, pause);
+    if (message !== null) this.log(message);
   }
 
   /** The exhausted recovery budget: block the work and ask the operator for

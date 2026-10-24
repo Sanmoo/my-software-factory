@@ -19,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 
 import { classifyCommand, withObservedRef, type EffectAction } from "../effects.js";
+import { readCallRecoveries, recoveryConsumption, recoveryForIntent } from "../call-recovery.js";
 import {
   appendJournalIntent,
   appendJournalResult,
@@ -110,6 +111,8 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // (the branch is that record) and they are how a worker writes its outcome
     // record, including the blocked self-report this refusal asks for.
     if (state === null) return refuseWithoutState(event, workMount);
+    const retry = guardCallRetry(workMount, state, event);
+    if (retry !== null) return retry;
     if (event.toolName !== "bash") {
       // Delegations are not recoverable state (issue 119, out of scope): an
       // interrupted one is an unknown effect, so a recovery pauses on it.
@@ -158,6 +161,49 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
       ok: !event.isError,
     });
   });
+}
+
+/** null follows the ordinary guardrail; undefined has already journaled the
+ * exact retry. The persisted intent, not process memory, consumes permission. */
+function guardCallRetry(workMount: string, state: GuardrailState, event: ToolCallLike): GuardrailBlock | undefined | null {
+  const block = (reason: string): GuardrailBlock => ({ block: true, reason: `${BLOCKED_PREAMBLE} ${reason}` });
+  try {
+    const recoveries = readCallRecoveries(workMount);
+    if (recoveries.length === 0) return null;
+    const journal = readEffectJournal(workMount);
+    if (!journal.intact) return block("cannot establish call retry consumption: effect journal is unreadable");
+    const current = recoveries.filter((entry) => entry.sessionId === state.sessionId && entry.attempt === state.attempt);
+    for (const entry of current) {
+      if (!journal.intents.some((intent) => recoveryForIntent([entry], intent) !== undefined)) return block("retry authorization has no matching original intent");
+    }
+    const command = typeof event.input["command"] === "string" ? event.input["command"] : "";
+    const available = current.find((entry) => recoveryConsumption(journal, entry) === undefined && !journal.results.some((result) => result.sessionId === entry.sessionId && result.callId === entry.callId));
+    if (available !== undefined && event.toolName === "bash" && command === available.command) {
+      const cwd = typeof event.input["cwd"] === "string" ? event.input["cwd"] : process.cwd();
+      if (cwd !== available.cwd) return block("the exact retry must use its original working directory");
+      if (journal.intents.some((intent) => intent.sessionId === state.sessionId && intent.callId === event.toolCallId)) return block("a retry needs a new tool call identity");
+      appendJournalIntent(workMount, {
+        attempt: state.attempt, sessionId: state.sessionId, callId: event.toolCallId,
+        tool: "bash", command, safety: "unknown", actions: [],
+        reason: "operator-authorized exact retry; the original outcome remains unknown",
+        retryAuthorization: available.id,
+      });
+      return undefined;
+    }
+    if (event.toolName === "bash" && current.some((entry) => entry.command === command && recoveryConsumption(journal, entry) !== undefined)) {
+      return block("this exact retry authorization was already consumed; another repetition needs a new operator decision");
+    }
+    const unsettled = available !== undefined || current.some((entry) => {
+      const consumed = recoveryConsumption(journal, entry);
+      return consumed !== undefined && !journal.results.some((result) => result.sessionId === consumed.sessionId && result.callId === consumed.callId);
+    });
+    if (unsettled && ((event.toolName === "bash" && classifyCommand(command).safety !== "safe") || event.toolName === "subagent" || event.toolName === "subagents_enable")) {
+      return block("an operator-authorized retry is pending; only that exact bash command may run before other effects. Do not rewrite it or work around this block");
+    }
+    return null;
+  } catch {
+    return block("call recovery journal cannot establish an authorization; no effect is allowed");
+  }
 }
 
 /**
