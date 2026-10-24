@@ -4,8 +4,8 @@ import { readFileSync, statSync } from "node:fs";
  * Model credentials are operational secrets, separate from the agent
  * resources (issue #159, ADR 0001). They arrive in one of two explicit ways:
  *
- *   - Pi-supported provider API-key environment variables, read from the
- *     factory's environment and forwarded into the worker container;
+ *   - Pi-supported provider environment variables (API keys and the provider
+ *     configuration they are read with), forwarded into the worker container;
  *   - an explicitly supplied Pi `auth.json` file (`worker-auth-file` in
  *     msf.yaml), mounted read-only and copied into the container's agent dir.
  *
@@ -14,9 +14,9 @@ import { readFileSync, statSync } from "node:fs";
  */
 
 /**
- * Pi's documented provider API-key variables (docs/providers.md, Pi 1.3.0).
- * Only these are forwarded: an unrelated ambient secret never rides the
- * worker container.
+ * Pi's documented provider variables (docs/providers.md, Pi 1.3.0): the API
+ * keys and the provider configuration read alongside them. Only these are
+ * forwarded: an unrelated ambient secret never rides the worker container.
  */
 export const PI_MODEL_AUTH_ENV_VARS: readonly string[] = [
   "ANTHROPIC_API_KEY",

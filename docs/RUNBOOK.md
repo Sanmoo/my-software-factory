@@ -69,9 +69,7 @@ the image tag — a failed build leaves the previous valid image in place.
   contents.
 - **Clean host check**: with no `~/.pi/agent` and no Pi on the host, run
   `npm run build:image`, `npm run gateway`, then `node dist/cli.js run --once`.
-  The image test in the gateway proves, inside the real container, that only
-  the declared skills/guidance load, undeclared project resources are ignored,
-  the cache starts empty, and authentication comes from the explicit source.
+  The gateway's image check is the proof of what loads (README: Tests).
 
 ## Real proof (operator credentials, not automatic)
 

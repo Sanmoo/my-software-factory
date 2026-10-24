@@ -126,7 +126,7 @@ async function main(): Promise<void> {
       model: "deterministic/stop-proof",
       agentResources: loadAgentResources(),
       authEnv: {},
-      modelCredentials: "unused",
+      agentMakesModelCalls: false,
       dockerSocket: dockerSocketFromHost(),
     }),
     workspace,
