@@ -1090,8 +1090,8 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.match(text, /pool \(eligible\): none/, "a Jira candidate is not presented as an eligible Work");
   });
 
-  test("one project feeds several destinations, and a ticket two rules promise is held as ambiguous", async () => {
-    // One site answers both rules: each sim is the site's reply to one query.
+  test("one project feeds several destinations, and a ticket two selections promise is held as ambiguous", async () => {
+    // One site answers both selections: each sim is the site's reply to one query.
     const frontend = new JiraSim();
     frontend.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend fix" });
     frontend.addIssue({ id: "10002", key: "ABC-2", summary: "Touches both layers" });
@@ -1119,7 +1119,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
 
     const [front, back] = view.jira;
-    if (front?.state !== "known" || back?.state !== "known") assert.fail("both rules are readable");
+    if (front?.state !== "known" || back?.state !== "known") assert.fail("both selections are readable");
     assert.deepEqual(
       front.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       ["ABC-1 (jira:acme.atlassian.net) → Sanmoo/frontend"],
@@ -1127,7 +1127,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.deepEqual(
       back.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       ["ABC-3 (jira:acme.atlassian.net) → Sanmoo/backend"],
-      "each rule feeds its own explicit destination",
+      "each selection feeds its own explicit destination",
     );
     assert.deepEqual(
       view.jiraAmbiguous.map((entry) => ({
@@ -1135,14 +1135,14 @@ describe("status: Jira candidates are read-only and each source stands alone", (
         destinations: entry.destinations.map((destination) => destination.repo),
       })),
       [{ key: "ABC-2", destinations: ["Sanmoo/frontend", "Sanmoo/backend"] }],
-      "a ticket two rules promise to different destinations is held, not listed twice",
+      "a ticket two selections promise to different destinations is held, not listed twice",
     );
 
     const text = renderStatus(view);
     assert.match(
       text,
       /nothing is claimed, commented or launched\): 2 selections$/m,
-      "one site carrying two rules is two selections, never two Sources",
+      "two selections on one Source: the header counts selections, never Sites",
     );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 candidate, 1 held as ambiguous/);
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 candidate, 1 held as ambiguous/);
@@ -1160,9 +1160,9 @@ describe("status: Jira candidates are read-only and each source stands alone", (
 
   test("a selection whose only tickets are held says so instead of 'none'", async () => {
     const left = new JiraSim();
-    left.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two rules" });
+    left.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections" });
     const right = new JiraSim();
-    right.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two rules" });
+    right.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections" });
 
     const view = await deriveStatus(
       {
@@ -1209,7 +1209,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: unknown \(/);
   });
 
-  test("the same Work selected by two rules for one destination is listed once", async () => {
+  test("the same Work selected by two selections for one destination is listed once", async () => {
     const left = new JiraSim();
     left.addIssue({ id: "10001", key: "ABC-1", summary: "One Work" });
     const right = new JiraSim();
@@ -1229,7 +1229,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
 
     const [first, second] = view.jira;
-    if (first?.state !== "known" || second?.state !== "known") assert.fail("both rules are readable");
+    if (first?.state !== "known" || second?.state !== "known") assert.fail("both selections are readable");
     assert.deepEqual(
       first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       ["ABC-1 (jira:acme.atlassian.net) → Sanmoo/a"],
@@ -1240,8 +1240,8 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 1 candidate$/m);
     assert.match(
       text,
-      /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 already listed by another rule$/m,
-      "the losing rule says why it lists nothing",
+      /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 already listed by another selection$/m,
+      "the losing selection says why it lists nothing",
     );
   });
 });

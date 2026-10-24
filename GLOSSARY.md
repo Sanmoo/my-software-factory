@@ -24,7 +24,7 @@ The GitHub repository that receives a Work's code and PR.
 
 **Selection**:
 One configured read from a Source for one Destination: the site, the JQL that selects its tickets and the destination their Work delivers to — one `jira:` entry. Several selections may read one Source, each with its own JQL and Destination.
-_Avoid_: Source, when only the site is meant.
+_Avoid_: Source, when the selection (a Source plus its JQL and Destination) is meant.
 
 **Repository identity**:
 Provider + site + the destination repository name; the code-host identity, never the ticket identity.
