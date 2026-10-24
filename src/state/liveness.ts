@@ -131,7 +131,7 @@ export type DockerRunner = (args: readonly string[], timeoutMs: number) => Promi
 export interface DockerProbeOptions {
   /** The workspace's works root (<workspace>/trabalhos): the mount identity. */
   worksRoot: string;
-  /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
+  /** The bound of each Docker command; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
   /** The Docker command runner; defaults to the real CLI. */
   run?: DockerRunner;
