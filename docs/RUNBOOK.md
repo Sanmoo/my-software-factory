@@ -21,10 +21,12 @@ npm run build:image
 # 2. model credentials, separate from the image and from any personal profile:
 #    export OPENCODE_API_KEY=...        # or another supported provider key
 #    # or worker-auth-file: /path/to/auth.json in msf.yaml
-#    The launcher refuses a missing or malformed credential with the provider's
-#    status; a wrong key surfaces at the model call. It never prints the value
-#    and never reads ~/.pi/agent. Only Pi's documented provider variables are
-#    forwarded — keep the factory's environment to the one your model needs.
+#    msf run (including --once) checks credentials offline before any sweep,
+#    tracker access or workspace changes; failure exits 1, naming the model and
+#    provider. This checks configuration, not whether the provider accepts the
+#    key: a wrong key surfaces at the model call. It never prints the value or
+#    inherits ~/.pi/agent. Only Pi's documented provider variables are forwarded
+#    — keep the factory's environment to the one your model needs.
 
 # 3. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container;

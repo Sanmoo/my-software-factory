@@ -39,7 +39,7 @@ import {
   verifyAgentInventory,
   type LoadedAgentResources,
 } from "./inventory.js";
-import { agentFileProblem, MODEL_AUTH_SOURCES, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
+import { agentFileProblem, modelAuthSources } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
@@ -1017,8 +1017,11 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
   };
 }
 
-/** The credential precondition's body: the explicit source, then its answer. */
-async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
+/** Shared by startup and launch: resolve configuration offline, not whether
+ *  the model provider will accept the credential on a real call. */
+export async function requireModelCredentials(
+  deps: Pick<PreflightDeps, "image" | "model" | "agentFiles" | "authEnv" | "authProbe">,
+): Promise<void> {
   const agentFiles = deps.agentFiles ?? [];
   for (const file of agentFiles) {
     // `worker-auth-file` is the key the operator sets; name it that way.
@@ -1027,7 +1030,7 @@ async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
     if (problem !== null) throw new Error(problem);
   }
   if (agentFiles.length === 0 && Object.keys(deps.authEnv).length === 0) {
-    throw new Error(NO_MODEL_AUTH_MESSAGE);
+    throw new Error(`no model credentials for the worker (${deps.model}): ${modelAuthSources(deps.model)}.`);
   }
   const probeAuth =
     deps.authProbe ??
@@ -1052,7 +1055,7 @@ async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
     const answer = status === "" ? "the probe returned no readable status" : status;
     throw new Error(
       `model credentials for ${deps.model} are not ready (${answer}${reason === "" ? "" : `: ${reason}`}): ` +
-        `${MODEL_AUTH_SOURCES}.`,
+        `${modelAuthSources(deps.model)}.`,
     );
   }
 }

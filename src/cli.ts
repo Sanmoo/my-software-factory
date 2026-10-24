@@ -15,7 +15,8 @@ import { deriveStatus } from "./state/status.js";
 import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
-import { SandcastleRuntime, workerToken, type SandcastleRuntimeOptions } from "./runtime/sandcastle.js";
+import { SandcastleRuntime, requireModelCredentials, workerToken, type SandcastleRuntimeOptions } from "./runtime/sandcastle.js";
+import { WORKER_IMAGE } from "./worker-image.js";
 import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
@@ -123,20 +124,23 @@ export function sandcastleRuntimeOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): SandcastleRuntimeOptions {
   return {
-    model: config.workerModel,
+    ...workerCredentials(config, env),
     token,
     // The toolchain convergence layer binds <workspace>/toolchains/... into
     // the container: installed once, reused by every launch.
     workspace: workspace.root,
-    // Model authentication is separate from agent resources: the supported
-    // provider env vars present here, or the explicitly supplied auth file —
-    // never the operator's personal Pi profile.
-    authEnv: modelAuthEnv(env),
-    agentFiles:
-      config.workerAuthFile === null ? [] : [{ name: "auth.json", hostPath: config.workerAuthFile }],
     // The worker self-reports blocked with the SAME vocabulary the factory
     // derives with — a non-default config label must reach the prompt too.
     blockedLabel: config.labels.blocked,
+  };
+}
+
+function workerCredentials(config: Config, env: NodeJS.ProcessEnv = process.env) {
+  return {
+    model: config.workerModel,
+    authEnv: modelAuthEnv(env),
+    agentFiles:
+      config.workerAuthFile === null ? [] : [{ name: "auth.json", hostPath: config.workerAuthFile }],
   };
 }
 
@@ -221,6 +225,16 @@ async function executeRun(
   runtimeName: string,
   stop: StopSignals,
 ): Promise<StopReport | null> {
+  if (runtimeName === "sandcastle") {
+    try {
+      await requireModelCredentials({ image: WORKER_IMAGE, ...workerCredentials(config) });
+    } catch (error) {
+      throw new Error(
+        `factory not started (worker model ${config.workerModel}): ${describeError(error)}\n` +
+          "No sweep was started and no tickets were changed.",
+      );
+    }
+  }
   const workspace = ensureWorkspace(config.workspace);
   const deps: LoopDeps = await wireRunDeps(config, workspace, {
     ...(runtimeName === "fake" ? { seams: { runtime: fakeRuntimePlaceholder() } } : {}),

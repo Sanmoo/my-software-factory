@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import {
-  NO_MODEL_AUTH_MESSAGE,
   PI_MODEL_AUTH_ENV_VARS,
   agentFileProblem,
   modelAuthEnv,
+  modelAuthSources,
 } from "./model-auth.js";
 
 /**
@@ -67,12 +67,26 @@ describe("model authentication — explicit sources only", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("the absence diagnostic names the supported sources and carries no secret", () => {
-    assert.match(NO_MODEL_AUTH_MESSAGE, /provider API key/);
-    assert.match(NO_MODEL_AUTH_MESSAGE, /worker-auth-file/);
-    assert.match(NO_MODEL_AUTH_MESSAGE, /never read from a personal Pi profile/);
-    // The directive names the variables the RUNBOOK documents, not whatever
-    // happens to sit first in the allow-list.
-    assert.match(NO_MODEL_AUTH_MESSAGE, /OPENCODE_API_KEY/);
+  test("the diagnostic names the configured provider's key, not keys for other providers", () => {
+    for (const [provider, key] of [
+      ["opencode-go", "OPENCODE_API_KEY"],
+      ["opencode", "OPENCODE_API_KEY"],
+      ["openai", "OPENAI_API_KEY"],
+      ["anthropic", "ANTHROPIC_API_KEY"],
+    ]) {
+      const message = modelAuthSources(`${provider}/model`);
+      assert.ok(message.includes(key!));
+      assert.ok(message.includes(`model provider "${provider}"`));
+      assert.match(message, /worker-auth-file/);
+      assert.match(message, /never read from a personal Pi profile/);
+      assert.deepEqual(message.match(/[A-Z_]+_API_KEY/g), [key]);
+    }
+  });
+
+  test("a provider without a known key hint gets no guessed variable", () => {
+    const message = modelAuthSources("custom/model");
+    assert.match(message, /Pi-supported provider credentials/);
+    assert.match(message, /model provider "custom"/);
+    assert.doesNotMatch(message, /OPENCODE_API_KEY|CUSTOM_API_KEY/);
   });
 });

@@ -120,12 +120,17 @@ export function agentFileProblem(what: string, path: string): string | null {
   }
 }
 
-/** The operator-facing directive shared by every credential diagnostic: the
- *  documented examples, not the allow-list's first entries. */
-export const MODEL_AUTH_SOURCES =
-  "set a Pi-supported provider API key in the factory's environment " +
-  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml; " +
-  "credentials are never read from a personal Pi profile";
-
-/** The absence diagnostic: no explicit source at all. */
-export const NO_MODEL_AUTH_MESSAGE = `no model credentials for the worker: ${MODEL_AUTH_SOURCES}.`;
+/** Name the configured provider's key when known; never suggest another
+ *  provider's key as a substitute. Other providers retain Pi's own diagnosis. */
+export function modelAuthSources(model: string): string {
+  const provider = model.split("/")[0]!;
+  const key = new Map([
+    ["opencode-go", "OPENCODE_API_KEY"],
+    ["opencode", "OPENCODE_API_KEY"],
+    ["openai", "OPENAI_API_KEY"],
+    ["anthropic", "ANTHROPIC_API_KEY"],
+  ]).get(provider);
+  return `set ${key ?? "Pi-supported provider credentials"} in the factory's environment ` +
+    `for model provider "${provider}" or set worker-auth-file in msf.yaml with credentials for that provider; ` +
+    "credentials are never read from a personal Pi profile";
+}
