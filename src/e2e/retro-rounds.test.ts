@@ -598,6 +598,42 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     );
   });
 
+  test("a window covers works of any source, not only the legacy GitHub keys", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps } = makeFactory(config);
+    // The record-form key of a Jira work (issue 126): its destination repo is
+    // encoded in the key, never reconstructed from the configuration.
+    const key = "jira@https%3A%2F%2Facme.atlassian.net@ABC-1@Sanmoo%2Fmy-tasks";
+    const workArchive = join(layout.archive, `${key}-2026-02-05`);
+    mkdirSync(workArchive, { recursive: true });
+    writeFileSync(join(workArchive, "log-1.jsonl"), "{}\n", "utf8");
+    const recordPath = join(workArchive, DESFECHO_FILENAME);
+    writeFileSync(recordPath, JSON.stringify({ class: "blocked-self-report", attempt: 1 }), "utf8");
+    utimesSync(recordPath, at(5) / 1000, at(5) / 1000);
+
+    await runOnce(deps);
+
+    const window = runtime.retroLaunched[0]!.works;
+    assert.deepEqual(window.map((work) => work.key), [key]);
+    assert.equal(window[0]!.repo, REPO, "the items are routed to the work's own repo");
+    assert.match(window[0]!.evidencePath, /^\/msf-arquivo\//);
+  });
+
+  test("an unknown liveness defers the round: the window's premise cannot be confirmed", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps, logs } = makeLoggedFactory(config);
+    seedArchived(1, at(1));
+    deps.probe = async () => {
+      throw new Error("Cannot connect to the Docker daemon");
+    };
+
+    await runOnce(deps);
+
+    assert.equal(runtime.retroLaunched.length, 0, "no round on an unverifiable window");
+    assert.ok(logs.some((line) => line.includes("liveness is unknown")));
+    assert.equal(existsSync(join(layout.retros, RETRO_STATE_FILENAME)), false, "nothing was consumed");
+  });
+
   test("an in-flight record that names no owner never holds the lane", async () => {
     const config = makeConfig({ threshold: 1 });
     const { runtime, deps } = makeFactory(config);

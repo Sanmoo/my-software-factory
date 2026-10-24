@@ -9,7 +9,7 @@ export interface CliArgs {
   all: boolean;
   configPath?: string;
   runtime?: string;
-  /** `msf retro <work>`: the "<owner>/<name>#<n>" work to analyze alone. */
+  /** `msf retro <work>`: the registry key (as `msf status` shows it) to analyze alone. */
   work?: string;
   /** `msf retro --language <tag>`: overrides `retro.language` for this round. */
   language?: string;
@@ -18,8 +18,7 @@ export interface CliArgs {
 const usage =
   "usage: msf run [--once] [--config <path>] [--runtime <name>]\n" +
   "       msf status [--all] [--config <path>]\n" +
-  "       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]\n" +
-  "       msf retro [<owner>/<name>#<number>] [--language <tag>] [--config <path>]";
+  "       msf retro [<work>] [--language <tag>] [--config <path>]";
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const [command, ...args] = argv;

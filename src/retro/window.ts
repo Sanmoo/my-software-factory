@@ -1,10 +1,15 @@
 import { readFile, stat } from "node:fs/promises";
 import { relative, sep } from "node:path";
 
-import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeClass } from "../state/outcome.js";
-import { readAttemptLedger, scanRegistry } from "../pool/registry.js";
+import {
+  DESFECHO_FILENAME,
+  ownOutcomeRecord,
+  readOutcomeRecord,
+  type OutcomeClass,
+} from "../state/outcome.js";
+import { readAttemptLedger } from "../pool/registry.js";
 import { anchorOfKey } from "../pool/work-key.js";
-import { scanReservations } from "../pool/reservation.js";
+import { scanReservations, workDirCandidates } from "../pool/reservation.js";
 import { readRepairCycle } from "../pool/repair.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { readModelProviderLedger } from "../pool/model-provider.js";
@@ -66,8 +71,9 @@ export function resultFileName(round: string): string {
  * Every finished work of the workspace, oldest first: the archived dones plus
  * the works still under trabalhos/ whose current attempt settled (a blocked
  * work is never archived). An attempt without its own outcome record is
- * pending reconciliation and stays out; a work a live container carries is
- * excluded by the caller's live keys.
+ * pending reconciliation and stays out. The caller's live keys exclude a work
+ * whose container still runs — and a caller that cannot tell passes none,
+ * which is why the sweep only runs a round on a known liveness.
  */
 export async function collectFinishedWorks(
   layout: WorkspaceLayout,
@@ -76,7 +82,11 @@ export async function collectFinishedWorks(
   const finished: FinishedWork[] = [];
   const seen = new Set<string>();
 
-  for (const dir of (await scanRegistry(layout)).archived) {
+  // The archive is read by the same bounded traversal the registry uses, then
+  // filtered by the key rule: a work of any source is a subject here, not only
+  // the legacy GitHub ones the status view names.
+  const isWholeWorkDir = (name: string): boolean => name.includes("#") || name.includes("@");
+  for (const dir of await workDirCandidates(layout.archive, isWholeWorkDir)) {
     const key = archivedKey(layout.archive, dir);
     if (key === null || liveKeys.has(key)) continue;
     seen.add(key);
@@ -112,7 +122,10 @@ async function finishedEntry(
   archived: boolean,
 ): Promise<FinishedWork | null> {
   const [{ lastAttempt }, record] = await Promise.all([readAttemptLedger(dir), readOutcomeRecord(dir)]);
-  if (record === null || lastAttempt === 0 || record.attempt !== lastAttempt) return null;
+  // The same ownership criterion the ruler and the registry apply: an older
+  // attempt's record is history, never the current attempt's outcome.
+  const outcome = ownOutcomeRecord(record, lastAttempt);
+  if (outcome === null) return null;
   const repo = anchorOfKey(key)?.repo;
   if (repo === undefined) return null;
   return {
@@ -126,8 +139,8 @@ async function finishedEntry(
       .split(sep)
       .join("/")}`,
     archived,
-    outcome: record.class,
-    attempt: record.attempt,
+    outcome: outcome.class,
+    attempt: outcome.attempt,
     completedAt: await completedAtOf(dir),
   };
 }

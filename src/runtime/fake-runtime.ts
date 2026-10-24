@@ -122,17 +122,14 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     this.retroScript = options.retro ?? [];
   }
 
-  /**
-   * The scripted round (issue 141): the fake writes the same two artifacts the
-   * agent writes — the report (the marker) and the result record (the filing
-   * ledger) — so the factory's artifact contract, not the fake's prose, is
-   * what a test observes. A round with `report: false` leaves neither.
-   */
+  /** The scripted round writes the same two artifacts the agent writes — the
+   *  report and the result record — so a test observes the factory's contract,
+   *  not the fake's prose. A round with `report: false` leaves neither. */
   async launchRetro(request: RetroRequest): Promise<void> {
     const index = this.retroLaunched.push(request) - 1;
     const hold = this.holdRetro ?? this.options.holdRetro;
     if (hold !== undefined) await hold(request, index);
-    const script = this.retroScript[Math.min(index, Math.max(0, this.retroScript.length - 1))];
+    const script = this.retroScriptFor(index);
     if (script === undefined || script.report === false) return;
     const filed = script.filed ?? [];
     const discarded = script.discarded ?? [];
@@ -147,7 +144,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
         "",
         "| Candidate | Outcome |",
         "| --- | --- |",
-        ...filed.map((item) => `| ${item.title ?? item.repo + "#" + item.number} | filed ${item.repo}#${item.number} |`),
+        ...filed.map(
+          (item) => `| ${item.title ?? `${item.repo}#${item.number}`} | filed ${item.repo}#${item.number} |`,
+        ),
         ...discarded.map((item) => `| ${item.title} | discarded: ${item.reason} |`),
         "",
       ].join("\n"),
@@ -167,7 +166,11 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       )}\n`,
       "utf8",
     );
+  }
 
+  /** The script of one round; the last scripted round repeats. */
+  private retroScriptFor(index: number): RetroScript | undefined {
+    return this.retroScript[Math.min(index, this.retroScript.length - 1)];
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {

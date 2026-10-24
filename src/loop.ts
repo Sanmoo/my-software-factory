@@ -819,6 +819,13 @@ export class SweepEngine {
 
   private async startRetroRound(): Promise<void> {
     const { config, runtime, workspace, notifier, now } = this.deps;
+    // The window's premise is that no live worker carries these works. An
+    // unknown liveness cannot confirm it, so the round waits for a sweep that
+    // can — the trigger stays armed, nothing is consumed.
+    if (this.liveness.state !== "known") {
+      this.log("retro: liveness is unknown — no round is launched; the window is analyzed once Docker answers");
+      return;
+    }
     const finished = await collectFinishedWorks(workspace, this.carriedKeys);
     const plan = await planAutomaticRound(config, workspace, finished, now);
     if (plan === null) return;
