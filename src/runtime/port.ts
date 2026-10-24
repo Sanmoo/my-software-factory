@@ -37,7 +37,7 @@ export interface RepairMaterial {
  * from the relevant context, never from session memory.
  */
 export interface WorkerMaterial {
-  /** The request's ticket content: the origin's title and body as usable text. */
+  /** The request's ticket content: the ticket's title and body as usable text. */
   ticket: { title: string; body: string };
   /** Human replies on a blocked ticket after the last agent marker; present only on retomada. */
   ticketReplies?: IssueComment[];

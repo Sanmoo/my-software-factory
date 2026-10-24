@@ -33,8 +33,3 @@ export function launchedNumber(request: WorkRequest): number {
   if (ticket.provider !== "github") throw new Error(`not a GitHub request: ${ticket.provider}`);
   return ticket.number;
 }
-
-/** The GitHub issue numbers of a run's launches, in launch order. */
-export function launchedNumbers(requests: readonly WorkRequest[]): number[] {
-  return requests.map(launchedNumber);
-}

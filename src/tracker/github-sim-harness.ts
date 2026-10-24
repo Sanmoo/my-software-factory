@@ -1,6 +1,6 @@
 import { createGitHubAdapter, type CommandRunner, type GitHubTrackerAdapter } from "./github-adapter.js";
 import { GitHubSim, type SimIssue } from "./github-sim.js";
-import type { ContractFaults, ContractHarness, ContractIssue } from "./contract.js";
+import type { GitHubContractFaults, GitHubContractHarness, GitHubContractIssue } from "./github-contract-suite.js";
 import type { IssueRef, ReadCost, TrackerPort } from "./port.js";
 import type { TicketTracker } from "./expanded-port.js";
 
@@ -9,7 +9,7 @@ import type { TicketTracker } from "./expanded-port.js";
  * and expanded-contract suites. Both boundaries use the SAME recorder/fault
  * seam, so a runner change cannot drift between them.
  */
-export class SimulatedRepoHarness implements ContractHarness {
+export class SimulatedRepoHarness implements GitHubContractHarness {
   readonly name = "real (gh CLI) over the simulated REST repo";
   readonly repo = "Sanmoo/sim-repo";
   readonly workerAccount = "bot-do-samuca";
@@ -23,7 +23,7 @@ export class SimulatedRepoHarness implements ContractHarness {
   private adapter: GitHubTrackerAdapter | undefined;
 
   /** Injects the failure at this harness's runner seam, never at live GitHub. */
-  faults(): ContractFaults {
+  faults(): GitHubContractFaults {
     return {
       failRemovingLabel: (label: string) => {
         this.failNext("DELETE", `/labels/${label}`);
@@ -95,7 +95,7 @@ export class SimulatedRepoHarness implements ContractHarness {
     title: string;
     labels?: string[];
     closed?: boolean;
-  }): Promise<ContractIssue> {
+  }): Promise<GitHubContractIssue> {
     const issue: SimIssue = this.sim.createIssue(input);
     return { ref: { repo: this.repo, number: issue.number }, createdAt: issue.createdAt };
   }

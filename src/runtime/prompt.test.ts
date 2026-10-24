@@ -563,7 +563,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
   });
 });
 
-describe("worker prompt — the ticket origin and the code destination are separate facts", () => {
+describe("worker prompt — the ticket source and the code destination are separate facts", () => {
   const jiraRequest = (url?: string): WorkRequest =>
     baseRequest({
       work: {

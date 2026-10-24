@@ -46,7 +46,7 @@ import {
   isGitHubSource,
   issueRefOf,
   issueRefOfTicket,
-  workOfIssueRef,
+  workOfLegacyRef,
   type TicketIdentity,
   type TicketSource,
   type WorkIdentity,
@@ -779,7 +779,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
   /** 9b. Open the PR of a work's branch, linked to the issue ("Closes #N"). */
   async openPr(input: OpenPrInput): Promise<PullRequest> {
     const opened = await this.openPullRequest({
-      work: workOfIssueRef({ repo: input.repo, number: input.issueNumber }),
+      work: workOfLegacyRef({ repo: input.repo, number: input.issueNumber }),
       headBranch: input.headBranch,
       baseBranch: input.baseBranch,
       title: input.title,

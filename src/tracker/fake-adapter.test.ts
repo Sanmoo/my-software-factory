@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { FakeTrackerAdapter } from "./fake-adapter.js";
-import { runGithubOnlySuite, runTrackerContractSuite, type ContractHarness } from "./contract.js";
+import { runGitHubOnlySuite, runGitHubContractSuite, type GitHubContractHarness } from "./github-contract-suite.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
@@ -13,7 +13,7 @@ import { AGENT_MARKER } from "./port.js";
  * comments, the push log) keep their own tests at the bottom.
  */
 
-function makeHarness(): ContractHarness {
+function makeHarness(): GitHubContractHarness {
   let adapter = freshAdapter();
   let nextNumber = 1;
   let nextPrNumber = 1;
@@ -103,8 +103,8 @@ function makeHarness(): ContractHarness {
   };
 }
 
-runTrackerContractSuite(makeHarness());
-runGithubOnlySuite(makeHarness());
+runGitHubContractSuite(makeHarness());
+runGitHubOnlySuite(makeHarness());
 
 // ---- fake-specific behaviors (not part of the shared contract) ----
 

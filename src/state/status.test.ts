@@ -734,7 +734,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /reconciliation: none/);
   });
 
-  test("a Jira Work is presented by its origin and destination — status invents no GitHub issue", () => {
+  test("a Jira Work is presented by its source and destination — status invents no GitHub issue", () => {
     const jiraWork = workIdentity(
       jiraTicket({
         site: "acme.atlassian.net",
@@ -751,7 +751,7 @@ describe("status — derivation on demand + local registry scan", () => {
       unmarkedReservations: [],
       registry: {
         attemptsWithoutOwnOutcome: [],
-        reservedWithoutAttempt: [],
+        reservedWithoutAttempt: ["jira@acme.atlassian.net@10042@Sanmoo%2Fmy-tasks"],
         lastOutcome: [],
         repair: [],
         recovery: [],
@@ -765,7 +765,13 @@ describe("status — derivation on demand + local registry scan", () => {
     };
 
     const text = renderStatus(view);
-    assert.match(text, /ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks/, "origin and destination are separate facts");
-    assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira origin");
+    assert.match(text, /ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks/, "source and destination are separate facts");
+    assert.match(
+      text,
+      /reserved without attempt[\s\S]*jira:acme\.atlassian\.net:10042 → Sanmoo\/my-tasks/,
+      "a registry-only Jira work shows its source and stable ticket id, never a raw key",
+    );
+    assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira source");
+    assert.doesNotMatch(text, /10042 \(jira/, "the stable id is never fabricated into a readable key");
   });
 });

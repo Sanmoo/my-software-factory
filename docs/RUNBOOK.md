@@ -186,8 +186,10 @@ leftovers when tracker and workspace disagree:
 - an **unmarked reservation** is a fact for a human decision — the report
   offers no command.
 
-The report never deletes, moves or archives anything; a released work
-(reservation + pool label) is normal and is never reported. Without Docker the
+Each entry names the work by its ticket source and the destination repository;
+a GitHub Issues work keeps the `owner/repo#n` spelling. The report never
+deletes, moves or archives anything; a released work (reservation + pool label)
+is normal and is never reported. Without Docker the
 two liveness lines read `liveness unknown (docker not reachable)`; the works
 carrying attempt evidence are still listed, unclassified, and the rest of the
 report is unchanged. A work carried by more than one container lists each
@@ -199,8 +201,10 @@ container and a **duplicate workers** line — the decision is yours.
 occurrence needs you: an open PR to review, a help request or a block, an
 intervention on a work (duplicate workers, a silent survivor), or the factory's
 own Docker warning, which names no work. One notice per occurrence — never a
-reminder — and `msf status` never notifies. A work notice names `<repo>#<n>`,
-the reason and the PR (review) or issue (help, intervention) address.
+reminder — and `msf status` never notifies. A work notice names its ticket
+(GitHub Issues keep the `owner/repo#n` spelling; another source shows its
+readable key and site), the reason, and the PR (review) or ticket (help,
+intervention) address when the source exposes one.
 
 On by default; disable with `notifications: false` in `msf.yaml`. Needs a
 Linux desktop session with a notification daemon, and the factory running

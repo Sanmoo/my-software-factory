@@ -11,15 +11,15 @@ import type { TicketTracker } from "./expanded-port.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
- * The contract suite of the GitHub adapter's legacy surface (ticket 16; split by
- * #127). The checks here are the GitHub adapter's own behavior: the fake
- * (in-memory GitHub adapter) runs them in `npm test`, fully offline, and the
- * real GitHub adapter runs the same checks in the credential-gated smoke.
+ * The GitHub adapter's contract suite. The checks here are GitHub-specific by
+ * construction: the fake (in-memory GitHub adapter) runs them in `npm test`,
+ * fully offline, and the real GitHub adapter runs the same checks in the
+ * credential-gated smoke.
  *
- * GitHub-ONLY rules live in `githubOnlyChecks` below and never enter the common
- * list: a future Jira ticket adapter is not asked to emulate the absence of a
- * native Rank or completion by closing an issue. The provider-neutral expanded
- * contracts are exercised in `expanded-contract.test.ts`.
+ * Rules that only GitHub can satisfy — no native Rank, completion by closing
+ * an issue — live in `githubOnlyChecks` below. A Jira ticket adapter is never
+ * asked to emulate them; the provider-neutral expanded contracts are exercised
+ * in `expanded-contract.test.ts`.
  *
  * A harness abstracts what adapters cannot share: how issues, PRs, blockers
  * and comments are seeded, and how everything is reverted afterwards. The
@@ -27,13 +27,13 @@ import { AGENT_MARKER } from "./port.js";
  * cleanup — nothing stays behind in the target repo.
  */
 
-export interface ContractIssue {
+export interface GitHubContractIssue {
   ref: IssueRef;
   /** ISO 8601 creation date, when the harness can know it. */
   createdAt?: string;
 }
 
-export interface ContractHarness {
+export interface GitHubContractHarness {
   /** Human name of the adapter under test ("fake (in-memory)", "real (gh CLI)"). */
   readonly name: string;
   readonly repo: string;
@@ -51,7 +51,7 @@ export interface ContractHarness {
     title: string;
     labels?: string[];
     closed?: boolean;
-  }): Promise<ContractIssue>;
+  }): Promise<GitHubContractIssue>;
   /** A ref that is guaranteed not to exist (for unknown-is-never-absent tests). */
   missingRef(): Promise<IssueRef>;
   /** Native dependency: `blocker` blocks `ref`. */
@@ -60,7 +60,9 @@ export interface ContractHarness {
   addComment(ref: IssueRef, author: string, body: string): Promise<void>;
   /** Ensure a remote branch exists with one commit beyond the base. */
   ensureBranch(branch: string, baseBranch?: string): Promise<void>;
-  /** Create a PR linked to the issue ("Closes #N"), returning its number. */
+  /** GitHub-only seeding: create a PR linked to the issue by the GitHub
+   *  issue-closing syntax, returning its number. A non-GitHub adapter never
+   *  implements this harness. */
   createPullRequest(issue: IssueRef, input?: { headBranch?: string; baseBranch?: string }): Promise<number>;
   /** Close a PR WITHOUT merging it (the rejection shape; reopenPr's opposite). */
   closePullRequest(issue: IssueRef, prNumber: number): Promise<void>;
@@ -75,13 +77,13 @@ export interface ContractHarness {
    *  make ONE write fail with a REAL error — never the tolerated absent-label
    *  case. The live smoke harness cannot and omits it; its interruption checks
    *  are skipped. */
-  faults?(): ContractFaults;
+  faults?(): GitHubContractFaults;
   /** Optional read-cost surface (issue 99): whole-repo listings and per-issue
    *  reads served since reset; a harness that cannot count omits it. */
   readCost?(): ReadCost;
 }
 
-export interface ContractFaults {
+export interface GitHubContractFaults {
   /** Make the NEXT removal of this label fail with a real error. */
   failRemovingLabel(label: string): void;
 }
@@ -91,7 +93,7 @@ const other = "other-label";
 const blocked = "agent-blocked";
 
 /** The checks, in port order. Each check is self-contained: it seeds what it needs. */
-export function contractChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
+function githubContractChecks(harness: GitHubContractHarness): { name: string; run: () => Promise<void> }[] {
   const adapter = () => harness.getAdapter();
   /** The bundled 3-label vocabulary the multi-label transitions take (the
    *  harness's claimed label + this suite's ready/blocked constants). */
@@ -540,7 +542,7 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
 
 /** The GitHub-ONLY rules: completion by closing the issue, and no native Rank.
  *  They are never part of the provider-neutral contract a Jira adapter runs. */
-function githubOnlyChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
+function githubOnlyChecks(harness: GitHubContractHarness): { name: string; run: () => Promise<void> }[] {
   const adapter = () => harness.getAdapter();
   return [
     {
@@ -566,17 +568,8 @@ function githubOnlyChecks(harness: ContractHarness): { name: string; run: () => 
   ];
 }
 
-/** Run all checks sequentially against one harness — the smoke's path. */
-export async function runContractChecks(harness: ContractHarness): Promise<void> {
-  await harness.reset();
-  for (const check of [...contractChecks(harness), ...githubOnlyChecks(harness)]) {
-    await check.run();
-    console.log(`  ✔ ${check.name}`);
-  }
-}
-
 /** Run all checks as a node:test suite — the `npm test` path (the fake). */
-export function runTrackerContractSuite(harness: ContractHarness): void {
+export function runGitHubContractSuite(harness: GitHubContractHarness): void {
   describe(`tracker port contract — ${harness.name}`, () => {
     beforeEach(async () => {
       await harness.reset();
@@ -584,7 +577,7 @@ export function runTrackerContractSuite(harness: ContractHarness): void {
     after(async () => {
       await harness.cleanup();
     });
-    for (const check of contractChecks(harness)) {
+    for (const check of githubContractChecks(harness)) {
       test(check.name, async () => {
         await check.run();
       });
@@ -593,7 +586,7 @@ export function runTrackerContractSuite(harness: ContractHarness): void {
 }
 
 /** The GitHub-only rules as their own suite, beside the provider-neutral one. */
-export function runGithubOnlySuite(harness: ContractHarness): void {
+export function runGitHubOnlySuite(harness: GitHubContractHarness): void {
   describe(`GitHub-only rules — ${harness.name}`, () => {
     beforeEach(async () => {
       await harness.reset();

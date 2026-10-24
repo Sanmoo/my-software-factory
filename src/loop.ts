@@ -803,7 +803,7 @@ export class SweepEngine {
           // a pause whose block and help request never landed (a death in
           // between) is announced now, exactly once. Other works keep going.
           this.log(
-            `derived ${workKeyOf(decision.work)}: attempt ${decision.attempt} is paused for help ` +
+            `derived ${renderWorkIdentity(decision.work)}: attempt ${decision.attempt} is paused for help ` +
               `(${decision.pause.reason}) — no recovery is spent and nothing is relaunched`,
           );
           this.announce(decision.work, "reserved");
@@ -1341,7 +1341,7 @@ export class SweepEngine {
       entry.attempt = attempt;
       if (await this.settleStoppedAdmission(entry, attempt)) {
         this.log(
-          `the recovery granted to ${workKeyOf(entry.work)} is returned: the requested stop cancelled its relaunch`,
+          `the recovery granted to ${renderWorkIdentity(entry.work)} is returned: the requested stop cancelled its relaunch`,
         );
       }
     }
@@ -2080,12 +2080,12 @@ export class SweepEngine {
       await tickets.blockTicketClaim(work.ticket, config.labels);
       writePause(dir, { ...pause, announced: true });
       this.log(
-        `continuity of ${workKeyOf(work)} still paused (${pause.reason}) — no new help request, no recovery spent`,
+        `continuity of ${renderWorkIdentity(work)} still paused (${pause.reason}) — no new help request, no recovery spent`,
       );
       return;
     }
     this.log(
-      `continuity of ${workKeyOf(work)} paused (${pause.reason}): ${pause.detail} — ` +
+      `continuity of ${renderWorkIdentity(work)} paused (${pause.reason}): ${pause.detail} — ` +
         "the work waits for the operator; files and evidence are preserved",
     );
     await this.applyBlockWithComment(
@@ -2123,7 +2123,7 @@ export class SweepEngine {
       workspace,
     });
     this.log(
-      `the interrupted attempt ${attempt} of ${workKeyOf(work)} is paused (${decision.reason}) — ` +
+      `the interrupted attempt ${attempt} of ${renderWorkIdentity(work)} is paused (${decision.reason}) — ` +
         "blocked with the evidence; a human decision is needed",
     );
     await this.applyBlockWithComment(work, comment);
@@ -2193,7 +2193,7 @@ export class SweepEngine {
         await this.deliverNotice(helpNotice(work));
         await markModelProviderHelpRequested(dir, attempt, failure);
         this.log(
-          `awaiting model provider for ${workKeyOf(work)}: attempt ${attempt} ended by a model provider failure ` +
+          `awaiting model provider for ${renderWorkIdentity(work)}: attempt ${attempt} ended by a model provider failure ` +
             `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
         );
       }
@@ -2202,7 +2202,7 @@ export class SweepEngine {
 
     if (settlement.recorded) {
       this.log(
-        `model provider failure on attempt ${attempt} of ${workKeyOf(work)}: ${failure.message} — ` +
+        `model provider failure on attempt ${attempt} of ${renderWorkIdentity(work)}: ${failure.message} — ` +
           `retry ${settlement.consumed}/${config.modelProvider.maxRetries} after ${settlement.waitMs}ms ` +
           "(the recovery budget is untouched)",
       );
@@ -2404,7 +2404,7 @@ export class SweepEngine {
       attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
     });
     this.log(
-      `repair attempt ${attempt.attempt} of ${workKeyOf(work)}: the remote branch ` +
+      `repair attempt ${attempt.attempt} of ${renderWorkIdentity(work)}: the remote branch ` +
         `${describeRemoteChange(remoteHeadSha)} while the attempt's observed head was ` +
         `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
     );

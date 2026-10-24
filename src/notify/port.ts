@@ -12,7 +12,7 @@ import {
  * capability (issue 93).
  */
 export interface WorkNotification {
-  /** The Work's origin and destination — never a synthesized GitHub issue. */
+  /** The Work's source and destination — never a synthesized GitHub issue. */
   work: WorkIdentity;
   kind: "review" | "help" | "intervention";
   /** The PR for review; the ticket for help or intervention. Null when the

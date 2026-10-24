@@ -163,7 +163,7 @@ export function renderTicketIdentity(ticket: TicketIdentity): string {
   return `${ticket.key} (${ticket.provider}:${ticket.site})`;
 }
 
-/** The operator-facing name of a Work: its ticket origin and the destination
+/** The operator-facing name of a Work: its ticket source and the destination
  *  that receives the code. The legacy GitHub spelling stays byte-identical. */
 export function renderWorkIdentity(work: WorkIdentity): string {
   const { ticket, destination } = work;
@@ -222,12 +222,6 @@ export function workOfLegacyRef(ref: LegacyWorkRef): WorkIdentity {
     ticket: githubTicket(ref.repo, ref.number),
     destination: githubRepository(ref.repo),
   };
-}
-
-/** The legacy spelling of the Work a legacy ref names; the adapters' legacy
- *  surface uses it, and the workspace reader uses {@link workOfLegacyRef}. */
-export function workOfIssueRef(ref: LegacyWorkRef): WorkIdentity {
-  return workOfLegacyRef(ref);
 }
 
 /** Does a value read from a legacy workspace file name a Work that way? */
@@ -291,7 +285,7 @@ export function isPullRequestIdentity(value: unknown): value is PullRequestIdent
   );
 }
 
-/** A Work as the workspace persists it: the ticket origin and the destination
+/** A Work as the workspace persists it: the ticket source and the destination
  *  as separate facts. */
 export function isWorkIdentity(value: unknown): value is WorkIdentity {
   if (value === null || typeof value !== "object") return false;

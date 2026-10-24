@@ -1,4 +1,4 @@
-import { type ContractHarness } from "./contract.js";
+import { type GitHubContractHarness } from "./github-contract-suite.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
 import { deriveTrackerState } from "../state/derive.js";
 import { githubSelections } from "./identity.js";
@@ -84,7 +84,7 @@ export async function recheckLateOpenIssues(
 
 /** The full cycle of one issue: every operation executed, verified — reverted by the harness's cleanup. */
 export async function runSmokeCycle(
-  harness: ContractHarness,
+  harness: GitHubContractHarness,
   adapter: TrackerPort & TicketTracker,
 ): Promise<SmokeCycleReport> {
   const repo = harness.repo;

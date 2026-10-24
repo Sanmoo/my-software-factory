@@ -16,7 +16,7 @@ import { runOnce, type LoopDeps } from "../loop.js";
 import { type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
-import type { WorkRequest } from "../runtime/port.js";
+import { launchedNumber } from "./work-fixtures.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
 import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
@@ -35,13 +35,6 @@ import type { IssueRef } from "../tracker/port.js";
  */
 
 const REPO = "Sanmoo/my-tasks";
-
-/** The GitHub issue number of a launched Work in this GitHub-only suite. */
-function launchedNumber(request: WorkRequest): number {
-  const ticket = request.work.ticket;
-  assert.equal(ticket.provider, "github");
-  return ticket.provider === "github" ? ticket.number : -1;
-}
 const NOW = "2026-01-01T00:00:00Z";
 
 class FakeGitWork implements LegacyGitWork {
