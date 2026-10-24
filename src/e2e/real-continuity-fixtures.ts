@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { GUARDRAIL_CONTAINER_FILE } from "../runtime/sandcastle.js";
+import { GUARDRAIL_CONTAINER_MODULES } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 
 const ENABLED = process.env["MSF_REQUIRE_DOCKER"] === "1";
@@ -25,16 +25,18 @@ function missingPrerequisite(): MissingPrerequisite | null {
   try {
     // The tag alone is not the prerequisite: this proof reads the session the
     // in-container guardrail journals, and the runtime refuses to launch an
-    // image without it. Check exactly the file the launch preflight checks, so
-    // a stale image reports itself instead of failing mid-proof.
+    // image without it. Check EVERY module the guardrail loads, exactly as the
+    // launch preflight does, so a half-staged image reports itself instead of
+    // failing mid-proof.
     execFileSync(
       "docker",
-      ["run", "--rm", "--network", "none", "--entrypoint", "test", WORKER_IMAGE, "-f", GUARDRAIL_CONTAINER_FILE],
+      ["run", "--rm", "--network", "none", "--entrypoint", "sh", WORKER_IMAGE, "-c",
+        GUARDRAIL_CONTAINER_MODULES.map((path) => `test -f ${path}`).join(" && ")],
       { stdio: "ignore" },
     );
   } catch {
     return {
-      reason: `the worker image ${WORKER_IMAGE} carries no continuity guardrail at ${GUARDRAIL_CONTAINER_FILE} — run npm run build:image`,
+      reason: `the worker image ${WORKER_IMAGE} is missing a continuity guardrail module (${GUARDRAIL_CONTAINER_MODULES.join(", ")}) — run npm run build:image`,
     };
   }
   return null;

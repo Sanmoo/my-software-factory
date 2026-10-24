@@ -285,6 +285,18 @@ export function workerFlagArgs(resources: LoadedAgentResources): string[] {
  *  refuses an image without it rather than running the session unguarded. */
 export const GUARDRAIL_CONTAINER_FILE = "/opt/msf/runtime/guardrail/extension.js";
 
+/** Every module the in-container guardrail loads at session start. The image
+ *  must carry all of them: the extension's relative imports fail closed, and a
+ *  preflight that proved only one path let a half-staged image through while
+ *  naming the file that WAS present. */
+export const GUARDRAIL_CONTAINER_MODULES = [
+  GUARDRAIL_CONTAINER_FILE,
+  "/opt/msf/runtime/call-recovery.js",
+  "/opt/msf/runtime/stop-request.js",
+  "/opt/msf/runtime/guardrail/delegation.js",
+  "/opt/msf/runtime/guardrail/journal-lock.js",
+] as const;
+
 const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
 
@@ -878,6 +890,23 @@ export async function dockerAuthProbe(deps: {
   }
 }
 
+/** The guardrail modules the image does not carry, read in ONE throwaway
+ *  container (no network, no artifact). An unreadable answer counts every
+ *  module as missing: the preflight refuses, it never assumes presence. */
+async function missingGuardrailModules(
+  image: string,
+  run: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>,
+): Promise<string[]> {
+  const script = GUARDRAIL_CONTAINER_MODULES.map((path) => `test -f ${path} || echo ${path}`).join("; ");
+  const answer = await run("docker", [
+    "run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c", script,
+  ]).catch(() => null);
+  const reported = new Set(
+    answer === null ? [] : answer.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== ""),
+  );
+  return GUARDRAIL_CONTAINER_MODULES.filter((path) => answer === null || reported.has(path));
+}
+
 /**
  * The launch preconditions: Docker is alive, the image exists and its recorded
  * inventory matches this checkout's declaration, the token is present, the
@@ -965,26 +994,14 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     // journals effects before they happen and blocks a repeat on a resume. An
     // image built before this feature would run unguarded, so the launch is
     // refused instead of trusting the worker's prose. One throwaway container,
-    // no network, no artifact.
-    try {
-      await run("docker", [
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--entrypoint",
-        "test",
-        deps.image,
-        "-f",
-        GUARDRAIL_CONTAINER_FILE,
-        "-a", "-f", "/opt/msf/runtime/call-recovery.js",
-        "-a", "-f", "/opt/msf/runtime/stop-request.js",
-        "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
-        "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
-      ]);
-    } catch {
+    // no network, no artifact — and it names EVERY missing module: `test -f`
+    // chained with `-a` reports only its own failure, which once pointed at a
+    // file that was present while another was absent.
+    const missing = await missingGuardrailModules(deps.image, run);
+    if (missing.length > 0) {
       throw new Error(
-        `worker image ${deps.image} has no continuity guardrail at ${GUARDRAIL_CONTAINER_FILE} — a resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} carries no continuity guardrail — missing ${missing.join(", ")}. ` +
+          `A resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
       );
     }
 

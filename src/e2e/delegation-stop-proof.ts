@@ -62,7 +62,11 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
     try {
       if (mode === "requested") {
         const childrenStarted = () => ["code-reviewer", "spec-reviewer"].every((agent) => existsSync(join(target, `delegation-started-${agent}`)));
-        const deadline = Date.now() + 25_000;
+        // Two real children booting Pi inside one container: the wait covers
+        // that startup under a loaded host (the gateway runs the whole suite at
+        // once) while staying inside this proof's own 60 s ceiling, so a proof
+        // that never starts its children still fails by name.
+        const deadline = Date.now() + 45_000;
         while (!childrenStarted() && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }

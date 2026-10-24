@@ -20,6 +20,7 @@ import {
   SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
   GUARDRAIL_CONTAINER_FILE,
+  GUARDRAIL_CONTAINER_MODULES,
   defaultPreflight,
   dockerSocketFromHost,
   stageAgentFiles,
@@ -673,14 +674,10 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "--network",
         "none",
         "--entrypoint",
-        "test",
+        "sh",
         WORKER_IMAGE,
-        "-f",
-        GUARDRAIL_CONTAINER_FILE,
-        "-a", "-f", "/opt/msf/runtime/call-recovery.js",
-        "-a", "-f", "/opt/msf/runtime/stop-request.js",
-        "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
-        "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
+        "-c",
+        GUARDRAIL_CONTAINER_MODULES.map((path) => `test -f ${path} || echo ${path}`).join("; "),
       ],
       [
         "docker",
@@ -770,6 +767,50 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     });
     await assert.rejects(failing, /no git credential helper for github\.com/);
     await assert.rejects(failing, /npm run build:image/);
+  });
+
+  test("the default preflight names EVERY guardrail module the image is missing, not just the first", async () => {
+    const absent = ["/opt/msf/runtime/stop-request.js", "/opt/msf/runtime/guardrail/delegation.js"];
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
+      dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
+      run: async (_command, args) => {
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        // The half-staged image: the extension loads, two of its imports do not.
+        if (args.includes("sh")) return { stdout: `${absent.join("\n")}\n`, stderr: "" };
+        return { stdout: "29.7.2", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /missing \/opt\/msf\/runtime\/stop-request\.js, \/opt\/msf\/runtime\/guardrail\/delegation\.js/);
+    await assert.rejects(failing, /npm run build:image/);
+    const present = await failing().catch((error: Error) => error.message);
+    assert.doesNotMatch(String(present), /missing[^.]*guardrail\/extension\.js/, "a present module is never named");
+    assert.doesNotMatch(String(present), /journal-lock/);
+  });
+
+  test("the default preflight refuses an unreadable guardrail listing instead of assuming the modules are there", async () => {
+    const failing = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "openai/gpt-4o",
+      agentResources: RESOURCES,
+      authEnv: { OPENAI_API_KEY: "probe-sentinel" },
+      dockerSocket: SOCKET,
+      authProbe: READY_PROBE,
+      run: async (_command, args) => {
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        if (args.includes("sh")) throw new Error("docker: container exited before answering");
+        return { stdout: "29.7.2", stderr: "" };
+      },
+    });
+    await assert.rejects(failing, /carries no continuity guardrail/);
   });
 
   test("the default preflight refuses an image with no docker CLI — the worker would self-report a missing Docker", async () => {
