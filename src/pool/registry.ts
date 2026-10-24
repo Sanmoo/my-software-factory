@@ -23,8 +23,8 @@ import {
   type ModelProviderSettlement,
 } from "./model-provider.js";
 import { pauseWaits, readEffectJournal, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
-import { readWorkEvidence, presenceOf, type WorkEvidence } from "../state/evidence.js";
-import { EVENT_LOG_PATTERN, eventLogName, sandcastleLogName } from "../runtime/attempt-logs.js";
+import { readWorkEvidence, probeAttemptArtifacts, type WorkEvidence } from "../state/evidence.js";
+import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import { workKeyOf } from "./work-key.js";
@@ -116,10 +116,7 @@ export async function readAttemptStartEvidence(
   workDir: string,
   attempt: number,
 ): Promise<AttemptStartEvidence> {
-  const [eventLog, sandcastleLog] = await Promise.all([
-    presenceOf(join(workDir, eventLogName(attempt))),
-    presenceOf(join(workDir, SESSIONS_SUBDIR, sandcastleLogName(attempt))),
-  ]);
+  const { eventLog, sandcastleLog } = await probeAttemptArtifacts(workDir, attempt);
   if (eventLog === "present" || sandcastleLog === "present") return "started";
   const record = await readOutcomeRecord(workDir);
   if (record?.attempt === attempt) return "started";

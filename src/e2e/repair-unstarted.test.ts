@@ -36,13 +36,10 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { launchedNumber } from "./work-fixtures.js";
 
 /**
- * e2e of issue 181: a repair round that NEVER reached a worker is neither an
- * attempt nor a fall. The continuity decision can refuse the launch after the
- * repair context was built; charging the round before that decision left a
- * ghost "attempt N / not published" that the next sweep settled as a Repair
- * fall — two of them blocked the work without a worker ever running. The tests
- * also cover the legacy records written by the older order, and the rule that
- * separates a real, started round that failed to publish (it still falls).
+ * e2e of issue 181: a repair round that never reached a worker is neither an
+ * attempt nor a fall. It covers the continuity pause that prevents the launch,
+ * the legacy ghost records written by the older order, a started round that
+ * still falls, and the workspace move.
  */
 
 const REPO = "Sanmoo/my-tasks";
@@ -294,6 +291,41 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     const cycle = await readRepairCycle(target);
     assert.equal(cycle.consecutiveFalls, 1, "the started round counts its fall");
     assert.equal(cycle.usedRounds, 1, "the fallen round returns and the resumed one is charged");
+  });
+
+  test("a legacy ghost never refunds a round a real attempt had already consumed", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedOpenPr(tracker, runtime, deps, 6);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    const target = workDir(layout, REPO, 6);
+    const ghost: RepairAttempt = {
+      evidence: signatureOf(6, OBSERVED),
+      attempt: 6,
+      observedHeadSha: OBSERVED,
+      remoteHeadSha: null,
+      publication: "not-published",
+      localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
+    };
+    // One earlier, genuinely delivered round stays charged. The ghost's own
+    // settlement already returned ITS round; healing it must not return the
+    // delivered one a second time.
+    writeFileSync(
+      join(target, REPAIR_FILENAME),
+      `${JSON.stringify(
+        { usedRounds: 1, lastEvidence: ghost.evidence, consecutiveFalls: 2, attempt: ghost },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "the persisting impediment opens the next round");
+    const cycle = await readRepairCycle(target);
+    assert.equal(cycle.usedRounds, 2, "the delivered round stays charged; only the ghost fell away");
+    assert.equal(cycle.consecutiveFalls, 1, "the ghost's fall is withdrawn once");
   });
 
   test("a legacy attempt without session evidence never blocks the next sweep", async () => {

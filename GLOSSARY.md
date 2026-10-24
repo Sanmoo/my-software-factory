@@ -238,7 +238,11 @@ An automatic reactivation of reserved work to address confirmed PR conflicts or 
 What the agents themselves write under the dirs the session binds (the session transcripts, the work artifacts): the only input of the idle limit, so a worker waiting on its reviewer subagents is not idle and an unconditional heartbeat is not work.
 
 **Repair fall**:
-A repair attempt that ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall. A Requested stop or a round that never started is not a Repair fall.
+A repair attempt that STARTED and ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall. A Requested stop or a round that never started is not a Repair fall.
+
+**Unstarted repair round**:
+A repair round whose launch a continuity pause, the operator's stop or a death prevented before any worker session existed. It is not an attempt and not a Repair fall: its round returns to the budget, no fall is counted, and it leaves no attempt record behind.
+_Avoid_: Repair fall, when no worker ever ran.
 
 **Repair premise**:
 The PR facts that opened a Repair round: the conflict with the base and the required checks that failed. The round re-reads them before spending work and before asking for help; a premise that cannot be re-read is never taken for a confirmed absence.

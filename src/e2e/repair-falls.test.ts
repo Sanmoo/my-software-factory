@@ -630,7 +630,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       `${JSON.stringify({ usedRounds: 1, lastEvidence: evidence })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 107), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(107, 2);
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
@@ -934,7 +934,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 113), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(113, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     // A collaborator pushed to the same branch AFTER the fall.
     git.remoteHead = "collaborator777";
@@ -1250,7 +1250,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       `${JSON.stringify({ class: "clean-without-pr", attempt: 2 })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 126), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(126, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     git.remoteHead = OBSERVED;
 

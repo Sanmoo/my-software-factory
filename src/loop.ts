@@ -1950,12 +1950,10 @@ export class SweepEngine {
       // repair budget (issue 107 story 23); new commits never do.
       await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
-    // The local work the round takes over, read from real git only once the
-    // round is really going out: existing commits are reused, changes are
-    // inspected, an unfinished operation is continued — the resumption never
-    // restarts the work blind (issue 112). The ROUND is not charged here: a
-    // continuity pause below means no worker ever ran, and a charged round
-    // would then be settled as a fall (issue 181).
+    // The local work the round takes over, read before the material; the round
+    // itself is charged below, only after continuity grants the launch (issue
+    // 181), and an unfinished operation is continued, never restarted blind
+    // (issue 112).
     if (repair !== undefined) {
       repair.localWork = await this.inspectLocalWork(work);
     }
@@ -2100,11 +2098,9 @@ export class SweepEngine {
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
 
-    // The round is charged HERE — after continuity granted the launch, so a
-    // pause that prevented the session never spends a round and never becomes
-    // a fall (issue 181) — and BEFORE the worker starts (issue 107), with the
-    // attempt's own facts (issue 112): a death mid-round refunds the round only
-    // once publication is provably absent, never by presumption.
+    // The round is charged only now, after continuity granted the launch, so a
+    // pause that prevented the session never spends a round or becomes a fall
+    // (issue 181) — and still before the worker starts (issue 107/112).
     if (repair !== undefined) {
       await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
     }
@@ -2486,32 +2482,30 @@ export class SweepEngine {
       const stored = await readRepairCycle(work.dir);
       const requestedStop =
         stored.attempt !== null && (await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt));
-      // A recorded round whose attempt never reached a worker (issue 181): the
-      // continuity pause, the operator's stop or a death before the spawn left
-      // an attempt record with no session behind it. It is not an attempt and
-      // not a fall — the charge returns and the old settlement's fall, if any,
-      // is withdrawn. This also heals a `reparo.json` written by an older
-      // version before the charge moved behind the continuity decision.
-      if (stored.attempt !== null) {
-        const start = await readAttemptStartEvidence(work.dir, stored.attempt.attempt);
-        if (start === "unstarted") {
+      const attempt = stored.attempt;
+      if (attempt !== null) {
+        // A recorded round whose attempt never reached a worker is not an
+        // attempt and not a fall (issue 181) — this also heals legacy records.
+        const start = await readAttemptStartEvidence(work.dir, attempt.attempt);
+        if (start === "never-started") {
           const returned = returnUnstartedRound(stored);
-          if (returned !== stored) {
-            await writeRepairCycle(work.dir, returned);
-            this.log(
-              `repair attempt ${stored.attempt.attempt} of ${key} unstarted (no session artifacts) — ` +
-                `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
-                `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
-            );
-            continue;
-          }
+          await writeRepairCycle(work.dir, returned);
+          this.log(
+            `repair attempt ${attempt.attempt} of ${key} never started (no session evidence) — ` +
+              `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
+              `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
+          );
+          continue;
         }
+        if (isSettledPublication(attempt.publication)) continue;
       }
-      if (stored.attempt !== null && requestedStop &&
-          ownWrittenOutcome(await readOutcomeRecord(work.dir), stored.attempt.attempt) === null) {
+      if (attempt !== null && requestedStop &&
+          ownWrittenOutcome(await readOutcomeRecord(work.dir), attempt.attempt) === null) {
         continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
       }
-      if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
+        }
+        if (isSettledPublication(attempt.publication)) continue;
+      }
       // A work that never ran a repair round has nothing to reconcile — no git
       // inspection is paid for it on every sweep.
       if (!hasRepairCycle(stored)) continue;

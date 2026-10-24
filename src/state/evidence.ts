@@ -33,6 +33,24 @@ export interface WorkEvidence {
   sandcastleLog: EvidenceLocation;
 }
 
+/** The two per-attempt artifacts whose presence separates a started attempt
+ *  from a round that never reached a worker. */
+export interface AttemptArtifactsEvidence {
+  eventLog: EvidencePresence;
+  sandcastleLog: EvidencePresence;
+}
+
+export async function probeAttemptArtifacts(
+  dir: string,
+  attempt: number,
+): Promise<AttemptArtifactsEvidence> {
+  const [eventLog, sandcastleLog] = await Promise.all([
+    presenceOf(join(dir, eventLogName(attempt))),
+    presenceOf(join(dir, SESSIONS_SUBDIR, sandcastleLogName(attempt))),
+  ]);
+  return { eventLog, sandcastleLog };
+}
+
 /** Probe the three locations of one attempt: `dir` inside the workspace. */
 export async function readWorkEvidence(
   workspace: WorkspaceLayout,
@@ -40,17 +58,16 @@ export async function readWorkEvidence(
   attempt: number,
 ): Promise<WorkEvidence> {
   const shownDir = relative(workspace.root, dir).split(sep).join("/");
-  const [dirPresence, logPresence, sandcastlePresence] = await Promise.all([
+  const [dirPresence, artifacts] = await Promise.all([
     presenceOf(dir),
-    presenceOf(join(dir, eventLogName(attempt))),
-    presenceOf(join(dir, SESSIONS_SUBDIR, sandcastleLogName(attempt))),
+    probeAttemptArtifacts(dir, attempt),
   ]);
   return {
     workDir: { path: `${shownDir}/`, presence: dirPresence },
-    eventLog: { path: `${shownDir}/${eventLogName(attempt)}`, presence: logPresence },
+    eventLog: { path: `${shownDir}/${eventLogName(attempt)}`, presence: artifacts.eventLog },
     sandcastleLog: {
       path: `${shownDir}/sessao/${sandcastleLogName(attempt)}`,
-      presence: sandcastlePresence,
+      presence: artifacts.sandcastleLog,
     },
   };
 }
