@@ -43,7 +43,7 @@ repos:
 #     token-env: MSF_JIRA_ACME_TOKEN  # the NAME of the local variable holding the token
 #     jql: project = ABC AND assignee = currentUser()
 #     destination: Sanmoo/my-tasks   # explicit GitHub destination, never guessed
-#   - site: acme.atlassian.net    # the same project may feed another repository
+#   - site: acme.atlassian.net
 #     account: bot@acme.example
 #     token-env: MSF_JIRA_ACME_TOKEN
 #     jql: project = ABC AND labels = backend

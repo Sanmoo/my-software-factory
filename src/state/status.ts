@@ -97,6 +97,9 @@ export interface JiraAmbiguousTicket {
   title: string;
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
+  /** An unreadable selection on this site names a further destination, so the
+   *  conflict itself is not verified. */
+  unverified: boolean;
 }
 
 /** One configured Jira selection and the read-only adapter that answers it. */
@@ -123,6 +126,9 @@ export type JiraSourceView =
       candidates: JiraCandidate[];
       /** Candidates removed because more than one destination promises them. */
       held: number;
+      /** An unreadable selection on this site names a different destination, so
+       *  an overlap with these candidates cannot be ruled out. */
+      unverified: boolean;
     }
   | { selection: TicketSelection; state: "unknown"; reason: string };
 
@@ -214,6 +220,7 @@ async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Prom
             assignees: entry.assignees,
           })),
           held: 0,
+          unverified: false,
         };
       } catch (error) {
         return { selection: source.selection, state: "unknown", reason: describeError(error) };
@@ -233,8 +240,12 @@ interface JiraHold {
  * explicit destination (spec #92 story 8): it is held with the reason instead
  * of being listed once per selection — the operator resolves the overlap in
  * the rules. A ticket selected twice for the SAME destination is not
- * conflicting. An UNKNOWN sibling may hide an overlap; the readable source
- * still lists, and the report says the overlap is unverified.
+ * conflicting. An UNKNOWN sibling naming a different destination may hide a
+ * conflict; the readable source still lists, and says the overlap is
+ * unverified.
+ *
+ * `held` counts a ticket once per selection that removed it; `ambiguous`
+ * counts tickets, so the counts need not agree.
  */
 function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
   const selected = new Map<
@@ -260,10 +271,12 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
   for (const [key, entry] of selected) {
     if (entry.destinations.size < 2) continue;
     heldKeys.add(key);
+    const destinations = [...entry.destinations.values()];
     ambiguous.push({
       ticket: entry.ticket,
       title: entry.title,
-      destinations: [...entry.destinations.values()],
+      destinations,
+      unverified: unknownSelectionConflicts(views, entry.ticket.site, destinations),
     });
   }
 
@@ -275,9 +288,31 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
       if (heldKeys.has(ticketIdentityKey(candidate.work.ticket))) held += 1;
       else candidates.push(candidate);
     }
-    return { ...view, candidates, held };
+    return {
+      ...view,
+      candidates,
+      held,
+      unverified: unknownSelectionConflicts(views, view.selection.source.site, [view.selection.destination]),
+    };
   });
   return { sources, ambiguous };
+}
+
+/** Does an unreadable selection on `site` name a destination outside `known`?
+ *  If so, a conflict with it may exist and cannot be verified. */
+function unknownSelectionConflicts(
+  views: readonly JiraSourceView[],
+  site: string,
+  known: readonly RepositoryIdentity[],
+): boolean {
+  return views.some(
+    (view) =>
+      view.state === "unknown" &&
+      view.selection.source.site === site &&
+      !known.some(
+        (destination) => repositoryIdentityKey(destination) === repositoryIdentityKey(view.selection.destination),
+      ),
+  );
 }
 
 /**

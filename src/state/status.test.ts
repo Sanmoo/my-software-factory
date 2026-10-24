@@ -1132,14 +1132,18 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
 
     const text = renderStatus(view);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 \(1 held as ambiguous\)/);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 \(1 held as ambiguous\)/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 candidate, 1 held as ambiguous/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 candidate, 1 held as ambiguous/);
     assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
     assert.match(
       text,
-      /ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/frontend, Sanmoo\/backend/,
+      /1\. ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/frontend, Sanmoo\/backend/,
     );
-    assert.doesNotMatch(text, /^\s+\d+\. .*ABC-2/m, "the ambiguous ticket is never offered as a candidate");
+    assert.doesNotMatch(
+      text,
+      /^\s+\d+\. ABC-2 \(jira:[^)]*\) → /m,
+      "the ambiguous ticket is never offered as a candidate",
+    );
   });
 
   test("a selection whose only tickets are held says so instead of 'none'", async () => {
@@ -1162,8 +1166,8 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
     const text = renderStatus(view);
 
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 0 \(1 held as ambiguous\)/);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: 0 \(1 held as ambiguous\)/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 held as ambiguous/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: 0 candidates, 1 held as ambiguous/);
     assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held selection never reads as an empty JQL result");
   });
 
@@ -1188,7 +1192,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
 
     assert.match(
       text,
-      /acme\.atlassian\.net → Sanmoo\/a: 1; another selection on this site is unknown, so a conflicting destination is unverified/,
+      /acme\.atlassian\.net → Sanmoo\/a: 1 candidate; another selection on this site is unknown, so a conflicting destination is unverified/,
     );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: unknown \(/);
   });
