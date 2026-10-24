@@ -61,13 +61,17 @@ export function releaseClaim(
   }
 
   const snapshot = tracker.snapshot();
+  // Refuse BEFORE removing anything: one unreadable marker means the operator
+  // cannot know what a partial release would destroy.
   for (const comment of snapshot.comments) {
-    const parsed = parseClaim(comment.body);
-    if (parsed.kind === "malformed") {
+    if (parseClaim(comment.body).kind === "malformed") {
       throw new OperatorReleaseRefused(
         `comment ${comment.id} carries an unreadable claim marker; release it by hand`,
       );
     }
+  }
+  for (const comment of snapshot.comments) {
+    const parsed = parseClaim(comment.body);
     if (parsed.kind === "valid" && sameTicket(parsed.record.ticket, ticket)) {
       tracker.apply({ kind: "delete-comment", commentId: comment.id });
     }

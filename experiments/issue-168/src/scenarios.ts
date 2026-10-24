@@ -451,6 +451,15 @@ export function unreadableClaim(): ScenarioResult {
     labels: [PADLOCK_LABEL],
     comments: [
       {
+        id: 6,
+        author: "acting-account",
+        body: formatClaim({
+          factoryId: "zeta",
+          nonce: "zeta:inc-1:1",
+          ticket,
+        }),
+      },
+      {
         id: 7,
         author: "unknown-factory",
         body: "<!-- msf:claim -->\nfactory: unknown-factory\n",
@@ -694,6 +703,15 @@ export function releaseRefusesMalformed(): ScenarioResult {
   const tracker = new SimTracker(ticket, {
     labels: [PADLOCK_LABEL],
     comments: [
+      {
+        id: 6,
+        author: "acting-account",
+        body: formatClaim({
+          factoryId: "zeta",
+          nonce: "zeta:inc-1:1",
+          ticket,
+        }),
+      },
       {
         id: 7,
         author: "unknown-factory",

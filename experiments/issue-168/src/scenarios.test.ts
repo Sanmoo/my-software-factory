@@ -222,7 +222,7 @@ test("a prior Claim convention is respected until the operator releases it", () 
 test("a malformed claim marker is refused by the operator release, never deleted by guess", () => {
   const o = observations("release-refuses-malformed");
   assert.equal(o["refused"], true);
-  assert.equal(o["claims"], 1);
+  assert.equal(o["claims"], 2);
   assert.equal(o["padlock"], true);
 });
 

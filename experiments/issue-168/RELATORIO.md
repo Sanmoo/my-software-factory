@@ -100,7 +100,11 @@ lacuna que a conclusão registra.
 ## 3. Candidatos e por que a intuição não basta
 
 Os cinco candidatos estão implementados em `src/protocols.ts` e explorados em
-todas as intercalações de `write`/`verify`/`launch` das duas instâncias.
+todas as intercalações de `write`/`verify`/`launch` das duas instâncias. Um
+candidato baseado em **editar** título/corpo (`PATCH`) não é examinado em
+separado: a edição é a mesma escrita cega do `Update an issue`, e a leitura de
+verificação não identifica quem fez a última edição; o argumento de C1/C3 se
+aplica sem alteração.
 
 ### C1 — marca atual: label `agent-claimed` + atribuição à Acting account, re-lida
 
@@ -430,6 +434,7 @@ ids em ordem de aplicação e leitura fresca — as premissas P1/P2 da seção 5
 | `manual-release-precondition` | liberação recusada com Worker vivo; só após o fim confirmado o Claim sai e B adquire |
 | `local-recovery` | A restaura e relança a **mesma** Attempt 1; B segue `unavailable` |
 | `legacy-claim` | label antigo sem registro: B `unavailable`, 0 escritas; após liberação manual, B adquire |
+| `release-refuses-malformed` | marcador ilegível: a liberação manual recusa antes de apagar; Claim e padlock intactos |
 | `claim-for-another-ticket` | marcador de outro Ticket: incerto, 0 lançamento |
 
 Comandos e isolamento: `experiments/issue-168/README.md`.
