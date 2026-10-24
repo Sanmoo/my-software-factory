@@ -105,6 +105,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 2,
       workspace: target.root,
@@ -256,7 +257,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
       false,
       "the status repair section does not list the round",
     );
-    const view = await deriveStatus(tracker, deps.config, layout, async () => []);
+    const view = await deriveStatus({ github: tracker }, deps.config, layout, async () => []);
     assert.match(
       renderStatus(view),
       /repair \(unpublished attempts, local work, pending reconciliation\): none/,
