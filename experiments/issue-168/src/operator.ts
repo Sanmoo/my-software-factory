@@ -40,16 +40,18 @@ export function confirmStop(workers: WorkerRegistry, ticket: TicketIdentity): St
 }
 
 /**
- * Remove the reservation marks AFTER the confirmation. It removes every claim
- * record and padlock for the Ticket, so a deadlocked pair of claims can be
- * resolved by the operator; it never removes a marker it cannot read (a
- * malformed claim needs a human in the tracker's UI).
+ * Remove the reservation marks AFTER the confirmation: the claim records, the
+ * padlock/unique labels and the Acting account's assignment — a Claim in the
+ * glossary's sense is mark + assignment. It resolves a deadlocked pair of
+ * claims; it never removes a marker it cannot read (a malformed claim needs a
+ * human in the tracker's UI).
  */
 export function releaseClaim(
   tracker: SimTracker,
   workers: WorkerRegistry,
   ticket: TicketIdentity,
   confirmation: StopConfirmation,
+  actingAccount: string,
 ): void {
   if (!confirmation.confirmedWorkerEnded || !sameTicket(confirmation.ticket, ticket)) {
     throw new OperatorReleaseRefused("the confirmation does not cover this ticket");
@@ -74,5 +76,8 @@ export function releaseClaim(
     if (label === PADLOCK_LABEL || label.startsWith(CLAIM_LABEL_PREFIX)) {
       tracker.apply({ kind: "remove-label", label });
     }
+  }
+  if (snapshot.assignees.includes(actingAccount)) {
+    tracker.apply({ kind: "remove-assignee", login: actingAccount });
   }
 }

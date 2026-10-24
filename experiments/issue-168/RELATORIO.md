@@ -200,8 +200,9 @@ outro Ticket é **malformado**: incerteza, nunca “sem Claim”.
      outra convenção → **indisponível**; não escrever, não limpar.
    - Marcador malformado → **incerto**; não escrever, não limpar.
    - Nada → **livre**; seguir.
-2. **Escrita do padlock** — `POST /issues/{n}/labels` com `agent-claimed`
-   (idempotente). Serve à apresentação/pool; não decide nada.
+2. **Escrita do padlock** — `POST /issues/{n}/labels` com `agent-claimed`.
+   Serve à apresentação/pool; não decide nada. A doc não declara idempotência
+   para esse endpoint; a apresentação não depende de a chamada ser repetível.
 3. **Escrita da atribuição** — `POST /issues/{n}/assignees` com a Acting
    account (idempotente/aditiva). Completa o Claim no vocabulário do glossário
    e a superfície que a fábrica atual conhece; não decide nada.
@@ -226,7 +227,9 @@ recomputável a partir do tracker — desde que P1/P2 valham.
 
 Incerteza cobre: resposta perdida de qualquer escrita, falha antes da escrita,
 leitura de verificação que não mostra o próprio registro, Claim parcial (só o
-padlock), marcador malformado, Claim para outro Ticket, e leitura que falhou.
+padlock), marcador malformado e Claim para outro Ticket. Uma falha de leitura
+também seria incerta por construção, mas o harness não a simula (o modelo do
+tracker não falha): é argumento, não cenário.
 Em todos: **não lançar**, **não remover Claim que possa ser alheio**, **não
 consumir Attempt**. A fábrica mantém o Claim pendente e repete a verificação
 numa varredura seguinte; ela **não** descarta o pendente e faz uma observação
@@ -243,8 +246,10 @@ pode assumir, e o Ticket fica indisponível até a liberação manual — o mesm
 desfecho do deadlock do `strict-unique`, mas por incerteza, não por dois Claims.
 
 Uma leitura posterior, **isolada**, não é tratada como resolução da corrida: a
-confirmação é a verificação do Claim que a própria fábrica já escreveu. Se o
-registro próprio continua invisível, continua incerto.
+confirmação é a verificação do Claim que a própria fábrica já escreveu. Se
+nenhum registro válido está visível, o resultado é incerto; se outro registro é
+visível e o meu não, é indisponível — um Claim alheio, ou de outra aquisição da
+mesma instalação, não é meu por semelhança.
 
 ### Claims anteriores, Recovery local e fábricas não participantes
 
@@ -265,7 +270,8 @@ registro próprio continua invisível, continua incerto.
 ### Liberação/transferência manual
 
 Fora do protocolo e do código de aquisição. O operador **para e confirma** o
-fim do Worker anterior e só então remove o Claim (comentário + label). Uma
+fim do Worker anterior e só então remove o Claim (comentário + label +
+atribuição). Uma
 edição no tracker **não** interrompe o Worker remotamente; o harness até recusa
 a liberação enquanto observa um Worker vivo (o registro de Workers é a
 testemunha do experimento; na instalação real, a confirmação é do operador). Se
@@ -396,7 +402,9 @@ documentada); `prefix+ordered` e `linearizable` concedem P1/P2 explicitamente.
 A matriz **não** é prova de garantia da API: ela mostra o que cada premissa
 compra e o que falta.
 
-Cenários (cada um com o tracker, o registry de Workers e workspaces próprios):
+Cenários (cada um com o tracker, o registry de Workers e workspaces próprios).
+Salvo os contraexemplos explícitos (`unordered-ids-*` e `stale-*`), eles usam
+ids em ordem de aplicação e leitura fresca — as premissas P1/P2 da seção 5:
 
 | Cenário | Fato observado |
 | --- | --- |
