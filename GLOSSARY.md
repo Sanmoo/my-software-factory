@@ -290,7 +290,7 @@ One execution of the retrospective over a window of finished works, from its tri
 _Avoid_: Work, when the analysis job is meant.
 
 **Retrospective window**:
-The finished works one retrospective round analyzes: those finished after the last report's boundary, or the last ten when there is no report yet.
+The finished works one retrospective round analyzes: those finished after the last window report's boundary that no round has analyzed yet, or the last ten when no window report exists yet.
 _Avoid_: Pool, when the finished works are meant.
 
 **Retrospective report**:

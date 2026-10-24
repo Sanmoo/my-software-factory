@@ -16,8 +16,13 @@ import { planManualRound, runRetroRound } from "./retro/round.js";
 >>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
 =======
 import { collectFinishedWorks } from "./retro/window.js";
+<<<<<<< HEAD
 import { emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
 >>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
+=======
+import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
+import { liveRoundInFlight } from "./retro/marker.js";
+>>>>>>> da4fc8f1 (fix(141): one round at a time, enforced by the lane's marker)
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -413,6 +418,13 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
 =======
   const lock = await acquireRunLock(config.configPath);
   try {
+    // One round at a time (issue 141): the lane's marker names the process that
+    // owns the round in flight, and a live owner is never overridden — the
+    // round that started first keeps it. A record left by a dead owner is
+    // cleared here, so a crash never blocks the lane.
+    const running = await liveRoundInFlight(workspace);
+    if (running !== null) throw new RetroBusyError(running.round);
+
     // The window is planned BEFORE any credential or runtime is demanded: an
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.

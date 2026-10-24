@@ -9,7 +9,7 @@ import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "../work-record/logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import type { RetroRequest, RetroResult, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -128,14 +128,12 @@ export class FakeWorkerRuntime implements WorkerRuntime {
    * ledger) — so the factory's artifact contract, not the fake's prose, is
    * what a test observes. A round with `report: false` leaves neither.
    */
-  async launchRetro(request: RetroRequest): Promise<RetroResult> {
+  async launchRetro(request: RetroRequest): Promise<void> {
     const index = this.retroLaunched.push(request) - 1;
     const hold = this.holdRetro ?? this.options.holdRetro;
     if (hold !== undefined) await hold(request, index);
     const script = this.retroScript[Math.min(index, Math.max(0, this.retroScript.length - 1))];
-    if (script === undefined || script.report === false) {
-      return { outcome: "no-report" };
-    }
+    if (script === undefined || script.report === false) return;
     const filed = script.filed ?? [];
     const discarded = script.discarded ?? [];
     writeFileSync(
@@ -169,7 +167,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       )}\n`,
       "utf8",
     );
-    return { outcome: "report-written" };
+
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
