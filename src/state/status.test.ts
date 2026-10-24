@@ -1137,7 +1137,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
     assert.match(
       text,
-      /1\. ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/frontend, Sanmoo\/backend/,
+      /1\. ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers \[assignee: Factory Bot\] → Sanmoo\/frontend, Sanmoo\/backend/,
     );
     assert.doesNotMatch(
       text,
@@ -1192,8 +1192,40 @@ describe("status: Jira candidates are read-only and each source stands alone", (
 
     assert.match(
       text,
-      /acme\.atlassian\.net → Sanmoo\/a: 1 candidate; another selection on this site is unknown, so a conflicting destination is unverified/,
+      /acme\.atlassian\.net → Sanmoo\/a: 1 candidate \(unverified: another selection on this site is unknown\)/,
     );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: unknown \(/);
+  });
+
+  test("the same Work selected by two rules for one destination is listed once", async () => {
+    const left = new JiraSim();
+    left.addIssue({ id: "10001", key: "ABC-1", summary: "One Work" });
+    const right = new JiraSim();
+    right.addIssue({ id: "10001", key: "ABC-1", summary: "One Work" });
+
+    const view = await deriveStatus(
+      {
+        github: null,
+        jira: [
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
+          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: jiraAdapter(right) },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [first, second] = view.jira;
+    if (first?.state !== "known" || second?.state !== "known") assert.fail("both rules are readable");
+    assert.deepEqual(
+      first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
+      ["ABC-1 (jira:acme.atlassian.net) → Sanmoo/a"],
+    );
+    assert.deepEqual(second.candidates, [], "the same Work is not offered twice");
+    assert.deepEqual(view.jiraAmbiguous, [], "one destination is not a conflict");
+    const text = renderStatus(view);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 1 candidate$/m);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: none$/m);
   });
 });

@@ -12,7 +12,14 @@ import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
 import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
-import type { JiraAmbiguousTicket, JiraSourceView, OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
+import type {
+  JiraAmbiguousTicket,
+  JiraSourceView,
+  KnownJiraSourceView,
+  OrphanedAttempt,
+  RunningWorker,
+  StatusView,
+} from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
@@ -177,9 +184,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   return lines.join("\n");
 }
 
-/** The Jira candidates, one block per configured selection (issue 128): native
- *  Rank order, no claim, and unknown when the source could not be read. A
- *  ticket two selections promise to different destinations is held apart. */
+/** One block per configured selection, in native Rank order, nothing claimed;
+ *  an unreadable source says unknown, and a held ticket gets its own section. */
 function renderJiraSources(
   sources: readonly JiraSourceView[],
   ambiguous: readonly JiraAmbiguousTicket[],
@@ -196,9 +202,7 @@ function renderJiraSources(
       lines.push(`  ${site} → ${destination}: unknown (${source.reason})`);
       continue;
     }
-    const unverified = source.unverified
-      ? "; another selection on this site is unknown, so a conflicting destination is unverified"
-      : "";
+    const unverified = UNVERIFIED_NOTE(source.unverified);
     lines.push(`  ${site} → ${destination}: ${describeCandidates(source)}${unverified}`);
     renderCapped(lines, source.candidates, cap, (candidate, index) => {
       const assignee =
@@ -210,16 +214,21 @@ function renderJiraSources(
     lines.push(`  ambiguous (more than one destination — held, no destination chosen): ${ambiguous.length}`);
     renderCapped(lines, ambiguous, cap, (entry, index) => {
       const destinations = entry.destinations.map(renderRepositoryIdentity).join(", ");
-      const unverified = entry.unverified ? " (an unreadable selection on this site may also claim it)" : "";
-      return `    ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${destinations}${unverified}`;
+      const assignee = entry.assignees.length === 0 ? "" : ` [assignee: ${entry.assignees.join(", ")}]`;
+      return `    ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${UNVERIFIED_NOTE(entry.unverified)}`;
     });
   }
   return lines;
 }
 
+/** One wording for "an unreadable selection may hide another destination". */
+function UNVERIFIED_NOTE(unverified: boolean): string {
+  return unverified ? " (unverified: another selection on this site is unknown)" : "";
+}
+
 /** The per-selection counts: candidates kept, and the tickets it lost because
  *  more than one destination promises them. */
-function describeCandidates(source: JiraSourceView & { state: "known" }): string {
+function describeCandidates(source: KnownJiraSourceView): string {
   if (source.candidates.length === 0 && source.held === 0) return "none";
   const candidates = `${source.candidates.length} candidate${source.candidates.length === 1 ? "" : "s"}`;
   return source.held === 0 ? candidates : `${candidates}, ${source.held} held as ambiguous`;

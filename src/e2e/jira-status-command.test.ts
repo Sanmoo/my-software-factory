@@ -336,6 +336,11 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
       /1\. ABC-30 \(jira:acme\.atlassian\.net\) — Shared across layers → Sanmoo\/frontend, Sanmoo\/backend/,
     );
     assert.match(result.stdout, /pool \(eligible\): none/);
+    assert.deepEqual(
+      jira.calls(),
+      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
+      "one identity and one native read per rule, no claim or write",
+    );
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 });

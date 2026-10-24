@@ -12,6 +12,7 @@ import {
   repositoryIdentityKey,
   ticketIdentityKey,
   workIdentity,
+  workIdentityKey,
   type RepositoryIdentity,
   type TicketIdentity,
   type WorkIdentity,
@@ -95,6 +96,7 @@ export interface JiraCandidate {
 export interface JiraAmbiguousTicket {
   ticket: TicketIdentity;
   title: string;
+  assignees: string[];
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
   /** An unreadable selection on this site names a further destination, so the
@@ -131,6 +133,9 @@ export type JiraSourceView =
       unverified: boolean;
     }
   | { selection: TicketSelection; state: "unknown"; reason: string };
+
+/** The readable variant, for the presentation and the hold. */
+export type KnownJiraSourceView = Extract<JiraSourceView, { state: "known" }>;
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
@@ -239,19 +244,18 @@ interface JiraHold {
  * A ticket two readable selections promise to different destinations has no
  * explicit destination (spec #92 story 8): it is held with the reason instead
  * of being listed once per selection — the operator resolves the overlap in
- * the rules. A ticket selected twice for the SAME destination is not
- * conflicting. An UNKNOWN sibling naming a different destination may hide a
- * conflict; the readable source still lists, and says the overlap is
- * unverified.
- *
- * `held` counts a ticket once per selection that removed it; `ambiguous`
- * counts tickets, so the counts need not agree.
+ * the rules. The same Work selected by several rules is listed once. An
+ * UNKNOWN sibling naming a different destination may hide a conflict; the
+ * readable source still lists, and says the overlap is unverified.
  */
 function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
-  const selected = new Map<
-    string,
-    { ticket: TicketIdentity; title: string; destinations: Map<string, RepositoryIdentity> }
-  >();
+  interface SelectedTicket {
+    ticket: TicketIdentity;
+    title: string;
+    assignees: string[];
+    destinations: Map<string, RepositoryIdentity>;
+  }
+  const selected = new Map<string, SelectedTicket>();
   for (const view of views) {
     if (view.state !== "known") continue;
     for (const candidate of view.candidates) {
@@ -259,6 +263,7 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
       const entry = selected.get(key) ?? {
         ticket: candidate.work.ticket,
         title: candidate.title,
+        assignees: candidate.assignees,
         destinations: new Map<string, RepositoryIdentity>(),
       };
       entry.destinations.set(repositoryIdentityKey(candidate.work.destination), candidate.work.destination);
@@ -275,18 +280,26 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
     ambiguous.push({
       ticket: entry.ticket,
       title: entry.title,
+      assignees: entry.assignees,
       destinations,
       unverified: unknownSelectionConflicts(views, entry.ticket.site, destinations),
     });
   }
 
+  // The same Work (ticket + destination) selected by several rules is one
+  // candidate, so it is listed once.
+  const listed = new Set<string>();
   const sources = views.map((view): JiraSourceView => {
     if (view.state !== "known") return view;
     const candidates: JiraCandidate[] = [];
     let held = 0;
     for (const candidate of view.candidates) {
-      if (heldKeys.has(ticketIdentityKey(candidate.work.ticket))) held += 1;
-      else candidates.push(candidate);
+      if (heldKeys.has(ticketIdentityKey(candidate.work.ticket))) {
+        held += 1;
+      } else if (!listed.has(workIdentityKey(candidate.work))) {
+        listed.add(workIdentityKey(candidate.work));
+        candidates.push(candidate);
+      }
     }
     return {
       ...view,
