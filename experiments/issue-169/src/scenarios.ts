@@ -1,6 +1,7 @@
 import { Factory, type AcquisitionOutcome, type Observation } from "./factory.js";
 import {
   claimRecord,
+  CLAIMED_LABEL,
   CLAIM_PROPERTY_KEY,
   githubDestination,
   jiraTicket,
@@ -77,7 +78,7 @@ export class Lab {
         accountId: options?.accountId ?? SHARED_ACCOUNT,
         destination:
           options?.destination ?? githubDestination({ site: "github.com", repo: `Sanmoo/dest-${id}` }),
-        claimedLabel: "agent-claimed",
+        claimedLabel: CLAIMED_LABEL,
       },
       ticket,
       this.tracker,
@@ -777,7 +778,7 @@ export function malformedClaimIsUncertainty(): SceneFacts {
 export function legacyClaimIsRespected(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
-  lab.seed(ticket, { labels: ["agent-claimed"], assignee: SHARED_ACCOUNT });
+  lab.seed(ticket, { labels: [CLAIMED_LABEL], assignee: SHARED_ACCOUNT });
   const b = lab.factory("B", ticket);
   const observation = b.observe();
   const attempted = b.submitClaim();

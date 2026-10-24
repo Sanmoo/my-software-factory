@@ -15,6 +15,8 @@ export const CLAIM_PROTOCOL = "msf-jira-claim/v1" as const;
 
 export const CLAIM_PROPERTY_KEY = "com.sanmoo.msf.claim" as const;
 
+export const CLAIMED_LABEL = "agent-claimed" as const;
+
 export interface JiraTicket {
   provider: "jira";
   /** The Jira Cloud site host — identity is scoped by site, never by key. */
