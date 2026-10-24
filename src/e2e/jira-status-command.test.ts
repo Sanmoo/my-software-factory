@@ -269,7 +269,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
         body: { isLast: true, issues: [frontend] },
       },
       // The site-wide union is the only source of the order: two native pages.
-      [`POST /rest/api/3/search/jql :: (project = ABC AND labels = backend) OR (project = ABC AND labels = frontend) ORDER BY Rank ASC`]: [
+      [`POST /rest/api/3/search/jql`]: [
         { body: { isLast: false, nextPageToken: "page-2", issues: [frontend] } },
         { body: { isLast: true, issues: [backend] } },
       ],
@@ -352,7 +352,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
       [`POST /rest/api/3/search/jql :: project = ABC AND labels = shared ORDER BY Rank ASC`]: {
         body: { isLast: true, issues: [shared] },
       },
-      [`POST /rest/api/3/search/jql :: (project = ABC AND labels = frontend) OR (project = ABC AND labels = shared) ORDER BY Rank ASC`]: {
+      [`POST /rest/api/3/search/jql`]: {
         body: { isLast: true, issues: [frontendOnly, shared] },
       },
     });
@@ -410,7 +410,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     const ticket = {
       id: "10040",
       key: "ABC-40",
-      fields: { summary: "One Work, two selectors", labels: ["ready"], created: "2026-01-01T00:00:00.000+0000", assignee: null },
+      fields: { summary: "One Work, two selections", labels: ["ready"], created: "2026-01-01T00:00:00.000+0000", assignee: null },
     };
     jira = installJiraFetchShim(dir, {
       [`GET /rest/api/3/myself`]: {
@@ -420,7 +420,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
       [`POST /rest/api/3/search/jql :: project = ABC AND labels = ready ORDER BY Rank ASC`]: {
         body: { isLast: true, issues: [ticket] },
       },
-      [`POST /rest/api/3/search/jql :: (project = ABC) OR (project = ABC AND labels = ready) ORDER BY Rank ASC`]: {
+      [`POST /rest/api/3/search/jql`]: {
         body: { isLast: true, issues: [ticket] },
       },
     });
@@ -439,7 +439,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
         "POST /rest/api/3/search/jql",
         "POST /rest/api/3/search/jql",
       ],
-      "both selectors and the site union were read; nothing was written",
+      "both selections and the site union were read; nothing was written",
     );
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });

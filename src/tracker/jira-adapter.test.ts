@@ -83,12 +83,6 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend"], created: "2026-05-01T00:00:00.000+0000" });
     sim.addIssue({ id: "10002", key: "DEF-1", summary: "Backend first", labels: ["backend"], created: "2026-01-01T00:00:00.000+0000" });
     sim.addIssue({ id: "10003", key: "ABC-2", summary: "Frontend second", labels: ["frontend"], created: "2026-03-01T00:00:00.000+0000" });
-    sim.select = (jql, issues) => {
-      if (jql.includes(") OR (")) return issues;
-      if (jql.includes("labels = frontend")) return issues.filter((issue) => issue.labels.includes("frontend"));
-      if (jql.includes("labels = backend")) return issues.filter((issue) => issue.labels.includes("backend"));
-      return [];
-    };
     const adapter = adapterFor(sim);
     const frontend = { ...selectionFor(sim, "project in (ABC, DEF) AND labels = frontend"), destination: githubRepository("Sanmoo/frontend") };
     const backend = { ...selectionFor(sim, "project in (ABC, DEF) AND labels = backend"), destination: githubRepository("Sanmoo/backend") };
@@ -101,11 +95,11 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
       "the site's native Rank order crosses selections and pages, never the declaration order",
     );
     const searches = sim.requests.filter((request) => request.path === "/rest/api/3/search/jql");
-    assert.equal(searches.length, 2, "two pages of the one site query");
-    assert.equal(
-      searches[0]?.jql,
-      "(project in (ABC, DEF) AND labels = backend) OR (project in (ABC, DEF) AND labels = frontend) ORDER BY Rank ASC",
-      "the site query is the union of the selections, ordered only by native Rank",
+    assert.equal(searches.length, 2, "two pages of the one site read");
+    assert.deepEqual(
+      searches.map((request) => request.nextPageToken),
+      [null, "2"],
+      "the site's own page token chain is followed, not a page per selection",
     );
   });
 

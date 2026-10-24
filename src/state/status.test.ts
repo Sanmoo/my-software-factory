@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
-import { JiraSim } from "../tracker/jira-sim.js";
+import { JiraSim, type SimJiraIssue } from "../tracker/jira-sim.js";
 import type { TicketSelection } from "../tracker/expanded-port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -1013,6 +1013,15 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     };
   }
 
+  /** A controlled Jira selection stand-in: a configured JQL gets its own
+   *  issues; any other read (the site's ordered result) sees the whole site. */
+  function selectBy(members: Record<string, (issue: SimJiraIssue) => boolean>): NonNullable<JiraSim["select"]> {
+    return (jql, issues) => {
+      const direct = Object.entries(members).find(([query]) => jql === query || jql === `${query} ORDER BY Rank ASC`);
+      return direct === undefined ? issues : issues.filter(direct[1]);
+    };
+  }
+
   test("one site's candidates keep native Rank order; another site that cannot be read is unknown", async () => {
     const healthy = new JiraSim();
     healthy.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: null });
@@ -1100,13 +1109,12 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     sim.addIssue({ id: "10003", key: "ABC-3", summary: "Touches both layers", labels: ["frontend", "backend"], created: "2026-04-01T00:00:00.000+0000", priority: "Medium", assignee: null });
     sim.addIssue({ id: "10004", key: "ABC-4", summary: "Frontend second", labels: ["frontend"], created: "2026-03-01T00:00:00.000+0000", priority: "Lowest" });
     sim.addIssue({ id: "10005", key: "ABC-5", summary: "Backend second", labels: ["backend"], created: "2026-02-01T00:00:00.000+0000", priority: "High" });
-    sim.select = (jql, issues) => {
-      if (jql.includes(") OR (")) return issues;
-      if (jql.includes("labels = frontend")) return issues.filter((issue) => issue.labels.includes("frontend"));
-      if (jql.includes("labels = backend")) return issues.filter((issue) => issue.labels.includes("backend"));
-      return [];
-    };
+    sim.select = selectBy({
+      "project = ABC AND labels = frontend": (issue) => issue.labels.includes("frontend"),
+      "project = ABC AND labels = backend": (issue) => issue.labels.includes("backend"),
+    });
 
+    const adapter = jiraAdapter(sim);
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
@@ -1114,11 +1122,11 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
           // Declared backend first: the site's Rank must not follow declarations.
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = backend", "Sanmoo/backend"),
-            tickets: jiraAdapter(sim),
+            tickets: adapter,
           },
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
-            tickets: jiraAdapter(sim),
+            tickets: adapter,
           },
         ],
       },
@@ -1144,12 +1152,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       "only the ticket two destinations promise is held; the other candidates stay usable",
     );
     assert.ok(
-      sim.requests.some((request) => request.jql === "(project = ABC AND labels = backend) OR (project = ABC AND labels = frontend) ORDER BY Rank ASC"),
-      "the site is read as one Rank-ordered union, never as concatenated selection queues",
-    );
-    assert.ok(
       sim.requests.filter((request) => request.path === "/rest/api/3/search/jql").length > 3,
-      "the union and the selection reads both followed Jira's page tokens",
+      "the site read and the selection reads both followed Jira's page tokens",
     );
 
     const text = renderStatus(view);
@@ -1163,7 +1167,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.match(
       text,
       /selection \(project = ABC AND labels = backend\) → Sanmoo\/backend: 3 selected, 1 held as ambiguous/,
-      "each readable selector's contribution is visible in the report",
+      "each readable selection's contribution is visible in the report",
     );
     assert.match(
       text,
@@ -1175,19 +1179,18 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
   test("a site whose only tickets are held says so instead of 'none'", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections", labels: ["a", "b"] });
-    sim.select = (jql, issues) => {
-      if (jql.includes(") OR (")) return issues;
-      if (jql.includes("labels = a")) return issues.filter((issue) => issue.labels.includes("a"));
-      if (jql.includes("labels = b")) return issues.filter((issue) => issue.labels.includes("b"));
-      return [];
-    };
+    sim.select = selectBy({
+      "labels = a": (issue) => issue.labels.includes("a"),
+      "labels = b": (issue) => issue.labels.includes("b"),
+    });
+    const adapter = jiraAdapter(sim);
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/a"), tickets: jiraAdapter(sim) },
-          { selection: selection("acme.atlassian.net", "labels = b", "Sanmoo/b"), tickets: jiraAdapter(sim) },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/a"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = b", "Sanmoo/b"), tickets: adapter },
         ],
       },
       statusConfig(),
@@ -1201,20 +1204,33 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held ticket never reads as an empty JQL result");
   });
 
-  test("a readable selection on a site with an unreadable sibling says the overlap is unverified", async () => {
+  test("an unreadable sibling leaves a readable selection's candidates unverified, even for one destination", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One", labels: ["abc"] });
-    sim.select = (jql, issues) => {
-      if (jql.includes("labels = abc")) return issues.filter((issue) => issue.labels.includes("abc"));
-      return issues;
+    sim.select = selectBy({ "labels = abc": (issue) => issue.labels.includes("abc") });
+    const transport = async (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }) => {
+      if (url.endsWith("/rest/api/3/search/jql")) {
+        const body = JSON.parse(init.body ?? "{}") as { jql?: string };
+        if (body.jql?.includes("project = XYZ")) {
+          return { status: 400, text: JSON.stringify({ errorMessages: ["Error in the JQL Query"] }) };
+        }
+      }
+      return sim.transport(url, init);
     };
+    const adapter = new JiraTicketAdapter({
+      site: sim.site,
+      account: sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env: { [TOKEN_ENV]: sim.token },
+      transport,
+    });
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = abc", "Sanmoo/a"), tickets: jiraAdapter(sim) },
-          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/b"), tickets: jiraAdapter(sim, {}) },
+          { selection: selection("acme.atlassian.net", "labels = abc", "Sanmoo/a"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/a"), tickets: adapter },
         ],
       },
       statusConfig(),
@@ -1223,46 +1239,48 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
     const [site] = view.jira;
     if (site?.state !== "known") assert.fail("the readable selection still lists");
-    assert.equal(site.candidates[0]?.unverified, true, "the unknown sibling names another destination");
+    assert.equal(site.candidates[0]?.unverified, true, "the unreadable sibling may hide an interleaved candidate");
     const text = renderStatus(view);
 
-    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a, Sanmoo\/b: 1 candidate/);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: 1 candidate/);
     assert.match(text, /1\. ABC-1 .*\(unverified: another selection on this site is unknown\)/);
-    assert.match(text, /selection \(project = XYZ\) → Sanmoo\/b: unknown \(/);
+    assert.match(text, /selection \(project = XYZ\) → Sanmoo\/a: unknown \(/);
   });
 
   test("a site whose ordered union cannot be read is unknown, never its selections concatenated", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend", labels: ["frontend"] });
     sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend", labels: ["backend"] });
-    sim.select = (jql, issues) => {
-      if (jql.includes(") OR (")) return issues;
-      return issues.filter((issue) => jql.includes(`labels = ${issue.labels[0]}`));
-    };
+    sim.select = selectBy({
+      "labels = frontend": (issue) => issue.labels.includes("frontend"),
+      "labels = backend": (issue) => issue.labels.includes("backend"),
+    });
+    const directQueries = new Set(["labels = frontend", "labels = backend"]);
     const transport = async (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }) => {
       if (url.endsWith("/rest/api/3/search/jql")) {
         const body = JSON.parse(init.body ?? "{}") as { jql?: string };
-        if (body.jql?.includes(") OR (")) {
+        const direct = [...directQueries].some((query) => body.jql === query || body.jql === `${query} ORDER BY Rank ASC`);
+        if (!direct) {
           return { status: 503, text: JSON.stringify({ errorMessages: ["The service is unavailable"] }) };
         }
       }
       return sim.transport(url, init);
     };
-    const reader = (jql: string, destination: string) => ({
-      selection: selection("acme.atlassian.net", jql, destination),
-      tickets: new JiraTicketAdapter({
-        site: sim.site,
-        account: sim.account.emailAddress,
-        tokenEnv: TOKEN_ENV,
-        env: { [TOKEN_ENV]: sim.token },
-        transport,
-      }),
+    const adapter = new JiraTicketAdapter({
+      site: sim.site,
+      account: sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env: { [TOKEN_ENV]: sim.token },
+      transport,
     });
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
-        jira: [reader("labels = frontend", "Sanmoo/frontend"), reader("labels = backend", "Sanmoo/backend")],
+        jira: [
+          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter },
+        ],
       },
       statusConfig(),
       layout,
@@ -1278,7 +1296,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.deepEqual(
       site.selections.map((entry) => entry.state),
       ["known", "known"],
-      "the individual selectors were readable; only the order is unknown",
+      "the individual selections were readable; only the order is unknown",
     );
     const text = renderStatus(view);
     assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: unknown \(/);
@@ -1289,12 +1307,13 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One Work", labels: ["ready"] });
 
+    const adapter = jiraAdapter(sim);
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(sim) },
-          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: jiraAdapter(sim) },
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: adapter },
         ],
       },
       statusConfig(),

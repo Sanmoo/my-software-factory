@@ -90,8 +90,8 @@ export interface JiraTicketFacts {
  *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
 export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
-  /** An unreadable selection on this site names another destination, so this
-   *  candidate's overlap with it cannot be ruled out. */
+  /** An unreadable selection on this site may hide a candidate that would
+   *  interleave with this one, or another destination for it. */
   unverified: boolean;
 }
 
@@ -102,39 +102,32 @@ export interface AmbiguousJiraTicket extends JiraTicketFacts {
   ticket: TicketIdentity;
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
-  /** An unreadable selection on this site names a further destination, so the
-   *  conflict itself is not verified. */
+  /** An unreadable selection on this site may name a further destination, so
+   *  the conflict itself is not verified. */
   unverified: boolean;
 }
 
 /** One configured selection's read, kept for diagnosis: a site's ordered set is
- *  the candidates, while this says whether each selector contributed. */
+ *  the candidates, while this says whether each selection contributed. */
 export type JiraSelectionView =
   | { selection: TicketSelection; state: "known"; selected: number; held: number }
   | { selection: TicketSelection; state: "unknown"; reason: string };
 
 /** One Jira site's candidates: ONE native Rank order across all its selections,
  *  never one queue per destination or per declared repository (issue 129). */
+interface JiraSiteBase {
+  site: string;
+  /** Every explicitly configured destination, sorted so declaration order
+   *  never changes the report. */
+  destinations: RepositoryIdentity[];
+  selections: JiraSelectionView[];
+  candidates: JiraCandidate[];
+  ambiguous: AmbiguousJiraTicket[];
+}
+
 export type JiraSiteView =
-  | {
-      site: string;
-      /** Every explicitly configured destination, sorted so declaration order
-       *  never changes the report. */
-      destinations: RepositoryIdentity[];
-      state: "known";
-      selections: JiraSelectionView[];
-      candidates: JiraCandidate[];
-      ambiguous: AmbiguousJiraTicket[];
-    }
-  | {
-      site: string;
-      destinations: RepositoryIdentity[];
-      state: "unknown";
-      reason: string;
-      selections: JiraSelectionView[];
-      candidates: JiraCandidate[];
-      ambiguous: AmbiguousJiraTicket[];
-    };
+  | (JiraSiteBase & { state: "known" })
+  | (JiraSiteBase & { state: "unknown"; reason: string });
 
 /** One configured Jira selection and the read-only adapter that reads it. */
 export interface JiraSelectionReader {
@@ -210,19 +203,22 @@ function emptyTrackerState(): TrackerState {
   return { pool: [], unbackedClaims: [], unmarkedReservations: [] };
 }
 
-/** The result of one selection's own read: its tickets, or why it is unknown. */
 type SelectionRead =
   | { reader: JiraSelectionReader; state: "known"; tickets: OpenTicket[] }
   | { reader: JiraSelectionReader; state: "unknown"; reason: string };
 
 type KnownSelectionRead = Extract<SelectionRead, { state: "known" }>;
+type UnknownSelectionRead = Extract<SelectionRead, { state: "unknown" }>;
 export type KnownJiraSiteView = Extract<JiraSiteView, { state: "known" }>;
+
+const isKnownRead = (entry: SelectionRead): entry is KnownSelectionRead => entry.state === "known";
+const isUnknownRead = (entry: SelectionRead): entry is UnknownSelectionRead => entry.state === "unknown";
 
 /**
  * Every configured Jira site, grouped by site and read as ONE ordered set
  * (issue 129). Sites are sorted by name so the report never inherits the order
  * the repositories were declared in. The order inside a site comes only from
- * Jira's native Rank — never from the first-listed selector or a merged list of
+ * Jira's native Rank — never from the first-listed selection or a merged list of
  * independently ordered queues.
  */
 async function readJiraSites(readers: readonly JiraSelectionReader[]): Promise<JiraSiteView[]> {
@@ -233,7 +229,7 @@ async function readJiraSites(readers: readonly JiraSelectionReader[]): Promise<J
     if (group === undefined) groups.set(site, [reader]);
     else group.push(reader);
   }
-  const sites = [...groups.keys()].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  const sites = [...groups.keys()].sort((left, right) => left.localeCompare(right));
   return Promise.all(sites.map((site) => readJiraSite(site, groups.get(site) ?? [])));
 }
 
@@ -250,7 +246,10 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       }
     }),
   );
-  const known = readings.filter((entry): entry is Extract<SelectionRead, { state: "known" }> => entry.state === "known");
+  const known = readings.filter(isKnownRead);
+  if (new Set(readers.map((reader) => reader.tickets)).size > 1) {
+    return unknownSite(site, destinations, "the site's selections do not share one tracker", readings);
+  }
 
   if (known.length === 0) {
     return unknownSite(
@@ -262,13 +261,13 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   }
 
   // One selection is already one complete native order. Several need Jira's
-  // own union query: only the site can say how its selectors' tickets rank
+  // own union query: only the site can say how its selections' tickets rank
   // against each other.
   let ordered: OpenTicket[];
   if (known.length === 1) {
     ordered = known[0]?.tickets ?? [];
   } else {
-    const orderedRead = await readSiteOrder(known);
+    const orderedRead = await readSiteOrder(known[0]!, known);
     if (orderedRead.state === "unknown") {
       return unknownSite(site, destinations, orderedRead.reason, readings);
     }
@@ -276,9 +275,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   }
 
   const membership = ticketMemberships(known);
-  const unknownDestinations = readings
-    .filter((entry): entry is Extract<SelectionRead, { state: "unknown" }> => entry.state === "unknown")
-    .map((entry) => entry.reader.selection.destination);
+  const hasUnreadableSelection = readings.some(isUnknownRead);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
   if ([...membership.keys()].some((key) => !orderedKeys.has(key))) {
     // The two reads disagree, so no reliable site order exists for that ticket.
@@ -312,7 +309,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
         title: ticket.title,
         assignees: ticket.assignees,
         destinations: destinationsForTicket,
-        unverified: unknownSelectionConflicts(unknownDestinations, destinationsForTicket),
+        unverified: hasUnreadableSelection,
       });
       continue;
     }
@@ -322,7 +319,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       work: workIdentity(ticket.ticket, destination),
       title: ticket.title,
       assignees: ticket.assignees,
-      unverified: unknownSelectionConflicts(unknownDestinations, [destination]),
+      unverified: hasUnreadableSelection,
     });
   }
 
@@ -338,14 +335,13 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
 
 /** The site's union query, read only after its readable selections are known. */
 async function readSiteOrder(
+  first: KnownSelectionRead,
   known: readonly KnownSelectionRead[],
 ): Promise<{ state: "known"; tickets: OpenTicket[] } | { state: "unknown"; reason: string }> {
-  const reader = known[0]?.reader;
-  if (reader === undefined) return { state: "unknown", reason: "the site carries no readable selection" };
   try {
     return {
       state: "known",
-      tickets: await reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection)),
+      tickets: await first.reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection)),
     };
   } catch (error) {
     return { state: "unknown", reason: describeError(error) };
@@ -407,23 +403,10 @@ function distinctDestinations(destinations: readonly RepositoryIdentity[]): Repo
   const byKey = new Map<string, RepositoryIdentity>();
   for (const destination of destinations) byKey.set(repositoryIdentityKey(destination), destination);
   return [...byKey.entries()]
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .sort(([left], [right]) => left.localeCompare(right))
     .map(([, destination]) => destination);
 }
 
-/** Does an unreadable selection name a destination outside `known`? If so, an
- *  overlap with it cannot be ruled out (never an empty conflict list). */
-function unknownSelectionConflicts(
-  unknown: readonly RepositoryIdentity[],
-  known: readonly RepositoryIdentity[],
-): boolean {
-  return unknown.some(
-    (destination) =>
-      !known.some(
-        (candidate) => repositoryIdentityKey(candidate) === repositoryIdentityKey(destination),
-      ),
-  );
-}
 
 /**
  * The two states, from the registry and the probe together (issue 102): a work
