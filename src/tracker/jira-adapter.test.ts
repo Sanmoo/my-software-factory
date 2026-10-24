@@ -166,6 +166,22 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
     });
   });
 
+  test("a page that says it is not the last and carries no token is a read failure too", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.endsWith("/rest/api/3/search/jql")) return response;
+      return { status: 200, text: JSON.stringify({ issues: JSON.parse(response.text).issues, isLast: false }) };
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    await assert.rejects(
+      adapter.listOpenTickets(selectionFor(sim, "project = ABC")),
+      /neither ends the result nor carries a page token/,
+    );
+  });
+
   test("a page that ends and also carries a page token is a read failure, never a silent stop", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
