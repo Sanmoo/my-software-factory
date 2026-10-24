@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 
 /**
- * The factory's worker image tag, single-sourced from package.json's
- * `workerImage`. Shared by the runtime, the status probe and the gateway; the
- * gateway and the TypeScript build both import this module.
+ * The factory's worker image tag: package.json's `workerImage`, unless
+ * MSF_WORKER_IMAGE overrides it for one checkout. Shared by the runtime, the
+ * status probe and the gateway; the gateway and the TypeScript build both
+ * import this module.
  */
 function readWorkerImage() {
   // An isolated checkout may keep its own tag apart from the shared default

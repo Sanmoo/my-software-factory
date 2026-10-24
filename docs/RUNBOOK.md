@@ -1,4 +1,4 @@
-# RUNBOOK — the live proof of v0.1 (ticket 18)
+# RUNBOOK — the live proof of v0.1
 
 The factory is wired end to end with only real components: the real GitHub
 adapter (`gh` keyring token at boot), the real Sandcastle runtime (Pi
@@ -49,27 +49,21 @@ EOF
 `agent-resources.yaml` is the single declaration of the environment: Pi, the
 selected upstream skills at an immutable commit, the delegation extension with
 its operating guidance, and the reviewer agents. `npm run build:image` fetches
-and verifies all of it, records the result in `/opt/msf/agent-inventory.json`,
-and only then moves the image tag — a failed build leaves the previous valid
-image in place.
+and verifies all of it, records what the image holds in
+`/opt/msf/agent-inventory.json`, and moves the tag only on success.
 
-- **Update a resource**: change `agent-resources.yaml` in a reviewed commit,
-  then `npm run build:image`. Never edit files inside a running image. The
-  continuity guardrail is factory code staged from this checkout's `dist/`,
-  not a declared external resource; the same build pins it.
-- **Upgrading from the profile snapshot**: `profile-allowed-roots` and
-  `profile-skip-dangling-links` no longer exist — delete them from `msf.yaml`.
-- **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`
-  shows what the image actually contains. A launch whose image differs from
-  the checkout's declaration fails at boot with the differences and the
-  rebuild command; the worker is never started on the wrong set.
-- **Concurrent checkouts**: set `MSF_WORKER_IMAGE=msf-v2-worker:<name>` for
-  both `build:image` and `gateway` so two checkouts on one Docker host do not
-  overwrite each other's tag; the image inventory, not the tag, proves the
-  contents.
-- **Clean host check**: with no `~/.pi/agent` and no Pi on the host, run
-  `npm run build:image`, `npm run gateway`, then `node dist/cli.js run --once`.
-  The gateway's image check is the proof of what loads (README: Tests).
+- **Update a resource**: change `agent-resources.yaml` in a reviewed commit and
+  rebuild. Never edit a running image.
+- **Upgrading from the profile snapshot**: delete `profile-allowed-roots` and
+  `profile-skip-dangling-links` from `msf.yaml`.
+- **Diagnose**: `docker run --rm --network none --entrypoint cat <image> /opt/msf/agent-inventory.json`
+  shows what the image holds; a launch whose image differs from this checkout's
+  declaration refuses to start the worker and names the rebuild command.
+- **Concurrent checkouts**: set `MSF_WORKER_IMAGE=<image>:<name>` for both
+  `build:image` and `gateway`, so two checkouts on one Docker host keep their
+  tags apart.
+- **Clean host check**: with no `~/.pi/agent` and no Pi installed, rebuild, run
+  the gateway, then `node dist/cli.js run --once`.
 
 ## Real proof (operator credentials, not automatic)
 
@@ -78,13 +72,13 @@ MSF_REAL_PROOF_MODEL=provider/model-id npm run proof:real
 # or MSF_REAL_PROOF_AUTH_FILE=/path/to/auth.json
 ```
 
-This starts the built image with no personal profile and an empty cache,
-loads the declared skills, implements a local spec, and requires two distinct
-reviewer subagents plus the outcome record. The GitHub-delivery half of ADR 0001 (an actual PR in an authorized
-disposable repo) remains an operator-gated run: no credentials or disposable
-repo are assumed here, so it is recorded as outstanding rather than claimed.
+This starts the built image on an empty cache, implements a local spec and
+requires two distinct reviewer subagents plus the outcome record. ADR 0001's
+GitHub-delivery half (an actual PR in an authorized disposable repo) remains an
+operator-gated run: no credentials or disposable repo are assumed here, so it is
+recorded as outstanding rather than claimed.
 
-## Toolchains — the convergence layer (ticket 18)
+## Toolchains — the convergence layer
 
 The worker image ships the `mise` binary (its apt repo, mise.jdx.dev/deb) and
 the agent's PATH starts with `/home/agent/.local/share/mise/shims`. The
