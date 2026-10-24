@@ -8,7 +8,13 @@ import type { LivenessObservation } from "../state/liveness.js";
 import { COOPERATIVE_STOP_MS } from "../stop-signals.js";
 import { renderWorkIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { readLastAttempt, readLaunchFacts } from "./registry.js";
-import { recordStopRequest, recordUnconfirmedStop, refundRecovery } from "./recovery.js";
+import {
+  confirmStopRequest,
+  readRecoveryLedger,
+  recordStopRequest,
+  recordUnconfirmedStop,
+  refundRecovery,
+} from "./recovery.js";
 import { workKeyOf, workOfKey } from "./work-key.js";
 
 /**
@@ -20,10 +26,13 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  * persisted so the next invocation holds the work instead of relaunching over
  * a possible worker (ADR 0008).
  *
- * The module owns that whole ordering. The sweep supplies only the facts of
- * the run — its in-flight launches, its survivors and what is still pending —
- * and calls the interface; the recovery ledger remains `pool/recovery.ts`'s
- * writer, sequenced from here.
+ * The module owns that whole ordering, and the next invocation's reconciliation
+ * of an unconfirmed stop re-derives it here, over the same hold rule the stop
+ * applied: one reading of the persisted facts, not two. The sweep supplies only
+ * the facts of the run — its in-flight launches, its survivors, the reserved
+ * works to reconcile and the latest liveness observation — and calls the
+ * interface; the recovery ledger remains `pool/recovery.ts`'s writer,
+ * sequenced from here.
  */
 
 /**
@@ -103,8 +112,9 @@ const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.l
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
 /** Why a work's end cannot be confirmed, or null when it is: an unreadable
- *  probe is uncertainty, never an empty factory. Shared with the sweep's
- *  reconciliation of a stop a previous invocation could not confirm. */
+ *  probe is uncertainty, never an empty factory. It is THE reading of the hold
+ *  rule: the stop's confirmation and the next invocation's reconciliation both
+ *  ask it, so the same persisted facts get the same verdict. */
 export function stopHoldReason(observation: LivenessObservation, key: string): string | null {
   if (observation.state === "unknown") {
     return `the worker liveness could not be read (${observation.reason})`;
@@ -112,6 +122,53 @@ export function stopHoldReason(observation: LivenessObservation, key: string): s
   return observation.workers.some((worker) => worker.key === key)
     ? "a worker of this work is still alive"
     : null;
+}
+
+/** A reserved Work as the next invocation's reconciliation addresses it: the
+ *  registry key and the dir holding its recovery ledger. */
+export interface StopWorkRef {
+  key: string;
+  dir: string;
+}
+
+/** What the next invocation decides about a stop a previous invocation could
+ *  not confirm: the attempt resumes free of charge, or the work stays held for
+ *  the reason the same rule gives. */
+export type UnconfirmedStopVerdict =
+  | { kind: "resume"; key: string; attempt: number }
+  | { kind: "hold"; key: string; because: string };
+
+/**
+ * Settle the stops a previous invocation could not confirm (issue #146, ADR
+ * 0008) with the same reading the stop itself applies: the persisted
+ * `lastStop` names the attempt, `stopHoldReason` answers over the fresh
+ * observation, a worker confirmed gone promotes the record to the
+ * requested-stop resume it was meant to be, and a hold never relaunches. The
+ * caller only presents the verdicts; the persisted facts and the recovery write
+ * are decided here.
+ */
+export async function reconcileUnconfirmedStops(
+  works: Iterable<StopWorkRef>,
+  observation: LivenessObservation,
+  now: () => Date = () => new Date(),
+): Promise<UnconfirmedStopVerdict[]> {
+  const verdicts: UnconfirmedStopVerdict[] = [];
+  for (const work of works) {
+    const stop = (await readRecoveryLedger(work.dir)).lastStop;
+    if (stop === null || stop.kind !== "stop-unconfirmed") continue;
+    const because = stopHoldReason(observation, work.key);
+    if (because !== null) {
+      verdicts.push({
+        kind: "hold",
+        key: work.key,
+        because: `${because} — the previous stop (${stop.because}) stays unconfirmed`,
+      });
+      continue;
+    }
+    await confirmStopRequest(work.dir, stop.attempt, now);
+    verdicts.push({ kind: "resume", key: work.key, attempt: stop.attempt });
+  }
+  return verdicts;
 }
 
 /** One run's requested stop: begin it once, escalate at will, read the report. */
