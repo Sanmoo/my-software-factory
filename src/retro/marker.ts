@@ -19,7 +19,7 @@ export const RETRO_IN_FLIGHT_FILENAME = "rodada-em-andamento.json";
 export interface RetroState {
   /** File name of the last report any round wrote; null before any. */
   lastReport: string | null;
-  /** Finish time (epoch ms) of the newest work the last report covered. */
+  /** Finish time (epoch ms) of the newest work a report has covered. */
   boundaryAt: number | null;
   /** Works a forced single-work round analyzed without moving the boundary. */
   analyzed: string[];
@@ -118,6 +118,9 @@ export async function liveRoundInFlight(layout: WorkspaceLayout): Promise<RetroI
 }
 
 function isOwnerAlive(inFlight: RetroInFlight): boolean {
+  // pid 0 is the caller's own process group — `kill(0, 0)` always answers, so a
+  // record that names no owner is stale by definition.
+  if (inFlight.pid <= 0) return false;
   try {
     process.kill(inFlight.pid, 0);
     return true;
