@@ -5,7 +5,7 @@ import { activePullRequest, readPrAssociations } from "../pool/pr-association.js
 import { workKeyOf } from "../pool/work-key.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -556,18 +556,26 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       ticket: jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
       destination: githubRepository(REPO),
     };
-    reserveWork(layout, reservationRecordOf(jiraWork, { title: "Jira request" }));
+    const reserved = reserveWork(layout, reservationRecordOf(jiraWork, { title: "Jira request" }));
 
     const logs: string[] = [];
+    const held = () => logs.filter((line) => line.includes("the composed ticket adapter does not serve"));
     const engine = new SweepEngine({ ...deps, log: (message) => logs.push(message) });
     await engine.deriveAndAct();
     await engine.deriveAndAct();
 
-    assert.equal(
-      logs.filter((line) => line.includes("the composed ticket adapter does not serve")).length,
-      1,
-      "the operator reads the hold once, not on every tick",
-    );
+    assert.equal(held().length, 1, "the operator reads the hold once, not on every tick");
+
+    // The reservation leaves the workspace and comes back: a new appearance,
+    // so the hold is said again instead of being spent by the earlier one.
+    const away = join(layout.root, "held-away");
+    renameSync(reserved.dir, away);
+    await engine.deriveAndAct();
+    assert.equal(held().length, 1, "nothing to hold while the reservation is gone");
+    renameSync(away, reserved.dir);
+    await engine.deriveAndAct();
+
+    assert.equal(held().length, 2, "the returned reservation is held again, never silently passed over");
   });
 
   test("ticket facts and PR facts travel through their own expanded ports", async () => {

@@ -28,10 +28,11 @@ import {
 
 /**
  * TRANSITIONAL bridge (issue 124): the old `TrackerPort` shape over the
- * expanded ticket/PR contracts. The migrated orchestration no longer uses it;
- * it remains the declared compatibility surface until #127 removes it, and
- * the contract regression still exercises it. It never adds a fact of its
- * own — every operation is one call into the expanded port.
+ * expanded ticket/PR contracts. The orchestration speaks the expanded ports;
+ * what still reads this shape is the worker-facing continuity machinery,
+ * which the loop serves through the bridge at that one boundary until #127
+ * removes it. The contract regression also exercises it. It never adds a fact
+ * of its own — every operation is one call into the expanded port.
  */
 export function legacyTrackerPort(
   tickets: TicketTracker,
