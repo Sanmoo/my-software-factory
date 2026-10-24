@@ -1,7 +1,6 @@
 import { Factory, type AcquisitionOutcome, type Observation } from "./factory.js";
 import {
   claimRecord,
-  claimToJson,
   CLAIM_PROPERTY_KEY,
   githubDestination,
   jiraTicket,
@@ -61,10 +60,6 @@ export class Lab {
     this.ticketMap.set(ticketIdentityKey(ticket), ticket);
     this.tracker.seedIssue({ site: ticket.site, stableId: ticket.stableId, key: ticket.key });
     return ticket;
-  }
-
-  addTicket(ticket: JiraTicket): void {
-    this.seed(ticket);
   }
 
   factory(id: string, ticket: JiraTicket, options?: { destination?: Destination; accountId?: string }): Factory {
@@ -190,6 +185,20 @@ function contendDocumented(lab: Lab): void {
   b.verifyClaim();
   b.presentClaim();
   b.launch();
+}
+
+/** A blind-mark race: each factory writes its mark, reads it back, and runs. */
+function raceBlindMarks(
+  lab: Lab,
+  write: (factory: Factory) => void,
+  showsOwnMark: (factory: Factory) => boolean,
+): void {
+  for (const id of ["A", "B"] as const) {
+    const factory = lab.f(id);
+    factory.observe();
+    write(factory);
+    if (showsOwnMark(factory)) startDirect(lab, id);
+  }
 }
 
 function startDirect(lab: Lab, id: string): void {
@@ -467,6 +476,97 @@ export function failedJobWritesNothing(): SceneFacts {
   });
 }
 
+export function failureBeforeScheduling(): SceneFacts {
+  const ticket = defaultTicket();
+  const lab = new Lab(CAS_PREMISE_MODEL);
+  lab.seed(ticket);
+  lab.factory("A", ticket);
+  const a = lab.f("A");
+  a.observe();
+  a.submitClaim({ failBeforeScheduling: true });
+  const firstOutcome = a.outcome();
+  const attemptsAfterFailure = a.attempts();
+  const launchAfterFailure = a.launch();
+
+  a.observe();
+  const retry = a.submitClaim();
+  if (retry?.taskId != null) lab.tracker.applyJob(retry.taskId);
+  a.completeClaim();
+  a.verifyClaim();
+  a.presentClaim();
+  const launched = a.launch();
+  return lab.facts({
+    scenario: "failure-before-scheduling",
+    note: "the request never reached Jira: no job, no claim, no Attempt; a clean retry acquires",
+    outcomes: { A: outcomeText(a.outcome()) },
+    details: {
+      "outcome after the failed request": outcomeText(firstOutcome),
+      "launch after the failed request": launchAfterFailure === null ? "no" : "yes",
+      "attempts after the failed request": String(attemptsAfterFailure),
+      "launch after the retry": launched === null ? "no" : "yes",
+    },
+  });
+}
+
+export function currentValueTransfer(premise: "cas" | "documented"): SceneFacts {
+  const ticket = defaultTicket();
+  const lab = new Lab(
+    premise === "cas"
+      ? CAS_PREMISE_MODEL
+      : { eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+  );
+  lab.seed(ticket);
+  const holder = lab.factory("A", ticket);
+  const first = lab.factory("B", ticket);
+  const second = lab.factory("C", ticket);
+  const observed = claimFor(holder, "a-1");
+  lab.tracker.setPropertyBlind({
+    site: ticket.site,
+    issueId: Number(ticket.stableId),
+    propertyKey: CLAIM_PROPERTY_KEY,
+    value: observed,
+    factory: holder.id,
+  });
+  const firstJob = lab.tracker.submitConditional({
+    site: ticket.site,
+    issueId: Number(ticket.stableId),
+    propertyKey: CLAIM_PROPERTY_KEY,
+    value: claimFor(first, "b-1"),
+    factory: first.id,
+    filter: "current-value",
+    currentValue: observed,
+  });
+  const secondJob = lab.tracker.submitConditional({
+    site: ticket.site,
+    issueId: Number(ticket.stableId),
+    propertyKey: CLAIM_PROPERTY_KEY,
+    value: claimFor(second, "c-1"),
+    factory: second.id,
+    filter: "current-value",
+    currentValue: observed,
+  });
+  if (premise === "cas") {
+    lab.tracker.applyJob(firstJob.taskId);
+    lab.tracker.applyJob(secondJob.taskId);
+  } else {
+    lab.tracker.beginJob(firstJob.taskId);
+    lab.tracker.beginJob(secondJob.taskId);
+    lab.tracker.commitJob(firstJob.taskId);
+    lab.tracker.commitJob(secondJob.taskId);
+  }
+  return lab.facts({
+    scenario: `current-value-transfer-${premise}`,
+    note: "currentValue is the same undocumented evaluation; two transfers conditioned on the same observed value can both commit",
+    details: {
+      "observed value": observed.factory,
+      "final claim": String(lab.claims()[ticketIdentityKey(ticket)]),
+      "transfer jobs committed": String(
+        lab.tracker.requestLog().filter((entry) => entry.op === "bulk job" && entry.outcome === "applied").length,
+      ),
+    },
+  });
+}
+
 export function noLocalReservationProvesNoAbandonment(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
@@ -714,7 +814,7 @@ export function nonParticipantBreaksThePremise(): SceneFacts {
     site: ticket.site,
     issueId: Number(ticket.stableId),
     propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimToJson({ ...intruder, factory: "intruder" }),
+    value: { ...intruder, factory: "intruder" },
     factory: "intruder",
   });
   lab.runtime.start({
@@ -832,7 +932,7 @@ export function candidateBlindSingleProperty(): SceneFacts {
     site: ticket.site,
     issueId: Number(ticket.stableId),
     propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimToJson(claimFor(a, "a-1")),
+    value: claimFor(a, "a-1"),
     factory: a.id,
   });
   a.verifyClaim();
@@ -842,7 +942,7 @@ export function candidateBlindSingleProperty(): SceneFacts {
     site: ticket.site,
     issueId: Number(ticket.stableId),
     propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimToJson(claimFor(b, "b-1")),
+    value: claimFor(b, "b-1"),
     factory: b.id,
   });
   b.verifyClaim();
@@ -869,7 +969,7 @@ export function candidateBulkList(): SceneFacts {
     site: ticket.site,
     issueId: Number(ticket.stableId),
     propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimToJson(claimFor(a, "a-1")),
+    value: claimFor(a, "a-1"),
     factory: a.id,
   });
   lab.tracker.applyJob(first.taskId);
@@ -881,7 +981,7 @@ export function candidateBulkList(): SceneFacts {
     site: ticket.site,
     issueId: Number(ticket.stableId),
     propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimToJson(claimFor(b, "b-1")),
+    value: claimFor(b, "b-1"),
     factory: b.id,
   });
   lab.tracker.applyJob(second.taskId);
@@ -900,24 +1000,19 @@ export function candidateAssignment(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
   lab.seed(ticket);
-  const a = lab.factory("A", ticket, { accountId: "account-a" });
-  const b = lab.factory("B", ticket, { accountId: "account-b" });
-  a.observe();
-  b.observe();
-  lab.tracker.setAssigneeBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    accountId: "account-a",
-    factory: a.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).assignee === "account-a") startDirect(lab, a.id);
-  lab.tracker.setAssigneeBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    accountId: "account-b",
-    factory: b.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).assignee === "account-b") startDirect(lab, b.id);
+  lab.factory("A", ticket, { accountId: "account-a" });
+  lab.factory("B", ticket, { accountId: "account-b" });
+  raceBlindMarks(
+    lab,
+    (factory) =>
+      lab.tracker.setAssigneeBlind({
+        site: ticket.site,
+        issueId: Number(ticket.stableId),
+        accountId: factory.accountId,
+        factory: factory.id,
+      }),
+    (factory) => lab.tracker.issueView(ticket.site, Number(ticket.stableId)).assignee === factory.accountId,
+  );
   return lab.facts({
     scenario: "candidate-assignment",
     note: "assignment is a blind, last-write-wins field; each factory reads its own account and runs",
@@ -929,28 +1024,20 @@ export function candidateLabelEdit(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
   lab.seed(ticket);
-  const a = lab.factory("A", ticket);
-  const b = lab.factory("B", ticket);
-  a.observe();
-  b.observe();
-  lab.tracker.addLabelBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    label: `msf-claim:${a.id}`,
-    factory: a.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).labels.includes(`msf-claim:${a.id}`)) {
-    startDirect(lab, a.id);
-  }
-  lab.tracker.addLabelBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    label: `msf-claim:${b.id}`,
-    factory: b.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).labels.includes(`msf-claim:${b.id}`)) {
-    startDirect(lab, b.id);
-  }
+  lab.factory("A", ticket);
+  lab.factory("B", ticket);
+  raceBlindMarks(
+    lab,
+    (factory) =>
+      lab.tracker.addLabelBlind({
+        site: ticket.site,
+        issueId: Number(ticket.stableId),
+        label: `msf-claim:${factory.id}`,
+        factory: factory.id,
+      }),
+    (factory) =>
+      lab.tracker.issueView(ticket.site, Number(ticket.stableId)).labels.includes(`msf-claim:${factory.id}`),
+  );
   return lab.facts({
     scenario: "candidate-label-edit",
     note: "a common edit adding a per-factory label: labels accumulate, so both factories read their own mark and run",
@@ -962,24 +1049,19 @@ export function candidateWorkflowTransition(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
   lab.seed(ticket);
-  const a = lab.factory("A", ticket);
-  const b = lab.factory("B", ticket);
-  a.observe();
-  b.observe();
-  lab.tracker.transitionBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    status: `Claimed by ${a.id}`,
-    factory: a.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).status === `Claimed by ${a.id}`) startDirect(lab, a.id);
-  lab.tracker.transitionBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    status: `Claimed by ${b.id}`,
-    factory: b.id,
-  });
-  if (lab.tracker.issueView(ticket.site, Number(ticket.stableId)).status === `Claimed by ${b.id}`) startDirect(lab, b.id);
+  lab.factory("A", ticket);
+  lab.factory("B", ticket);
+  raceBlindMarks(
+    lab,
+    (factory) =>
+      lab.tracker.transitionBlind({
+        site: ticket.site,
+        issueId: Number(ticket.stableId),
+        status: `Claimed by ${factory.id}`,
+        factory: factory.id,
+      }),
+    (factory) => lab.tracker.issueView(ticket.site, Number(ticket.stableId)).status === `Claimed by ${factory.id}`,
+  );
   return lab.facts({
     scenario: "candidate-workflow-transition",
     note: "a transition is a blind status write; it carries no condition tied to the claim and needs an unapproved workflow change",
@@ -1001,6 +1083,9 @@ export function runScenarios(): SceneFacts[] {
     lostResponseDoesNotLaunch(),
     failedReadDoesNotAuthorize(),
     failedJobWritesNothing(),
+    failureBeforeScheduling(),
+    currentValueTransfer("documented"),
+    currentValueTransfer("cas"),
     noLocalReservationProvesNoAbandonment(),
     deathAndTimeDoNotAuthorizeTakeover(),
     localRecoveryKeepsTheAttempt(),

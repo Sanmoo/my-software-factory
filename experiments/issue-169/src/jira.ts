@@ -1,4 +1,4 @@
-import { cloneJson, type JsonValue } from "./json.js";
+import { cloneJson, jsonEquals, type JsonValue } from "./json.js";
 
 export type { JsonValue };
 
@@ -137,10 +137,13 @@ interface IssueState {
 }
 
 type JobKind = "conditional-property" | "list-property";
+type ConditionalFilter = "absent" | "current-value";
 
 interface Job {
   taskId: string;
   kind: JobKind;
+  filter: ConditionalFilter;
+  currentValue: JsonValue | undefined;
   site: string;
   issueId: number;
   propertyKey: string;
@@ -323,14 +326,29 @@ export class JiraCloud {
     propertyKey: string;
     value: JsonValue;
     factory: string;
+    filter?: ConditionalFilter;
+    currentValue?: JsonValue;
     faults?: SubmitFaults;
   }): SubmitOutcome {
     const state = this.requireIssue(input.site, input.issueId);
+    const filter = input.filter ?? "absent";
+    if (filter === "current-value" && input.currentValue === undefined) {
+      this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "failed", "currentValue filter without a value");
+      throw new JiraRequestError(400, "a currentValue filter requires the value to compare");
+    }
     if (input.faults?.failBeforeScheduling) {
       this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "failed", "connection failed before the job existed");
       throw new JiraRequestError(0, "connection failed before the job existed");
     }
-    const job = this.scheduleJob("conditional-property", state, input.propertyKey, input.value, input.factory);
+    const job = this.scheduleJob(
+      "conditional-property",
+      state,
+      input.propertyKey,
+      input.value,
+      input.factory,
+      filter,
+      input.currentValue,
+    );
     this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "scheduled", job.taskId);
     if (input.faults?.loseResponseAfterScheduling) {
       this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "lost", `${job.taskId} scheduled; response lost`);
@@ -377,7 +395,7 @@ export class JiraCloud {
         ? true
         : this.model.eligibilityAt === "enqueue"
           ? job.enqueuedEligible
-          : this.absentToday(state, job.propertyKey);
+          : this.eligibleToday(state, job);
     return job.eligible;
   }
 
@@ -398,7 +416,7 @@ export class JiraCloud {
         ? true
         : this.model.eligibilityAt === "enqueue"
           ? job.enqueuedEligible
-          : this.absentToday(state, job.propertyKey);
+          : this.eligibleToday(state, job);
     this.finishJob(job);
   }
 
@@ -487,12 +505,16 @@ export class JiraCloud {
     propertyKey: string,
     value: JsonValue,
     factory: string,
+    filter: ConditionalFilter = "absent",
+    currentValue?: JsonValue,
   ): Job {
     this.taskSeq += 1;
     const at = this.requests.length + 1;
     const job: Job = {
       taskId: `task-${this.taskSeq}`,
       kind,
+      filter,
+      currentValue: currentValue === undefined ? undefined : cloneJson(currentValue),
       site: state.site,
       issueId: state.issueId,
       propertyKey,
@@ -500,7 +522,11 @@ export class JiraCloud {
       factory,
       submittedSeq: at,
       status: "ENQUEUED",
-      enqueuedEligible: this.absentToday(state, propertyKey),
+      enqueuedEligible: this.eligibleToday(state, {
+        propertyKey,
+        filter,
+        currentValue: currentValue === undefined ? undefined : cloneJson(currentValue),
+      }),
       eligible: null,
       result: undefined,
     };
@@ -517,8 +543,12 @@ export class JiraCloud {
     this.record(job.site, job.factory, "bulk job", job.issueId, written ? "applied" : "skipped", job.taskId);
   }
 
-  private absentToday(state: IssueState, propertyKey: string): boolean {
-    return state.properties.get(propertyKey) === undefined;
+  private eligibleToday(
+    state: IssueState,
+    filter: { propertyKey: string; filter: ConditionalFilter; currentValue: JsonValue | undefined },
+  ): boolean {
+    const current = state.properties.get(filter.propertyKey);
+    return filter.filter === "absent" ? current === undefined : jsonEquals(current, filter.currentValue);
   }
 
   private writeProperty(state: IssueState, propertyKey: string, value: JsonValue | undefined): void {

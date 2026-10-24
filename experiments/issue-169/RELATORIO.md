@@ -12,7 +12,7 @@ property em lote**: `PUT /rest/api/3/issue/properties/{propertyKey}` com
 de Claim com a identidade da fábrica. Ele é **condicionalmente suficiente** sob
 estas premissas:
 
-- **P-ATOMIC** — o teste de elegibilidade (`hasProperty: false`) e a escrita são
+- **P-CAS** (a premissa de atomicidade do teste e da escrita) — o teste de elegibilidade (`hasProperty: false`) e a escrita são
   **um único passo indivisível** em relação a jobs concorrentes no mesmo
   Ticket: no máximo um job observa a propriedade ausente e grava; os demais
   observam a propriedade presente e não gravam. **A Atlassian não documenta
@@ -28,7 +28,7 @@ estas premissas:
   operador parar e confirmar o fim do Worker anterior; a instalação liberada não
   volta a executar aquele Work.
 
-Sem **P-ATOMIC**, a documentação admite a interleaving em que os dois jobs leem
+Sem **P-CAS**, a documentação admite a interleaving em que os dois jobs leem
 o estado anterior, ambos gravam (last write wins, exatamente a advertência
 oficial de concorrência em entity properties) e cada fábrica relê o **próprio**
 registro antes da escrita da outra: **dois Workers autorizados**. O harness
@@ -181,7 +181,7 @@ mas **não** neste `PUT` condicional.
 | Jobs concorrentes sobre a mesma issue são isolados/serializados | **inferência** (o `409` dos POSTs sugere, mas não é contrato do PUT nem CAS) |
 | O resultado da task diz quantas/ quais issues foram atualizadas | **não documentado** — o resultado é “specific to the operation”, e a operação não o descreve |
 | `GET` direto da property é read-after-write consistente | **não documentado** |
-| P-ATOMIC (teste + escrita indivisíveis) | **não documentado** — premissa indispensável |
+| P-CAS (teste + escrita indivisíveis) | **não documentado** — premissa indispensável |
 | Dois jobs concorrentes podem ambos atualizar sob as semânticas documentadas | **experimento no simulador**, consistente com a documentação; não é experimento contra o Jira |
 | Um experimento real de corrida no Jira Cloud | **não executado** (sem autorização/fixture) |
 
@@ -197,16 +197,16 @@ base URL é o site `*.atlassian.net`; a identidade do Ticket inclui o site.
 | # | Candidato | Por que não garante exclusividade |
 | --- | --- | --- |
 | C1 | `PUT` simples da property + releitura | Escrita cega, last write wins. A e B gravam; A relê antes da escrita de B e lança; B relê depois e lança. **2 Workers no harness.** |
-| C2 | `PUT /issue/properties/{key}` com `hasProperty:false` + `entityIds` | O filtro **parece** um CAS, mas a documentação não fixa quando é avaliado nem isola jobs concorrentes. Sob P-ATOMIC funciona; sem ela, os dois gravam. **Candidato condicional.** |
+| C2 | `PUT /issue/properties/{key}` com `hasProperty:false` + `entityIds` | O filtro **parece** um CAS, mas a documentação não fixa quando é avaliado nem isola jobs concorrentes. Sob P-CAS funciona; sem ela, os dois gravam. **Candidato condicional.** |
 | C3 | `POST /issue/properties` (lista, transacional) | A transação protege o conjunto contra erros, não contra um job concorrente que grava a mesma issue. Sem filtro: escrita cega. **2 Workers.** |
 | C4 | Atribuição (`PUT assignee`) + releitura | Campo único, escrita cega; a conta pode ser compartilhada (as duas leem “eu”). Não identifica instância. **2 Workers.** |
 | C5 | Edição comum (`PUT /issue`) com label/campo por fábrica | Labels acumulam; a edição é cega; o `409` é “conflicting update”, não uma condição sobre o Claim. **2 Workers.** |
 | C6 | Transição de workflow | Sem condição sobre o valor do Claim; exige mudança de workflow; o `409` genérico não elege vencedor. **2 Workers** no modelo; pré-requisito não aprovado. |
-| C7 | Comentário com menor `id` | A criação é cega e a ordem dos `id` concorrentes não é documentada; a listagem pode omitir um comentário já aplicado. Sem ordenação do provedor, dois vencedores. |
+| C7 | Comentário com menor `id` | A criação é cega e a ordem dos `id` concorrentes não é documentada; a listagem pode omitir um comentário já aplicado. Não há ordem do provedor que eleja um vencedor; não foi modelado porque a documentação não oferece a base. |
 | C8 | Lease/expiração/quiescência (esperar e reler) | Troca exclusividade por melhor esforço e reintroduz o problema: uma sobrescrita posterior pode ocorrer depois da última leitura. Rejeitado pelo requisito. |
 
 C2 é o único candidato que **poderia** satisfazer o requisito, e apenas sob
-P-ATOMIC. Não foi encontrado candidato melhor “só com o documentado”: todas as
+P-CAS. Não foi encontrado candidato melhor “só com o documentado”: todas as
 demais mutações são escritas cegas, e nenhuma operação documentada é um
 `create-if-absent` ou test-and-set.
 
@@ -230,11 +230,12 @@ A documentação não responde. Duas leituras são compatíveis com o texto:
 - **no enqueue** — o conjunto elegível é fixado quando o `303` é devolvido;
 - **no apply** — o job relê a propriedade quando executa.
 
-As duas importam. Mesmo supondo escritas serializadas (jamais simultâneas), um
-snapshot de elegibilidade no enqueue permite que dois jobs aprovados antes de
-qualquer escrita gravem em sequência: 60/924 interleavings com dois vencedores
-no harness. Um `409` que rejeitasse “outro bulk update em andamento” não
-resolveria sozinho esse caso, e o `PUT` condicional sequer documenta `409`.
+As duas importam. Sob o modelo documentado (sem isolamento), um snapshot no
+enqueue produz **520/3.432** interleavings com dois vencedores; mesmo
+**concedendo** escritas serializadas (P-CAS), um snapshot no enqueue ainda
+produz **60/924**: os dois jobs foram aprovados antes de qualquer escrita e
+gravam em sequência. Um `409` que rejeitasse “outro bulk update em andamento”
+não resolveria sozinho esse caso, e o `PUT` condicional sequer documenta `409`.
 
 ### 4.3 Distinguir aquisição efetiva de “nenhum Ticket elegível”
 
@@ -248,13 +249,16 @@ distingue**:
   dos dois vencedores”.
 
 A releitura do valor só prova que o valor **atual** é o meu (ou é o de outro).
-Sem P-ATOMIC, dois jobs podem ambos gravar; cada fábrica relê o próprio valor
+Sem P-CAS, dois jobs podem ambos gravar; cada fábrica relê o próprio valor
 antes da sobrescrita da outra, e ambas se autorizam. A tarefa de “provar o
 vencedor” precisa da atomicidade, não de uma leitura posterior.
 
-Se a task falhar (`FAILED`), a garantia transacional documenta “none are
-updated”: aí sim é seguro tratar como **não adquirido** e tentar de novo, sem
-consumir Attempt. Essa é a única distinção que a documentação entrega de graça.
+Duas falhas são distinguíveis pela documentação, mas por motivos diferentes:
+uma conexão que **nunca chegou a agendar** o job não pode ter escrito nada; e
+uma task `FAILED` é a transação documentada como “none are updated”. Em ambas é
+seguro tratar como **não adquirido** e tentar de novo, sem consumir Attempt. O
+caso perigoso é a escrita aplicada com resposta perdida: ele não é nenhum dos
+dois, e por isso só pode ser **incerto**.
 
 ### 4.4 Ordem assíncrona
 
@@ -262,7 +266,21 @@ consumir Attempt. Essa é a única distinção que a documentação entrega de g
 protocolo não pode usar ordem de submissão nem de conclusão como desempate: o
 job de B pode executar antes do de A. A decisão precisa vir do teste condicional
 no momento da escrita. O harness explora a inversão (A submete primeiro, B
-aplica primeiro) e, sob P-ATOMIC, B vence com um único Worker.
+aplica primeiro) e, sob P-CAS, B vence com um único Worker.
+
+### 4.5 O critério `currentValue`
+
+`currentValue` é o outro critério de elegibilidade documentado. A aquisição usa
+`hasProperty:false`; `currentValue` serve a uma atualização condicionada ao valor
+observado (por exemplo, uma transferência ou renovação de Claim). Ele sofre da
+**mesma indeterminação**: a documentação não diz quando o valor é comparado nem
+isola o teste da escrita, e a advertência de concorrência em entity properties
+continua valendo. Duas transferências condicionadas ao mesmo valor observado
+podem ambas passar e gravar em sequência; o harness tem
+`current-value-transfer-documented` (dois jobs aplicados, o Claim final é o da
+segunda) e `current-value-transfer-cas` (só um job aplicado). Portanto
+`currentValue` **não** é um primitivo mais forte que `hasProperty:false` e não
+resolve P-CAS; ele herda exatamente a mesma lacuna.
 
 ## 5. Protocolo ponta a ponta (C2)
 
@@ -343,16 +361,18 @@ as outras fábricas já veem a property e ficam fora.
 O vencedor é observável por qualquer leitor: o valor atual da property é um
 registro válido cujo `ticket` é a identidade do Ticket e cujo `factory` é a
 instância autorizada. A prova é recomputável a partir do tracker — **desde que
-P-ATOMIC valha**. Sem P-ATOMIC, o valor atual não prova que houve um único
+P-CAS valha**. Sem P-CAS, o valor atual não prova que houve um único
 escritor: o perdedor também pode ter gravado e relido o próprio valor antes da
 sobrescrita.
 
 ### 5.4 Resultados incertos
 
-São incertos: resposta perdida de qualquer escrita, falha antes da escrita,
-task desconhecida (o `303` se perdeu), leitura de verificação que falhou ou que
-não mostra o próprio registro, Claim ilegível, Claim para outro Ticket e Claim
-parcial. Em todos:
+São incertos: resposta perdida de qualquer escrita, task desconhecida (o `303`
+se perdeu), leitura de verificação que falhou ou que não mostra o próprio
+registro, Claim ilegível, Claim para outro Ticket e Claim parcial. Duas falhas
+**não** são incertas: a conexão que nunca chegou a agendar (nada pôde ser
+escrito) e a task `FAILED` (a transação documentada como “none are updated”)
+são **não adquirido**. Em todos os casos incertos:
 
 - **não lançar**;
 - **não remover** um Claim que possa ser alheio;
@@ -362,7 +382,7 @@ parcial. Em todos:
 Uma leitura posterior **isolada** não é tratada como resolução da corrida: a
 confirmação é a verificação do Claim que a própria fábrica já escreveu. Se o
 próprio registro continua invisível, continua incerto. Não há retry cego de
-escrita enquanto o resultado é incerto; sob P-ATOMIC um reenvio com
+escrita enquanto o resultado é incerto; sob P-CAS um reenvio com
 `hasProperty:false` seria inofensivo, mas a regra conservadora é verificar.
 
 Ausência de Reservation local **não** comprova abandono: outra instalação pode
@@ -428,7 +448,7 @@ apaga o que não consegue ler.
 
 Nada abaixo foi adotado; fica exposto para decisão:
 
-1. **Garantia da Atlassian para P-ATOMIC** (e, idealmente, para P-READ e para o
+1. **Garantia da Atlassian para P-CAS** (e, idealmente, para P-READ e para o
    conteúdo do resultado da task). É uma resposta de fornecedor/documentação,
    não uma configuração.
 2. **App Forge/Connect ou serviço externo** que ofereça um CAS transacional.
@@ -447,7 +467,7 @@ Nada abaixo foi adotado; fica exposto para decisão:
 
 ### 6.1 Premissas
 
-- **P-ATOMIC (não documentada, indispensável).** Para jobs concorrentes de
+- **P-CAS (não documentada, indispensável).** Para jobs concorrentes de
   atualização condicional na mesma issue, o teste de elegibilidade e a escrita
   são um passo indivisível: no máximo um job com `hasProperty:false` grava, e
   sua escrita é visível a qualquer teste de elegibilidade posterior. É um
@@ -467,7 +487,7 @@ Nada abaixo foi adotado; fica exposto para decisão:
   fábrica; a chave da property é reservada ao protocolo; valor ilegível é
   incerteza, nunca “livre”.
 
-### 6.2 Prova sob P-ATOMIC e P-PARTICIPANTS
+### 6.2 Prova sob P-CAS e P-PARTICIPANTS
 
 Suponha duas fábricas distintas `f` e `g` que lançam. Lançar exige um resultado
 “autorizado”: uma leitura devolveu um registro válido com o próprio `factory
@@ -477,7 +497,7 @@ leitura de `f`, o valor era `R_f`; no de `g`, `R_g`. Como as fábricas são
 distintas, `R_f ≠ R_g`; houve pelo menos uma escrita entre as duas leituras.
 Seja `W_g` a escrita que tornou `R_g` o valor corrente. Para `W_g` ser aceita,
 seu filtro `hasProperty:false` tinha de valer no momento do teste. Por
-P-ATOMIC, teste e escrita são o mesmo passo, então imediatamente antes de `W_g`
+P-CAS, teste e escrita são o mesmo passo, então imediatamente antes de `W_g`
 a property estava ausente. Mas, por P-PARTICIPANTS, nenhum participante
 sobrescreve um Claim válido; e, por P-RELEASE, uma liberação manual no meio só
 poderia ter ocorrido após o operador parar e confirmar o fim do Worker de `f`, o
@@ -485,7 +505,7 @@ que impediria o lançamento de `f`. Logo, imediatamente antes de `W_g` o valor
 ainda era `R_f` (presente), contradizendo a ausência exigida. Portanto, no
 máximo uma fábrica lança.
 
-**Progresso** (P-ATOMIC + P-READ): uma fábrica sozinha observa livre, submete; se
+**Progresso** (P-CAS + P-READ): uma fábrica sozinha observa livre, submete; se
 o filtro casar no momento da escrita, grava; a task completa; o `GET` direto vê
 o próprio registro; ela apresenta e lança. Se o filtro não casar (outra escreveu
 antes), o `GET` vê o registro alheio → indisponível; ou, com leitura
@@ -499,7 +519,7 @@ resposta perdida, task desconhecida, conclusão assíncrona fora de ordem e leit
 de verificação falha ou ausente produzem **incerto**: nenhum desses caminhos
 devolve um registro válido com o `factory id` da fábrica, e sem essa leitura não
 há lançamento. Claim parcial: a autoridade é um único valor de property — uma
-escrita por issue, atômica sob P-ATOMIC —; a apresentação é separada e, se
+escrita por issue, atômica sob P-CAS —; a apresentação é separada e, se
 falhar, a fábrica segura sem lançar e sem consumir Attempt.
 
 **Fronteira da leitura desatualizada.** O único caminho em que uma leitura
@@ -515,8 +535,8 @@ depende da condição de parada do operador, não de uma garantia da API.
 
 | Falta | O que acontece | Evidência no harness |
 | --- | --- | --- |
-| P-ATOMIC | Dois jobs leem a ausência, ambos gravam; cada fábrica relê o próprio valor antes da sobrescrita e lança. | `documented-apply-not-isolated`: **200/3.432** com 2 Workers; testemunha na seção 7.2. |
-| Avaliação no apply (em vez de enqueue) | Mesmo com escritas serializadas, um snapshot no enqueue aprova os dois. | `documented-enqueue-serialized`: **60/924** com 2 Workers. |
+| P-CAS | Dois jobs leem a ausência, ambos gravam; cada fábrica relê o próprio valor antes da sobrescrita e lança. | `documented-apply-not-isolated`: **200/3.432** com 2 Workers; testemunha na seção 7.2. |
+| Avaliação no apply (em vez de enqueue) | Um snapshot no enqueue aprova os dois; mesmo **concedendo** escritas serializadas (P-CAS), as duas escritas em sequência acontecem. | `documented-enqueue-not-isolated`: **520/3.432**; `premise-enqueue-serialized`: **60/924** com 2 Workers. |
 | P-READ | Segurança preservada; nenhuma verificação confirma o próprio registro; ninguém lança. | `cas-premise-prefix-reads`: **924/924 sem vencedor**. |
 | P-PARTICIPANTS | Um não participante sobrescreve o Claim e roda um segundo Worker. | `non-participant-breaks-the-premise`: **2 Workers**. |
 | P-RELEASE | Liberação sem fim confirmado, ou recuperação de Claim liberado, pode autorizar um Worker sobre o antigo. | `manual-release-needs-confirmed-end`: liberação **recusada** com Worker vivo e sem confirmação. |
@@ -548,7 +568,7 @@ O modelo **não** tem lock, fila, lease, relógio de expiração nem oráculo de
 vencedor. Ele tem knobs explícitos para o que a documentação **não** fixa:
 
 - `eligibilityAt: "enqueue" | "apply"` — quando o filtro é avaliado;
-- `isolation: "none" | "serialized"` — `serialized` **é a premissa P-ATOMIC**,
+- `isolation: "none" | "serialized"` — `serialized` **é a premissa P-CAS**,
   não um presente do simulador; `none` permite que dois jobs leiam o estado
   anterior e ambos gravem;
 - `readModel: "fresh" | "prefix"` — leitura direta fresca ou que omite a última
@@ -568,16 +588,22 @@ commit, conclusão da task, verificação e lançamento. `serialized` reduz a ca
 (leitura+escrita em um passo); `none` separa leitura e commit — o que permite a
 ambos lerem o estado anterior.
 
+As variantes `cas-premise*` e `premise-enqueue-serialized` são **premissas**:
+`serialized` é P-CAS (teste + escrita indivisíveis); a variante de enqueue
+concede P-CAS apenas para mostrar que o momento da avaliação, sozinho, já
+quebra a exclusividade.
+
 | variante | premissa | runs | 1 vencedor | 2 vencedores | 0 vencedor |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `documented-apply-not-isolated` | documentado | 3.432 | 3.232 | **200** | 0 |
-| `documented-enqueue-serialized` | documentado | 924 | 864 | **60** | 0 |
+| `documented-enqueue-not-isolated` | documentado | 3.432 | 2.912 | **520** | 0 |
+| `premise-enqueue-serialized` | P-CAS (enqueue) | 924 | 864 | **60** | 0 |
 | `documented-apply-prefix-reads` | documentado | 3.432 | 1.200 | 0 | 2.232 |
 | `documented-stale-search` | documentado | 3.432 | 3.232 | **200** | 0 |
-| `cas-premise` | P-ATOMIC | 924 | 924 | 0 | 0 |
-| `cas-premise-stale-search` | P-ATOMIC | 924 | 924 | 0 | 0 |
-| `cas-premise-prefix-reads` | P-ATOMIC | 924 | 0 | 0 | 924 |
-| `cas-premise-task-counts` | P-ATOMIC | 924 | 924 | 0 | 0 |
+| `cas-premise` | P-CAS | 924 | 924 | 0 | 0 |
+| `cas-premise-stale-search` | P-CAS | 924 | 924 | 0 | 0 |
+| `cas-premise-prefix-reads` | P-CAS | 924 | 0 | 0 | 924 |
+| `cas-premise-task-counts` | P-CAS | 924 | 924 | 0 | 0 |
 
 A leitura correta da tabela:
 
@@ -587,18 +613,19 @@ A leitura correta da tabela:
   A verifica e lança antes de B gravar; B grava e verifica o próprio valor
   depois; o valor final é de B e **os dois** Workers estão vivos. As requisições
   mostram dois `PUT bulk issue property` agendados e dois `bulk job -> applied`.
-- **documentado, enqueue + escritas serializadas**: 60 interleavings com dois
-  Workers. Testemunha:
+- **P-CAS concedido, enqueue**: 60/924 interleavings com dois Workers.
+  Testemunha:
   `A:observe A:submit B:observe B:submit A:apply A:complete A:verify A:launch B:apply B:complete B:verify B:launch`.
   As escritas não se sobrepõem; o snapshot de elegibilidade do enqueue é que
-  aprova os dois.
+  aprova os dois antes de qualquer escrita. Sem serialização, o mesmo cenário
+  documentado produz 520/3.432.
 - **documentado, leitura em prefixo**: 0 dois-vencedores, mas 2.232 sem
   vencedor. A leitura desatualizada **mascara** a corrida neste modelo; isso não
   é uma garantia, e o caso de leitura fresca acima é o contraexemplo decisivo.
-- **P-ATOMIC**: 0 dois-vencedores em todas as 924 interleavings, com progresso
+- **P-CAS**: 0 dois-vencedores em todas as 924 interleavings, com progresso
   em 924. Com leitura em prefixo, a segurança continua e o progresso se perde
   (924 sem vencedor): só entra em jogo P-READ.
-- **P-ATOMIC + resultado com contagem**: não muda a segurança; a contagem só
+- **P-CAS + resultado com contagem**: não muda a segurança; a contagem só
   reduz incerteza, e sua existência/formato **não é documentada**.
 
 ### 7.3 Cenários dos critérios de aceitação
@@ -609,39 +636,42 @@ A leitura correta da tabela:
 | cenário | Workers | Attempts | Claim |
 | --- | ---: | --- | --- |
 | Ticket livre, sem disputa | 1 | A:1 | A |
-| Disputa simultânea sob P-ATOMIC | 1 | A:1, B:0 | A |
+| Disputa simultânea sob P-CAS | 1 | A:1, B:0 | A |
 | Disputa simultânea sob o documentado | **2** | A:1, B:1 | B |
-| Mesmo Ticket, Destinations diferentes — P-ATOMIC | 1 | A:1, B:0 | A |
+| Mesmo Ticket, Destinations diferentes — P-CAS | 1 | A:1, B:0 | A |
 | Mesmo Ticket, Destinations diferentes — documentado | **2** | A:1, B:1 | B |
 | Dois sites, mesma chave e mesmo id | 2 | A:1, B:1 | A, B |
 | Sub-issue e pai | 2 | A:1, B:1 | A, B |
 | Tickets distintos | 2 | A:1, B:1 | A, B |
 | Claim existente | 1 | A:1, B:0 | A (B não escreve) |
-| Resposta perdida | 1 | A:1 | A (0 antes de verificar; 1 submissão) |
+| Resposta perdida | 1 | A:1, B:0 | A (0 antes de verificar; 1 submissão) |
 | Leitura de verificação falha | 1 | A:1 | A (0 antes; incerto, sem lançar) |
-| Job `FAILED` | 1 | A:1 | A (nada escrito; retry permitido) |
+| Conexão falha antes de agendar | 1 | A:1 | A (nada escrito; retry permitido) |
+| Job `FAILED` (transação: nada atualizado) | 1 | A:1 | A (retry permitido) |
+| `currentValue`: duas transferências — documentado | 0 | A:0, B:0, C:0 | C (2 jobs aplicados) |
+| `currentValue`: duas transferências — P-CAS | 0 | A:0, B:0, C:0 | B (1 job aplicado) |
 | Sem Reservation local | 1 | A:1, B:0 | A (B não escreve) |
 | Morte + 30 dias | 0 vivos | A:1, B:0 | A (sem takeover) |
-| Recovery local | 1 | A:1 | A (mesmo Attempt; 2 starts) |
+| Recovery local | 1 | A:1, B:0 | A (mesmo Attempt; 2 starts) |
 | Claim sem Worker | 1 | A:1, B:0 | A (Reserved without Attempt) |
-| Claim parcial (apresentação falha) | 1 | A:1 | A (segura sem lançar) |
-| Claim ilegível | 0 | — | ilegível (preservado) |
+| Claim parcial (apresentação falha) | 1 | A:1, B:0 | A (segura sem lançar) |
+| Claim ilegível | 0 | B:0 | ilegível (preservado) |
 | Claim legado (label+atribuição) | 0 | B:0 | ausente (B não escreve) |
 | Liberação manual | 1 | A:1, B:1 | B (recusada com Worker vivo/sem confirmação) |
 | Não participante | **2** | A:1 | intruso (fora da garantia) |
-| Busca desatualizada + P-ATOMIC | 1 | A:1, B:0 | A (B não lança) |
+| Busca desatualizada + P-CAS | 1 | A:1, B:0 | A (B não lança) |
 | Verificação desatualizada | 0 | A:0 | A (incerto, sem lançar) |
-| Task fora de ordem + P-ATOMIC | 1 | A:0, B:1 | B (submissão A→B, aplicação B→A) |
-| C1 property simples | **2** | — | B |
+| Task fora de ordem + P-CAS | 1 | A:0, B:1 | B (submissão A→B, aplicação B→A) |
+| C1 property simples | **2** | A:1, B:1 | B |
 | C3 lista em lote | **2** | A:1, B:1 | B |
-| C4 atribuição | **2** | — | — |
-| C5 edição comum (label) | **2** | — | — |
-| C6 transição | **2** | — | — |
+| C4 atribuição | **2** | n/a (start direto) | — |
+| C5 edição comum (label) | **2** | n/a (start direto) | — |
+| C6 transição | **2** | n/a (start direto) | — |
 
 Os cenários de “dois Workers” dos candidatos C1/C3–C6 mostram que a falha não é
-do protocolo C2: é do tipo de escrita. Os cenários “1 Worker” sob P-ATOMIC são a
+do protocolo C2: é do tipo de escrita. Os cenários “1 Worker” sob P-CAS são a
 demonstração positiva **condicionada** — não uma demonstração de que o Jira
-oferece P-ATOMIC.
+oferece P-CAS.
 
 ### 7.4 Limites da demonstração
 
@@ -652,7 +682,7 @@ oferece P-ATOMIC.
   banco, replicação, retries do servidor). Ele reproduz apenas o que a
   documentação permite e marca como premissa o que ela não fixa.
 - O resultado da task é modelado nas duas formas (“desconhecido” e “contagem”);
-  a forma real, se existir, precisa ser descoberta — e não substitui P-ATOMIC.
+  a forma real, se existir, precisa ser descoberta — e não substitui P-CAS.
 - A retomada de uma instalação **depois** de uma liberação manual, com leitura
   desatualizada do Claim antigo, não é simulada: ela é fechada por P-RELEASE
   (a instalação liberada não volta a executar aquele Work), não pela API.
@@ -663,7 +693,7 @@ oferece P-ATOMIC.
 ### 8.1 Resposta explícita
 
 **Não demonstrado sob as garantias documentadas; condicionalmente suficiente sob
-P-ATOMIC/P-READ/P-PARTICIPANTS/P-RELEASE, que a Atlassian não documenta.** O
+P-CAS/P-READ/P-PARTICIPANTS/P-RELEASE, que a Atlassian não documenta.** O
 candidato não é “inadequado por construção” — ele é o único que pode funcionar —
 mas a garantia necessária não está estabelecida. O requisito **não** foi
 enfraquecido: nada aqui autoriza “melhor esforço”, lease, expiração, takeover,
@@ -700,7 +730,7 @@ limitações e os pré-requisitos não aprovados voltam ao operador; #170 perman
 
 - `experiments/issue-169/RELATORIO.md` — este relatório.
 - `experiments/issue-169/src/` — modelo, protocolo, explorador, cenários e
-  testes (60 testes).
+  testes (66 testes).
 - `npm test` — identidade, semântica do modelo, matriz exaustiva e cenários.
 - `npm run run` → `runs/evidence.json` — matriz completa, testemunhas de
   interleaving, cenários e as citações das fontes primárias.

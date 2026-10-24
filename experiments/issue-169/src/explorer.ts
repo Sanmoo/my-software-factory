@@ -47,10 +47,16 @@ export const VARIANTS: readonly Variant[] = [
     note: "the filter is read at apply time, but two concurrent jobs are not isolated: both may observe the pre-state",
   },
   {
-    name: "documented-enqueue-serialized",
-    model: { eligibilityAt: "enqueue", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+    name: "documented-enqueue-not-isolated",
+    model: { eligibilityAt: "enqueue", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
     premise: "documented",
-    note: "the eligible set is fixed when the 303 is returned; serialized writes cannot undo the stale decision",
+    note: "the eligible set is fixed when the 303 is returned; two jobs can write the same pre-state",
+  },
+  {
+    name: "premise-enqueue-serialized",
+    model: { eligibilityAt: "enqueue", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+    premise: "premise",
+    note: "EVEN granting serialized writes (P-CAS), an enqueue-time snapshot approves both jobs",
   },
   {
     name: "documented-apply-prefix-reads",
@@ -197,18 +203,10 @@ function eventsFor(model: JiraModel, label: FactoryLabel): SimEvent[] {
     run: (sim) => void sim.factories[label].submitClaim(),
   };
 
-  if (model.isolation === "serialized") {
-    const apply: SimEvent = {
-      id: `${prefix}:apply`,
-      deps: [submit.id],
-      run: (sim) => {
-        const pending = sim.factories[label].pendingAcquisition();
-        if (pending?.taskId != null) sim.tracker.applyJob(pending.taskId);
-      },
-    };
+  const tail = (written: SimEvent): SimEvent[] => {
     const complete: SimEvent = {
       id: `${prefix}:complete`,
-      deps: [apply.id],
+      deps: [written.id],
       run: (sim) => void sim.factories[label].completeClaim(),
     };
     const verify: SimEvent = {
@@ -221,7 +219,19 @@ function eventsFor(model: JiraModel, label: FactoryLabel): SimEvent[] {
       deps: [verify.id],
       run: (sim) => void sim.factories[label].launch(),
     };
-    return [observe, submit, apply, complete, verify, launch];
+    return [complete, verify, launch];
+  };
+
+  if (model.isolation === "serialized") {
+    const apply: SimEvent = {
+      id: `${prefix}:apply`,
+      deps: [submit.id],
+      run: (sim) => {
+        const pending = sim.factories[label].pendingAcquisition();
+        if (pending?.taskId != null) sim.tracker.applyJob(pending.taskId);
+      },
+    };
+    return [observe, submit, apply, ...tail(apply)];
   }
 
   const begin: SimEvent = {
@@ -240,22 +250,7 @@ function eventsFor(model: JiraModel, label: FactoryLabel): SimEvent[] {
       if (pending?.taskId != null) sim.tracker.commitJob(pending.taskId);
     },
   };
-  const complete: SimEvent = {
-    id: `${prefix}:complete`,
-    deps: [commit.id],
-    run: (sim) => void sim.factories[label].completeClaim(),
-  };
-  const verify: SimEvent = {
-    id: `${prefix}:verify`,
-    deps: [complete.id],
-    run: (sim) => void sim.factories[label].verifyClaim(),
-  };
-  const launch: SimEvent = {
-    id: `${prefix}:launch`,
-    deps: [verify.id],
-    run: (sim) => void sim.factories[label].launch(),
-  };
-  return [observe, submit, begin, commit, complete, verify, launch];
+  return [observe, submit, begin, commit, ...tail(commit)];
 }
 
 function* linearExtensions(events: readonly SimEvent[]): Generator<SimEvent[]> {

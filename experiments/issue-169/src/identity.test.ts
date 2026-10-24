@@ -3,7 +3,6 @@ import { describe, test } from "node:test";
 
 import {
   claimRecord,
-  claimToJson,
   CLAIM_PROPERTY_KEY,
   CLAIM_PROTOCOL,
   githubDestination,
@@ -58,7 +57,7 @@ describe("claim record", () => {
 
   test("round-trips through the JSON value Jira stores", () => {
     const source = record();
-    const parsed = parseClaim(claimToJson(source), expected);
+    const parsed = parseClaim(source, expected);
     assert.equal(parsed.kind, "valid");
     if (parsed.kind === "valid") {
       assert.deepEqual(parsed.record, source);
@@ -69,16 +68,14 @@ describe("claim record", () => {
   test("a record for another Ticket is malformed, never a valid claim for this one", () => {
     const other = jiraTicket({ site: BETA, stableId: "10001", key: "OPS-1" });
     const parsed = parseClaim(
-      claimToJson(
-        claimRecord({
-          factory: "factory-b",
-          nonce: "n",
-          ticket: other,
-          account: "a",
-          destination: DEST_A,
-          createdAt: "2026-10-24T12:00:00.000Z",
-        }),
-      ),
+      claimRecord({
+        factory: "factory-b",
+        nonce: "n",
+        ticket: other,
+        account: "a",
+        destination: DEST_A,
+        createdAt: "2026-10-24T12:00:00.000Z",
+      }),
       expected,
     );
     assert.equal(parsed.kind, "malformed");
@@ -86,8 +83,8 @@ describe("claim record", () => {
   });
 
   test("an unknown protocol, a missing field and a non-object are malformed", () => {
-    assert.equal(parseClaim({ ...claimToJson(record()), protocol: "other/v1" }, expected).kind, "malformed");
-    const missing: Record<string, unknown> = { ...claimToJson(record()) };
+    assert.equal(parseClaim({ ...record(), protocol: "other/v1" }, expected).kind, "malformed");
+    const missing: Record<string, unknown> = { ...record() };
     delete missing["factory"];
     assert.equal(parseClaim(missing, expected).kind, "malformed");
     assert.equal(parseClaim("a string", expected).kind, "malformed");
@@ -97,15 +94,15 @@ describe("claim record", () => {
   test("the Destination is audit data: a claim from another Destination still names the same Ticket", () => {
     const fromA = record({ destination: `github:github.com:Sanmoo/repo-a` });
     const fromB = record({ destination: `github:github.com:Sanmoo/repo-b` });
-    const parsedA = parseClaim(claimToJson(fromA), expected);
-    const parsedB = parseClaim(claimToJson(fromB), expected);
+    const parsedA = parseClaim(fromA, expected);
+    const parsedB = parseClaim(fromB, expected);
     assert.equal(parsedA.kind, "valid");
     assert.equal(parsedB.kind, "valid");
     assert.equal(parsedA.kind === "valid" && parsedA.record.ticket, parsedB.kind === "valid" && parsedB.record.ticket);
   });
 
-  test("claimToJson has no class instances and survives a JSON round trip", () => {
-    const json = claimToJson(record());
+  test("the record is a plain JSON value and survives a JSON round trip", () => {
+    const json = record();
     assert.deepEqual(JSON.parse(JSON.stringify(json)), json);
   });
 });

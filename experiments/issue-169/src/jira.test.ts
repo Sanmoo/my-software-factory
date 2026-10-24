@@ -239,6 +239,110 @@ describe("reads the API admits", () => {
     );
   });
 
+  test("currentValue is compared by the same undocumented machinery: two value-conditioned jobs can both commit", () => {
+    const tracker = new JiraCloud(DOCUMENTED_MODEL);
+    seed(tracker);
+    tracker.setPropertyBlind({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "A" },
+      factory: "A",
+    });
+    const observed = { factory: "A" };
+    const first = tracker.submitConditional({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "B" },
+      factory: "B",
+      filter: "current-value",
+      currentValue: observed,
+    });
+    const second = tracker.submitConditional({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "C" },
+      factory: "C",
+      filter: "current-value",
+      currentValue: observed,
+    });
+    assert.equal(tracker.beginJob(first.taskId), true);
+    assert.equal(tracker.beginJob(second.taskId), true, "both compared against the same observed value");
+    tracker.commitJob(first.taskId);
+    tracker.commitJob(second.taskId);
+    assert.equal(claimOf(tracker), "C");
+
+    const cas = new JiraCloud(CAS_PREMISE_MODEL);
+    seed(cas);
+    cas.setPropertyBlind({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "A" },
+      factory: "A",
+    });
+    const casFirst = cas.submitConditional({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "B" },
+      factory: "B",
+      filter: "current-value",
+      currentValue: observed,
+    });
+    const casSecond = cas.submitConditional({
+      site: SITE,
+      issueId: ISSUE_ID,
+      propertyKey: PROPERTY,
+      value: { factory: "C" },
+      factory: "C",
+      filter: "current-value",
+      currentValue: observed,
+    });
+    cas.applyJob(casFirst.taskId);
+    cas.applyJob(casSecond.taskId);
+    assert.equal(claimOf(cas), "B", "the second transfer no longer matches the current value");
+  });
+
+  test("a currentValue filter without a value is rejected before any job exists", () => {
+    const tracker = new JiraCloud(DOCUMENTED_MODEL);
+    seed(tracker);
+    assert.throws(
+      () =>
+        tracker.submitConditional({
+          site: SITE,
+          issueId: ISSUE_ID,
+          propertyKey: PROPERTY,
+          value: { factory: "B" },
+          factory: "B",
+          filter: "current-value",
+        }),
+      JiraRequestError,
+    );
+    assert.equal(tracker.scheduledTaskIds().length, 0);
+  });
+
+  test("a request that fails before scheduling leaves no job and no write", () => {
+    const tracker = new JiraCloud(CAS_PREMISE_MODEL);
+    seed(tracker);
+    assert.throws(
+      () =>
+        tracker.submitConditional({
+          site: SITE,
+          issueId: ISSUE_ID,
+          propertyKey: PROPERTY,
+          value: { factory: "A" },
+          factory: "A",
+          faults: { failBeforeScheduling: true },
+        }),
+      JiraRequestError,
+    );
+    assert.equal(tracker.scheduledTaskIds().length, 0);
+    assert.equal(claimOf(tracker), null);
+  });
+
   test("a failed job updates nothing and is reported FAILED", () => {
     const tracker = new JiraCloud(CAS_PREMISE_MODEL);
     seed(tracker);
