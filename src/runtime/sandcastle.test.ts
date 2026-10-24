@@ -22,6 +22,7 @@ import {
   GUARDRAIL_CONTAINER_FILE,
   defaultPreflight,
   dockerSocketFromHost,
+  stageAgentFiles,
   unixSocketPath,
   workerFlagArgs,
   workerShapedDockerRun,
@@ -53,7 +54,8 @@ const dockerSocket = () => SOCKET;
 
 const RESOURCES = loadAgentResources();
 
-/** The inventory a correctly provisioned image records for RESOURCES. */
+/** The recorded inventory the comparison accepts for RESOURCES (same fields
+ *  a provisioned image reports; see agent-inventory-fixture.ts). */
 function inventoryJson(): string {
   return JSON.stringify(provisionedInventory(RESOURCES));
 }
@@ -325,6 +327,18 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.ok(hook?.command.includes(`${AGENT_FILES_MOUNT_DIR}/auth.json`));
     assert.match(hook?.command ?? "", /\$HOME\/\.pi\/agent/);
     assert.ok(!existsSync(agentFilesMount!.hostPath), "the staged dir dies with the launch");
+  });
+
+  test("a supplied file name is a bare, shell-safe name — the start hook interpolates it", () => {
+    for (const name of ["../auth.json", "sub/auth.json", "auth.json; rm -rf /", "a b.json", ""]) {
+      assert.throws(() => stageAgentFiles([{ name, hostPath: authFile }]), /bare file name/, `refused: ${name}`);
+    }
+    const dir = stageAgentFiles([{ name: "auth.json", hostPath: authFile }]);
+    try {
+      assert.equal(readFileSync(join(dir, "auth.json"), "utf8"), readFileSync(authFile, "utf8"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("without a supplied file no files mount is created — provider env vars are the other explicit source", async () => {
