@@ -82,25 +82,23 @@ export type Liveness =
       orphaned: OrphanedAttempt[];
     };
 
-/** What the status says about a selected ticket, before its Work is composed. */
+/** What the status presents about a selected ticket: its title and who owns it. */
 export interface JiraTicketFacts {
-  ticket: TicketIdentity;
   title: string;
   assignees: string[];
 }
 
 /** One Jira candidate: the Work the ticket names, its title and its assignee(s).
  *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
-export interface JiraCandidate {
+export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
-  title: string;
-  assignees: string[];
 }
 
 /** A ticket the configured selections promise to more than one destination: its
  *  destination is ambiguous, so it is held with the reason and is never
  *  presented as a candidate (issue 128; spec #92 story 8). */
-export interface JiraAmbiguousTicket extends JiraTicketFacts {
+export interface AmbiguousJiraTicket extends JiraTicketFacts {
+  ticket: TicketIdentity;
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
   /** An unreadable selection on this site names a further destination, so the
@@ -140,7 +138,6 @@ export type JiraSelectionView =
     }
   | { selection: TicketSelection; state: "unknown"; reason: string };
 
-/** The readable variant, for the presentation and the hold. */
 export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known" }>;
 
 export interface StatusView {
@@ -149,7 +146,7 @@ export interface StatusView {
   /** Jira selections, read-only: candidates in native Rank order, nothing claimed. */
   jira: JiraSelectionView[];
   /** Tickets more than one selection claims for a different destination: held. */
-  jiraAmbiguous: JiraAmbiguousTicket[];
+  jiraAmbiguous: AmbiguousJiraTicket[];
   /** A tracker mark with no reservation in this workspace. */
   unbackedClaims: UnbackedClaim[];
   /** A reservation on disk whose work carries no factory mark. */
@@ -185,7 +182,7 @@ export async function deriveStatus(
   const selections = githubSelections(config.repos);
   const state =
     selections.length === 0
-      ? EMPTY_TRACKER_STATE
+      ? emptyTrackerState()
       : await deriveTrackerState(githubTracker(sources), selections, config.labels, reservations);
   const jira = holdAmbiguousTickets(await readJiraCandidates(sources.jira ?? []));
   return {
@@ -202,8 +199,11 @@ export async function deriveStatus(
 }
 
 /** No configured repo means no GitHub Issues read — and no GitHub credential may
- *  be required of a Jira-only factory (issue 128). */
-const EMPTY_TRACKER_STATE: TrackerState = { pool: [], unbackedClaims: [], unmarkedReservations: [] };
+ *  be required of a Jira-only factory (issue 128). Fresh per derivation: the view
+ *  hands its arrays to the caller. */
+function emptyTrackerState(): TrackerState {
+  return { pool: [], unbackedClaims: [], unmarkedReservations: [] };
+}
 
 function githubTracker(sources: StatusSources): TicketTracker {
   if (sources.github === null) {
@@ -244,7 +244,7 @@ async function readJiraCandidates(readers: readonly JiraSelectionReader[]): Prom
 /** The read selections plus the tickets they agree cannot be given a destination. */
 interface JiraHold {
   selections: JiraSelectionView[];
-  ambiguous: JiraAmbiguousTicket[];
+  ambiguous: AmbiguousJiraTicket[];
 }
 
 /**
@@ -257,6 +257,7 @@ interface JiraHold {
  */
 function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
   interface SelectedTicket extends JiraTicketFacts {
+    ticket: TicketIdentity;
     destinations: Map<string, RepositoryIdentity>;
   }
   const selected = new Map<string, SelectedTicket>();
@@ -276,7 +277,7 @@ function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
   }
 
   const heldKeys = new Set<string>();
-  const ambiguous: JiraAmbiguousTicket[] = [];
+  const ambiguous: AmbiguousJiraTicket[] = [];
   for (const [key, entry] of selected) {
     if (entry.destinations.size < 2) continue;
     heldKeys.add(key);

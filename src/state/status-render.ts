@@ -13,7 +13,7 @@ import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } fr
 import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
 import type {
-  JiraAmbiguousTicket,
+  AmbiguousJiraTicket,
   JiraSelectionView,
   KnownJiraSelectionView,
   OrphanedAttempt,
@@ -190,7 +190,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
  *  unreadable selection read as zero. */
 function renderJiraSelections(
   selections: readonly JiraSelectionView[],
-  ambiguous: readonly JiraAmbiguousTicket[],
+  ambiguous: readonly AmbiguousJiraTicket[],
   cap: number,
 ): string[] {
   if (selections.length === 0) return [];
@@ -240,12 +240,10 @@ function describeCandidates(view: KnownJiraSelectionView): string {
   return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;
 }
 
-/** "1 candidate", "2 candidates" — the counts the operator reads. */
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** One capped list: the entries, then the omission marker past the cap. */
 function renderCapped<T>(
   lines: string[],
   entries: readonly T[],

@@ -50,17 +50,15 @@ repos:
 #     destination: Sanmoo/backend
 ```
 
-Each `jira:` entry is selected by its own JQL — nothing else filters the
-result — and always read in native **Rank ascending** order; a conflicting
-`ORDER BY` is a configuration error. `currentUser()` means the authenticated
-account named by `account` — the API token's owner, not an implicitly different
-human operator. The token is never a YAML value: `token-env` names the local
-environment variable that holds it. One site may feed several repositories, each
-selection naming its own destination. When readable selections promise one
-ticket to different destinations, `msf status` holds it with the reason instead
-of a destination; an unreadable selection leaves that overlap unverified. This
-release only reads Jira: `msf status` lists the candidates (no claim, comment or
-launch), and `msf run` refuses a Jira configuration before any claim. A
+Each `jira:` entry is its own selection: its JQL decides what it reads — no
+filter is added — and the result always arrives in native **Rank ascending**
+order, so a conflicting `ORDER BY` is a configuration error. `currentUser()`
+means the account the API token authenticates as, not an implicit operator. One
+site may feed several repositories through several selections. When readable
+selections promise one ticket to different destinations, `msf status` holds it
+with the reason; an unreadable selection leaves that overlap unverified. This
+release only reads Jira: `msf status` lists candidates (no claim, comment or
+launch) and `msf run` refuses a Jira configuration before any claim; a
 Jira-only factory writes `repos: []`.
 
 ## Usage
