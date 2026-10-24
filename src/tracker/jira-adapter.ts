@@ -72,7 +72,7 @@ export interface JiraAdapterOptions {
 /** The authenticated Jira identity the adapter acts as. */
 export interface JiraActingAccount {
   accountId: string;
-  emailAddress: string | null;
+  emailAddress: string;
   displayName: string;
 }
 
@@ -169,7 +169,7 @@ const MYSELF_PATH = "/rest/api/3/myself";
 const SEARCH_PATH = "/rest/api/3/search/jql";
 /** The listing requests only the facts a candidate needs; the JQL decides selection. */
 const LIST_FIELDS = ["summary", "labels", "assignee", "created"];
-const READ_FIELDS = ["summary", "description", "status", "labels", "assignee", "created", "issuetype", "parent"];
+const READ_FIELDS = ["summary", "description", "labels", "assignee", "created"];
 
 /** The negative forms Jira uses when the site cannot order by Rank. */
 const RANK_UNAVAILABLE =
@@ -212,10 +212,15 @@ export class JiraTicketAdapter implements TicketTracker {
     if (account.active === false) {
       throw new JiraAuthenticationError(this.site, `the account "${account.displayName}" is inactive`);
     }
-    if (
-      account.emailAddress !== null &&
-      account.emailAddress.toLowerCase() !== this.account.toLowerCase()
-    ) {
+    // The configured account must be the one the credential authenticated as:
+    // an unidentified identity is refused, never relabelled as the config's.
+    if (account.emailAddress === null) {
+      throw new JiraAuthenticationError(
+        this.site,
+        "the site did not report the authenticated account's email, so the configured account cannot be verified",
+      );
+    }
+    if (account.emailAddress.toLowerCase() !== this.account.toLowerCase()) {
       throw new JiraAccountMismatchError(this.site, account.emailAddress, this.account);
     }
     return {

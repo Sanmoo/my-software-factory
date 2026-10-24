@@ -45,17 +45,14 @@ repos:
 #     destination: Sanmoo/my-tasks   # explicit GitHub destination, never guessed
 ```
 
-A Jira source is selected only by its own JQL and read in Jira's native **Rank
-ascending** order: the factory supplies the ordering when the query has none
-and rejects a conflicting `ORDER BY` as a configuration error — it never falls
-back to age or Priority. The JQL is the whole selection: no unassigned-only,
-open-only, readiness-label or subtask filter is added. `currentUser()` in JQL
-means the authenticated account configured by `account` (the API token's
-owner), not an implicitly different human operator. The token itself is never a
-YAML value: `token-env` names the local environment variable that holds it.
-This release only reads Jira — `msf status` lists the candidates (no claim,
-comment or launch), and `msf run` refuses a Jira configuration before any
-claim. `repos` may be omitted when Jira supplies every destination.
+A Jira source is selected by its own JQL and always read in native **Rank
+ascending** order; a conflicting `ORDER BY` is a configuration error. The JQL
+is the whole selection. `currentUser()` means the authenticated account named
+by `account` — the API token's owner, not an implicitly different human
+operator. The token is never a YAML value: `token-env` names the local
+environment variable that holds it. This release only reads Jira: `msf status`
+lists the candidates (no claim, comment or launch), and `msf run` refuses a
+Jira configuration before any claim.
 
 ## Usage
 

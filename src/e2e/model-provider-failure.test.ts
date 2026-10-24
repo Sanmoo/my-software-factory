@@ -396,7 +396,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
 
     const { deriveStatus } = await import("../state/status.js");
     const { renderStatus } = await import("../state/status-render.js");
-    const view = await deriveStatus(tracker, config, layout, () => Promise.resolve([]));
+    const view = await deriveStatus({ github: tracker }, config, layout, () => Promise.resolve([]));
     const text = renderStatus(view);
 
     assert.match(

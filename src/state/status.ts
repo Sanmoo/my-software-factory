@@ -12,6 +12,7 @@ import { describeError } from "../format.js";
 import {
   deriveTrackerState,
   type PoolEntry,
+  type TrackerState,
   type UnbackedClaim,
   type UnmarkedReservation,
 } from "./derive.js";
@@ -86,6 +87,13 @@ export interface JiraCandidateSource {
   tickets: TicketTracker;
 }
 
+/** Where the status derivation reads from: the GitHub Issues tracker (absent
+ *  when no repo is configured — a Jira-only factory) and the Jira selections. */
+export interface StatusSources {
+  github: TicketTracker | null;
+  jira?: readonly JiraCandidateSource[];
+}
+
 /**
  * A Jira source's candidates, or that the source could not be read (unknown —
  * never an empty selection). The candidates keep Jira's native Rank order.
@@ -119,11 +127,10 @@ export interface StatusView {
  * another one — never a CLI flag.
  */
 export async function deriveStatus(
-  tickets: TicketTracker,
+  sources: StatusSources,
   config: Config,
   layout: WorkspaceLayout,
   probe: LivenessProbe = workspaceLivenessProbe(layout),
-  jiraSources: readonly JiraCandidateSource[] = [],
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
@@ -132,15 +139,14 @@ export async function deriveStatus(
     ...registry.reservedWithoutAttempt,
     ...registry.lastOutcome.map((entry) => entry.key),
   ]);
-  const state = await deriveTrackerState(
-    tickets,
-    githubSelections(config.repos),
-    config.labels,
-    reservations,
-  );
+  const selections = githubSelections(config.repos);
+  const state =
+    selections.length === 0
+      ? EMPTY_TRACKER_STATE
+      : await deriveTrackerState(githubTracker(sources), selections, config.labels, reservations);
   return {
     pool: state.pool,
-    jira: await readJiraCandidates(jiraSources),
+    jira: await readJiraCandidates(sources.jira ?? []),
     unbackedClaims: state.unbackedClaims,
     unmarkedReservations: state.unmarkedReservations,
     registry,
@@ -148,6 +154,17 @@ export async function deriveStatus(
     recoveryBudget: config.recovery,
     modelProviderBudget: config.modelProvider,
   };
+}
+
+/** No configured repo means no GitHub Issues read — and no GitHub credential may
+ *  be required of a Jira-only factory (issue 128). */
+const EMPTY_TRACKER_STATE: TrackerState = { pool: [], unbackedClaims: [], unmarkedReservations: [] };
+
+function githubTracker(sources: StatusSources): TicketTracker {
+  if (sources.github === null) {
+    throw new Error("no GitHub Issues tracker was supplied for the configured repositories");
+  }
+  return sources.github;
 }
 
 /**

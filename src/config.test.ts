@@ -393,7 +393,7 @@ describe("config: Jira Cloud sources", () => {
   const HEAD = ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash"];
 
   function jiraYaml(...entries: string[]): string {
-    return writeYaml(dir, [...HEAD, "jira:", ...entries].join("\n"));
+    return writeYaml(dir, [...HEAD, "repos: [Sanmoo/github-issues]", "jira:", ...entries].join("\n"));
   }
 
   function oneEntry(overrides: Partial<Record<string, string>> = {}): string {
@@ -429,8 +429,8 @@ describe("config: Jira Cloud sources", () => {
     assert.deepEqual(loadConfig(path).jira, []);
   });
 
-  test("the destination is explicit — a Jira-only config needs no GitHub Issues repo list", () => {
-    const config = loadConfig(jiraYaml(oneEntry()));
+  test("the destination is explicit — a Jira-only config lists no GitHub Issues repo", () => {
+    const config = loadConfig(writeYaml(dir, [...HEAD, "repos: []", "jira:", oneEntry()].join("\n")));
 
     assert.deepEqual(config.repos, [], "no GitHub Issues source is invented");
     assert.equal(config.jira[0]?.destination, "Sanmoo/my-tasks");

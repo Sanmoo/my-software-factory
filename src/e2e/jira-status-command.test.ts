@@ -84,34 +84,48 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
           active: true,
         },
       },
-      [`POST /rest/api/3/search/jql`]: {
-        body: {
-          isLast: true,
-          issues: [
-            {
-              id: "10001",
-              key: "ABC-1",
-              fields: {
-                summary: "Fix login",
-                labels: ["ready"],
-                // Created LATER than ABC-2: the display order is Rank's, not age.
-                created: "2026-02-01T00:00:00.000+0000",
-                assignee: { accountId: "human-1", displayName: "Ana Silva" },
+      // Two native pages, exactly as Jira returns them: the adapter follows the
+      // opaque nextPageToken and keeps Rank order across the boundary.
+      [`POST /rest/api/3/search/jql`]: [
+        {
+          body: {
+            isLast: false,
+            nextPageToken: "page-2",
+            issues: [
+              {
+                id: "10001",
+                key: "ABC-1",
+                fields: {
+                  summary: "Fix login",
+                  labels: ["ready"],
+                  // Created LATER than ABC-2: the display order is Rank's, not age.
+                  created: "2026-02-01T00:00:00.000+0000",
+                  assignee: { accountId: "human-1", displayName: "Ana Silva" },
+                },
               },
-            },
-            {
-              id: "10002",
-              key: "ABC-2",
-              fields: {
-                summary: "Fix logout",
-                labels: [],
-                created: "2026-01-01T00:00:00.000+0000",
-                assignee: null,
-              },
-            },
-          ],
+            ],
+          },
         },
-      },
+        {
+          body: {
+            isLast: true,
+            issues: [
+              {
+                id: "10002",
+                key: "ABC-2",
+                fields: {
+                  summary: "Fix logout (subtask)",
+                  labels: [],
+                  created: "2026-01-01T00:00:00.000+0000",
+                  assignee: null,
+                  issuetype: { name: "Sub-task", subtask: true },
+                  parent: { key: "ABC-1" },
+                },
+              },
+            ],
+          },
+        },
+      ],
     });
   }
 
@@ -128,8 +142,9 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
   test("status presents the Jira candidates in native Rank order and never claims or launches", () => {
     writeConfig();
     installJiraAnswers();
+    const ready = join(dir, "status-boot-check-ran");
 
-    const result = runCli(dir, ["status"], cliEnv());
+    const result = runCli(dir, ["status"], cliEnv({ ready }));
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\)/);
@@ -138,7 +153,10 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
       result.stdout,
       new RegExp(`1\\. ABC-1 \\(jira:${ALPHA.replace(/\./g, "\\.")}\\) → ${REPO} — Fix login \\[assignee: Ana Silva\\]`),
     );
-    assert.match(result.stdout, /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout$/m);
+    assert.match(
+      result.stdout,
+      /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout \(subtask\)$/m,
+    );
     assert.ok(
       result.stdout.indexOf("1. ABC-1") < result.stdout.indexOf("2. ABC-2"),
       "the returned Rank order is presented as-is, never re-sorted by creation age",
@@ -149,10 +167,15 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
 
     assert.deepEqual(
       jira.calls(),
-      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql"],
-      "one identity read and one native search: no claim, comment or transition",
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+      ],
+      "one identity read and the native pages: no claim, comment or transition",
     );
     assert.deepEqual(gh.restCalls(), [], "repos: [] means no GitHub Issues REST call");
+    assert.equal(existsSync(ready), false, "a Jira-only status needs no GitHub credential");
     assert.equal(existsSync(workspace), false, "status created no execution workspace");
   });
 
