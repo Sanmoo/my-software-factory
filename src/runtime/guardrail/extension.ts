@@ -13,8 +13,8 @@
  * this?" and "what does the record say?" have one answer on both sides of the
  * container boundary.
  *
- * Installed by the worker image at /opt/msf/runtime/guardrail/extension.js and loaded
- * with `--extension`; it reads the work mount from MSF_WORK_MOUNT.
+ * Installed by the worker image at /opt/msf/runtime/guardrail/extension.js and
+ * loaded with `--extension`; it reads the work mount from MSF_WORK_MOUNT.
  */
 
 import { execFileSync } from "node:child_process";

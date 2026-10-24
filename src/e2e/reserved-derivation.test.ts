@@ -146,7 +146,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     return feedback.value.pr && feedback.value.pr.state === "open" ? feedback.value.pr.number : null;
   }
 
-  // ---- case 1: human comment on the PR → feedback round, same branch, same PR ----
+  // ---- case 1: human comment on the PR → feedback round, same branch, same
+  // PR ----
 
   test("a new human comment on the PR launches a feedback round on the SAME branch and the SAME PR", async () => {
     const config = makeConfig(2);
@@ -191,7 +192,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.ok(comments.some((comment) => comment.body === "seja mais sucinto"));
   });
 
-  // ---- case 2: human comment on a blocked issue after the marker → retomada ----
+  // ---- case 2: human comment on a blocked issue after the marker →
+  // retomada ----
 
   test("a human answer on the issue AFTER the marker resumes the work from the existing branch", async () => {
     const config = makeConfig(2);
@@ -274,7 +276,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     );
   });
 
-  // ---- case 3: PR closed without merge → rejected, blocked with a comment pointing at the PR ----
+  // ---- case 3: PR closed without merge → rejected, blocked with a comment
+  // pointing at the PR ----
 
   test("a PR closed without merge becomes blocked, with a comment pointing at the PR", async () => {
     const config = makeConfig(2);
@@ -365,7 +368,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.deepEqual(git.cleaned, [{ repo: REPO, number: 5 }], "the git host cleaned the work's branches");
   });
 
-  // ---- case 2 (rejection branch): the rejected work's retomada reopens the SAME PR ----
+  // ---- case 2 (rejection branch): the rejected work's retomada reopens the
+  // SAME PR ----
 
   test("a rejected work answered on the issue resumes from the existing branch and reopens the SAME PR", async () => {
     const config = makeConfig(2);
@@ -421,7 +425,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.equal(launchOf(second.launched, githubWork(REPO, 10))?.request.attempt, 2, "the registry numbered the round");
   });
 
-  // ---- case 6: the orphan claim — a death between the claim and the spawn is an interruption ----
+  // ---- case 6: the orphan claim — a death between the claim and the spawn is
+  // an interruption ----
 
   test("an orphan claim with zero footprint is recovered as attempt 1 — never released, never a fall", async () => {
     const config = makeConfig(2);

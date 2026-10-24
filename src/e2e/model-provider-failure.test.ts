@@ -29,12 +29,13 @@ import { seedSession } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * End-to-end of the model provider budget: the recovery of an interrupted attempt must tell a
- * MODEL PROVIDER FAILURE from an interruption of the agent. A model provider
- * error in the attempt's own stream retries on its own budget and backoff; an
- * interruption without it keeps the interruption recovery untouched; an exhausted
- * model provider budget waits for the operator ("awaiting model provider") as a
- * help request — never a block and never an infinite retry.
+ * End-to-end of the model provider budget: the recovery of an interrupted
+ * attempt must tell a MODEL PROVIDER FAILURE from an interruption of the agent.
+ * A model provider error in the attempt's own stream retries on its own budget
+ * and backoff; an interruption without it keeps the interruption recovery
+ * untouched; an exhausted model provider budget waits for the operator
+ * ("awaiting model provider") as a help request — never a block and never an
+ * infinite retry.
  *
  * The seams are the ticket's: the scriptable fake runtime (a model provider
  * error written into the attempt's stream log, exactly as the real runtime
