@@ -160,8 +160,9 @@ describe("the continuity artifacts", () => {
   });
 
   test("a workspace written before the expansion stays readable as a GitHub Work", () => {
-    // The pre-#127 file named the work as `{repo, number}`. Reading it is a
-    // compatibility contract: the association is not discarded or guessed.
+    // A file written in the earlier shape names the work as `{repo, number}`.
+    // Reading it is a compatibility contract: the association is not discarded
+    // or guessed.
     writeFileSync(
       join(dir, "sessao-vinculos.jsonl"),
       `${JSON.stringify({ version: 1, work: { repo: "Sanmoo/my-tasks", number: 7 }, attempt: 2, round: 1, sessionId: "legacy", at: "" })}\n`,

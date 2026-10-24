@@ -464,8 +464,8 @@ export function describeForeignRecord(attempt: number): string {
 
 /**
  * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt. Absence is the FACT "no-outcome" : the
- * recovery budget, never the fall ruler, answers it.
+ * invalid or corrupt. Absence is the FACT "no-outcome": the recovery budget,
+ * never the fall ruler, answers it.
  */
 export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {
   let raw: string;

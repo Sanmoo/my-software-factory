@@ -8,11 +8,11 @@
  *  - with no trustworthy state, ask for help instead of pretending to recover;
  *  - the recovery budget is finite and separate from attempt identity.
  *
- * A is modelled as it exists (the factory relaunches a new attempt with
- * reconstructed context and has no worker-recognition path: the status path
- * and the first/second-drop rule are its evidence), so its
- * expected outcomes here are deliberately worse. That is the baseline being
- * observed, not a defect introduced by the harness.
+ * A is modelled as it exists: the factory relaunches a new attempt with
+ * reconstructed context and has no worker-recognition path (state/status.ts
+ * reads the container listing; the fall ruler frees on the first fall and
+ * blocks on the second), so its expected outcomes here are deliberately worse.
+ * That is the baseline being observed, not a defect introduced by the harness.
  */
 import type { RecoveryDecision } from "./recovery.js";
 import type { OwnerState, WorkerRecord } from "./ownership.js";

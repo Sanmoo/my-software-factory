@@ -218,7 +218,8 @@ function compareLeftoverWorks(a: { work: WorkIdentity }, b: { work: WorkIdentity
 }
 
 /** A stable presentation order that keeps GitHub's historical repo-then-number
- *  comparison and falls back to the Work key for other sources. */
+ *  comparison (a lower number sorts before a higher one) and falls back to the
+ *  Work key for other sources. */
 function compareWorks(a: WorkIdentity, b: WorkIdentity): number {
   if (a.ticket.provider === "github" && b.ticket.provider === "github") {
     return (

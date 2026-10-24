@@ -70,8 +70,8 @@ class FakeGitWork implements LegacyGitWork {
 
 /**
  * A tracker whose first PR-feedback read waits for the test: the collection of
- * a finished worker can then be observed INSIDE the stop, the race the issue
- * asks to cover.
+ * a finished worker can then be observed INSIDE the stop — the race a stop
+ * must never lose.
  */
 class GatedTracker extends FakeTrackerAdapter {
   readonly collectionEntered = deferred();
@@ -278,7 +278,7 @@ describe("e2e: requested stop, restart and resume", { timeout: 60_000 }, () => {
     assert.equal(
       next.launched[0]?.request.session?.mode,
       "new",
-      "the worker never started, so no session exists to reopen: the SAME attempt creates its first one ",
+      "the worker never started, so no session exists to reopen: the SAME attempt creates its first one",
     );
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
     assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");

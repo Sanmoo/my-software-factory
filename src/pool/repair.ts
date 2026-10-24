@@ -107,8 +107,9 @@ export const EMPTY_REPAIR_CYCLE: RepairCycle = {
 
 /**
  * Read the cycle; an absent or corrupt file is the honest initial state. A
- * file carrying only usedRounds/lastEvidence is read as it stands — no attempt, no falls, and nothing renewed or deleted
- * silently because the older shape lacks the newer facts.
+ * file carrying only usedRounds/lastEvidence is read as it stands — no
+ * attempt, no falls, and nothing renewed or deleted silently because the older
+ * shape lacks the newer facts.
  */
 export async function readRepairCycle(workDir: string): Promise<RepairCycle> {
   try {

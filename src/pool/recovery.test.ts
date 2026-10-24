@@ -49,7 +49,7 @@ describe("the recovery budget — finite, persisted, separate from the attempts"
       assert.equal(decision.decision, "recover");
       if (decision.decision === "recover") waits.push(decision.waitMs);
     }
-    assert.deepEqual(waits, [1_000, 4_000, 16_000], "the fixed #111 schedule, by index");
+    assert.deepEqual(waits, [1_000, 4_000, 16_000], "the fixed schedule, by index");
 
     const exhausted = await consumeRecovery(dir, BUDGET, 1, NOW);
     assert.equal(exhausted.decision, "pause-help");

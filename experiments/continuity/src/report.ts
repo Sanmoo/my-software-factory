@@ -321,7 +321,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	);
 	lines.push("");
 	lines.push(
-		"**Investigar antes de avançar com C** apenas se aparecer um requisito de trabalho durável recuperável (delegação, subagente, checkpoint intra-run). Nesse caso, o experimento a fazer é o de delegação, não este: aqui, C não superou B em nada que o contrato desta issue exija.",
+		"**Investigar antes de avançar com C** apenas se aparecer um requisito de trabalho durável recuperável (delegação, subagente, checkpoint intra-run). Nesse caso, o experimento a fazer é o de delegação, não este: aqui, C não superou B em nada que o contrato deste experimento exija.",
 	);
 
 	lines.push("");

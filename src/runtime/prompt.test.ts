@@ -467,14 +467,14 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /Delegation is\s+operator-authorized for this procedure/);
   });
 
-  test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded (stories 4, 5)", () => {
+  test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded", () => {
     assert.match(initial, /READ its SKILL\.md and EXECUTE its instructions/);
     assert.match(initial, /no tool named "Skill"/);
     assert.match(initial, /merely mentioning[\s\S]*without loading it is not following it/);
     assert.doesNotMatch(initial, /call the Skill tool/i);
   });
 
-  test("the order is fixed: pin the round's SHA, implement, validate, commit LOCALLY, review, fix, publish last (stories 7, 8)", () => {
+  test("the order is fixed: pin the round's SHA, implement, validate, commit LOCALLY, review, fix, publish last", () => {
     const pin = initial.indexOf("PIN the round");
     const implement = initial.indexOf("IMPLEMENT per /implement");
     const validate = initial.indexOf("VALIDATE:");
@@ -489,7 +489,7 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /new commits on the branch[\s\S]*re-run the review against the SAME starting SHA/, "fixes are new commits, re-reviewed");
   });
 
-  test("the review runs as TWO SEPARATE subagents, IN PARALLEL — never one agent, never self-review (stories 9-11, 16)", () => {
+  test("the review runs as TWO SEPARATE subagents, IN PARALLEL — never one agent, never self-review", () => {
     assert.match(initial, /TWO SEPARATE subagent runs, issued IN PARALLEL/);
     assert.match(initial, /one for the Standards/);
     assert.match(initial, /one for the Spec axis/);
@@ -506,19 +506,19 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /NEVER[\s\S]*silently replace the subagents with your own review/);
   });
 
-  test("documented-standard violations and missing requirements block completion; smells are judgement calls (stories 13, 14)", () => {
+  test("documented-standard violations and missing requirements block completion; smells are judgement calls", () => {
     assert.match(initial, /violations of documented standards and missing or incorrect\s+requirements block completion/);
     assert.match(initial, /Code smells are judgement calls, not\s+violations/);
     assert.match(initial, /apply them or justify/);
   });
 
-  test("the blocked procedure preserves the local work and any existing PR (stories 17, 18)", () => {
+  test("the blocked procedure preserves the local work and any existing PR", () => {
     assert.match(initial, /keep the local commits and\s+any existing PR/);
     assert.match(initial, /push nothing new, recreate no branch, discard nothing/);
     assert.match(initial, /obligation 3 applies unchanged/);
   });
 
-  test("the two axis reports land in the attempt's artifacts and ride the outcome record's paths (stories 19, 20)", () => {
+  test("the two axis reports land in the attempt's artifacts and ride the outcome record's paths", () => {
     assert.match(initial, new RegExp(reviewReportPath(1, "standards").replace(/\//g, "\\/")));
     assert.match(initial, new RegExp(reviewReportPath(1, "spec").replace(/\//g, "\\/")));
     assert.match(initial, /list\s+both files in the "paths" of the outcome record/);

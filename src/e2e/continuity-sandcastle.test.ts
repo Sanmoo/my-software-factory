@@ -50,7 +50,7 @@ import { SESSIONS_SUBDIR } from "../layout.js";
  * The test runs on the operator's host AND inside a worker container (the
  * factory's own tests run there): inside a container, the paths it hands the
  * host daemon are translated through its own bind mounts, which is exactly the
- * host/container path resolution the issue requires.
+ * host/container path resolution the daemon demands.
  */
 
 import { bridgeAddress, hostVisibleBase, waitForPushThenFindWorker, killContainer, continuitySkipReason as skipReason } from "./real-continuity-fixtures.js";

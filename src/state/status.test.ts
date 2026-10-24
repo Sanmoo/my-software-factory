@@ -33,7 +33,7 @@ import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
- * `msf status` : derivation on demand through the
+ * `msf status`: derivation on demand through the
  * port — works with the factory stopped — plus the local registry scan and the
  * read-only liveness probe. Running and Orphaned come from Docker + disk
  * together; the overlap (outcome written, worker still alive) is shown as two

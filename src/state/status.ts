@@ -177,7 +177,7 @@ async function classifyLiveness(
     running,
     duplicates: duplicateWorkers(observation.workers),
     // A work whose attempt waits for the operator is not "orphaned, awaiting
-    // the factory's next reconciliation" : it has its own section.
+    // the factory's next reconciliation": it has its own section.
     orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key) && !paused.has(entry.key)),
   };
 }

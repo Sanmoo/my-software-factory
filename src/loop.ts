@@ -159,8 +159,9 @@ import { join } from "node:path";
  * tracker/ + pool/ + git/ + runtime/ — the loop only reads the
  * facts and applies what they decide.
  *
- * The derivation of the tick covers the states of ALL reserved works (done · done-fallback · rejected · feedback · resumable — state/
- * decides, the loop executes the tracker and disk writes), the launches
+ * The derivation of the tick covers the states of ALL reserved works (done ·
+ * done-fallback · rejected · feedback · resumable — state/ decides, the loop
+ * executes the tracker and disk writes), the launches
  * prioritize the parked reserved works before new claims by age, and the
  * continuous run wakes by event (end of worker), not only by the clock.
  */
@@ -1897,7 +1898,7 @@ export class SweepEngine {
     // attempt was launched on: equal to the trigger's by construction, since
     // only the attempt whose evidence still matches the current head is
     // resumed), never a fresh read, so a collaborator's push to the branch
-    // after the fall is never overwritten by local history (stories 10/17).
+    // after the fall is never overwritten by local history.
     const repair: RepairLaunchContext | undefined =
       derivedTrigger === undefined
         ? undefined
