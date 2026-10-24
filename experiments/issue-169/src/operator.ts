@@ -1,5 +1,5 @@
 import type { JiraTicket } from "./identity.js";
-import { CLAIM_PROPERTY_KEY, ticketIdentityKey } from "./identity.js";
+import { CLAIM_PROPERTY_KEY, CLAIMED_LABEL, ticketIdentityKey } from "./identity.js";
 import type { JiraCloud } from "./jira.js";
 import type { WorkerRuntime } from "./workers.js";
 
@@ -45,7 +45,7 @@ export function releaseManually(input: {
   input.tracker.removeLabel({
     site: input.ticket.site,
     issueId,
-    label: "agent-claimed",
+    label: CLAIMED_LABEL,
     factory: input.actor,
   });
   return { released: true, reason: "released after the previous Worker's end was confirmed" };

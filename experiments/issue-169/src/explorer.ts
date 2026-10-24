@@ -1,5 +1,6 @@
 import { Factory, type FactoryConfig, type PendingAcquisition } from "./factory.js";
 import {
+  CLAIMED_LABEL,
   CLAIM_PROPERTY_KEY,
   githubDestination,
   jiraTicket,
@@ -130,7 +131,7 @@ function factoryConfig(label: FactoryLabel): FactoryConfig {
       site: "github.com",
       repo: label === "A" ? "Sanmoo/dest-a" : "Sanmoo/dest-b",
     }),
-    claimedLabel: "agent-claimed",
+    claimedLabel: CLAIMED_LABEL,
   };
 }
 

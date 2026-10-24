@@ -432,9 +432,11 @@ apaga o que não consegue ler.
 
 - **Permissões** — *Browse projects* (ler a issue e a property) e *Edit issues*
   (gravar a property) no projeto de cada Ticket; *Assign issues* para a
-  apresentação (atribuição). O endpoint de property em lote **não** exige a
-  permissão global *Bulk change* (essa é do `POST /bulk/issues/fields`). A
-  conta pode ser compartilhada; o `factory id` é configuração, não login.
+  apresentação (atribuição). A API de *Bulk edit issues*
+  (`POST /bulk/issues/fields`) exige a permissão global *Bulk change*; a
+  documentação do endpoint de property lista apenas *Browse projects* e *Edit
+  issues*. A conta pode ser compartilhada; o `factory id` é configuração, não
+  login.
 - **Configuração** — chave namespaced da property (≤255 bytes; valor ≤32 KB),
   `factory id` único por instalação, credencial da Acting account e o site Jira.
   Nada de workflow, campo customizado, app Forge/Connect ou automação.
@@ -601,7 +603,7 @@ ambos lerem o estado anterior.
 As variantes `cas-premise*` e `premise-enqueue-serialized` são **premissas**:
 `serialized` é P-CAS (teste + escrita indivisíveis); a variante de enqueue
 concede P-CAS apenas para mostrar que o momento da avaliação, sozinho, já
-quebra a exclusividade. Nas variantes `documented-enqueue-*`, "documentado"
+quebra a exclusividade. Nas variantes `documented-*`, "documentado"
 significa que nenhuma atomicidade foi concedida; o momento da avaliação é a
 inferência em teste.
 

@@ -462,7 +462,7 @@ export class JiraCloud {
     return this.requests.filter((entry) => entry.outcome === "applied").length;
   }
 
-  /** Schedule a property job and translate the two documented transport faults. */
+  /** Schedule a property job and translate the two documented transport failures. */
   private submitPropertyJob(input: {
     kind: JobKind;
     op: string;

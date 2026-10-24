@@ -1,8 +1,9 @@
 /**
  * The primary sources behind the experiment. Quotes are verbatim from the
- * Jira Cloud v3 documentation/OpenAPI (accessed 2026-10-24). Nothing from the
- * Jira Data Center/Server documentation is imported: the API and its property
- * semantics are a different edition.
+ * Jira Cloud v3 documentation/OpenAPI (accessed 2026-10-24), except the
+ * `openapi-scan` entry, whose "quotes" record the findings of scanning the
+ * published OpenAPI. Nothing from the Jira Data Center/Server documentation is
+ * imported: the API and its property semantics are a different edition.
  */
 
 export const ACCESSED = "2026-10-24";
@@ -194,8 +195,8 @@ export const SOURCES: readonly SourceNote[] = [
     doesNotEstablish:
       "that conditional requests are silently supported. A header the documentation does not declare is not a guarantee",
     quotes: [
-      "Header parameters declared by the entire OpenAPI document: Atlassian-Transfer-Id (only).",
-      "No path declares If-Match, If-None-Match, ETag or a version precondition parameter.",
+      "Scan finding: header parameters declared by the entire OpenAPI document are Atlassian-Transfer-Id only.",
+      "Scan finding: no path declares If-Match, If-None-Match, ETag or a version precondition parameter.",
     ],
   },
 ];
