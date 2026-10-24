@@ -151,9 +151,9 @@ round keeps its own ruler, and a repair fall resumes on the same branch and PR
 (see GLOSSARY.md).
 
 A surviving worker keeps its work and its slot; when it ends, the factory
-reconciles the result on its own. Its identity is the work mount, not the
-configured image: a worker launched before the image tag moved stays
-recognised. If Docker stops answering, launches pause and resume without
+reconciles the result on its own, even if the image tag moved after it was
+launched. A stop ends every container binding the work's dir, whatever image
+it runs. If Docker stops answering, launches pause and resume without
 intervention; one notice appears after `liveness.unavailable-warn-ms` (60 s by
 default), and every worker and reservation is preserved meanwhile.
 

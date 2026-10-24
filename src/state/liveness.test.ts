@@ -405,18 +405,18 @@ describe("liveness — the worker identity survives the image reference moving (
   });
 
   test("the screening places containers under THIS works root and leaves the rest to the inspect", () => {
-    const unreadable = "c".repeat(64);
+    const unrendered = "c".repeat(64);
     const listing = [
       `${OLD_WORKER} ${WORKS}/Sanmoo/my-tasks#7,/var/run/docker.sock`,
       `${SECOND} ${WORKS}-old/Sanmoo/my-tasks#8`,
-      unreadable,
+      unrendered,
     ].join("\n");
     assert.deepEqual(screenWorkerContainers(listing, WORKS), {
       candidates: [OLD_WORKER],
-      unreadable: [unreadable],
+      needsInspect: [unrendered],
     });
     assert.deepEqual(
-      screenWorkerContainers(`${OLD_WORKER} /home/sanmoo/…`, WORKS).unreadable,
+      screenWorkerContainers(`${OLD_WORKER} /home/sanmoo/…`, WORKS).needsInspect,
       [OLD_WORKER],
       "a truncated mount column is not read as absence",
     );
