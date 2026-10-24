@@ -93,13 +93,12 @@ export interface SessionResult {
 }
 
 /**
- * A launch the runtime REFUSED before any worker existed: a precondition of
- * the environment (Docker, the image and its inventory, the git credential
- * helper, the model credential) rejected it before the attempt's footprint was
- * written, so no session and no container was created (issue 178). The factory
- * uses this proof — and only this proof — to return the recovery grant it
- * persisted before the launch. Any other failure may have left a worker
- * behind and keeps the grant consumed; the doubt is never renewed.
+ * A launch the runtime refused before any worker existed: a precondition of the
+ * environment (Docker, the image and its inventory, the git credential helper,
+ * the model credential) rejected it before the attempt's footprint was
+ * written, so no worker ran (issue 178). The factory uses this proof to refund
+ * the recovery grant it persisted before the launch; a failure that may have
+ * left a worker behind keeps the grant consumed.
  */
 export class LaunchPreconditionError extends Error {
   constructor(message: string, cause?: unknown) {

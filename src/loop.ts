@@ -6,6 +6,7 @@ import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tra
 import {
   LaunchPreconditionError,
   type SessionResult,
+  type WorkRequest,
   type WorkerMaterial,
   type WorkerRuntime,
 } from "./runtime/port.js";
@@ -295,6 +296,9 @@ interface InFlightLaunch {
   /** The ledger event of a recovery granted to this admission, so a return
    *  removes exactly it: non-null while the grant may still be unused. */
   recoveryIndex: number | null;
+  /** The requested stop this admission consumed before launching (issue #146),
+   *  re-recorded when the launch never carried the attempt out. */
+  consumedStop?: RecoveryStop | null;
 }
 
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
@@ -1647,33 +1651,48 @@ export class SweepEngine {
 
   /**
    * A stop cancelled this admission before any worker existed: the granted
-   * recovery is returned and the requested stop is (re)recorded, so the next
-   * invocation resumes the attempt for free. The grant's own event index makes
-   * it idempotent — the requested stop and the admission may both reach it,
-   * and neither can return an earlier, legitimate recovery. A grant the stop
-   * could not return because a worker may already be carrying it (the runtime
-   * was called) stays in place: a later proof that no worker existed — the
-   * runtime's own precondition refusal (issue 178) — can still return it.
-   * Returns whether a grant was actually returned.
+   * recovery is refunded and the requested stop is (re)recorded, so the next
+   * invocation resumes the attempt for free. Returns whether a grant was
+   * actually refunded.
    */
   private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
     const grant = entry.recoveryIndex !== null && !entry.launched ? entry.recoveryIndex : null;
-    const refunded = grant === null ? false : await refundRecovery(entry.dir, attempt, grant);
-    if (refunded) entry.recoveryIndex = null;
+    const refunded = await this.refundGrant(entry, attempt, grant);
     await recordStopRequest(entry.dir, attempt);
     return refunded;
   }
 
   /**
    * A launch the runtime refused before any worker existed (issue 178): the
-   * recovery grant this admission persisted is returned to the attempt's
-   * budget, durably and idempotently — the grant's own event index is its
-   * identity, so a retry of the tick, a restart or a concurrent requested stop
-   * that already returned it can never return it twice. Only that proof
-   * returns it; an ambiguous failure keeps the grant consumed.
+   * grant this admission persisted is refunded and the refusal keeps
+   * propagating, because it is the environment's failure, never the work's.
+   * Only that proof refunds; an ambiguous failure may have left a worker and
+   * keeps the grant consumed.
    */
-  private async returnRejectedGrant(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    const grant = entry.recoveryIndex;
+  private async launchWorker(request: WorkRequest, entry: InFlightLaunch, attempt: number): Promise<SessionResult> {
+    try {
+      return await this.deps.runtime.launch(request);
+    } catch (error) {
+      // The requested stop this launch consumed keeps its record when the
+      // launch did not carry the attempt out (issue #146): the next invocation
+      // resumes the same attempt free of charge instead of losing the evidence.
+      await this.restoreConsumedStop(entry, attempt);
+      if (!(error instanceof LaunchPreconditionError)) throw error;
+      const refunded = await this.refundGrant(entry, attempt, entry.recoveryIndex);
+      this.log(
+        `launch of ${workKeyOf(request.work)} refused before any worker existed (${describeError(error)}) — ` +
+          (refunded ? "the recovery granted to this relaunch is refunded; " : "") +
+          "no attempt was consumed and the work stays reserved",
+      );
+      throw error;
+    }
+  }
+
+  /** Refund one grant of this admission to the attempt's budget and clear it.
+   *  The ledger event index is the grant's identity, so refunding the same
+   *  grant twice — a retried tick, a restart, a requested stop that already
+   *  refunded it — is a no-op. */
+  private async refundGrant(entry: InFlightLaunch, attempt: number, grant: number | null): Promise<boolean> {
     entry.recoveryIndex = null;
     return grant === null ? false : refundRecovery(entry.dir, attempt, grant);
   }
@@ -1684,15 +1703,13 @@ export class SweepEngine {
    * else claimed the attempt, so the stop is still the evidence that resumes
    * the same attempt free of charge.
    */
-  private async restoreConsumedStop(
-    dir: string,
-    stopBeforeLaunch: RecoveryStop | null,
-    attempt: number,
-  ): Promise<void> {
-    if (stopBeforeLaunch?.kind !== "stop-requested" || stopBeforeLaunch.attempt !== attempt) return;
-    if (ownWrittenOutcome(await readOutcomeRecord(dir), attempt) !== null) return;
-    if ((await readRecoveryLedger(dir)).lastStop !== null) return;
-    await recordStopRequest(dir, attempt);
+  private async restoreConsumedStop(entry: InFlightLaunch, attempt: number): Promise<void> {
+    const stop = entry.consumedStop ?? null;
+    entry.consumedStop = null;
+    if (stop?.kind !== "stop-requested" || stop.attempt !== attempt) return;
+    if (ownWrittenOutcome(await readOutcomeRecord(entry.dir), attempt) !== null) return;
+    if ((await readRecoveryLedger(entry.dir)).lastStop !== null) return;
+    await recordStopRequest(entry.dir, attempt);
   }
 
   /** The attempt the pending launch would use, read from the registry. A work
@@ -1796,7 +1813,7 @@ export class SweepEngine {
   }
 
   private async launchInner(launchable: Launchable, entry: InFlightLaunch): Promise<Launchable | null> {
-    const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
+    const { config, tickets, pullRequests, git, workspace } = this.deps;
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
 
@@ -2136,6 +2153,7 @@ export class SweepEngine {
     // interruption of this attempt.
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
+    entry.consumedStop = stopBeforeLaunch;
 
     if (launchable.callRecovery !== undefined) clearPause(dir);
     // Charge only after continuity allowed the launch. A pause before a worker
@@ -2148,9 +2166,8 @@ export class SweepEngine {
       return null;
     }
     entry.launched = true;
-    let result: SessionResult;
-    try {
-      result = await runtime.launch({
+    const result = await this.launchWorker(
+      {
         work,
         workDir: dir,
         branch: prepared.branch,
@@ -2159,27 +2176,10 @@ export class SweepEngine {
         attempt: facts.attempt,
         session: { mode: continuity.mode, sessionId: continuity.sessionId },
         material,
-      });
-    } catch (error) {
-      // The requested stop this launch consumed keeps its record when the
-      // launch did not carry the attempt out (issue #146): the next invocation
-      // resumes the same attempt free of charge instead of losing the evidence.
-      await this.restoreConsumedStop(dir, stopBeforeLaunch, facts.attempt);
-      // The runtime refused BEFORE any worker existed (issue 178): a
-      // precondition of the environment — Docker, the image's inventory, the
-      // git helper, the model credential. No session and no container was
-      // born, so the grant persisted before the launch is returned exactly as
-      // the requested stop returns a cancelled admission's; anything else may
-      // have left a worker behind and keeps the grant consumed.
-      if (!(error instanceof LaunchPreconditionError)) throw error;
-      const returned = await this.returnRejectedGrant(entry, facts.attempt);
-      this.log(
-        `launch of ${key} refused before any worker existed (${describeError(error)}) — ` +
-          (returned ? "the recovery granted to this relaunch is returned; " : "") +
-          "no attempt was consumed and the work stays reserved",
-      );
-      return null;
-    }
+      },
+      entry,
+      facts.attempt,
+    );
     this.launched.push(result);
 
     return this.collect(launchable, result, facts.attempt, facts.previousFall);

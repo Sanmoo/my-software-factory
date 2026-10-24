@@ -424,10 +424,9 @@ export class SandcastleRuntime implements WorkerRuntime {
   private async launchRegistered(request: WorkRequest, session: RunningSession): Promise<SessionResult> {
     const stopSignal = session.stop.signal;
     // Preconditions BEFORE any footprint: infra and config failures are not
-    // work falls — the factory fails fast with the reason (the v1's refusal)
-    // — and, precisely because they run before the footprint, their refusal
-    // is the proof that no worker existed (issue 178).
-    await refusedBeforeWorker(() => this.preflight());
+    // work falls — the factory fails fast with the reason — and, being before
+    // the footprint, their refusal proves no worker existed.
+    await launchPrecondition(() => this.preflight());
 
     // Stopped while the preconditions ran: no footprint, no worker. The
     // requested stop is not a session this runtime has to report, and the
@@ -437,14 +436,13 @@ export class SandcastleRuntime implements WorkerRuntime {
       return { request, outcome: "abrupt-death" };
     }
 
-    // The Docker socket the container inherits (ADR 0003) is resolved with the
+    // The Docker socket the container inherits (ADR 0003), resolved with the
     // preconditions: a socket that vanished between the two is the factory's
     // failure to refuse out loud, never a work-level fall. An explicitly
     // supplied auth file is staged into a private host dir for the read-only
     // mount — never written to the image, never read from a personal profile.
-    // Both land BEFORE the footprint, so their refusal proves no worker
-    // existed too, and the dir dies with the launch.
-    const { dockerSocket, agentFilesDir } = await refusedBeforeWorker(() => ({
+    // Both land BEFORE the footprint and the dir dies with the launch.
+    const { dockerSocket, agentFilesDir } = await launchPrecondition(() => ({
       dockerSocket: this.resolveDockerSocket(),
       agentFilesDir: this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles),
     }));
@@ -753,13 +751,11 @@ export class SandcastleRuntime implements WorkerRuntime {
 }
 
 /**
- * Run one step of the launch that happens BEFORE the attempt's footprint. Its
- * refusal is a LaunchPreconditionError — the attempt's dir and log do not
- * exist yet, so no worker was born — which is what lets the factory return the
- * recovery grant it persisted before the launch (issue 178). A failure raised
- * after the footprint is never wrapped here: the worker may exist.
+ * Run one launch step that happens BEFORE the attempt's footprint, typing its
+ * refusal as proof that no worker existed (issue 178). A step after the
+ * footprint is never wrapped here: the worker may exist.
  */
-async function refusedBeforeWorker<T>(step: () => T | Promise<T>): Promise<T> {
+async function launchPrecondition<T>(step: () => T | Promise<T>): Promise<T> {
   try {
     return await step();
   } catch (error) {

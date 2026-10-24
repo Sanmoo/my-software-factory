@@ -18,6 +18,8 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { LaunchPreconditionError, type WorkRequest } from "../runtime/port.js";
 import { consumeRecovery, readRecoveryLedger } from "../pool/recovery.js";
+import { deriveStatus } from "../state/status.js";
+import { renderStatus } from "../state/status-render.js";
 import { seedSession } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -25,7 +27,7 @@ import type { IssueRef } from "../tracker/port.js";
 /**
  * e2e of issue 178: a launch the runtime refuses BEFORE any worker existed
  * (a precondition of the environment — Docker, the image's inventory, the git
- * helper, the model credential) returns the recovery grant the factory
+ * helper, the model credential) refunds the recovery grant the factory
  * persisted before the launch. The work stays reserved with its budget intact
  * and the next tick relaunches the same attempt; an ambiguous failure — one
  * that may have left a worker behind — keeps the grant consumed, exactly as
@@ -118,9 +120,9 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
   function refusesBeforeWorker(
     message: string,
     launches = 1,
-  ): (request: WorkRequest, index: number) => { error: Error; workerExisted: boolean } | null {
+  ): (request: WorkRequest, index: number) => { error: Error; footprint: "none" } | null {
     return (_request, index) =>
-      index < launches ? { error: new LaunchPreconditionError(message), workerExisted: false } : null;
+      index < launches ? { error: new LaunchPreconditionError(message), footprint: "none" } : null;
   }
 
   test("the refusal returns the grant: the budget stays intact, the work reserved, and the next tick retries the same attempt", async () => {
@@ -133,12 +135,17 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       ),
     });
 
-    const refused = await runOnce(deps(runtime));
+    const refused = await runOnce(deps(runtime)).then(
+      () => null,
+      (error: unknown) => error,
+    );
 
-    assert.equal(refused.launched.length, 0, "the runtime refused before any worker existed — nothing was launched");
+    assert.ok(refused instanceof LaunchPreconditionError, "the environment's refusal surfaces, never swallowed");
+    assert.match(refused.message, /agent-inventory\.json/, "and carries the operator's own reason");
+    assert.equal(runtime.launched.length, 1, "the runtime was asked once and refused before any session");
     const afterRefusal = await readRecoveryLedger(target);
-    assert.equal(afterRefusal.consumed, 0, "the granted recovery was returned to the attempt's budget");
-    assert.deepEqual(afterRefusal.events, [], "the returned grant is not left as history");
+    assert.equal(afterRefusal.consumed, 0, "the granted recovery was refunded to the attempt's budget");
+    assert.deepEqual(afterRefusal.events, [], "the refunded grant is not left as history");
     assert.equal(afterRefusal.attempt, 1, "the attempt keeps its number");
     assert.equal(afterRefusal.lastStop?.kind, "interruption", "the attempt is still the interrupted one");
     assert.equal(existsSync(join(target, "desfecho.json")), false, "no outcome was written: no attempt was consumed");
@@ -149,7 +156,16 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       true,
       "the operator reads the environment's own reason",
     );
-    assert.equal(logs.some((line) => line.includes("the recovery granted to this relaunch is returned")), true);
+    assert.equal(logs.some((line) => line.includes("the recovery granted to this relaunch is refunded")), true);
+
+    // `msf status` derives the same ledger: the budget is the real one after
+    // the refund, and the work is still the interrupted attempt.
+    const view = await deriveStatus(tracker, config(), layout, async () => []);
+    assert.match(
+      renderStatus(view),
+      /#1 \(attempt 1: last stop was an interruption — no attempt consumed; 0\/3 recoveries/,
+      "the operator sees the return in the budget the ledger really holds",
+    );
 
     // The next tick re-derives the work from disk and retries the SAME attempt.
     const retried = await runOnce(deps(runtime));
@@ -168,7 +184,7 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       outcomes: ["pr-open"],
       rejectLaunch: () => ({
         error: new Error("docker run failed after the container was created (daemon did not answer)"),
-        workerExisted: true,
+        footprint: "started",
       }),
     });
 
@@ -197,7 +213,7 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       rejectLaunch: refusesBeforeWorker("Docker is unavailable (docker info failed) — refusing to launch a worker."),
     });
 
-    await runOnce(deps(runtime));
+    await assert.rejects(runOnce(deps(runtime)), /Docker is unavailable \(docker info failed\)/);
 
     const ledger = await readRecoveryLedger(target);
     assert.equal(ledger.consumed, 1, "the dead process's grant stays consumed — no refund can prove that worker never existed");
@@ -222,10 +238,10 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       rejectLaunch: refusesBeforeWorker("no model credentials for the worker", 2),
     });
 
-    await runOnce(deps(runtime, cfg));
-    assert.equal((await readRecoveryLedger(target)).consumed, 2, "the first refusal returned only its own grant");
-    await runOnce(deps(runtime, cfg));
-    assert.equal((await readRecoveryLedger(target)).consumed, 2, "the retried refusal cannot return a grant twice");
+    await assert.rejects(runOnce(deps(runtime, cfg)), /no model credentials for the worker/);
+    assert.equal((await readRecoveryLedger(target)).consumed, 2, "the first refusal refunded only its own grant");
+    await assert.rejects(runOnce(deps(runtime, cfg)), /no model credentials for the worker/);
+    assert.equal((await readRecoveryLedger(target)).consumed, 2, "the retried refusal cannot refund a grant twice");
 
     const retried = await runOnce(deps(runtime, cfg));
     assert.equal(retried.launched.length, 1, "the work relaunches once the environment allows it");

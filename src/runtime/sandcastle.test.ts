@@ -632,6 +632,77 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
   });
 
+  test("the issue's own refusals — a stale image inventory and an unresolved credential — are typed as proven-before-worker", async () => {
+    const stale = JSON.parse(inventoryJson()) as { pi: { version: string } };
+    stale.pi.version = "1.2.0";
+    const runtimeWith = (preflight: () => Promise<void>) =>
+      new SandcastleRuntime({
+        model: MODEL,
+        token: "present",
+        agentResources: RESOURCES,
+        authEnv: {},
+        workspace: root,
+        dockerSocket,
+        preflight,
+        runSandcastle: async () => {
+          throw new Error("run must never be reached");
+        },
+        dockerProvider: () => dummySandbox(),
+      });
+    const run = async (_command: string, args: string[]) => {
+      if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: JSON.stringify(stale), stderr: "" };
+      if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+      return { stdout: "ok", stderr: "" };
+    };
+    const staleInventory = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: {},
+        dockerSocket: SOCKET,
+        run,
+      }),
+    );
+
+    await assert.rejects(
+      staleInventory.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /does not match this checkout's agent-resources\.yaml/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the stale inventory leaves no footprint");
+
+    const unresolvedCredential = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: { OPENAI_API_KEY: "probe-sentinel" },
+        dockerSocket: SOCKET,
+        authProbe: async () => ({
+          status: 1,
+          stdout: '{"status":"not_ready","provider":"openai","reason":"credentials_not_configured"}',
+          stderr: "",
+        }),
+        run: async (_command, args) => {
+          if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+          if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+          return { stdout: "ok", stderr: "" };
+        },
+      }),
+    );
+
+    await assert.rejects(
+      unresolvedCredential.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError && /model credentials for/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the credential refusal leaves no footprint");
+  });
+
   test("the default preflight checks Docker, the image inventory, the token, the git helper, Docker inside and the model auth", async () => {
     const checks: string[][] = [];
     const recorded = defaultPreflight({
