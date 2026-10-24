@@ -40,6 +40,8 @@ export interface RetroInFlight {
   startedAt: number;
   window: string[];
   manual: boolean;
+  /** The process that owns the round: the lane's exclusivity is its liveness. */
+  pid: number;
 }
 
 /** The absolute path of a round's report — the marker the factory checks. */
@@ -67,9 +69,9 @@ export async function readRetroState(layout: WorkspaceLayout): Promise<RetroStat
     };
   } catch {
     // A lost index never makes the factory skip work it does not know about:
-    // the reports are still on disk, so the boundary degrades to the first
-    // round's rule (the last ten finished works) and re-analysis is possible —
-    // an overlap, never a silent skip.
+    // the reports still name the last round, and the unknown boundary degrades
+    // to the first round's rule (the last ten finished works) — re-analysis is
+    // possible, a silent skip never is.
     return { ...EMPTY_RETRO_STATE, lastReport: await latestReport(layout) };
   }
 }
@@ -91,7 +93,42 @@ export async function writeRetroState(layout: WorkspaceLayout, state: RetroState
   await writeFile(join(layout.retros, RETRO_STATE_FILENAME), `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
+/**
+ * The round in flight, as `status` shows it: a record whose owner died is not
+ * a round in flight (and status writes nothing, so it is never cleaned here).
+ * The record names the process, so a factory of another config sharing this
+ * workspace is respected instead of being wiped.
+ */
 export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroInFlight | null> {
+  const inFlight = await readInFlightRecord(layout);
+  return inFlight !== null && isOwnerAlive(inFlight) ? inFlight : null;
+}
+
+/**
+ * The lane's exclusivity (issue 141): a round in flight by a live process, or
+ * null after clearing the record a dead process left — the next round can only
+ * start once the previous one is over.
+ */
+export async function liveRoundInFlight(layout: WorkspaceLayout): Promise<RetroInFlight | null> {
+  const inFlight = await readInFlightRecord(layout);
+  if (inFlight === null) return null;
+  if (isOwnerAlive(inFlight)) return inFlight;
+  clearRetroInFlight(layout);
+  return null;
+}
+
+function isOwnerAlive(inFlight: RetroInFlight): boolean {
+  try {
+    process.kill(inFlight.pid, 0);
+    return true;
+  } catch (error) {
+    // A process of another user cannot be signalled but is there: only the
+    // kernel's own "no such process" proves the owner died.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function readInFlightRecord(layout: WorkspaceLayout): Promise<RetroInFlight | null> {
   try {
     const raw = await readFile(join(layout.retros, RETRO_IN_FLIGHT_FILENAME), "utf8");
     const parsed: unknown = JSON.parse(raw);
@@ -100,12 +137,14 @@ export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroI
     const round = record["round"];
     const startedAt = record["startedAt"];
     const window = record["window"];
+    const pid = record["pid"];
     if (typeof round !== "string" || typeof startedAt !== "number" || !Array.isArray(window)) return null;
     return {
       round,
       startedAt,
       window: window.filter((entry): entry is string => typeof entry === "string"),
       manual: record["manual"] === true,
+      pid: typeof pid === "number" ? pid : 0,
     };
   } catch {
     return null;
@@ -121,8 +160,7 @@ export async function writeRetroInFlight(layout: WorkspaceLayout, inFlight: Retr
   );
 }
 
-/** Remove the in-flight record. A run start clears what a dead run left:
- *  the workspace lock proves no other run owns it. */
+/** Remove the in-flight record — once its owner is proven gone. */
 export function clearRetroInFlight(layout: WorkspaceLayout): void {
   try {
     rmSync(join(layout.retros, RETRO_IN_FLIGHT_FILENAME), { force: true });

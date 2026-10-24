@@ -438,6 +438,7 @@ export function buildRetroPrompt(request: RetroRequest): string {
     `# Retrospective round ${request.round}`,
     ``,
     `You are analyzing a window of finished works of the software factory.`,
+    `The analysis instructions below are version ${request.instructionsVersion} of the factory's own set.`,
     `The report and every filed issue are written in: ${request.language}.`,
     `You file improvement items as a GitHub issue through the acting account \`${request.account}\`.`,
     ``,

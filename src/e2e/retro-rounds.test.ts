@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -559,6 +569,44 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.match(rendered, /retro \(window reports mark the next window; items land as needs-triage\)/);
     assert.match(rendered, /1 item\(s\) filed by the last round/);
     assert.match(rendered, /window boundary: 2026-02-01T12:00:00\.000Z/);
+  });
+
+  test("one round at a time: a live round's marker keeps the lane, and a dead owner's is cleared", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps, logs } = makeLoggedFactory(config);
+    seedArchived(1, at(1));
+    const inFlightPath = join(layout.retros, RETRO_IN_FLIGHT_FILENAME);
+    const inFlight = (pid: number): string =>
+      JSON.stringify({
+        round: "2026-03-01T00-00-00-000Z",
+        startedAt: at(1),
+        window: [`${REPO}#9`],
+        manual: false,
+        pid,
+      });
+    mkdirSync(layout.retros, { recursive: true });
+
+    // This test process is alive: the round belongs to a factory that is still running.
+    writeFileSync(inFlightPath, inFlight(process.pid), "utf8");
+    await runOnce(deps);
+    assert.equal(runtime.retroLaunched.length, 0, "the lane is taken");
+    assert.ok(logs.some((line) => line.includes("already in flight")));
+    assert.ok(readdirSync(layout.retros).includes(RETRO_IN_FLIGHT_FILENAME), "a live owner's record is never wiped");
+
+    // A process that exited owns nothing: its record is stale, the lane is free.
+    const deadPid = spawnSync(process.execPath, ["-e", ""]).pid!;
+    writeFileSync(inFlightPath, inFlight(deadPid), "utf8");
+    let heldWhileRunning = "";
+    runtime.holdRetro = () => {
+      heldWhileRunning = readFileSync(inFlightPath, "utf8");
+    };
+    await runOnce(deps);
+    assert.equal(runtime.retroLaunched.length, 1, "the stale record never blocks a round");
+    assert.match(
+      heldWhileRunning,
+      new RegExp(`"pid": ${process.pid}\\b`),
+      "the new round holds the lane for its own lifetime",
+    );
   });
 
   test("an empty workspace launches no round and writes no marker", async () => {

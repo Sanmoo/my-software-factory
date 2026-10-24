@@ -58,7 +58,7 @@ import {
 } from "./inventory.js";
 import { agentFileProblem, modelAuthSources } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
-import type { RetroRequest, RetroResult, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { operationalLogPath } from "../log.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 import { repoCloneDir } from "../git/port.js";
@@ -749,7 +749,7 @@ export class SandcastleRuntime implements WorkerRuntime {
    * to the worker model) — never the worker's by accident. There is no branch
    * strategy to advance: the round analyzes and files, it never commits code.
    */
-  async launchRetro(request: RetroRequest): Promise<RetroResult> {
+  async launchRetro(request: RetroRequest): Promise<void> {
     await this.preflight();
     // The round's own model may be a different provider than the worker's:
     // its credential source is resolved for the model the round really uses.
@@ -845,7 +845,7 @@ export class SandcastleRuntime implements WorkerRuntime {
         logging: { type: "file", path: join(sessionsDir, "sandcastle.log") },
       });
 
-      return { outcome: existsSync(request.reportPath) ? "report-written" : "no-report" };
+
     } finally {
       if (agentFilesDir !== undefined) rmSync(agentFilesDir, { recursive: true, force: true });
     }

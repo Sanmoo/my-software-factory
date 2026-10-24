@@ -145,8 +145,8 @@ import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { collectFinishedWorks } from "./retro/window.js";
-import { clearRetroInFlight } from "./retro/marker.js";
-import { emptyWindowNotice, planAutomaticRound, runRetroRound } from "./retro/round.js";
+
+import { RetroBusyError, emptyWindowNotice, planAutomaticRound, runRetroRound } from "./retro/round.js";
 import { describeError, formatDuration } from "./format.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -625,9 +625,6 @@ export class SweepEngine {
   ) {
     this.slots = new Slots(deps.config.concurrency);
     this.log = operationalLog(deps.log);
-    // A round file left by a dead run is stale: this run holds the workspace
-    // lock, so nothing else is analysing it (issue 141, status visibility only).
-    clearRetroInFlight(deps.workspace);
     this.cooperativeMs = stop.cooperativeMs ?? COOPERATIVE_STOP_MS;
     // The signals are listened to from the START of the run (issue #146): a
     // stop requested during the derivation, before the first admission, is
@@ -1049,7 +1046,13 @@ export class SweepEngine {
   private maybeStartRetro(): void {
     if (!this.deps.config.retro.enabled || this.retroRun !== null || this.stopping) return;
     this.retroRun = this.startRetroRound()
-      .catch((error: unknown) => this.log(`retro round failed: ${describeError(error)}`))
+      .catch((error: unknown) => {
+        const line =
+          error instanceof RetroBusyError
+            ? `retro: ${error.message}`
+            : `retro round failed: ${describeError(error)}`;
+        this.log(line);
+      })
       .finally(() => {
         this.retroRun = null;
       });

@@ -120,13 +120,12 @@ export interface RetroWorkInput {
 export interface RetroRequest {
   /** The round id — also the report and result file names' prefix. */
   round: string;
-  /** The dedicated retrospective model. */
   model: string;
   /** The one language of the round (report and every filed item). */
   language: string;
-  /** The acting account that files the issues. */
   account: string;
-  /** Where factory-axis improvement items are filed. */
+  /** Where factory-axis improvement items are filed; target-repo items go to
+   *  the repo concerned. */
   factoryItemsDestination: string;
   works: RetroWorkInput[];
   /** Host paths the round writes (report and result record). */
@@ -140,11 +139,6 @@ export interface RetroRequest {
   /** The factory-owned, versioned analysis instructions. */
   instructions: string;
   instructionsVersion: string;
-}
-
-export interface RetroResult {
-  /** What the runtime saw the round produce: the report artifact, or nothing. */
-  outcome: "report-written" | "no-report";
 }
 
 export interface WorkerRuntime {
@@ -167,7 +161,8 @@ export interface WorkerRuntime {
   /**
    * Run one retrospective round (issue 141). It is not a Work: no claim, no
    * slot, no branch, no outcome record — the round writes its report and
-   * result record and ends, and the factory reads the artifacts back.
+   * result record and ends, and the factory reads those artifacts back: the
+   * round's word about what it produced is never a fact.
    */
-  launchRetro(request: RetroRequest): Promise<RetroResult>;
+  launchRetro(request: RetroRequest): Promise<void>;
 }

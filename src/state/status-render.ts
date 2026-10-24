@@ -170,9 +170,15 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
         retro.lastReport === null
           ? `no report yet — the first round covers the last ${FIRST_WINDOW_SIZE} finished works`
           : `${retro.lastReport} — ${retro.filed} item(s) filed by the last round`,
-        retro.boundaryAt === null
-          ? "no window boundary yet — a single-work post-mortem never moves it"
-          : `window boundary: ${new Date(retro.boundaryAt).toISOString()} (newest finish the last window covered)`,
+        ...(retro.lastReport !== null && retro.boundaryAt === null
+          ? ["no window boundary yet — only single-work post-mortems ran, and they never move it"]
+          : []),
+        ...(retro.boundaryAt === null
+          ? []
+          : [
+              `window boundary: ${new Date(retro.boundaryAt).toISOString()} ` +
+                "(newest finish the last window covered)",
+            ]),
       ],
       cap,
     ));
