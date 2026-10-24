@@ -8,7 +8,8 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { JiraTicketAdapter } from "./tracker/jira-adapter.js";
-import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
+import { runForever, runOnce, type LoopDeps } from "./loop.js";
+import { stopConfirmed, type StopReport } from "./pool/stop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
