@@ -1,14 +1,12 @@
-# The factory's worker image: Debian trixie with an agent user matching the
-# host UID/GID, so bind-mounted artifacts keep the operator's ownership.
-# Sandcastle enters the container with `docker exec`, so it stays alive.
-# Build with `npm run build:image` (it passes the UID/GID and the declared Pi).
+# The factory's worker image: Debian trixie, an agent user matching the host
+# UID/GID (bind-mounted artifacts keep the operator's ownership), kept alive
+# for `docker exec`. Build with `npm run build:image`.
 #
-# The agent environment is provisioned HERE from the factory's declaration
-# (agent-resources.yaml): Pi at its exact version, the selected upstream skills
-# at an immutable revision, the delegation extension with its operating
-# guidance, and the reviewer agents. The worker starts with that set present —
-# no personal Pi profile, no startup install, no discovery from the host or the
-# target project.
+# The agent environment is provisioned HERE from agent-resources.yaml: Pi at
+# its exact version, the selected skills at an immutable revision, the
+# delegation extension with its operating guidance, the reviewer agents. The
+# worker starts with that set — no personal Pi profile, no startup install, no
+# discovery from the host or the target project.
 FROM node:22-trixie-slim
 
 ARG AGENT_UID=1000
@@ -18,16 +16,12 @@ ARG AGENT_GID=1000
 ARG PI_PACKAGE
 ARG PI_VERSION
 
-# git pushes the work branch and fetches the pinned skills revision while
-# building; gh opens the PR and reads the issue, authenticated by GH_TOKEN.
-# ripgrep, fd and jq are the tools Pi probes for and would otherwise download
-# at start (fd-find installs `fdfind`). curl only fetches the apt keys and is
-# purged after.
-#
-# The docker CLI is the client only — the runtime binds the host's daemon
-# socket (ADR 0003), so the worker builds and inspects through the host's
-# daemon and never starts a second one. buildx is what modern `docker build`
-# drives; the client negotiates the API with the host's server.
+# git pushes the work branch and fetches the pinned skills revision during the
+# build; gh reads the issue and opens the PR, authenticated by GH_TOKEN.
+# ripgrep, fd and jq are what Pi probes for and would otherwise download at
+# start (fd-find installs `fdfind`). The docker CLI is the client only: the
+# runtime binds the host's daemon socket (ADR 0003), so the worker never starts
+# a daemon. curl only fetches the apt keys and is purged.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       git ca-certificates curl gnupg python3 ripgrep fd-find jq docker-cli docker-buildx \
@@ -61,9 +55,8 @@ RUN set -eux; \
   chown -R "${AGENT_UID}:${AGENT_GID}" /home/agent
 
 # git calls `gh auth git-credential` only when a credential.helper is
-# configured: without this section `git push` asks for a username and the
-# round blocks on a provisioning gap. GH_TOKEN itself arrives at launch, never
-# from here. Sandcastle edits this file for the commit identity.
+# configured; without it `git push` asks for a username. GH_TOKEN arrives at
+# launch, never from here.
 RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n[credential "https://gist.github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' > /home/agent/.gitconfig \
  && chown "${AGENT_UID}:${AGENT_GID}" /home/agent/.gitconfig
 
@@ -72,12 +65,12 @@ RUN printf '[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth g
 RUN npm install --global --no-fund --no-audit "${PI_PACKAGE}@${PI_VERSION}" \
  && pi --version
 
-# The declared resources. The provisioner stages everything, validates every
-# skill, reference, version and dependency, and swaps the destination in only
-# after all checks pass, so an invalid or unavailable source fails the build.
-# The inventory it records is what this image actually contains, for the launch
-# to compare with the checkout's declaration. `agent-resources.json` here is
-# the canonical form `npm run build:image` generated from agent-resources.yaml.
+# The declared resources: the provisioner stages, validates every skill,
+# reference, version, licence and dependency, and swaps the destination in only
+# when every check passed. The inventory it writes records what this image
+# holds, for the launch to compare with the checkout's declaration.
+# `agent-resources.json` is the canonical form `npm run build:image` generated
+# from agent-resources.yaml.
 COPY scripts/agent-resources.mjs /opt/msf/scripts/agent-resources.mjs
 COPY docker/provision-agent.mjs /opt/msf/docker/provision-agent.mjs
 COPY docker/agent-resources.json /opt/msf/agent-resources.json
@@ -90,16 +83,14 @@ RUN node /opt/msf/docker/provision-agent.mjs \
 
 ENV HOME=/home/agent
 
-# The runtime binds <workspace>/toolchains/mise read-write over this directory,
-# so tools installed through mise persist across launches; nothing is
-# pre-installed here.
+# The runtime binds <workspace>/toolchains/mise over this directory, so tools
+# installed through mise persist across launches; nothing is pre-installed.
 ENV PATH="/home/agent/.local/share/mise/shims:${PATH}"
 
 # The continuity guardrail: factory code the runtime loads as an extension. It
-# journals every external effect before the tool runs and blocks a repeat when
-# a recovered session retries one. Staged from dist/ by `npm run build:image` so
-# the image carries the code this factory pins; the launch refuses an image
-# without it. Read-only to the worker.
+# journals every external effect before the tool runs and blocks a repeat on a
+# recovered session. Staged from dist/ by `npm run build:image`; the launch
+# refuses an image without it. Read-only to the worker.
 COPY docker/guardrail /opt/msf/
 RUN chmod -R a+rX /opt/msf
 

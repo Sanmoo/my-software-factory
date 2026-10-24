@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, test } from "node:test";
 
-import { declarationDigest, type AgentResourcesDeclaration } from "../../scripts/agent-resources.mjs";
+import {
+  AGENT_DECLARATION_FILE,
+  declarationDigest,
+  type AgentResourcesDeclaration,
+} from "../../scripts/agent-resources.mjs";
 import {
   AGENT_DECLARATION_PATH,
   AgentImageMismatchError,
@@ -124,9 +128,31 @@ describe("the factory's agent-resource declaration and image inventory", () => {
       ["code-reviewer", "spec-reviewer"],
     );
     assert.match(loaded.digest, /^[0-9a-f]{64}$/);
-    assert.equal(loaded.digest, declarationDigest(loaded.declaration), "the digest is the canonical form's");
-    assert.equal(AGENT_DECLARATION_PATH, new URL("../../agent-resources.yaml", import.meta.url).pathname);
+    assert.equal(basename(AGENT_DECLARATION_PATH), AGENT_DECLARATION_FILE, "the file name has one home");
     assert.equal(IMAGE_INVENTORY_PATH, "/opt/msf/agent-inventory.json");
+  });
+
+  test("the declaration's identity is its effective set, not its bytes: reformatting keeps the digest, a content change does not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "msf-declaration-"));
+    try {
+      const plain = loadAgentResources(fixtureFile(dir));
+      const reformatted = loadAgentResources(
+        fixtureFile(dir, [
+          [
+            "pi:\n  package: \"@earendil-works/pi-coding-agent\"\n  version: \"1.0.0\"\n  license: MIT\n",
+            "# a comment the parser ignores\npi:\n  license: \"MIT\"\n  version: '1.0.0'\n  package: \"@earendil-works/pi-coding-agent\"\n",
+          ],
+        ]),
+      );
+
+      assert.equal(reformatted.digest, plain.digest, "comments, quoting and key order are not the identity");
+      assert.equal(reformatted.digest, declarationDigest(reformatted.declaration));
+
+      const changed = loadAgentResources(fixtureFile(dir, [['version: "1.0.0"', 'version: "1.0.1"']]));
+      assert.notEqual(changed.digest, plain.digest, "a different set is a different declaration");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("a declaration typo is rejected instead of silently changing the effective set", () => {

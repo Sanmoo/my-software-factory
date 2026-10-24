@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadAgentDeclaration } from "../../scripts/agent-declaration.mjs";
 import {
+  AGENT_DECLARATION_FILE,
   AgentResourcesError,
   compareAgentInventory,
   type AgentInventory,
@@ -22,7 +23,7 @@ import {
 export const IMAGE_INVENTORY_PATH = "/opt/msf/agent-inventory.json";
 
 /** The declaration committed next to the compiled factory. */
-export const AGENT_DECLARATION_PATH = fileURLToPath(new URL("../../agent-resources.yaml", import.meta.url));
+export const AGENT_DECLARATION_PATH = fileURLToPath(new URL(`../../${AGENT_DECLARATION_FILE}`, import.meta.url));
 
 export class AgentImageMismatchError extends Error {
   constructor(message: string) {

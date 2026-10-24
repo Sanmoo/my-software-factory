@@ -18,5 +18,4 @@ export interface ProvisionOptions {
 
 export function listFiles(dir: string): string[];
 export function directoryDigest(dir: string): string;
-export function fileDigest(file: string): string;
 export function provisionAgentResources(options: ProvisionOptions): Promise<AgentInventory>;
