@@ -4,10 +4,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
+<<<<<<< HEAD
 import { collectFinishedWorks } from "./retro/window.js";
 import { anchorOfKey } from "./pool/work-key.js";
 import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
 import { liveRoundInFlight } from "./retro/marker.js";
+=======
+import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
+import { planManualRound, runRetroRound } from "./retro/round.js";
+>>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -394,6 +399,31 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   }
 
   const workspace = ensureWorkspace(config.workspace);
+<<<<<<< HEAD
+=======
+  const lock = await acquireRunLock(config.configPath);
+  try {
+    // The window is planned BEFORE any credential or runtime is demanded: an
+    // empty window is a notice, and the operator's command must not need the
+    // keyring to say there is nothing to analyze.
+    const observation = await probeLiveness(workspaceLivenessProbe(workspace));
+    const finished = await collectFinishedWorks(workspace, liveWorkKeys(observation));
+    const plan = await planManualRound(config, workspace, finished, {
+      ...(work === undefined ? {} : { work }),
+      ...(args.language === undefined ? {} : { language: args.language }),
+    });
+    if ("empty" in plan) {
+      writeOperationalLog(
+        workspace,
+        utcStamp(
+          plan.empty === "no-finished-works"
+            ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"
+            : "retro: nothing new since the last report — nothing was launched and no report was written",
+        ),
+      );
+      return;
+    }
+>>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
 
   // One round at a time, enforced by the lane's marker: it names the process
   // that owns the round in flight, so the exclusivity holds across processes —

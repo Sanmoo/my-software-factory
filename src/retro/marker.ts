@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, rmSync } from "node:fs";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
@@ -17,7 +17,7 @@ export const RETRO_STATE_FILENAME = "estado.json";
 export const RETRO_IN_FLIGHT_FILENAME = "rodada-em-andamento.json";
 
 export interface RetroState {
-  /** File name of the last report that moved the marker; null before any. */
+  /** File name of the last report any round wrote; null before any. */
   lastReport: string | null;
   /** Finish time (epoch ms) of the newest work the last report covered. */
   boundaryAt: number | null;
@@ -40,7 +40,6 @@ export interface RetroInFlight {
   startedAt: number;
   window: string[];
   manual: boolean;
-  pid: number;
 }
 
 /** The absolute path of a round's report — the marker the factory checks. */
@@ -101,14 +100,12 @@ export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroI
     const round = record["round"];
     const startedAt = record["startedAt"];
     const window = record["window"];
-    const pid = record["pid"];
     if (typeof round !== "string" || typeof startedAt !== "number" || !Array.isArray(window)) return null;
     return {
       round,
       startedAt,
       window: window.filter((entry): entry is string => typeof entry === "string"),
       manual: record["manual"] === true,
-      pid: typeof pid === "number" ? pid : 0,
     };
   } catch {
     return null;
@@ -128,7 +125,7 @@ export async function writeRetroInFlight(layout: WorkspaceLayout, inFlight: Retr
  *  the workspace lock proves no other run owns it. */
 export function clearRetroInFlight(layout: WorkspaceLayout): void {
   try {
-    rm(join(layout.retros, RETRO_IN_FLIGHT_FILENAME), { force: true });
+    rmSync(join(layout.retros, RETRO_IN_FLIGHT_FILENAME), { force: true });
   } catch {
     // The marker is visibility only: an unremovable file never blocks a round.
   }
