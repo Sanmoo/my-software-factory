@@ -16,6 +16,7 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 import { RECOVERY_FILENAME, readRecoveryLedger } from "../pool/recovery.js";
+import { EVENT_LOG_PATTERN, eventLogName } from "../runtime/attempt-logs.js";
 import { fakeDocker, inspectedContainer } from "../state/fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "../state/liveness.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -159,7 +160,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     const target = workDir(layout, REPO, number);
     mkdirSync(target, { recursive: true });
     for (const attempt of attempts) {
-      writeFileSync(join(target, `log-${attempt}.jsonl`), "{}\n", "utf8");
+      writeFileSync(join(target, eventLogName(attempt)), "{}\n", "utf8");
       // The launch also recorded the session of that attempt (issue 119): an
       // interrupted attempt whose session exists is recoverable.
       seedSession(target, { repo: REPO, number }, attempt);
@@ -214,9 +215,9 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
     assert.deepEqual(
       readdirSync(target)
-        .filter((name) => name.startsWith("log-"))
+        .filter((name) => EVENT_LOG_PATTERN.test(name))
         .sort(),
-      attempts.map((attempt) => `log-${attempt}.jsonl`),
+      attempts.map(eventLogName),
       "its attempt's evidence is untouched — no attempt was created",
     );
     assert.deepEqual(await labelSet(tracker, number), [DEFAULT_LABELS.claimed], "its work stays reserved");
