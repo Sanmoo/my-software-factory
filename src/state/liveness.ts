@@ -14,8 +14,7 @@ import { parseWorkKey } from "../pool/registry.js";
  *
  * The interpretation of Docker's output is a PURE function over the canned
  * strings (parseWorkerContainers); the command shell (dockerWorkerProbe) is
- * the only part that touches the machine. Tests inject a fake probe, and the
- * shell itself takes a runner — never a CLI flag.
+ * the only part that touches the machine.
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
@@ -134,7 +133,7 @@ export interface DockerProbeOptions {
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /** The Docker command runner; production spawns the CLI, tests inject a fake. */
+  /** The Docker command runner; defaults to the real CLI. */
   run?: DockerRunner;
 }
 
@@ -185,7 +184,7 @@ export function screenWorkerContainers(psListing: string, worksRoot: string): Sc
   const candidates: string[] = [];
   const needsInspect: string[] = [];
   for (const line of psListing.split("\n")) {
-    const listed = listedContainer(line);
+    const listed = parseListingRow(line);
     if (listed === null) continue;
     if (listed.mounts.includes(underRoot)) candidates.push(listed.id);
     else if (listed.mounts === "" || listed.mounts.includes("…")) needsInspect.push(listed.id);
@@ -195,7 +194,7 @@ export function screenWorkerContainers(psListing: string, worksRoot: string): Sc
 
 /** One row of the listing: the container's ID and the mount sources Docker
  *  rendered for it (the `ps` column, nothing interpreted further). */
-function listedContainer(line: string): { id: string; mounts: string } | null {
+function parseListingRow(line: string): { id: string; mounts: string } | null {
   const trimmed = line.trim();
   if (trimmed === "") return null;
   const spaceAt = trimmed.indexOf(" ");
