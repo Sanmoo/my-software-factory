@@ -117,7 +117,7 @@ interface StepSequence {
   readonly verifies: readonly VerifySlot[];
 }
 
-function stepSequences(mutationsPerClaim: number): readonly StepSequence[] {
+function stepSequences(writesPerClaim: number): readonly StepSequence[] {
   const sequences: StepSequence[] = [];
   const kinds: readonly StepKind[] = ["write", "verify", "launch"];
 
@@ -128,7 +128,7 @@ function stepSequences(mutationsPerClaim: number): readonly StepSequence[] {
       steps.forEach((step, position) => {
         if (step.kind === "write") writes += 1;
         if (step.kind === "verify") {
-          verifies.push({ position, applied: writes * mutationsPerClaim });
+          verifies.push({ position, applied: writes * writesPerClaim });
         }
       });
       sequences.push({ steps: [...steps], verifies });

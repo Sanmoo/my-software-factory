@@ -168,7 +168,7 @@ protocolo completo e a seção 6, o argumento.
   distintos.
 - **Factory id** — identidade da instalação, atribuída pelo operador na
   configuração, estável entre reinícios e **única entre instalações
-  concorrentes**. Não é a Acting account. É o que a condição de parada
+  concorrentes**. Não é a Acting account. É o que a confirmação de parada do Worker anterior
   identifica.
 - **Nonce** — identificador do escrito de aquisição, único por incarnação do
   processo (um reinício gera outro). Correlaciona a resposta perdida e
@@ -310,7 +310,7 @@ não consegue ler.
   (se mostra um escrito posterior, mostra os anteriores). **Não documentado.**
 - **P3 — participantes.** Todas as fábricas que disputam o conjunto executam o
   protocolo; factory ids são únicos entre instalações concorrentes; a liberação
-  manual respeita a condição de parada.
+  manual respeita a confirmação de que o Worker anterior terminou.
 
 ### Prova sob P0–P3
 
@@ -338,7 +338,7 @@ concorrente, apenas de P0/P2 para o próprio registro.
 | --- | --- | --- |
 | P1 | A escreve e verifica antes de B escrever (vê só A, id maior); B escreve e recebe id menor; B verifica e vê os dois, menor é o próprio → B também autoriza. | `unordered-ids-two-winners`: 2 Workers vivos; `fresh+unordered`: 8/20 intercalações com 2. |
 | P2 | A verifica omitindo o Claim de B e B verifica omitindo o de A; cada uma vê só o próprio e autoriza. | `stale-read-two-winners`: 2 Workers vivos; `holey+ordered`: 1120/7040 com 2. |
-| P1+P2 | Seguro; a única perda é incerteza quando a verificação não vê o próprio registro. | `prefix+ordered`: 0/420 com 2; `linearizable`: 0/20 com 2 e 20/20 com 1. |
+| P1+P2 | Seguro; a única perda é incerteza quando a verificação não vê o próprio registro. | `prefix+ordered`: 0/812 com 2; `linearizable`: 0/20 com 2 e 20/20 com 1. |
 | P3 (participante) | Uma fábrica antiga ignora o comentário e lança pelo label/estado antigo; o protocolo não a impede. | Limitação declarada, não simulada como garantia. |
 
 ### Por que não existe um candidato melhor “só com o documentado”
@@ -462,6 +462,9 @@ do gateway (e com que orçamento).
   a confirmação real é operacional.
 - **Jira** é a investigação #169, independente. A exigência cross-provider da
   #122 só pode ser avaliada com as duas conclusões.
+- **Vocabulário** — `Factory id`, `claim record` e `nonce` são termos desta
+  investigação, ainda não no `GLOSSARY.md`; a #170 deve levá-los ao
+  `/domain-modeling` antes de fixar o contrato.
 
 ## 8. Pendências do provedor e próximos passos
 

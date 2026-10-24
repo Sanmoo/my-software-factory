@@ -39,6 +39,12 @@ export function equal<T>(actual: T, expected: T, what: string): void {
 
 const FRESH: ReadView = { kind: "all" };
 
+/** The three writes C5 performs for one claim (padlock, assignment, record),
+ *  by applied position. */
+function claimWrites(start: number): ReadView {
+  return { kind: "omit", indices: [start, start + 1, start + 2] };
+}
+
 interface World {
   readonly ticket: TicketIdentity;
   readonly tracker: SimTracker;
@@ -419,7 +425,7 @@ export function staleObservation(): ScenarioResult {
   const w = world(claimSequence);
   observeFree(w.a, w);
   w.a.write(w.tracker, w.ticket); // A's claim is applied here...
-  const observationB = w.b.observe(w.tracker, w.ticket, { kind: "omit", indices: [0, 1, 2] });
+  const observationB = w.b.observe(w.tracker, w.ticket, claimWrites(0));
   w.b.write(w.tracker, w.ticket);
   const decisionB = w.b.verify(w.tracker, w.ticket, FRESH);
   const workerB = w.b.launch(w.workers, w.ticket);
@@ -471,10 +477,10 @@ export function staleReadTwoWinners(): ScenarioResult {
   const w = world(claimSequence);
   observeFree(w.a, w);
   observeFree(w.b, w);
-  w.a.write(w.tracker, w.ticket); // history 0 (padlock), 1 (claim)
-  w.b.write(w.tracker, w.ticket); // history 2 (padlock), 3 (claim)
-  const decisionA = w.a.verify(w.tracker, w.ticket, { kind: "omit", indices: [3, 4, 5] });
-  const decisionB = w.b.verify(w.tracker, w.ticket, { kind: "omit", indices: [0, 1, 2] });
+  w.a.write(w.tracker, w.ticket); // history 0 padlock, 1 assignment, 2 record
+  w.b.write(w.tracker, w.ticket); // history 3 padlock, 4 assignment, 5 record
+  const decisionA = w.a.verify(w.tracker, w.ticket, claimWrites(3));
+  const decisionB = w.b.verify(w.tracker, w.ticket, claimWrites(0));
   w.a.launch(w.workers, w.ticket);
   w.b.launch(w.workers, w.ticket);
   return {
@@ -653,9 +659,10 @@ export function legacyClaim(): ScenarioResult {
   });
   const workers = new WorkerRegistry();
   const b = newFactory("alpha", claimSequence);
+  const before = tracker.appliedCount;
   const observation = b.observe(tracker, ticket, FRESH);
   const worker = b.launch(workers, ticket);
-  const afterObserve = tracker.appliedCount;
+  const bWrote = tracker.appliedCount - before;
 
   const confirmation = confirmStop(workers, ticket);
   releaseClaim(tracker, workers, ticket, confirmation);
@@ -671,7 +678,7 @@ export function legacyClaim(): ScenarioResult {
     observations: {
       observation: observation.decision,
       worker: worker?.id ?? null,
-      bWrote: afterObserve,
+      bWrote,
       releasedPadlock,
       afterRelease: afterRelease.decision,
       workerB: workerB?.id ?? null,
@@ -700,7 +707,10 @@ export function claimForAnotherTicket(): ScenarioResult {
   return {
     name: "claim-for-another-ticket",
     expectation: "a marker that does not describe this Ticket is uncertain, never ignored",
-    observations: { observation: observation.decision, worker: b.launch(workers, ticket) ?? null },
+    observations: {
+      observation: observation.decision,
+      worker: b.launch(workers, ticket)?.id ?? null,
+    },
   };
 }
 
