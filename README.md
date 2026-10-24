@@ -50,14 +50,13 @@ repos:
 #     destination: Sanmoo/backend
 ```
 
-Each `jira:` entry selects from its site with its own JQL, always read in
-native **Rank ascending** order; a conflicting `ORDER BY` is a configuration
-error, and nothing else filters the result — the JQL is the whole query.
-`currentUser()` means the authenticated account named by `account` — the API
-token's owner, not an implicitly different human operator. The token is never a
-YAML value: `token-env` names the local environment variable that holds it. One
-Jira project may feed several repositories: several selections on the same
-site, each with its own destination. When readable selections promise one
+Each `jira:` entry is selected by its own JQL — nothing else filters the
+result — and always read in native **Rank ascending** order; a conflicting
+`ORDER BY` is a configuration error. `currentUser()` means the authenticated
+account named by `account` — the API token's owner, not an implicitly different
+human operator. The token is never a YAML value: `token-env` names the local
+environment variable that holds it. One site may feed several repositories, each
+selection naming its own destination. When readable selections promise one
 ticket to different destinations, `msf status` holds it with the reason instead
 of a destination; an unreadable selection leaves that overlap unverified. This
 release only reads Jira: `msf status` lists the candidates (no claim, comment or

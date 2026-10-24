@@ -944,9 +944,9 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       text,
       /reserved without attempt[\s\S]*jira:acme\.atlassian\.net:10042 → Sanmoo\/my-tasks/,
-      "a registry-only Jira work shows its source and stable ticket id, never a raw key",
+      "a registry-only Jira work shows its site and stable ticket id, never a raw key",
     );
-    assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira source");
+    assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira ticket");
     assert.doesNotMatch(text, /10042 \(jira/, "the stable id is never fabricated into a readable key");
     assert.match(
       text,

@@ -198,16 +198,16 @@ function renderJiraSelections(
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ` +
       plural(selections.length, "selection"),
   ];
-  for (const selection of selections) {
-    const site = selection.selection.source.site;
-    const destination = renderRepositoryIdentity(selection.selection.destination);
-    if (selection.state === "unknown") {
-      lines.push(`  ${site} → ${destination}: unknown (${selection.reason})`);
+  for (const view of selections) {
+    const site = view.selection.source.site;
+    const destination = renderRepositoryIdentity(view.selection.destination);
+    if (view.state === "unknown") {
+      lines.push(`  ${site} → ${destination}: unknown (${view.reason})`);
       continue;
     }
-    const unverified = unverifiedNote(selection.unverified);
-    lines.push(`  ${site} → ${destination}: ${describeCandidates(selection)}${unverified}`);
-    renderCapped(lines, selection.candidates, cap, (candidate, index) => {
+    const unverified = unverifiedNote(view.unverified);
+    lines.push(`  ${site} → ${destination}: ${describeCandidates(view)}${unverified}`);
+    renderCapped(lines, view.candidates, cap, (candidate, index) => {
       const assignee =
         candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
       return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`;
@@ -231,12 +231,12 @@ function unverifiedNote(unverified: boolean): string {
 
 /** The per-selection counts: candidates kept, and the tickets it lost because
  *  more than one destination promises them. */
-function describeCandidates(selection: KnownJiraSelectionView): string {
+function describeCandidates(view: KnownJiraSelectionView): string {
   const notes: string[] = [];
-  if (selection.held > 0) notes.push(`${selection.held} held as ambiguous`);
-  if (selection.repeated > 0) notes.push(`${selection.repeated} already listed by another selection`);
-  if (selection.candidates.length === 0 && notes.length === 0) return "none";
-  const candidates = plural(selection.candidates.length, "candidate");
+  if (view.held > 0) notes.push(`${view.held} held as ambiguous`);
+  if (view.repeated > 0) notes.push(`${view.repeated} already listed by another selection`);
+  if (view.candidates.length === 0 && notes.length === 0) return "none";
+  const candidates = plural(view.candidates.length, "candidate");
   return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;
 }
 
