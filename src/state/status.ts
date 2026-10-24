@@ -142,7 +142,7 @@ export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known"
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
   pool: PoolEntry[];
-  /** Jira selections, read-only: candidates in native Rank order, nothing claimed. */
+  /** The configured Jira selections, read-only: candidates in native Rank order. */
   jira: JiraSelectionView[];
   /** Tickets more than one selection claims for a different destination: held. */
   jiraAmbiguous: AmbiguousJiraTicket[];
