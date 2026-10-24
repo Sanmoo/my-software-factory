@@ -330,31 +330,11 @@ export class JiraCloud {
     currentValue?: JsonValue;
     faults?: SubmitFaults;
   }): SubmitOutcome {
-    const state = this.requireIssue(input.site, input.issueId);
-    const filter = input.filter ?? "absent";
-    if (filter === "current-value" && input.currentValue === undefined) {
-      this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "failed", "currentValue filter without a value");
-      throw new JiraRequestError(400, "a currentValue filter requires the value to compare");
-    }
-    if (input.faults?.failBeforeScheduling) {
-      this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "failed", "connection failed before the job existed");
-      throw new JiraRequestError(0, "connection failed before the job existed");
-    }
-    const job = this.scheduleJob(
-      "conditional-property",
-      state,
-      input.propertyKey,
-      input.value,
-      input.factory,
-      filter,
-      input.currentValue,
-    );
-    this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "scheduled", job.taskId);
-    if (input.faults?.loseResponseAfterScheduling) {
-      this.record(input.site, input.factory, "PUT bulk issue property", input.issueId, "lost", `${job.taskId} scheduled; response lost`);
-      throw new JiraNetworkError("the job was scheduled and the response was lost");
-    }
-    return { kind: "scheduled", taskId: job.taskId };
+    return this.submitPropertyJob({
+      kind: "conditional-property",
+      op: "PUT bulk issue property",
+      ...input,
+    });
   }
 
   /**
@@ -371,18 +351,11 @@ export class JiraCloud {
     factory: string;
     faults?: SubmitFaults;
   }): SubmitOutcome {
-    const state = this.requireIssue(input.site, input.issueId);
-    if (input.faults?.failBeforeScheduling) {
-      this.record(input.site, input.factory, "POST bulk issue properties", input.issueId, "failed", "connection failed before the job existed");
-      throw new JiraRequestError(0, "connection failed before the job existed");
-    }
-    const job = this.scheduleJob("list-property", state, input.propertyKey, input.value, input.factory);
-    this.record(input.site, input.factory, "POST bulk issue properties", input.issueId, "scheduled", job.taskId);
-    if (input.faults?.loseResponseAfterScheduling) {
-      this.record(input.site, input.factory, "POST bulk issue properties", input.issueId, "lost", `${job.taskId} scheduled; response lost`);
-      throw new JiraNetworkError("the job was scheduled and the response was lost");
-    }
-    return { kind: "scheduled", taskId: job.taskId };
+    return this.submitPropertyJob({
+      kind: "list-property",
+      op: "POST bulk issue properties",
+      ...input,
+    });
   }
 
   /** First half of a NON-isolated job: read eligibility, write nothing. */
@@ -390,12 +363,7 @@ export class JiraCloud {
     const job = this.requireJob(taskId);
     const state = this.requireIssue(job.site, job.issueId);
     job.status = "RUNNING";
-    job.eligible =
-      job.kind === "list-property"
-        ? true
-        : this.model.eligibilityAt === "enqueue"
-          ? job.enqueuedEligible
-          : this.eligibleToday(state, job);
+    job.eligible = this.decideEligibility(job, state);
     return job.eligible;
   }
 
@@ -411,12 +379,7 @@ export class JiraCloud {
     const job = this.requireJob(taskId);
     const state = this.requireIssue(job.site, job.issueId);
     job.status = "RUNNING";
-    job.eligible =
-      job.kind === "list-property"
-        ? true
-        : this.model.eligibilityAt === "enqueue"
-          ? job.enqueuedEligible
-          : this.eligibleToday(state, job);
+    job.eligible = this.decideEligibility(job, state);
     this.finishJob(job);
   }
 
@@ -499,6 +462,46 @@ export class JiraCloud {
     return this.requests.filter((entry) => entry.outcome === "applied").length;
   }
 
+  /** Schedule a property job and translate the two documented transport faults. */
+  private submitPropertyJob(input: {
+    kind: JobKind;
+    op: string;
+    site: string;
+    issueId: number;
+    propertyKey: string;
+    value: JsonValue;
+    factory: string;
+    filter?: ConditionalFilter;
+    currentValue?: JsonValue;
+    faults?: SubmitFaults;
+  }): SubmitOutcome {
+    const state = this.requireIssue(input.site, input.issueId);
+    const filter = input.filter ?? "absent";
+    if (filter === "current-value" && input.currentValue === undefined) {
+      this.record(input.site, input.factory, input.op, input.issueId, "failed", "currentValue filter without a value");
+      throw new JiraRequestError(400, "a currentValue filter requires the value to compare");
+    }
+    if (input.faults?.failBeforeScheduling) {
+      this.record(input.site, input.factory, input.op, input.issueId, "failed", "connection failed before the job existed");
+      throw new JiraRequestError(0, "connection failed before the job existed");
+    }
+    const job = this.scheduleJob(
+      input.kind,
+      state,
+      input.propertyKey,
+      input.value,
+      input.factory,
+      filter,
+      input.currentValue,
+    );
+    this.record(input.site, input.factory, input.op, input.issueId, "scheduled", job.taskId);
+    if (input.faults?.loseResponseAfterScheduling) {
+      this.record(input.site, input.factory, input.op, input.issueId, "lost", `${job.taskId} scheduled; response lost`);
+      throw new JiraNetworkError("the job was scheduled and the response was lost");
+    }
+    return { kind: "scheduled", taskId: job.taskId };
+  }
+
   private scheduleJob(
     kind: JobKind,
     state: IssueState,
@@ -541,6 +544,11 @@ export class JiraCloud {
     job.status = "COMPLETE";
     job.result = this.model.taskResult === "counts" ? { updated: written ? 1 : 0 } : undefined;
     this.record(job.site, job.factory, "bulk job", job.issueId, written ? "applied" : "skipped", job.taskId);
+  }
+
+  private decideEligibility(job: Job, state: IssueState): boolean {
+    if (job.kind === "list-property") return true;
+    return this.model.eligibilityAt === "enqueue" ? job.enqueuedEligible : this.eligibleToday(state, job);
   }
 
   private eligibleToday(
