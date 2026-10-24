@@ -20,6 +20,7 @@ import { launchedNumber } from "./work-fixtures.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
 import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
+import { humanCommentsForPause } from "../state/derive.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
@@ -120,13 +121,22 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
   }
 
   /** The durable footprint of an interrupted attempt 2 whose session exists. */
-  function interruptedAttempt2(options: { pending?: "push" | "unknown"; remote?: string | null } = {}): {
+  function interruptedAttempt2(options: {
+    pending?: "push" | "unknown";
+    remote?: string | null;
+    labels?: string[];
+  } = {}): {
     session: ReturnType<typeof seedSession>;
     ref: IssueRef;
     dir: string;
   } {
     const ref: IssueRef = { repo: REPO, number: 7 };
-    seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
+    seedIssue(tracker, {
+      repo: REPO,
+      number: 7,
+      createdAt: NOW,
+      labels: options.labels ?? [DEFAULT_LABELS.claimed],
+    });
     const target = workDir(layout, REPO, 7);
     mkdirSync(target, { recursive: true });
     writeFileSync(join(target, "log-1.jsonl"), '{"event":"session-end","attempt":1}\n', "utf8");
@@ -470,6 +480,67 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     );
     assert.equal(readPause(target), null, "the pause clears on the evidence, not on the answer");
     assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the retomada took the block back off");
+  });
+
+  test("issue 174 — a pause announced before occurrences had identities is not asked again after the upgrade", async () => {
+    const LEGACY_AT = "2025-12-31T23:00:00.000Z";
+    const { ref } = interruptedAttempt2({
+      pending: "push",
+      remote: "def456",
+      labels: [DEFAULT_LABELS.blocked],
+    });
+    const target = workDir(layout, REPO, 7);
+    // The pause as the PREVIOUS version left it: the request landed (announced),
+    // the record carries no identity and its comment carries no marker — there
+    // was none to carry.
+    writeFileSync(
+      join(target, "pausa.json"),
+      JSON.stringify({
+        version: 1,
+        work: ref,
+        attempt: 2,
+        reason: "effect-ambiguous",
+        detail: "the push of agent-issue-7 is ambiguous",
+        at: LEGACY_AT,
+        announced: true,
+      }),
+      "utf8",
+    );
+    await tracker.comment(ref, "the interrupted attempt 2 cannot be continued safely (effect-ambiguous)");
+    tracker.addComment(ref, "operator", "I pushed abc123; check again.");
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 0, "the answer re-reads the facts; it authorizes no replay");
+    assert.ok(
+      logs.some((line) => line.includes("the interrupted effect is still unresolved")),
+      "the answer really resumed the pause and was re-read — the work is not parked unanswered",
+    );
+    const upgraded = readPause(target);
+    assert.equal(upgraded?.reason, "effect-ambiguous");
+    assert.equal(upgraded?.announced, true);
+    assert.equal(upgraded?.id, undefined, "the legacy occurrence gains no identity no comment can carry");
+    assert.equal(upgraded?.at, LEGACY_AT, "it keeps the moment the operator was asked");
+    assert.equal((await agentComments(7)).length, 1, "the request is already on the issue: it is not repeated");
+    assert.equal(notifier.notifications.length, 0, "and nothing is notified again");
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.blocked], "only the block is re-asserted");
+    assert.equal(await readRecoveryLedger(target).then((ledger) => ledger.consumed), 0, "no recovery is spent");
+
+    const comments = await tracker.readComments(ref);
+    assert.ok(comments.known);
+    assert.deepEqual(
+      humanCommentsForPause(comments.value, upgraded!).map((comment) => comment.body),
+      ["I pushed abc123; check again."],
+      "the answer given to the legacy request still answers this occurrence",
+    );
+
+    // Restarting changes nothing: the same answer keeps resuming the same
+    // pause, and neither the question nor the notification is repeated.
+    const restart = await runOnce(deps(config()));
+    assert.equal(restart.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 1, "a restart does not ask again either");
+    assert.equal(notifier.notifications.length, 0);
+    assert.equal(readPause(target)?.id, undefined);
   });
 
   test("an effect proven absent may run once: the session is reopened with the absent verdict", async () => {

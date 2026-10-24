@@ -392,8 +392,13 @@ function pauseOccurrence(
   const pause = persistedPause(pending, work, attempt);
   const id = pause.id ?? previous?.id ?? randomUUID();
   // A record of the SAME occurrence keeps the moment it started; a new one
-  // starts now (the pause itself carries the time it was created).
-  const at = previous !== null && previous.id === id ? previous.at : pause.at;
+  // starts now (the pause itself carries the time it was created). A previous
+  // record with no identity is that same occurrence still waiting — written
+  // before identities existed — so the request the operator already answered
+  // keeps its own start time instead of being dated by this sweep. A record
+  // with no time at all (unreadable) has none to keep.
+  const sameOccurrence = previous !== null && (previous.id === undefined || previous.id === id);
+  const at = sameOccurrence && previous.at !== "" ? previous.at : pause.at;
   return { ...pause, id, at };
 }
 
@@ -407,6 +412,22 @@ function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number)
   // `readPause` fabricates no attempt for an unreadable record, so the caller's
   // is the only one there is.
   return { ...pause, work, attempt };
+}
+
+/**
+ * The record of a pause whose request already landed (the block and the
+ * comment are being re-asserted, never repeated). A legacy occurrence — one
+ * announced before identities existed — stays WITHOUT one: the identity
+ * generated for it now has no comment carrying it, and a record with no
+ * identity is the one case where the factory still binds the answers by the
+ * generic last-comment rule, so stamping it would orphan the answer already
+ * given (issue 174). The occurrence gains its identity with the first factory
+ * comment that can carry one: a diagnostic for a changed cause.
+ */
+function reassertedPause(pause: PauseRecord & { id: string }, previous: PauseRecord): PauseRecord {
+  if (previous.id !== undefined) return { ...pause, announced: true };
+  const { id: _generated, ...occurrence } = pause;
+  return { ...occurrence, announced: true };
 }
 
 /** The stable rendering order of a key set — presentation only, never the schedule. */
@@ -2065,9 +2086,10 @@ export class SweepEngine {
    * session is a continuation. The record is written FIRST and survives a
    * restart; the issue comment, the blocked label and the notice happen only
    * once per occurrence — a recheck that learned nothing new, a later sweep and
-   * a restart never re-ask (issue 174). Only a changed REASON is a new fact
-   * worth a diagnostic, and it keeps the occurrence's identity, so the answers
-   * already on the issue stay bound to it.
+   * a restart never re-ask (issue 174), and neither does the first sweep after
+   * an upgrade for a pause that was announced before occurrences had identities.
+   * Only a changed REASON is a new fact worth a diagnostic, and it keeps the
+   * occurrence's identity, so the answers already on the issue stay bound to it.
    */
   private async pauseForContinuity(
     work: WorkIdentity,
@@ -2085,14 +2107,24 @@ export class SweepEngine {
     // pause (its record cleared) makes the next one a different occurrence.
     const pause = pauseOccurrence(pending, work, attempt, previous);
     this.announce(work, "reserved");
-    if (previous !== null && previous.id === pause.id && previous.reason === pause.reason && previous.announced === true) {
+    // A record with no identity was announced before occurrences had one: the
+    // question is already on the issue, so this is the same occurrence and the
+    // identity it lacks must not ask it again. A record whose reason changed
+    // since is a NEW fact and is told.
+    const alreadyAnnounced =
+      previous !== null &&
+      previous.reason === pause.reason &&
+      previous.announced === true &&
+      (previous.id === undefined || previous.id === pause.id);
+    if (alreadyAnnounced) {
+>>>>>>> 0c8214b (fix(174): do not re-ask an already announced legacy pause)
       // The same pause was already announced: re-assert the blocked label
       // without repeating the request (a failed retomada swapped it), so the
       // work stays out of every launch and the human sees one request. Only the
       // detail may carry fresher evidence. The record is not marked
       // unannounced on the way: the request DID land.
       await tickets.blockTicketClaim(work.ticket, config.labels);
-      writePause(dir, { ...pause, announced: true });
+      writePause(dir, reassertedPause(pause, previous));
       this.log(
         `continuity of ${renderWorkIdentity(work)} still paused (${pause.reason}) — no new help request, no recovery spent`,
       );
