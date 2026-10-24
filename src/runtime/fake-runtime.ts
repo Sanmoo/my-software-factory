@@ -9,6 +9,7 @@ import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "../work-record/logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
+import { basename } from "node:path";
 import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**
@@ -32,6 +33,9 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
  * request or a force that cannot confirm the end, the two failure modes the
  * factory must survive without lying.
  */
+
+/** The one label a retrospective files under — the operator's triage queue. */
+const NEEDS_TRIAGE_LABEL = "needs-triage";
 
 export type ScriptedOutcome = SessionResult["outcome"];
 
@@ -122,9 +126,10 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     this.retroScript = options.retro ?? [];
   }
 
-  /** The scripted round writes the same two artifacts the agent writes — the
-   *  report and the result record — so a test observes the factory's contract,
-   *  not the fake's prose. A round with `report: false` leaves neither. */
+  /** The scripted round writes the two artifacts the agent writes — the report
+   *  and the result record — and files its items as `needs-triage` issues on the
+   *  tracker, exactly as the agent's `gh issue create` does. A round with
+   *  `report: false` leaves neither artifact and files nothing. */
   async launchRetro(request: RetroRequest): Promise<void> {
     const index = this.retroLaunched.push(request) - 1;
     const hold = this.holdRetro ?? this.options.holdRetro;
@@ -152,6 +157,20 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       ].join("\n"),
       "utf8",
     );
+    // The items land where the instructions send them: the operator's gate is
+    // the only label the factory adds.
+    const tracker = this.options.tracker;
+    if (tracker !== undefined) {
+      for (const item of filed) {
+        tracker.seedIssue({
+          repo: item.repo,
+          number: item.number,
+          title: item.title ?? `improvement item ${item.number}`,
+          body: `Report: ${basename(request.reportPath)} (retro round ${request.round}).`,
+          labels: [NEEDS_TRIAGE_LABEL],
+        });
+      }
+    }
     writeFileSync(
       request.resultPath,
       `${JSON.stringify(

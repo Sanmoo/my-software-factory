@@ -87,6 +87,9 @@ export interface RetroRoundFacts {
   discarded: DiscardedCandidate[];
 }
 
+/** The round's log when the caller wired none: silence, never a crash. */
+const NOOP_LOG = (): void => {};
+
 export interface RetroDeps {
   config: Config;
   runtime: WorkerRuntime;
@@ -98,24 +101,28 @@ export interface RetroDeps {
 
 /**
  * The automatic trigger: checked at each sweep, it fires once
- * `threshold` ARCHIVED works exist since the last report.
+ * `threshold` ARCHIVED works no report has covered yet have accumulated. A
+ * work a post-mortem already analyzed is covered, so it never counts again —
+ * the lane waits for real material instead of announcing an empty window on
+ * every sweep.
  */
 export async function planAutomaticRound(
   config: Config,
   layout: WorkspaceLayout,
   finished: readonly FinishedWork[],
   now: () => number = Date.now,
-): Promise<RetroPlan | { empty: RetroEmptyWindow } | null> {
+): Promise<RetroPlan | null> {
   const state = await readRetroState(layout);
-  const unseen = finished.filter((work) => isUnseen(work, state));
-  const archivedSince = unseen.filter((work) => work.archived);
-  if (archivedSince.length < config.retro.threshold) return null;
-
-  const window = windowFor(finished, state);
-  if (window.length === 0) return { empty: "nothing-new" };
+  const uncovered = uncoveredWorks(finished, state);
+  if (uncovered.filter((work) => work.archived).length < config.retro.threshold) return null;
 
   return {
-    ...plannedRound(config, finished, { works: window, singleWork: false, language: config.retro.language, now }),
+    ...plannedRound(config, finished, {
+      works: windowFor(uncovered, state),
+      singleWork: false,
+      language: config.retro.language,
+      now,
+    }),
     manual: false,
   };
 }
@@ -155,7 +162,7 @@ export async function planManualRound(
     };
   }
 
-  const window = windowFor(finished, state);
+  const window = windowFor(uncoveredWorks(finished, state), state);
   if (window.length === 0) return { empty: finished.length === 0 ? "no-finished-works" : "nothing-new" };
   return {
     ...plannedRound(config, finished, {
@@ -168,12 +175,20 @@ export async function planManualRound(
   };
 }
 
+/** What a trigger decides about the round; the rest is the factory's. */
+interface RoundShape {
+  works: readonly FinishedWork[];
+  singleWork: boolean;
+  language: string;
+  now: () => number;
+}
+
 /** The facts every plan shares: the round id, the window, the boundary it may
  *  advance, the one language and the model. */
 function plannedRound(
   config: Config,
   finished: readonly FinishedWork[],
-  round: { works: readonly FinishedWork[]; singleWork: boolean; language: string; now: () => number },
+  round: RoundShape,
 ): Omit<RetroPlan, "manual"> {
   return {
     round: roundId(new Date(round.now())),
@@ -190,17 +205,21 @@ function isUnseen(work: FinishedWork, state: RetroState): boolean {
 }
 
 /**
- * The glossary's Retrospective window, one rule for every trigger: the finished
- * works after the last report's boundary and not yet analyzed, or the last ten
- * finished works when no report has covered a window yet.
+ * The finished works a report does not cover yet: after the last report's
+ * boundary, and never one a post-mortem already analyzed — in the first window
+ * of ten either, since that post-mortem's report covered it too.
  */
-function windowFor(finished: readonly FinishedWork[], state: RetroState): FinishedWork[] {
-  // A work a post-mortem already analyzed is never analyzed twice, in the
-  // first window of ten either: its report covers it, and the boundary the
-  // full round advances leaves it behind.
-  const pending = (work: FinishedWork): boolean => !state.analyzed.includes(work.key);
-  if (state.boundaryAt === null) return finished.filter(pending).slice(-FIRST_WINDOW_SIZE);
-  return finished.filter((work) => isUnseen(work, state) && pending(work));
+function uncoveredWorks(finished: readonly FinishedWork[], state: RetroState): FinishedWork[] {
+  return finished.filter((work) => isUnseen(work, state) && !state.analyzed.includes(work.key));
+}
+
+/**
+ * The glossary's Retrospective window, one rule for every trigger: the
+ * uncovered finished works, or the last ten of them when no report has covered
+ * a window yet.
+ */
+function windowFor(uncovered: readonly FinishedWork[], state: RetroState): FinishedWork[] {
+  return state.boundaryAt === null ? uncovered.slice(-FIRST_WINDOW_SIZE) : [...uncovered];
 }
 
 function newestFinish(works: readonly FinishedWork[]): number | null {
@@ -230,7 +249,7 @@ export class RetroBusyError extends RetroError {
  */
 export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<RetroRoundFacts> {
   const { workspace: layout } = deps;
-  const log = deps.log ?? (() => {});
+  const log = deps.log ?? NOOP_LOG;
   const running = await liveRoundInFlight(layout);
   if (running !== null) throw new RetroBusyError(running.round);
 
@@ -286,7 +305,7 @@ async function settleRound(
   plan: RetroPlan,
   request: RetroRequest,
 ): Promise<RetroRoundFacts> {
-  const log = deps.log ?? (() => {});
+  const log = deps.log ?? NOOP_LOG;
   const { workspace: layout } = deps;
   const record = await readResultRecord(request.resultPath);
   const filed = readFiledItems(record);
@@ -363,34 +382,34 @@ function retroWorkInput(work: FinishedWork): RetroWorkInput {
   };
 }
 
-/** The result record's filed list; anything unreadable is an honest empty list. */
+/** The entries of one list in the result record; an unreadable record is an
+ *  honest empty list, and a malformed entry is dropped, never guessed. */
+function recordList(record: Record<string, unknown> | null, key: string): Array<Record<string, unknown>> {
+  if (record === null || !Array.isArray(record[key])) return [];
+  return (record[key] as unknown[]).filter(
+    (entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object",
+  );
+}
+
+/** The result record's filed list: only entries the factory can act on. */
 function readFiledItems(record: Record<string, unknown> | null): FiledImprovementItem[] {
-  if (record === null || !Array.isArray(record["filed"])) return [];
-  const items: FiledImprovementItem[] = [];
-  for (const entry of record["filed"] as unknown[]) {
-    if (entry === null || typeof entry !== "object") continue;
-    const item = entry as Record<string, unknown>;
+  return recordList(record, "filed").flatMap((item) => {
     const repo = item["repo"];
     const number = item["number"];
     const title = item["title"];
-    if (typeof repo !== "string" || typeof number !== "number" || !Number.isInteger(number)) continue;
-    items.push({ repo, number, title: typeof title === "string" ? title : "" });
-  }
-  return items;
+    if (typeof repo !== "string" || typeof number !== "number" || !Number.isInteger(number)) return [];
+    return [{ repo, number, title: typeof title === "string" ? title : "" }];
+  });
 }
 
+/** The candidates the round discarded, each with the reason it recorded. */
 function readDiscarded(record: Record<string, unknown> | null): DiscardedCandidate[] {
-  if (record === null || !Array.isArray(record["discarded"])) return [];
-  const discarded: DiscardedCandidate[] = [];
-  for (const entry of record["discarded"] as unknown[]) {
-    if (entry === null || typeof entry !== "object") continue;
-    const item = entry as Record<string, unknown>;
+  return recordList(record, "discarded").flatMap((item) => {
     const title = item["title"];
     const reason = item["reason"];
-    if (typeof title !== "string" || typeof reason !== "string") continue;
-    discarded.push({ title, reason });
-  }
-  return discarded;
+    if (typeof title !== "string" || typeof reason !== "string") return [];
+    return [{ title, reason }];
+  });
 }
 
 async function readResultRecord(resultPath: string): Promise<Record<string, unknown> | null> {
