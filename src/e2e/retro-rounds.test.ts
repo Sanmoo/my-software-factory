@@ -359,7 +359,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.match(summary, /repair round skipped/, "the last operational line about the work is quoted");
   });
 
-  test("a single-work round before the first report does not steal the first round's last-10 window", async () => {
+  test("a single-work round before the first report never steals or duplicates the first window", async () => {
     const config = makeConfig({ threshold: 1 });
     const { runtime, deps } = makeFactory(config);
     for (let day = 1; day <= 12; day += 1) seedArchived(day, at(day));
@@ -374,11 +374,13 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.equal((await readRetroState(layout)).boundaryAt, null, "no full window was ever analyzed");
 
     await runOnce(deps);
+    const fullWindow = runtime.retroLaunched.at(-1)!.works.map((work) => work.key);
     assert.equal(
-      runtime.retroLaunched.at(-1)!.works.length,
+      fullWindow.length,
       10,
-      "the first full round still covers the last ten works — the single-work report did not move the boundary",
+      "the first full round still covers ten works — the single-work report did not move the boundary",
     );
+    assert.ok(!fullWindow.includes(`${REPO}#12`), "the post-mortemed work is never analyzed a second time");
   });
 
   test("a lost state index never makes the factory skip work: it degrades to the first-round rule", async () => {
@@ -554,7 +556,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.match(settled.retro?.lastReport ?? "", /-retro\.md$/);
     assert.equal(settled.retro?.filed, 1);
     const rendered = renderStatus(settled);
-    assert.match(rendered, /retro \(a report that covers a window marks the next window's boundary/);
+    assert.match(rendered, /retro \(window reports mark the next window; items land as needs-triage\)/);
     assert.match(rendered, /1 item\(s\) filed by the last round/);
     assert.match(rendered, /window boundary: 2026-02-01T12:00:00\.000Z/);
   });

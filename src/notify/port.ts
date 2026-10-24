@@ -39,9 +39,7 @@ export interface FactoryNotification {
  */
 export interface RetroNotification {
   kind: "retro-items";
-  /** How many items the round filed at this destination. */
   items: number;
-  /** The "owner/name" destination whose triage queue grew. */
   destination: string;
   url: string;
 }

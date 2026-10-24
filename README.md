@@ -20,7 +20,7 @@ repos:
 
 # opcionais (defaults na fábrica):
 # concurrency: 2                  # the `y` — worker slots in process
-# workspace: ~/.local/share/msf   # repos/, trabalhos/, arquivo/, retros/ live under it
+# workspace: ~/.local/share/msf   # repos/, trabalhos/, arquivo/ live under it
 # labels:
 #   ready: ready-for-agent
 #   claimed: agent-claimed
@@ -87,9 +87,6 @@ Move any model previously selected on the command line into `worker-model`.
 agent into the image. The operator's exact script — build, model credentials,
 clean-host verification and the real proof — lives in the
 [RUNBOOK](docs/RUNBOOK.md).
-
-The retrospective files improvement items as `needs-triage` issues and labels
-nothing else.
 
 ## Design
 
