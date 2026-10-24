@@ -335,7 +335,7 @@ describe("reads the API admits", () => {
           propertyKey: PROPERTY,
           value: { factory: "A" },
           factory: "A",
-          faults: { failBeforeScheduling: true },
+          failures: { failBeforeScheduling: true },
         }),
       JiraRequestError,
     );

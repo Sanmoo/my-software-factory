@@ -9,6 +9,7 @@ import {
 } from "./identity.js";
 import {
   CAS_PREMISE_MODEL,
+  DOCUMENTED_MODEL,
   JiraCloud,
   modelLabel,
   type JiraModel,
@@ -44,37 +45,37 @@ export interface Variant {
 export const VARIANTS: readonly Variant[] = [
   {
     name: "documented-apply-not-isolated",
-    model: { eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+    model: { ...DOCUMENTED_MODEL },
     premise: "documented",
     note: "the filter is read at apply time, but two concurrent jobs are not isolated: both may observe the pre-state",
   },
   {
     name: "documented-enqueue-not-isolated",
-    model: { eligibilityAt: "enqueue", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+    model: { ...DOCUMENTED_MODEL, eligibilityAt: "enqueue" },
     premise: "documented",
     note: "the eligible set is fixed when the 303 is returned; two jobs can write the same pre-state",
   },
   {
     name: "premise-enqueue-serialized",
-    model: { eligibilityAt: "enqueue", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+    model: { ...CAS_PREMISE_MODEL, eligibilityAt: "enqueue" },
     premise: "premise",
     note: "EVEN granting serialized writes (P-CAS), an enqueue-time snapshot approves both jobs",
   },
   {
     name: "documented-apply-prefix-reads",
-    model: { eligibilityAt: "apply", isolation: "none", readModel: "prefix", taskResult: "undocumented", searchStale: false },
+    model: { ...DOCUMENTED_MODEL, readModel: "prefix" },
     premise: "documented",
     note: "no isolation plus monotonic stale reads",
   },
   {
     name: "documented-stale-search",
-    model: { eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: true },
+    model: { ...DOCUMENTED_MODEL, searchStale: true },
     premise: "documented",
     note: "the JQL search that observed the Ticket free is eventually consistent; the direct verification read is fresh",
   },
   {
     name: "cas-premise-stale-search",
-    model: { eligibilityAt: "apply", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: true },
+    model: { ...CAS_PREMISE_MODEL, searchStale: true },
     premise: "premise",
     note: "P-CAS with a stale observation from search",
   },
@@ -86,13 +87,13 @@ export const VARIANTS: readonly Variant[] = [
   },
   {
     name: "cas-premise-prefix-reads",
-    model: { eligibilityAt: "apply", isolation: "serialized", readModel: "prefix", taskResult: "undocumented", searchStale: false },
+    model: { ...CAS_PREMISE_MODEL, readModel: "prefix" },
     premise: "premise",
     note: "P-CAS with stale verification reads: safety must survive, progress may not",
   },
   {
     name: "cas-premise-task-counts",
-    model: { eligibilityAt: "apply", isolation: "serialized", readModel: "fresh", taskResult: "counts", searchStale: false },
+    model: { ...CAS_PREMISE_MODEL, taskResult: "counts" },
     premise: "premise",
     note: "P-CAS plus an undocumented task result that reports the updated count",
   },

@@ -601,7 +601,9 @@ ambos lerem o estado anterior.
 As variantes `cas-premise*` e `premise-enqueue-serialized` são **premissas**:
 `serialized` é P-CAS (teste + escrita indivisíveis); a variante de enqueue
 concede P-CAS apenas para mostrar que o momento da avaliação, sozinho, já
-quebra a exclusividade.
+quebra a exclusividade. Nas variantes `documented-enqueue-*`, "documentado"
+significa que nenhuma atomicidade foi concedida; o momento da avaliação é a
+inferência em teste.
 
 | variante | premissa | runs | 1 vencedor | 2 vencedores | 0 vencedor |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -656,8 +658,8 @@ A leitura correta da tabela:
 | Claim existente | 1 | A:1, B:0 | A (B não escreve) |
 | Resposta perdida | 1 | A:1, B:0 | A (0 antes de verificar; 1 submissão) |
 | Leitura de verificação falha | 1 | A:1 | A (0 antes; incerto, sem lançar) |
-| Conexão falha antes de agendar | 1 | A:1 | A (nada escrito; retry permitido) |
 | Job `FAILED` (transação: nada atualizado) | 1 | A:1 | A (retry permitido) |
+| Conexão falha antes de agendar | 1 | A:1 | A (nada escrito; retry permitido) |
 | `currentValue`: duas transferências — documentado | 0 | A:0, B:0, C:0 | C (2 jobs aplicados) |
 | `currentValue`: duas transferências — P-CAS | 0 | A:0, B:0, C:0 | B (1 job aplicado) |
 | Sem Reservation local | 1 | A:1, B:0 | A (B não escreve) |
@@ -668,7 +670,7 @@ A leitura correta da tabela:
 | Claim parcial (apresentação falha) | 1 | A:1, B:0 | A (segura sem lançar) |
 | Claim ilegível | 0 | B:0 | ilegível (preservado) |
 | Claim anterior (label+atribuição) | 0 | B:0 | ausente (B não escreve) |
-| Liberação manual | 1 | A:1, B:1 | B (recusada com Worker vivo/sem confirmação) |
+| Liberação manual | 1 | A:1, B:1 | B (recusada com Worker vivo/sem confirmação; liberada após o fim; então B) |
 | Não participante | **2** | A:1 | intruso (fora da garantia) |
 | Busca desatualizada + P-CAS | 1 | A:1, B:0 | A (B não lança) |
 | Verificação desatualizada | 0 | A:0 | A (incerto, sem lançar) |
@@ -697,6 +699,9 @@ oferece P-CAS.
 - A retomada de uma instalação **depois** de uma liberação manual, com leitura
   desatualizada do Claim antigo, não é simulada: ela é fechada por P-RELEASE
   (a instalação liberada não volta a executar aquele Work), não pela API.
+- A **inalcançabilidade** não é um estado modelado: o protocolo não tem canal
+  para a dona, então não há o que falhar. O cenário de perda de contato prova
+  que B não consulta a saúde da dona — não que detectaria uma dona viva.
 - Nenhuma mutação real, nenhuma credencial, nenhum Ticket operacional.
 
 ## 8. Conclusão e o que volta ao operador
@@ -713,9 +718,10 @@ particionamento prévio ou alocação manual.
 ### 8.2 Lacunas que precisam de esclarecimento da Atlassian
 
 1. O `PUT /rest/api/3/issue/properties/{propertyKey}` avalia o filtro
-   (`hasProperty:false`, `entityIds`) **no início da execução do job** e o
-   aplica **atomicamente** com a escrita, em relação a jobs concorrentes na
-   mesma issue?
+   (`hasProperty:false`, `entityIds`, `currentValue`) **no início da execução
+   do job** (e não no enqueue) e o aplica **atomicamente** com a escrita, em
+   relação a jobs concorrentes na mesma issue? Ou o conjunto elegível é fixado
+   no enqueue?
 2. Dois jobs concorrentes com `hasProperty:false` podem ambos atualizar a mesma
    issue? Um recebe `409`, ou ambos são aplicados (last write wins)?
 3. Qual é o conteúdo do `result` da task desse endpoint? Ele informa issue ids

@@ -10,7 +10,7 @@ import {
   type Destination,
   type JiraTicket,
 } from "./identity.js";
-import { CAS_PREMISE_MODEL, JiraCloud, type JiraModel, type JsonValue } from "./jira.js";
+import { CAS_PREMISE_MODEL, DOCUMENTED_MODEL, JiraCloud, type JiraModel, type JsonValue } from "./jira.js";
 import { releaseManually } from "./operator.js";
 import { WorkerRuntime } from "./workers.js";
 
@@ -56,9 +56,17 @@ export class Lab {
     this.tracker = new JiraCloud(model);
   }
 
-  seed(ticket: JiraTicket): JiraTicket {
+  seed(
+    ticket: JiraTicket,
+    issue?: { properties?: Record<string, JsonValue>; assignee?: string | null; labels?: string[]; status?: string },
+  ): JiraTicket {
     this.ticketMap.set(ticketIdentityKey(ticket), ticket);
-    this.tracker.seedIssue({ site: ticket.site, stableId: ticket.stableId, key: ticket.key });
+    this.tracker.seedIssue({
+      site: ticket.site,
+      stableId: ticket.stableId,
+      key: ticket.key,
+      ...(issue ?? {}),
+    });
     return ticket;
   }
 
@@ -266,7 +274,7 @@ export function contestedSimultaneousCas(): SceneFacts {
 
 export function contestedSimultaneousDocumented(): SceneFacts {
   const ticket = defaultTicket();
-  const lab = new Lab({ eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false });
+  const lab = new Lab(DOCUMENTED_MODEL);
   lab.seed(ticket);
   lab.factory("A", ticket);
   lab.factory("B", ticket);
@@ -283,7 +291,7 @@ export function sameTicketDifferentDestinations(premise: "cas" | "documented"): 
   const lab = new Lab(
     premise === "cas"
       ? CAS_PREMISE_MODEL
-      : { eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+      : DOCUMENTED_MODEL,
   );
   lab.seed(ticket);
   lab.factory("A", ticket, { destination: githubDestination({ site: "github.com", repo: "Sanmoo/repo-a" }) });
@@ -525,7 +533,7 @@ export function currentValueTransfer(premise: "cas" | "documented"): SceneFacts 
   const lab = new Lab(
     premise === "cas"
       ? CAS_PREMISE_MODEL
-      : { eligibilityAt: "apply", isolation: "none", readModel: "fresh", taskResult: "undocumented", searchStale: false },
+      : DOCUMENTED_MODEL,
   );
   lab.seed(ticket);
   const holder = lab.factory("A", ticket);
@@ -749,13 +757,7 @@ export function malformedClaimIsUncertainty(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
   const malformed: JsonValue = { protocol: "someone-else/v9", factory: "x" };
-  lab.tracker.seedIssue({
-    site: ticket.site,
-    stableId: ticket.stableId,
-    key: ticket.key,
-    properties: { [CLAIM_PROPERTY_KEY]: malformed },
-  });
-  lab.ticketMap.set(ticketIdentityKey(ticket), ticket);
+  lab.seed(ticket, { properties: { [CLAIM_PROPERTY_KEY]: malformed } });
   const b = lab.factory("B", ticket);
   const observation = b.observe();
   const attempted = b.submitClaim();
@@ -775,14 +777,7 @@ export function malformedClaimIsUncertainty(): SceneFacts {
 export function legacyClaimIsRespected(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
-  lab.tracker.seedIssue({
-    site: ticket.site,
-    stableId: ticket.stableId,
-    key: ticket.key,
-    labels: ["agent-claimed"],
-    assignee: SHARED_ACCOUNT,
-  });
-  lab.ticketMap.set(ticketIdentityKey(ticket), ticket);
+  lab.seed(ticket, { labels: ["agent-claimed"], assignee: SHARED_ACCOUNT });
   const b = lab.factory("B", ticket);
   const observation = b.observe();
   const attempted = b.submitClaim();
@@ -877,7 +872,7 @@ export function nonParticipantBreaksThePremise(): SceneFacts {
 
 export function staleSearchObservationStillLosesTheCas(): SceneFacts {
   const ticket = defaultTicket();
-  const lab = new Lab({ eligibilityAt: "apply", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: true });
+  const lab = new Lab({ ...CAS_PREMISE_MODEL, searchStale: true });
   lab.seed(ticket);
   lab.factory("A", ticket);
   lab.factory("B", ticket);
@@ -911,7 +906,7 @@ export function staleSearchObservationStillLosesTheCas(): SceneFacts {
 
 export function staleVerificationOnlyAddsUncertainty(): SceneFacts {
   const ticket = defaultTicket();
-  const lab = new Lab({ eligibilityAt: "apply", isolation: "serialized", readModel: "prefix", taskResult: "undocumented", searchStale: false });
+  const lab = new Lab({ ...CAS_PREMISE_MODEL, readModel: "prefix" });
   lab.seed(ticket);
   lab.factory("A", ticket);
   const a = lab.f("A");
@@ -983,7 +978,7 @@ export function candidateBlindSingleProperty(): SceneFacts {
 
 export function candidateBulkList(): SceneFacts {
   const ticket = defaultTicket();
-  const lab = new Lab({ eligibilityAt: "apply", isolation: "serialized", readModel: "fresh", taskResult: "undocumented", searchStale: false });
+  const lab = new Lab(CAS_PREMISE_MODEL);
   lab.seed(ticket);
   lab.factory("A", ticket);
   lab.factory("B", ticket);
