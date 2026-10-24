@@ -268,16 +268,13 @@ export function workerFlagArgs(resources: LoadedAgentResources): string[] {
   ];
 }
 
-/**
- * The guardrail extension the worker image carries: the in-container code that
- * journals effects before they happen and blocks a repeat on a resumed
- * session. It is factory code staged from this checkout's compiled `dist/` by
- * `npm run build:image` (not a distributed package), and the staged tree
- * mirrors `dist/` so its relative imports resolve; the preflight refuses an
- * image without it rather than running the session unguarded.
- */
-export const GUARDRAIL_CONTAINER_DIR = "/opt/msf/runtime/guardrail";
-export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_CONTAINER_DIR}/extension.js`;
+/** The guardrail extension the worker image carries: the in-container code
+ *  that journals effects before they happen and blocks a repeat on a resumed
+ *  session. It is factory code staged from this checkout's compiled `dist/` by
+ *  `npm run build:image` (not a distributed package), and the staged tree
+ *  mirrors `dist/` so the extension's relative imports resolve; the preflight
+ *  refuses an image without it rather than running the session unguarded. */
+export const GUARDRAIL_CONTAINER_FILE = "/opt/msf/runtime/guardrail/extension.js";
 
 const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
