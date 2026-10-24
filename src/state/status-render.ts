@@ -163,9 +163,6 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("pool (eligible)", view.pool.map((entry) => renderWorkIdentity(entry.work)), cap));
 
-  // Jira candidates are read-only in this release (issue 128): the section
-  // never claims, comments or launches, and a selection that could not be read
-  // says unknown instead of "none" — a candidate is not a reservation.
   lines.push(...renderJiraSelections(view.jira, view.jiraAmbiguous, cap));
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
@@ -184,10 +181,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   return lines.join("\n");
 }
 
-/** One block per configured selection, in native Rank order, nothing claimed;
- *  an unreadable selection says unknown, and a held ticket gets its own
- *  section. The header counts the selections: a candidate count would make an
- *  unreadable selection read as zero. */
+/** One block per configured selection, in native Rank order. The header counts
+ *  the selections: a candidate count would make an unreadable one read as zero. */
 function renderJiraSelections(
   selections: readonly JiraSelectionView[],
   ambiguous: readonly AmbiguousJiraTicket[],
@@ -195,7 +190,7 @@ function renderJiraSelections(
 ): string[] {
   if (selections.length === 0) return [];
   const lines = [
-    `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ` +
+    `jira candidates (read-only — each selection's JQL result in native Rank order; nothing is claimed, commented or launched): ` +
       plural(selections.length, "selection"),
   ];
   for (const view of selections) {

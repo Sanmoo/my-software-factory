@@ -441,7 +441,7 @@ export class JiraTicketAdapter implements TicketTracker {
 }
 
 /** The one place the browse URL is built — presentation, never identity. */
-export function jiraBrowseUrl(site: string, key: string): string {
+function jiraBrowseUrl(site: string, key: string): string {
   return `https://${site}/browse/${key}`;
 }
 

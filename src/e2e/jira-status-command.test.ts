@@ -46,11 +46,11 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", ()
 
   /** Two sites, one healthy and one whose local credential is missing: the
    *  independent selection must not be treated as absent. */
-  function writeConfig(overrides: { alphaJql?: string; alphaSecret?: string } = {}): void {
-    const alphaSecretLine =
-      overrides.alphaSecret === undefined
+  function writeConfig(overrides: { alphaJql?: string; alphaCredentialLine?: string } = {}): void {
+    const alphaCredentialLine =
+      overrides.alphaCredentialLine === undefined
         ? "    token-env: MSF_JIRA_ALPHA_TOKEN"
-        : overrides.alphaSecret;
+        : overrides.alphaCredentialLine;
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -61,7 +61,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", ()
         "jira:",
         `  - site: ${ALPHA}`,
         "    account: bot@acme.example",
-        alphaSecretLine,
+        alphaCredentialLine,
         `    jql: ${overrides.alphaJql ?? "project = ABC AND assignee = currentUser()"}`,
         `    destination: ${REPO}`,
         `  - site: ${BETA}`,
@@ -185,7 +185,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", ()
 
   test("the API token is refused as a YAML value before any read, and never echoed", () => {
     const secret = "ATATT3xFfGF0cli-secret";
-    writeConfig({ alphaSecret: `    token: ${secret}` });
+    writeConfig({ alphaCredentialLine: `    token: ${secret}` });
     installJiraAnswers();
 
     const result = runCli(dir, ["status"], cliEnv());
