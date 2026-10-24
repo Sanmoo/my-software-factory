@@ -1100,7 +1100,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
 
     const view = await deriveStatus(
       {
-        github: null,
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
@@ -1165,7 +1165,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
 
     const view = await deriveStatus(
       {
-        github: null,
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
           { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
           { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/b"), tickets: jiraAdapter(right) },
@@ -1189,7 +1189,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
 
     const view = await deriveStatus(
       {
-        github: null,
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
           { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(readable) },
           { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/b"), tickets: jiraAdapter(blind, {}) },
@@ -1216,7 +1216,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
 
     const view = await deriveStatus(
       {
-        github: null,
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
           { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
           { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: jiraAdapter(right) },

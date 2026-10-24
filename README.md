@@ -59,7 +59,8 @@ reports an overlap it cannot turn into one destination under `ambiguous`; an
 unreadable selection leaves that overlap unverified. This
 release only reads Jira: `msf status` lists candidates (no claim, comment or
 launch) and `msf run` refuses a Jira configuration before any claim; a
-Jira-only factory writes `repos: []`.
+Jira-only factory writes `repos: []` and still verifies its GitHub identity at
+boot.
 
 ## Usage
 

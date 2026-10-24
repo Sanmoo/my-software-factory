@@ -111,10 +111,11 @@ export interface JiraSelectionReader {
   tickets: TicketTracker;
 }
 
-/** Where the status derivation reads from: the GitHub Issues tracker (absent
- *  when no repo is configured — a Jira-only factory) and the Jira selections. */
+/** Where the status derivation reads from: the GitHub Issues tracker (always
+ *  present — the factory verifies its GitHub identity at boot) and the Jira
+ *  selections. */
 export interface StatusSources {
-  github: TicketTracker | null;
+  github: TicketTracker;
   jira?: readonly JiraSelectionReader[];
 }
 
@@ -182,7 +183,7 @@ export async function deriveStatus(
   const state =
     selections.length === 0
       ? emptyTrackerState()
-      : await deriveTrackerState(githubTracker(sources), selections, config.labels, reservations);
+      : await deriveTrackerState(sources.github, selections, config.labels, reservations);
   const jira = holdAmbiguousTickets(await readJiraCandidates(sources.jira ?? []));
   return {
     pool: state.pool,
@@ -197,18 +198,10 @@ export async function deriveStatus(
   };
 }
 
-/** No configured repo means no GitHub Issues read — and no GitHub credential may
- *  be required of a Jira-only factory (issue 128). Fresh per derivation: the view
- *  hands its arrays to the caller. */
+/** No configured GitHub Issues repo means no GitHub Issues read. Fresh per
+ *  derivation: the view hands its arrays to the caller. */
 function emptyTrackerState(): TrackerState {
   return { pool: [], unbackedClaims: [], unmarkedReservations: [] };
-}
-
-function githubTracker(sources: StatusSources): TicketTracker {
-  if (sources.github === null) {
-    throw new Error("no GitHub Issues tracker was supplied for the configured repositories");
-  }
-  return sources.github;
 }
 
 /**
