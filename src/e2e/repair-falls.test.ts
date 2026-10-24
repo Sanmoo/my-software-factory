@@ -283,7 +283,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "abrupt-death", "abrupt-death"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 100);
 
-    // The incident's state on disk: budget charged, evidence consumed, an
+    // The fallen repair's state on disk: budget charged, evidence consumed, an
     // attempt AFTER the record without one of its own, the local work
     // unpublished and the remote still at the observed head.
     seedFallenLegacyRound(100);
@@ -1233,7 +1233,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 126);
     // A previous attempt wrote a failure: a second clean end without a PR
-    // would be the 2nd consecutive fall — the help request of the incident.
+    // would be the 2nd consecutive fall — the help request of a blocked work.
     writeFileSync(
       join(workDir(layout, REPO, 126), DESFECHO_FILENAME),
       `${JSON.stringify({ class: "clean-without-pr", attempt: 2 })}\n`,
@@ -1572,7 +1572,7 @@ describe("e2e: the resumption over REAL git preserves the work", () => {
     const produced = (await execFile("git", ["rev-parse", workBranchName(100)], { cwd: cloneDir })).stdout.trim();
     assert.notEqual(produced, observed);
 
-    // The incident's durable state: the round charged, the fall on disk.
+    // The durable state of a repair that fell: the round charged, the fall on disk.
     writeFileSync(
       join(workDir(layout, REPO, 100), REPAIR_FILENAME),
       `${JSON.stringify({ usedRounds: 1, lastEvidence: `${REPO}#100|${observed}|conflicts|` })}\n`,

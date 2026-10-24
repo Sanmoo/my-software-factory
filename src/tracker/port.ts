@@ -225,9 +225,9 @@ export interface TrackerPort {
   /** 4. Claim: the reservation lands on the tracker BEFORE any launch. The
    *  claim label (the padlock) lands first and the pool label leaves last, so a
    *  neighbouring sweep excludes by the padlock's presence, never by the pool
-   * label's absence; the reverse order once left an interrupted
-   *  claim in neither the pool nor the reserved set. Only an absent label is
-   *  tolerated; any other failure propagates. */
+   *  label's absence; the reverse order would leave an interrupted claim in
+   *  neither the pool nor the reserved set. Only an absent label is tolerated;
+   *  any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
   /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the padlock when no ready label is given. Mirrored order: the pool label comes back first, the padlock leaves last. */

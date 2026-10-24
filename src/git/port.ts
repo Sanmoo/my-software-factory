@@ -15,7 +15,7 @@ import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../trac
  *     launch, reused on every relaunch (retomada / feedback / repair) — never
  *     recreated; a mere base advance is never touched (the human asks on the
  *     PR), and the branch is rebased onto the PR's current base only when a
- * confirmed conflict reactivates the worker;
+ *     confirmed conflict reactivates the worker;
  *   - the same branch cannot be checked out in two worktrees — git itself
  *     guarantees uniqueness across parallel works of the same repo;
  *   - done is the only state that cleans: remote branch deleted, local
