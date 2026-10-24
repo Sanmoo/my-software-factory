@@ -161,7 +161,7 @@ export interface SubmitOutcome {
   taskId: string;
 }
 
-export interface SubmitFaults {
+export interface SubmitFailures {
   /** The connection failed before the request reached Jira: no job exists. */
   failBeforeScheduling?: boolean;
   /** Jira scheduled the job and the 303 response was lost on the way back. */
@@ -300,15 +300,15 @@ export class JiraCloud {
     propertyKey: string;
     value: JsonValue;
     factory: string;
-    fault?: "fail-before-write" | "lose-response-after-write";
+    failure?: "fail-before-write" | "lose-response-after-write";
   }): void {
     const state = this.requireIssue(input.site, input.issueId);
-    if (input.fault === "fail-before-write") {
+    if (input.failure === "fail-before-write") {
       this.record(input.site, input.factory, "PUT single issue property", input.issueId, "failed", "request rejected before the write");
       throw new JiraRequestError(400, "request rejected before the write");
     }
     this.writeProperty(state, input.propertyKey, input.value);
-    if (input.fault === "lose-response-after-write") {
+    if (input.failure === "lose-response-after-write") {
       this.record(input.site, input.factory, "PUT single issue property", input.issueId, "lost", "applied; response lost");
       throw new JiraNetworkError("the property was written and the response was lost");
     }
@@ -328,7 +328,7 @@ export class JiraCloud {
     factory: string;
     filter?: ConditionalFilter;
     currentValue?: JsonValue;
-    faults?: SubmitFaults;
+    failures?: SubmitFailures;
   }): SubmitOutcome {
     return this.submitPropertyJob({
       kind: "conditional-property",
@@ -349,7 +349,7 @@ export class JiraCloud {
     propertyKey: string;
     value: JsonValue;
     factory: string;
-    faults?: SubmitFaults;
+    failures?: SubmitFailures;
   }): SubmitOutcome {
     return this.submitPropertyJob({
       kind: "list-property",
@@ -401,9 +401,9 @@ export class JiraCloud {
     };
   }
 
-  setAssigneeBlind(input: { site: string; issueId: number; accountId: string; factory: string; fault?: boolean }): void {
+  setAssigneeBlind(input: { site: string; issueId: number; accountId: string; factory: string; failure?: boolean }): void {
     const state = this.requireIssue(input.site, input.issueId);
-    if (input.fault) {
+    if (input.failure) {
       this.record(input.site, input.factory, "PUT assignee", input.issueId, "failed", "rejected");
       throw new JiraRequestError(403, "not permitted");
     }
@@ -423,9 +423,9 @@ export class JiraCloud {
     this.record(input.site, input.factory, "PUT issue labels", input.issueId, "deleted", input.label);
   }
 
-  addLabelBlind(input: { site: string; issueId: number; label: string; factory: string; fault?: boolean }): void {
+  addLabelBlind(input: { site: string; issueId: number; label: string; factory: string; failure?: boolean }): void {
     const state = this.requireIssue(input.site, input.issueId);
-    if (input.fault) {
+    if (input.failure) {
       this.record(input.site, input.factory, "PUT issue labels", input.issueId, "failed", "rejected");
       throw new JiraRequestError(400, "not permitted");
     }
@@ -433,9 +433,9 @@ export class JiraCloud {
     this.record(input.site, input.factory, "PUT issue labels", input.issueId, "applied", input.label);
   }
 
-  transitionBlind(input: { site: string; issueId: number; status: string; factory: string; fault?: boolean }): void {
+  transitionBlind(input: { site: string; issueId: number; status: string; factory: string; failure?: boolean }): void {
     const state = this.requireIssue(input.site, input.issueId);
-    if (input.fault) {
+    if (input.failure) {
       this.record(input.site, input.factory, "POST transition", input.issueId, "failed", "rejected");
       throw new JiraRequestError(400, "not permitted");
     }
@@ -473,7 +473,7 @@ export class JiraCloud {
     factory: string;
     filter?: ConditionalFilter;
     currentValue?: JsonValue;
-    faults?: SubmitFaults;
+    failures?: SubmitFailures;
   }): SubmitOutcome {
     const state = this.requireIssue(input.site, input.issueId);
     const filter = input.filter ?? "absent";
@@ -481,7 +481,7 @@ export class JiraCloud {
       this.record(input.site, input.factory, input.op, input.issueId, "failed", "currentValue filter without a value");
       throw new JiraRequestError(400, "a currentValue filter requires the value to compare");
     }
-    if (input.faults?.failBeforeScheduling) {
+    if (input.failures?.failBeforeScheduling) {
       this.record(input.site, input.factory, input.op, input.issueId, "failed", "connection failed before the job existed");
       throw new JiraRequestError(0, "connection failed before the job existed");
     }
@@ -495,7 +495,7 @@ export class JiraCloud {
       input.currentValue,
     );
     this.record(input.site, input.factory, input.op, input.issueId, "scheduled", job.taskId);
-    if (input.faults?.loseResponseAfterScheduling) {
+    if (input.failures?.loseResponseAfterScheduling) {
       this.record(input.site, input.factory, input.op, input.issueId, "lost", `${job.taskId} scheduled; response lost`);
       throw new JiraNetworkError("the job was scheduled and the response was lost");
     }

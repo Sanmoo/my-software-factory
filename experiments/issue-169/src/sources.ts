@@ -200,8 +200,3 @@ export const SOURCES: readonly SourceNote[] = [
   },
 ];
 
-export function sourceById(id: string): SourceNote {
-  const source = SOURCES.find((candidate) => candidate.id === id);
-  if (source === undefined) throw new Error(`unknown source ${id}`);
-  return source;
-}

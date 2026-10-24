@@ -13,7 +13,7 @@ import {
   JiraRequestError,
   type JobStatus,
   type JsonValue,
-  type SubmitFaults,
+  type SubmitFailures,
 } from "./jira.js";
 import type { WorkerHandle, WorkerRuntime } from "./workers.js";
 
@@ -173,7 +173,7 @@ export class Factory {
    * free. A valid foreign claim, a legacy mark or an unreadable property is
    * never written over and never cleared.
    */
-  submitClaim(faults?: SubmitFaults): PendingAcquisition | null {
+  submitClaim(failures?: SubmitFailures): PendingAcquisition | null {
     const observation = this.observations.get(this.key()) ?? this.observe();
     if (observation.kind === "own-claim") {
       this.outcomes.set(this.key(), { kind: "authorized", record: observation.record });
@@ -218,7 +218,7 @@ export class Factory {
         propertyKey: CLAIM_PROPERTY_KEY,
         value: record,
         factory: this.id,
-        ...(faults === undefined ? {} : { faults }),
+        ...(failures === undefined ? {} : { failures }),
       });
       pending.taskId = submitted.taskId;
     } catch (error) {
@@ -319,8 +319,8 @@ export class Factory {
   }
 
   /** Presentation marks: assignment to the acting account and the claimed label. */
-  presentClaim(faults?: { assignee?: boolean; label?: boolean }): boolean {
-    const appliedFailures = faults ?? this.nextPresentationFailure ?? undefined;
+  presentClaim(failures?: { assignee?: boolean; label?: boolean }): boolean {
+    const appliedFailures = failures ?? this.nextPresentationFailure ?? undefined;
     const outcome = this.outcomes.get(this.key());
     if (outcome?.kind !== "authorized") return false;
     if (this.presentationDone.has(this.key())) return true;
@@ -330,14 +330,14 @@ export class Factory {
         issueId: this.issueId(),
         accountId: this.accountId,
         factory: this.id,
-        ...(appliedFailures?.assignee === true ? { fault: true } : {}),
+        ...(appliedFailures?.assignee === true ? { failure: true } : {}),
       });
       this.tracker.addLabelBlind({
         site: this.ticket.site,
         issueId: this.issueId(),
         label: this.claimedLabel,
         factory: this.id,
-        ...(appliedFailures?.label === true ? { fault: true } : {}),
+        ...(appliedFailures?.label === true ? { failure: true } : {}),
       });
     } catch {
       return false;
