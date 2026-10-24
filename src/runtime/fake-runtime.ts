@@ -35,10 +35,23 @@ import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 export type ScriptedOutcome = SessionResult["outcome"];
 
+/** A launch the fake refuses instead of scripting an outcome. `workerExisted`
+ *  is the fact the factory must act on: false proves the rejection happened
+ *  before any footprint (the environment's precondition), true leaves the
+ *  ambiguity a launch that may have created a worker leaves. */
+export interface FakeLaunchRejection {
+  error: Error;
+  workerExisted: boolean;
+}
+
 export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
   /** Needed so the fake can actually open the PR the script promises. */
   tracker?: FakeTrackerAdapter;
+  /** Reject a launch (at its index in `launched`) instead of scripting an
+   *  outcome, before or after the worker's footprint — the two sides of the
+   *  issue 178 contract the factory must read differently. */
+  rejectLaunch?: (request: WorkRequest, index: number) => FakeLaunchRejection | null;
   /** Deterministic timing control for scenario tests: each launch awaits the
    * returned promise (before applying its outcome) — a worker can be parked
    * mid-flight, or a signal fired at the act of its launch, without sleeps. */
@@ -98,6 +111,10 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
+    const rejection = this.options.rejectLaunch?.(request, index) ?? null;
+    // A refusal before any worker existed leaves no footprint at all: the
+    // real runtime's preconditions run before the session is started.
+    if (rejection !== null && !rejection.workerExisted) throw rejection.error;
     const key = workKeyOf(request.work);
     const session: FakeSession = {
       work: request.work,
@@ -108,6 +125,12 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     this.sessions.set(key, session);
 
     try {
+      if (rejection !== null) {
+        // The worker was born before the failure: its footprint is written and
+        // the launch still rejects — the ambiguous shape that keeps the grant.
+        this.startSession(request);
+        throw rejection.error;
+      }
       const hold = this.hold ?? this.options.hold;
       const work = hold === undefined ? Promise.resolve("work") : Promise.resolve(hold(request, index)).then(() => "work");
       // A hung worker ignores the cooperative request: only its own hold or

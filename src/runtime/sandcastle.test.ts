@@ -31,7 +31,7 @@ import { readTurnModelProviderError } from "./model-provider-error.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
 import { provisionedInventory } from "./agent-inventory-fixture.js";
 import { agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
-import type { WorkRequest } from "./port.js";
+import { LaunchPreconditionError, type WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
@@ -597,7 +597,12 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerProvider: () => dummySandbox(),
     });
 
-    await assert.rejects(failing.launch(request), /docker unavailable/);
+    const refusal = await failing.launch(request).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    assert.ok(refusal instanceof LaunchPreconditionError, "the refusal is typed as PROVEN before any worker");
+    assert.match((refusal as Error).message, /docker unavailable/);
     assert.ok(!existsSync(request.workDir), "no footprint: no dir, no logs, no session");
   });
 
@@ -618,7 +623,12 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerProvider: () => dummySandbox(),
     });
 
-    await assert.rejects(failing.launch(request), /socket \/var\/run\/docker\.sock is missing/);
+    await assert.rejects(
+      failing.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /socket \/var\/run\/docker\.sock is missing/.test(error.message),
+    );
     assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
   });
 
