@@ -13,7 +13,7 @@
 export const RANK_ORDER = "Rank ASC";
 
 export type RankOrdering =
-  | { ok: true; jql: string }
+  | { ok: true; jql: string; filter: string }
   | { ok: false; because: string };
 
 /**
@@ -26,7 +26,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
 
   const masked = maskQuoted(trimmed);
   const clause = topLevelOrderBy(masked);
-  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}` };
+  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}`, filter: trimmed };
 
   const clauses = splitTopLevel(trimmed, masked, clause.bodyStart, ",");
   if (clauses.length !== 1) {
@@ -55,7 +55,11 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
       because: `ORDER BY Rank ${direction} conflicts with native Rank ascending order`,
     };
   }
-  return { ok: true, jql: trimmed };
+  const filter = trimmed.slice(0, clause.start).trim();
+  if (filter === "") {
+    return { ok: false, because: "the JQL carries only an ordering and no selection filter" };
+  }
+  return { ok: true, jql: trimmed, filter };
 }
 
 /**
@@ -73,14 +77,9 @@ export function withSiteRankOrdering(selections: readonly string[]): RankOrderin
   for (const selection of selections) {
     const ordered = withNativeRankOrdering(selection);
     if (!ordered.ok) return ordered;
-    const clause = topLevelOrderBy(maskQuoted(ordered.jql));
-    // withNativeRankOrdering always returns an ordering, but the narrower
-    // slice keeps the function honest if that changes.
-    const filter = clause === null ? ordered.jql.trim() : ordered.jql.slice(0, clause.start).trim();
-    if (filter === "") return { ok: false, because: "a selection carries no filter before its ordering" };
-    filters.push(`(${filter})`);
+    filters.push(`(${ordered.filter})`);
   }
-  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}` };
+  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}`, filter: filters.join(" OR ") };
 }
 
 /** The text inside quoted JQL literals, blanked out (indices preserved). */

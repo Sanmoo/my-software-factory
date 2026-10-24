@@ -17,6 +17,7 @@ import type {
   JiraCandidate,
   JiraSelectionView,
   JiraSiteView,
+  KnownJiraSiteView,
   OrphanedAttempt,
   RunningWorker,
   StatusView,
@@ -196,7 +197,7 @@ function renderJiraSites(sites: readonly JiraSiteView[], cap: number): string[] 
     const heading = `  ${site.site} (${plural(site.selections.length, "selection")}) → ${destinations}: `;
     if (site.state === "unknown") {
       lines.push(`${heading}unknown (${site.reason})`);
-      renderUnknownSelections(lines, site.selections);
+      renderSelections(lines, site.selections);
       continue;
     }
     lines.push(`${heading}${describeSite(site)}`);
@@ -205,13 +206,13 @@ function renderJiraSites(sites: readonly JiraSiteView[], cap: number): string[] 
       lines.push(`    ambiguous (more than one destination — held, no destination chosen): ${site.ambiguous.length}`);
       renderCapped(lines, site.ambiguous, cap, (entry, index) => renderAmbiguous(entry, index), "      ");
     }
-    renderUnknownSelections(lines, site.selections);
+    renderSelections(lines, site.selections);
   }
   return lines;
 }
 
 /** One site's ordered candidates and the tickets held out of that order. */
-function describeSite(site: Extract<JiraSiteView, { state: "known" }>): string {
+function describeSite(site: KnownJiraSiteView): string {
   if (site.candidates.length === 0 && site.ambiguous.length === 0) return "none";
   const facts = [plural(site.candidates.length, "candidate")];
   if (site.ambiguous.length > 0) facts.push(`${site.ambiguous.length} held as ambiguous`);
@@ -231,13 +232,21 @@ function renderAmbiguous(entry: AmbiguousJiraTicket, index: number): string {
   return `      ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${unverifiedNote(entry.unverified)}`;
 }
 
-/** The selectors the site could not read, each with its own reason. They are
- *  never silently dropped: an unknown selection may hide a destination. */
-function renderUnknownSelections(lines: string[], selections: readonly JiraSelectionView[]): void {
+/** Each selector's contribution when a site has several. A single selector is
+ *  the site line itself; an unknown selector is always named, because it may
+ *  hide a destination. */
+function renderSelections(lines: string[], selections: readonly JiraSelectionView[]): void {
+  const several = selections.length > 1;
   for (const view of selections) {
-    if (view.state !== "unknown") continue;
     const destination = renderRepositoryIdentity(view.selection.destination);
-    lines.push(`    selection (${view.selection.jql ?? "no JQL"}) → ${destination}: unknown (${view.reason})`);
+    const query = view.selection.jql ?? "no JQL";
+    if (view.state === "unknown") {
+      lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
+      continue;
+    }
+    if (!several) continue;
+    const held = view.held === 0 ? "" : `, ${view.held} held as ambiguous`;
+    lines.push(`    selection (${query}) → ${destination}: ${view.selected} selected${held}`);
   }
 }
 
