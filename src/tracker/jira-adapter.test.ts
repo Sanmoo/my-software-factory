@@ -149,6 +149,42 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
     );
   });
 
+  test("a page that does not state its own end is a read failure, never a short selection", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    // A proxy stripped `isLast` and the token: the page is half an answer.
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.endsWith("/rest/api/3/search/jql")) return response;
+      return { status: 200, text: JSON.stringify({ issues: JSON.parse(response.text).issues }) };
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    await assert.rejects(adapter.listOpenTickets(selectionFor(sim, "project = ABC")), (error: Error) => {
+      assert.match(error.message, /neither ends the result nor carries a page token/);
+      return true;
+    });
+  });
+
+  test("a page that ends and also carries a page token is a read failure, never a silent stop", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.endsWith("/rest/api/3/search/jql")) return response;
+      return {
+        status: 200,
+        text: JSON.stringify({ issues: JSON.parse(response.text).issues, isLast: true, nextPageToken: "more" }),
+      };
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    await assert.rejects(
+      adapter.listOpenTickets(selectionFor(sim, "project = ABC")),
+      /ends the result and also carries a page token/,
+    );
+  });
+
   test("every ticket carries provider, site, stable id, readable key and browse URL", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One", labels: ["ready"], created: "2026-02-01T00:00:00.000+0000" });

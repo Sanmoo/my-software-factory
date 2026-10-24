@@ -65,8 +65,6 @@ export interface JiraAdapterOptions {
   env?: NodeJS.ProcessEnv;
   /** The HTTP seam; production uses fetch. */
   transport?: JiraTransport;
-  /** Items per native page (Jira's own cap still applies). */
-  pageSize?: number;
 }
 
 /** The authenticated Jira identity the adapter acts as. */
@@ -183,6 +181,8 @@ const SEARCH_PATH = "/rest/api/3/search/jql";
 /** The listing requests only the facts a candidate needs; the JQL decides selection. */
 const LIST_FIELDS = ["summary", "labels", "assignee", "created"];
 const READ_FIELDS = ["summary", "description", "labels", "assignee", "created"];
+/** The page the listing asks for; Jira caps it at its own maximum. */
+const PAGE_SIZE = 100;
 
 /** The negative forms Jira uses when the site cannot order by Rank. */
 const RANK_UNAVAILABLE =
@@ -194,7 +194,6 @@ export class JiraTicketAdapter implements TicketTracker {
   readonly tokenEnv: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly transport: JiraTransport;
-  private readonly pageSize: number;
   /** `/myself` runs once per adapter; a failure is retried on the next call. */
   private identity: Promise<JiraActingAccount> | null = null;
 
@@ -204,7 +203,6 @@ export class JiraTicketAdapter implements TicketTracker {
     this.tokenEnv = options.tokenEnv;
     this.env = options.env ?? process.env;
     this.transport = options.transport ?? jiraHttpTransport;
-    this.pageSize = options.pageSize ?? 100;
   }
 
   /** The authenticated Acting account — the identity `currentUser()` means. */
@@ -263,12 +261,12 @@ export class JiraTicketAdapter implements TicketTracker {
       const body: Record<string, unknown> = {
         jql: ordering.jql,
         fields: LIST_FIELDS,
-        maxResults: this.pageSize,
+        maxResults: PAGE_SIZE,
         ...(pageToken === undefined ? {} : { nextPageToken: pageToken }),
       };
       const page = parseSearchPage(this.site, await this.requestJson("POST", SEARCH_PATH, body));
       for (const issue of page.issues) tickets.push(openTicket(this.site, issue));
-      if (page.nextPageToken === null || page.isLast) return tickets;
+      if (page.nextPageToken === null) return tickets;
       if (seenTokens.has(page.nextPageToken)) {
         throw new JiraProtocolError(this.site, `the page token "${page.nextPageToken}" repeated`);
       }
@@ -291,7 +289,7 @@ export class JiraTicketAdapter implements TicketTracker {
     await this.actingAccount();
     const json = await this.requestJsonOrNull(
       "GET",
-      `${SEARCH_ISSUE_PATH(source.stableId)}?fields=${READ_FIELDS.join(",")}`,
+      `${issuePath(source.stableId)}?fields=${READ_FIELDS.join(",")}`,
     );
     if (json === null) return notKnown;
 
@@ -447,7 +445,7 @@ export function jiraBrowseUrl(site: string, key: string): string {
   return `https://${site}/browse/${key}`;
 }
 
-const SEARCH_ISSUE_PATH = (stableId: string): string => `/rest/api/3/issue/${encodeURIComponent(stableId)}`;
+const issuePath = (stableId: string): string => `/rest/api/3/issue/${encodeURIComponent(stableId)}`;
 
 class JiraNotFoundError extends Error {
   constructor(site: string, detail: string) {
@@ -461,7 +459,6 @@ class JiraNotFoundError extends Error {
 function parseSearchPage(site: string, body: unknown): {
   issues: unknown[];
   nextPageToken: string | null;
-  isLast: boolean;
 } {
   if (!isRecord(body) || !Array.isArray(body["issues"])) {
     throw new JiraProtocolError(site, "the search response carries no issues array");
@@ -470,11 +467,20 @@ function parseSearchPage(site: string, body: unknown): {
   if (token !== undefined && typeof token !== "string") {
     throw new JiraProtocolError(site, "the search response carries a non-string page token");
   }
-  return {
-    issues: body["issues"] as unknown[],
-    nextPageToken: typeof token === "string" && token !== "" ? token : null,
-    isLast: body["isLast"] === true,
-  };
+  const nextPageToken = typeof token === "string" && token !== "" ? token : null;
+  const isLast = body["isLast"];
+  if (isLast !== undefined && typeof isLast !== "boolean") {
+    throw new JiraProtocolError(site, "the search response carries a non-boolean isLast");
+  }
+  // A page that does not state its own end would make a truncated answer read as
+  // the whole selection; that is a read failure (unknown), never a short list.
+  if (isLast === undefined && nextPageToken === null) {
+    throw new JiraProtocolError(site, "the search page neither ends the result nor carries a page token");
+  }
+  if (isLast === true && nextPageToken !== null) {
+    throw new JiraProtocolError(site, "the search page ends the result and also carries a page token");
+  }
+  return { issues: body["issues"] as unknown[], nextPageToken };
 }
 
 interface ParsedIssue {
