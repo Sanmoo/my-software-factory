@@ -315,8 +315,9 @@ não consegue ler.
   (vê tudo que foi aplicado antes de ser servida) ou visibilidade em prefixo
   (se mostra um escrito posterior, mostra os anteriores). **Não documentado.**
 - **P3 — participantes.** Todas as fábricas que disputam o conjunto executam o
-  protocolo; factory ids são únicos entre instalações concorrentes; a liberação
-  manual respeita a confirmação de que o Worker anterior terminou.
+  protocolo; factory ids são únicos entre instalações concorrentes e seguros
+  como label nos candidatos C2/C3 (`msf-claim-<id>`); a liberação manual
+  respeita a confirmação de que o Worker anterior terminou.
 
 ### Prova sob P0–P3
 
@@ -431,14 +432,7 @@ ids em ordem de aplicação e leitura fresca — as premissas P1/P2 da seção 5
 | `legacy-claim` | label antigo sem registro: B `unavailable`, 0 escritas; após liberação manual, B adquire |
 | `claim-for-another-ticket` | marcador de outro Ticket: incerto, 0 lançamento |
 
-Comandos:
-
-```bash
-cd experiments/issue-168
-npm install
-npm test
-npm run run   # matriz + cenários + runs/evidence.json
-```
+Comandos e isolamento: `experiments/issue-168/README.md`.
 
 Os testes do harness **não** integram o quality gateway da fábrica: são a
 demonstração desta investigação, não um check de prontidão da produção. A

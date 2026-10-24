@@ -94,7 +94,6 @@ interface Step {
 }
 
 interface VerifySlot {
-  readonly position: number;
   /** Mutations applied before this verify, hence the possible read views. */
   readonly applied: number;
 }
@@ -125,10 +124,10 @@ function stepSequences(writesPerClaim: number): readonly StepSequence[] {
     if (next[0] === 3 && next[1] === 3) {
       let writes = 0;
       const verifies: VerifySlot[] = [];
-      steps.forEach((step, position) => {
+      steps.forEach((step) => {
         if (step.kind === "write") writes += 1;
         if (step.kind === "verify") {
-          verifies.push({ position, applied: writes * writesPerClaim });
+          verifies.push({ applied: writes * writesPerClaim });
         }
       });
       sequences.push({ steps: [...steps], verifies });

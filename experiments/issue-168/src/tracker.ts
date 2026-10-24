@@ -102,6 +102,8 @@ export class SimTracker {
   apply(mutation: Mutation): void {
     let commentId: number | null = null;
     if (mutation.kind === "comment") {
+      // Two disjoint id ranges make the two orderings visible: apply-order ids
+      // grow from 100, reversed ids descend from 1_000_000.
       commentId =
         this.idOrder === "apply" ? 100 + this.appliedComments : 1_000_000 - this.appliedComments * 10;
       this.appliedComments += 1;

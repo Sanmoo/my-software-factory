@@ -193,6 +193,7 @@ test("manual release is refused while the previous Worker is alive", () => {
   assert.equal(o["claimWhileAlive"], 1);
   assert.equal(o["released"], 0);
   assert.equal(o["padlockAfter"], false);
+  assert.equal(o["assigneeAfter"], false);
   assert.notEqual(o["workerB"], null);
   assert.equal(o["live"], 1);
   assert.equal(o["firstWorkerEnded"], "interrupted");
@@ -216,6 +217,13 @@ test("a prior Claim convention is respected until the operator releases it", () 
   assert.equal(o["releasedPadlock"], false);
   assert.equal(o["afterRelease"], "free");
   assert.notEqual(o["workerB"], null);
+});
+
+test("a malformed claim marker is refused by the operator release, never deleted by guess", () => {
+  const o = observations("release-refuses-malformed");
+  assert.equal(o["refused"], true);
+  assert.equal(o["claims"], 1);
+  assert.equal(o["padlock"], true);
 });
 
 test("a claim marker for another Ticket is uncertain on this one", () => {

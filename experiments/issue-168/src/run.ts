@@ -42,13 +42,13 @@ function renderMatrix(cells: Cells): string[] {
   }
   out.push("");
   for (const protocol of PROTOCOLS) {
-    const risky = READ_PROFILES.filter((profile) => {
+    const workable = READ_PROFILES.filter((profile) => {
       const result = cells.get(`${protocol.name}/${profile.name}`);
       return result !== undefined && safe(result) && progress(result);
     }).map((profile) => profile.name);
     out.push(
       `${protocol.name}: exclusividade+progresso apenas em [${
-        risky.join(", ") || "nenhum"
+        workable.join(", ") || "nenhum"
       }]`,
     );
   }
