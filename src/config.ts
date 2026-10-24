@@ -113,8 +113,8 @@ export interface Labels {
  * token — the token value never enters this file, a log or a message. The JQL
  * is stored with its effective ordering: native Rank ascending, supplied when
  * the operator gave none and refused when they gave a conflicting one. One
- * entry IS one selection: two rules on one site (one Source) are two entries,
- * sharing that site's account and token.
+ * entry IS one selection: two selections on one site (one Source) are two
+ * entries sharing that site's account and token.
  */
 export interface JiraSelectionConfig {
   /** The Jira Cloud site host (`<tenant>.atlassian.net`). */

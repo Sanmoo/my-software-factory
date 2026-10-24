@@ -234,7 +234,7 @@ function unverifiedNote(unverified: boolean): string {
 function describeCandidates(selection: KnownJiraSelectionView): string {
   const notes: string[] = [];
   if (selection.held > 0) notes.push(`${selection.held} held as ambiguous`);
-  if (selection.repeated > 0) notes.push(`${selection.repeated} already listed by another rule`);
+  if (selection.repeated > 0) notes.push(`${selection.repeated} already listed by another selection`);
   if (selection.candidates.length === 0 && notes.length === 0) return "none";
   const candidates = plural(selection.candidates.length, "candidate");
   return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;

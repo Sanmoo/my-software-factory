@@ -225,7 +225,7 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
   });
 
   test("one Jira project feeds two destinations through two explicit selections and one identity", () => {
-    // Two rules on the SAME site: one account, one credential, one /myself.
+    // Two selections on the SAME site: one account, one credential, one /myself.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -276,13 +276,13 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
     assert.deepEqual(
       jira.calls(),
       ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
-      "one identity for the site and one native read per selection rule",
+      "one identity for the site and one native read per selection",
     );
     assert.deepEqual(gh.restCalls(), [], "no GitHub Issues read");
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 
-  test("a ticket two rules promise to different destinations is held, not listed as a candidate", () => {
+  test("a ticket two selections promise to different destinations is held, not listed as a candidate", () => {
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -343,7 +343,7 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
     assert.deepEqual(
       jira.calls(),
       ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
-      "one identity and one native read per rule, no claim or write",
+      "one identity and one native read per selection, no claim or write",
     );
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });

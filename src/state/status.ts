@@ -132,7 +132,7 @@ export type JiraSelectionView =
       candidates: JiraCandidate[];
       /** Candidates removed because more than one destination promises them. */
       held: number;
-      /** Candidates already listed by another rule for this same destination. */
+      /** Candidates already listed by another selection for this same destination. */
       repeated: number;
       /** An unreadable selection on this site names a different destination, so
        *  an overlap with these candidates cannot be ruled out. */
@@ -251,7 +251,7 @@ interface JiraHold {
  * A ticket two readable selections promise to different destinations has no
  * explicit destination (spec #92 story 8): it is held with the reason instead
  * of being listed once per selection — the operator resolves the overlap in
- * the rules. The same Work selected by several rules is listed once. An
+ * the selections. The same Work selected by several selections is listed once. An
  * UNKNOWN sibling naming a different destination may hide a conflict; the
  * readable source still lists, and says the overlap is unverified.
  */
@@ -290,7 +290,7 @@ function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
     });
   }
 
-  // The same Work (ticket + destination) selected by several rules is one
+  // The same Work (ticket + destination) selected by several selections is one
   // candidate, so it is listed once.
   const listed = new Set<string>();
   const selections = views.map((view): JiraSelectionView => {

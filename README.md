@@ -56,8 +56,8 @@ error. The JQL is the whole selection. `currentUser()` means the authenticated
 account named by `account` — the API token's owner, not an implicitly different
 human operator. The token is never a YAML value: `token-env` names the local
 environment variable that holds it. One Jira project may feed several
-repositories: one entry per selection rule, each with its own JQL and
-destination. When readable rules promise one ticket to different destinations,
+repositories: one entry per selection, each with its own JQL and destination.
+When readable selections promise one ticket to different destinations,
 `msf status` holds it with the reason instead of a destination; an unreadable
 selection leaves that overlap unverified. This release only reads Jira: `msf
 status` lists the candidates (no claim, comment or launch), and `msf run`
