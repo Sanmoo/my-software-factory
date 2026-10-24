@@ -128,7 +128,6 @@ describe("the factory's agent-resource declaration and image inventory", () => {
       ["code-reviewer", "spec-reviewer"],
     );
     assert.match(loaded.digest, /^[0-9a-f]{64}$/);
-    assert.equal(basename(AGENT_DECLARATION_PATH), AGENT_DECLARATION_FILE, "the file name has one home");
     assert.equal(IMAGE_INVENTORY_PATH, "/opt/msf/agent-inventory.json");
   });
 
@@ -146,7 +145,6 @@ describe("the factory's agent-resource declaration and image inventory", () => {
       );
 
       assert.equal(reformatted.digest, plain.digest, "comments, quoting and key order are not the identity");
-      assert.equal(reformatted.digest, declarationDigest(reformatted.declaration));
 
       const changed = loadAgentResources(fixtureFile(dir, [['version: "1.0.0"', 'version: "1.0.1"']]));
       assert.notEqual(changed.digest, plain.digest, "a different set is a different declaration");

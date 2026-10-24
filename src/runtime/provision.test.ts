@@ -76,14 +76,14 @@ function makeFixture(
     skills: {
       repository: skillsRepo,
       revision: options.skills === false ? "f".repeat(40) : revision,
-      license: "MIT (fixture LICENSE)",
+      license: "MIT",
       selected: [{ name: skillName, path: `skills/engineering/${skillName}`, role: "implement" }],
     },
     extensions: [
       {
         package: "pi-subagents",
         version: options.extensionVersion ?? "0.79.1",
-        license: "MIT (fixture LICENSE)",
+        license: "MIT",
         entry: "index.js",
         guidance: { name: "pi-subagents", path: "skills/pi-subagents" },
       },
@@ -305,7 +305,7 @@ describe("agent-resource provisioning at image build time", () => {
         provisionAgentResources(
           options(fixture, { run: fakeRun({ globalRoot: fixture.globalRoot, licenseText: "Apache License 2.0\n" }) }),
         ),
-        /extension "pi-subagents" LICENSE does not name the declared license "MIT \(fixture LICENSE\)"/,
+        /extension "pi-subagents" LICENSE does not name the declared license "MIT"/,
       );
       assert.ok(!existsSync(fixture.dest));
     } finally {
@@ -319,12 +319,12 @@ describe("agent-resource provisioning at image build time", () => {
       const bad = JSON.parse(readFileSync(fixture.declarationPath, "utf8")) as {
         skills: { license: string };
       };
-      bad.skills.license = "Apache-2.0 (upstream LICENSE)";
+      bad.skills.license = "Apache-2.0";
       writeFileSync(fixture.declarationPath, JSON.stringify(bad), "utf8");
 
       await assert.rejects(
         provisionAgentResources(options(fixture)),
-        /upstream skills LICENSE does not name the declared license "Apache-2\.0 \(upstream LICENSE\)"/,
+        /upstream skills LICENSE does not name the declared license "Apache-2\.0"/,
       );
       assert.ok(!existsSync(fixture.dest));
     } finally {

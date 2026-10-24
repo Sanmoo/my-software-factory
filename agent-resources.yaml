@@ -9,7 +9,7 @@ pi:
 skills:
   repository: https://github.com/mattpocock/skills.git
   revision: "49dd158d1076134a641b33efb035946536778336"
-  license: MIT (upstream LICENSE; copied unchanged with the selected skills)
+  license: MIT
   selected:
     - name: implement
       path: skills/engineering/implement
@@ -29,7 +29,7 @@ skills:
 extensions:
   - package: pi-subagents
     version: "0.81.0"
-    license: MIT (upstream LICENSE; copied with the package)
+    license: MIT
     entry: index.js
     guidance:
       name: pi-subagents
