@@ -34,15 +34,9 @@ import { DEFAULT_LABELS } from "../config.js";
  * explicitly: `npm run smoke:github`. Overrides: MSF_SMOKE_REPO,
  * MSF_SMOKE_ACCOUNT.
  *
- * op1 is designed around GitHub's eventual consistency: listings converge LATE
- * (the label-filtered one lagged minutes; even the plain open-issues
- * listing lagged >30s behind a freshly CREATED issue), while DIRECT GETs
- * are immediate. Eligibility is proven via direct reads right after seeding
- * with no settle wait, and the neutral open-issues read is re-checked ONCE
- * after the cycle's last op — NON-BLOCKING: a stale listing is reported as
- * environmental lag, never a failure (the factory re-derives the pool every
- * tick and self-heals). The cycle itself lives in `smoke-cycle.ts` so the
- * offline suites run the same flow over the sim.
+ * The cycle lives in `smoke-cycle.ts` — one home for the flow and for the
+ * eventual-consistency reasoning op1 is designed around — so the offline
+ * suites run the same sequence over the sim.
  */
 
 const SMOKE_BODY = `seeded by the msf smoke — reverted by its cleanup\n\n${AGENT_MARKER}`;

@@ -25,7 +25,7 @@ import { launchedNumber } from "./work-fixtures.js";
  * End-to-end of the pool, the claim and launch up to the outcome with PR.
  * The whole sweep runs against the two fake seams (in-memory tracker adapter
  * + scriptable fake runtime) — fast and deterministic, real temp workspace,
- * no network, no container (spec, Testing Decisions).
+ * no network, no container.
  *
  * The five cases:
  *   1. 3 eligibles with y=2 — two claims by age; the third enters in the same

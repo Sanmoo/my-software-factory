@@ -31,7 +31,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
  * per-work registry on real disk and the artifacts surviving the factory's
  * exit. The whole sweep runs against the two fake seams (in-memory tracker
  * adapter + scriptable fake runtime) — fast and deterministic, real temp
- * workspace, no network, no container (spec, Testing Decisions).
+ * workspace, no network, no container.
  *
  * The six classes of the ruler (each produces its decided transition):
  *   1. outcome with PR open → stays reserved awaiting the human (claim held);

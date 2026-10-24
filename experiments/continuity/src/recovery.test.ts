@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RecoveryLedger } from "./recovery.js";
 
-const fresh = () => join(mkdtempSync(join(tmpdir(), "msf111-rec-")), "recovery.json");
+const fresh = () => join(mkdtempSync(join(tmpdir(), "msf-continuity-rec-")), "recovery.json");
 const policy = { maxRecoveries: 3, waitsMs: [1, 4, 16] };
 
 test("recoveries wait by the fixed schedule and stop at the budget", () => {
