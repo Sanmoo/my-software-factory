@@ -320,6 +320,11 @@ export interface SandcastleRuntimeOptions {
   agentResources?: LoadedAgentResources;
   /** Launch preconditions; default defaultPreflight. */
   preflight?: () => Promise<void>;
+  /** Whether the launch resolves model credentials. `"unused"` is for an agent
+   * that performs no model call at all (the deterministic agent of the real
+   * stop proof): there is no credential to resolve, and the other
+   * preconditions still run for real. */
+  modelCredentials?: "resolve" | "unused";
 }
 
 export class SandcastleRuntime implements WorkerRuntime {
@@ -373,6 +378,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           agentResources: this.agentResources,
           authFile: this.authFile,
           authEnv: this.authEnv,
+          modelCredentials: options.modelCredentials,
           dockerSocket: this.resolveDockerSocket(),
         })());
     this.piProvider = options.piProvider ?? ((model, piOptions) => pi(model, piOptions));
@@ -757,7 +763,10 @@ export interface PreflightDeps {
   /** The command runner (docker); injectable for tests. */
   run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
   /** The model-auth probe; injectable for tests. */
-  authProbe?: () => Promise<{ status: number | null; stdout: string; stderr: string }>;
+  authProbe?: (() => Promise<{ status: number | null; stdout: string; stderr: string }>) | undefined;
+  /** `"unused"` = the agent performs no model call (a deterministic proof
+   *  agent), so no credential is resolved; the default resolves one. */
+  modelCredentials?: "resolve" | "unused" | undefined;
 }
 
 /** Run `docker` and keep its output even on a non-zero exit (no throw). */
@@ -966,40 +975,49 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
 
     // Model credentials (issue #159): an explicit file and/or Pi-supported
     // provider variables — never a personal profile. Both the absence and an
-    // unresolved/expired credential fail with the reason only (no value).
-    if (deps.authFile !== undefined) {
-      const problem = authFileProblem(deps.authFile);
-      if (problem !== null) throw new Error(problem);
-    }
-    if (deps.authFile === undefined && Object.keys(deps.authEnv).length === 0) {
-      throw new Error(NO_MODEL_AUTH_MESSAGE);
-    }
-    const probeAuth =
-      deps.authProbe ??
-      (() =>
-        dockerAuthProbe({
-          image: deps.image,
-          model: deps.model,
-          authFile: deps.authFile,
-          authEnv: deps.authEnv,
-        }));
-    const auth = await probeAuth();
-    let status = "";
-    let reason = "";
-    try {
-      const parsed = JSON.parse(auth.stdout) as { status?: unknown; reason?: unknown };
-      status = typeof parsed.status === "string" ? parsed.status : "";
-      reason = typeof parsed.reason === "string" ? parsed.reason : "";
-    } catch {
-      status = "";
-    }
-    if (status !== "ready") {
-      throw new Error(
-        `model credentials for ${deps.model} are not ready (${status === "" ? "the probe returned no readable status" : status}${reason === "" ? "" : `: ${reason}`}). ` +
-          "Supply a valid provider API key in the factory's environment or a valid worker-auth-file; nothing is read from a personal Pi profile.",
-      );
+    // unresolved/expired credential fail with the reason only (no value). An
+    // agent that makes no model call declares it and has no credential to
+    // resolve — every other precondition above still ran.
+    if (deps.modelCredentials !== "unused") {
+      await requireModelCredentials(deps);
     }
   };
+}
+
+/** The credential precondition's body: the explicit source, then its answer. */
+async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
+  if (deps.authFile !== undefined) {
+    const problem = authFileProblem(deps.authFile);
+    if (problem !== null) throw new Error(problem);
+  }
+  if (deps.authFile === undefined && Object.keys(deps.authEnv).length === 0) {
+    throw new Error(NO_MODEL_AUTH_MESSAGE);
+  }
+  const probeAuth =
+    deps.authProbe ??
+    (() =>
+      dockerAuthProbe({
+        image: deps.image,
+        model: deps.model,
+        authFile: deps.authFile,
+        authEnv: deps.authEnv,
+      }));
+  const auth = await probeAuth();
+  let status = "";
+  let reason = "";
+  try {
+    const parsed = JSON.parse(auth.stdout) as { status?: unknown; reason?: unknown };
+    status = typeof parsed.status === "string" ? parsed.status : "";
+    reason = typeof parsed.reason === "string" ? parsed.reason : "";
+  } catch {
+    status = "";
+  }
+  if (status !== "ready") {
+    throw new Error(
+      `model credentials for ${deps.model} are not ready (${status === "" ? "the probe returned no readable status" : status}${reason === "" ? "" : `: ${reason}`}). ` +
+        "Supply a valid provider API key in the factory's environment or a valid worker-auth-file; nothing is read from a personal Pi profile.",
+    );
+  }
 }
 
 /** The idle span in the operator's units: 300 ms is not "0 seconds". */
