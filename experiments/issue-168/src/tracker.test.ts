@@ -32,7 +32,7 @@ test("comments are listed by ascending id, even when ids do not follow applicati
 test("a multi-write claim is representable partially", () => {
   const tracker = new SimTracker(githubTicket("Sanmoo/fixture", 168));
   tracker.apply({ kind: "add-label", label: "agent-claimed" });
-  // The second write (the claim comment) was never applied.
+  // The padlock was applied; the assignment and the claim record were not.
   const snapshot = tracker.snapshot();
   assert.equal(snapshot.labels.includes("agent-claimed"), true);
   assert.equal(snapshot.comments.length, 0);

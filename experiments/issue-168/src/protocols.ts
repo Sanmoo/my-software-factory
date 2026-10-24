@@ -6,8 +6,8 @@
  * confirmed exclusive authority, Ticket unavailable, or an uncertain result —
  * only the first may start a Worker.
  *
- * None of these classes carries coordination state. The only shared medium is
- * the tracker passed in by the caller.
+ * None of these candidates carries coordination state. The only shared medium
+ * is the tracker passed in by the caller.
  */
 
 import {
@@ -216,9 +216,6 @@ export const conversationLock: ClaimProtocol = {
 /**
  * C5 — the Claim sequence. One marked comment carries the claim record; the
  * provider-assigned comment id orders the claims, and the smallest id wins.
- * The padlock lands first so every reader (including the current pool
- * derivation) sees the Ticket reserved even if the record is not visible yet.
- *
  * The padlock and the assignment to the Acting account land first, so the
  * result is a Claim in the glossary's sense (mark + assignment) and the pool
  * derivation keeps seeing the Ticket reserved; neither is authority. Safety
