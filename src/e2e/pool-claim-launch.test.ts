@@ -33,11 +33,11 @@ import { launchedNumber } from "./work-fixtures.js";
  *   2. An eligible with an open blocker stays out of the pool; with all
  *      closed it enters.
  *   3. The claim lands on the tracker before the launch — and the reservation
- * on disk lands before the claim itself — while the engine's
- *      own in-flight set keeps its launches out of its own re-derivations. A
- *      second, stateless sweep reading a claim with ZERO attempt evidence
- *      cannot see the live launch: it treats the claim as an orphan and falls
- * it — the honest disk truth, never a freeze.
+ *      on disk lands before the claim itself — while the engine's own in-flight
+ *      set keeps its launches out of its own re-derivations. A second,
+ *      stateless sweep reading a claim with ZERO attempt evidence cannot see
+ *      the live launch: it treats the claim as an orphan and falls it — the
+ *      honest disk truth, never a freeze.
  *   4. --once only exits after every launched worker ended, with the final
  *      tracker state correct (claimed with an open PR).
  *   5. A long work never blocks the other slots.

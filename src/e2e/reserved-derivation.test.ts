@@ -146,7 +146,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     return feedback.value.pr && feedback.value.pr.state === "open" ? feedback.value.pr.number : null;
   }
 
-  // ---- checklist 1: human comment on the PR → feedback round, same branch, same PR ----
+  // ---- case 1: human comment on the PR → feedback round, same branch, same PR ----
 
   test("a new human comment on the PR launches a feedback round on the SAME branch and the SAME PR", async () => {
     const config = makeConfig(2);
@@ -191,7 +191,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.ok(comments.some((comment) => comment.body === "seja mais sucinto"));
   });
 
-  // ---- checklist 2: human comment on a blocked issue after the marker → retomada ----
+  // ---- case 2: human comment on a blocked issue after the marker → retomada ----
 
   test("a human answer on the issue AFTER the marker resumes the work from the existing branch", async () => {
     const config = makeConfig(2);
@@ -274,7 +274,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     );
   });
 
-  // ---- checklist 3: PR closed without merge → rejected, blocked with a comment pointing at the PR ----
+  // ---- case 3: PR closed without merge → rejected, blocked with a comment pointing at the PR ----
 
   test("a PR closed without merge becomes blocked, with a comment pointing at the PR", async () => {
     const config = makeConfig(2);
@@ -308,7 +308,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.equal(third.launched.length, 0);
   });
 
-  // ---- checklist 4: done — issue closed by linkage, and by the fallback ----
+  // ---- case 4: done — issue closed by linkage, and by the fallback ----
 
   test("done by linkage: the human's merge closes the issue — artifacts archived, branches cleaned", async () => {
     const config = makeConfig(2);
@@ -365,7 +365,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.deepEqual(git.cleaned, [{ repo: REPO, number: 5 }], "the git host cleaned the work's branches");
   });
 
-  // ---- checklist 2 (rejection branch): the rejected work's retomada reopens the SAME PR ----
+  // ---- case 2 (rejection branch): the rejected work's retomada reopens the SAME PR ----
 
   test("a rejected work answered on the issue resumes from the existing branch and reopens the SAME PR", async () => {
     const config = makeConfig(2);
@@ -395,7 +395,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.equal(await openPrOf(tracker, 6), prNumber, "the SAME PR reopened — no PR novo");
   });
 
-  // ---- checklist 5: parked reserved works launch BEFORE new claims, by age ----
+  // ---- case 5: parked reserved works launch BEFORE new claims, by age ----
 
   test("parked reserved works (feedback, retomada) launch before new claims, each group by creation age", async () => {
     const config = makeConfig(2);
@@ -421,7 +421,7 @@ describe("e2e: the derivation of ALL reserved works", () => {
     assert.equal(launchOf(second.launched, githubWork(REPO, 10))?.request.attempt, 2, "the registry numbered the round");
   });
 
-  // ---- checklist 6: the orphan claim — a death between the claim and the spawn is an interruption ----
+  // ---- case 6: the orphan claim — a death between the claim and the spawn is an interruption ----
 
   test("an orphan claim with zero footprint is recovered as attempt 1 — never released, never a fall", async () => {
     const config = makeConfig(2);

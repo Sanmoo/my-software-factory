@@ -223,8 +223,8 @@ describe("e2e: msf run through the real cli wiring", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // Two sessions started and died without a record: the old ruler blocked on
-    // the 2nd consecutive drop; the interruption rule never does.
+    // Two sessions started and died without a record: a 2nd consecutive drop
+    // would block under the fall ruler; the interruption rule never does.
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
