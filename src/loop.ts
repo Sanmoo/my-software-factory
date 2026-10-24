@@ -1041,7 +1041,9 @@ export class SweepEngine {
    * Start a retrospective round when the trigger asks for one (issue 141).
    * The round is fire-and-forget for the sweep — it never consumes a slot and
    * never delays a launch — but a failure is logged, never silent, and the
-   * `--once` boundary waits for it (settle).
+   * `--once` boundary waits for it (settle). One round at a time: this engine
+   * holds at most one (the promise below) and the workspace lock keeps every
+   * other factory process out; the report's marker keeps the windows apart.
    */
   private maybeStartRetro(): void {
     if (!this.deps.config.retro.enabled || this.retroRun !== null || this.stopping) return;

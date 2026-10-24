@@ -243,6 +243,28 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     );
   });
 
+  test("a forced full round on a fresh workspace also covers the last ten, never the whole archive", async () => {
+    const config = makeConfig({ threshold: 5 });
+    const { runtime } = makeFactory(config);
+    for (let day = 1; day <= 12; day += 1) seedArchived(day, at(day));
+
+    const finished = await collectFinishedWorks(layout);
+    const plan = await planManualRound(config, layout, finished);
+    assert.ok(!("empty" in plan));
+    await runRetroRound(
+      { config, runtime, workspace: layout, log: () => {}, notifier: new FakeNotifier() },
+      plan as RetroPlan,
+    );
+
+    const keys = runtime.retroLaunched[0]!.works.map((work) => work.key);
+    assert.deepEqual(
+      keys,
+      Array.from({ length: 10 }, (_value, index) => `${REPO}#${index + 3}`),
+      "the first round's window is the last ten works, whichever trigger started it",
+    );
+    assert.notEqual((await readRetroState(layout)).boundaryAt, null, "a full round advances the boundary");
+  });
+
   test("the report is the marker: a second round covers only works after the boundary", async () => {
     const config = makeConfig({ threshold: 2 });
     const { runtime, deps } = makeFactory(config);

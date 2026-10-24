@@ -66,9 +66,8 @@ agent into the image. The operator's exact script — build, model credentials,
 clean-host verification and the real proof — lives in the
 [RUNBOOK](docs/RUNBOOK.md).
 
-The retrospective files `needs-triage` issues and never labels anything
-`ready-for-agent`: the operator's triage is the only gate between an
-improvement item and the pool.
+The retrospective files improvement items as `needs-triage` issues and labels
+nothing else.
 
 ## Design
 

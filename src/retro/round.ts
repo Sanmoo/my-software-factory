@@ -87,9 +87,7 @@ export interface RetroDeps {
 
 /**
  * The automatic trigger (issue 141): checked at each sweep, it fires once
- * `threshold` ARCHIVED works exist since the last report. The first round has
- * no marker and covers the last ten finished works; later rounds cover every
- * finished work since the boundary the last report advanced.
+ * `threshold` ARCHIVED works exist since the last report.
  */
 export async function planAutomaticRound(
   config: Config,
@@ -102,7 +100,7 @@ export async function planAutomaticRound(
   const archivedSince = unseen.filter((work) => work.archived);
   if (archivedSince.length < config.retro.threshold) return null;
 
-  const window = state.boundaryAt === null ? finished.slice(-FIRST_WINDOW_SIZE) : pendingWindow(unseen, state);
+  const window = windowFor(finished, state);
   if (window.length === 0) return { empty: "nothing-new" };
 
   return {
@@ -151,8 +149,7 @@ export async function planManualRound(
     };
   }
 
-  const unseen = finished.filter((work) => isUnseen(work, state));
-  const window = pendingWindow(unseen, state);
+  const window = windowFor(finished, state);
   if (window.length === 0) return { empty: finished.length === 0 ? "no-finished-works" : "nothing-new" };
   return {
     round: roundId(new Date(now())),
@@ -173,9 +170,14 @@ function isUnseen(work: FinishedWork, state: RetroState): boolean {
   return state.boundaryAt === null || work.completedAt > state.boundaryAt;
 }
 
-/** The works of `unseen` no report has analyzed yet. */
-function pendingWindow(unseen: readonly FinishedWork[], state: RetroState): FinishedWork[] {
-  return unseen.filter((work) => !state.analyzed.includes(work.key));
+/**
+ * The glossary's Retrospective window, one rule for every trigger: the finished
+ * works after the last report's boundary and not yet analyzed, or the last ten
+ * finished works when no report has covered a window yet.
+ */
+function windowFor(finished: readonly FinishedWork[], state: RetroState): FinishedWork[] {
+  if (state.boundaryAt === null) return finished.slice(-FIRST_WINDOW_SIZE);
+  return finished.filter((work) => isUnseen(work, state) && !state.analyzed.includes(work.key));
 }
 
 function newestFinish(works: readonly FinishedWork[]): number | null {
