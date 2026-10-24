@@ -58,10 +58,9 @@ repos:
 
 Each `jira:` entry is its own selection: its JQL decides what it reads — no
 filter is added — and a conflicting `ORDER BY` is a configuration error. All
-selections on one site are read as **one** native **Rank ascending** order
-across their destinations, never as concatenated per-repository queues; Rank
-values are not compared across sites. `currentUser()` means the account the API
-token authenticates as, not an implicit operator. One site may feed several
+selections on one site share that site's native **Rank ascending** order across
+their destinations. `currentUser()` means the account the API token
+authenticates as, not an implicit operator. One site may feed several
 repositories through several selections, and a repeated ticket for the same
 destination is listed once. This release only reads Jira: `msf status` lists
 candidates (no claim, comment or launch) and `msf run` refuses a Jira

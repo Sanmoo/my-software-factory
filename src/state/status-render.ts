@@ -247,14 +247,14 @@ function describeSite(site: KnownJiraSiteView): string {
 
 function renderCandidate(candidate: JiraCandidate, index: number): string {
   const assignee = candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
-  return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}${unverifiedNote(candidate.unverified)}`;
+  return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`;
 }
 
 /** One held ticket: every conflicting destination is named, never chosen. */
 function renderAmbiguous(entry: AmbiguousJiraTicket, index: number): string {
   const destinations = entry.destinations.map(renderRepositoryIdentity).join(", ");
   const assignee = entry.assignees.length === 0 ? "" : ` [assignee: ${entry.assignees.join(", ")}]`;
-  return `      ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${unverifiedNote(entry.unverified)}`;
+  return `      ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}`;
 }
 
 /** Each selection's contribution when a site has several. A single selection is
@@ -279,11 +279,6 @@ function renderSelections(
     const held = view.held === 0 ? "" : `, ${view.held} held as ambiguous`;
     lines.push(`    selection (${query}) → ${destination}: ${view.selected} selected${held}`);
   }
-}
-
-/** One wording for "an unreadable selection may hide another destination". */
-function unverifiedNote(unverified: boolean): string {
-  return unverified ? " (unverified: another selection on this site is unknown)" : "";
 }
 
 function plural(count: number, noun: string): string {
