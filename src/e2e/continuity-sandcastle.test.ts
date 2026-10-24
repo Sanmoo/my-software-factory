@@ -404,10 +404,11 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         remoteUrl: "/msf-work/fixtures/remotas/Sanmoo#prova-recuperacao.git",
       });
       try {
-        const profile = join(root, "perfil-recuperacao");
-        mkdirSync(profile, { recursive: true });
+        const agentConfig = join(root, "agent-config-recuperacao");
+        mkdirSync(agentConfig, { recursive: true });
+        const modelsFile = join(agentConfig, "models.json");
         writeFileSync(
-          join(profile, "models.json"),
+          modelsFile,
           JSON.stringify(
             {
               providers: {
@@ -445,8 +446,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
           concurrency: 1,
           workspace: workspace.root,
           labels: { ...DEFAULT_LABELS },
-          profileAllowedRoots: [],
-          profileSkipDanglingLinks: false,
+          workerAuthFile: null,
           recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
           liveness: { ...DEFAULT_LIVENESS_POLICY },
           modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
@@ -463,7 +463,8 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
           // precondition. No GitHub credential leaves this test.
           token: "recovery-proof-no-github",
           image: WORKER_IMAGE,
-          profileDir: profile,
+          agentFiles: [{ name: "models.json", hostPath: modelsFile }],
+          authEnv: {},
           workspace: workspace.root,
           idleTimeoutSeconds: 120,
           activityPollMs: 100,
