@@ -39,7 +39,7 @@ import { githubWork, launchedNumber } from "./work-fixtures.js";
 /**
  * e2e of issue 181: a repair round that never reached a worker is neither an
  * attempt nor a fall. It covers the continuity pause that prevents the launch,
- * the legacy ghost records written by the older order, a started round that
+ * the legacy ghost records written by an older factory version, a started round that
  * still falls, and the workspace move.
  */
 
@@ -147,7 +147,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
   const signatureOf = (number: number, headSha: string): string =>
     `${REPO}#${number}|${headSha}|conflicts|`;
 
-  /** The record an older order left behind: an attempt that no worker ever
+  /** The record an older factory version left behind: an attempt that no worker ever
    *  carried, settled as unpublished. */
   const ghostAttempt = (number: number, attempt: number): RepairAttempt => ({
     evidence: signatureOf(number, OBSERVED),
