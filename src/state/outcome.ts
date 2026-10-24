@@ -135,7 +135,7 @@ export interface ContinuityPausedInput {
    *  planned number must never be presented as an interrupted one. */
   evidencedAttempt: number;
   reason: PauseReason;
-  /** The occurrence's identity, carried into the comment (issue 174). */
+  /** The occurrence's identity, carried into the comment. */
   id: string;
   detail: string;
   sessionId?: string;
@@ -173,7 +173,7 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
  * shown; the session file is never rewritten or deleted to look usable, and
  * no attempt was consumed.
  *
- * The request is honest about what it can offer (issue 174): it names the
+ * The request is honest about what it can offer: it names the
  * attempt that is REALLY blocked (a planned attempt that never started is said
  * to be exactly that), and it asks for the evidence the resolver actually
  * reads — never for an answer at an internal position in the conversation.
@@ -198,7 +198,7 @@ export async function continuityPausedCommentBody(input: ContinuityPausedInput):
  * The attempt the operator must reason about. A pause written by the launch
  * path names the attempt it was about to open; when the disk evidences a
  * lower one, that planned attempt was never started and claiming it cannot be
- * continued would be a fabricated fact (issues 174/175). An attempt the record
+ * continued would be a fabricated fact. An attempt the record
  * never named is said so, not printed as "attempt 0".
  */
 function blockedAttemptSentence(attempt: number, evidencedAttempt: number, reason: PauseReason): string {
