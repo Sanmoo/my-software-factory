@@ -202,7 +202,7 @@ function renderJiraSources(
       lines.push(`  ${site} → ${destination}: unknown (${source.reason})`);
       continue;
     }
-    const unverified = UNVERIFIED_NOTE(source.unverified);
+    const unverified = unverifiedNote(source.unverified);
     lines.push(`  ${site} → ${destination}: ${describeCandidates(source)}${unverified}`);
     renderCapped(lines, source.candidates, cap, (candidate, index) => {
       const assignee =
@@ -215,23 +215,26 @@ function renderJiraSources(
     renderCapped(lines, ambiguous, cap, (entry, index) => {
       const destinations = entry.destinations.map(renderRepositoryIdentity).join(", ");
       const assignee = entry.assignees.length === 0 ? "" : ` [assignee: ${entry.assignees.join(", ")}]`;
-      return `    ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${UNVERIFIED_NOTE(entry.unverified)}`;
+      return `    ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${unverifiedNote(entry.unverified)}`;
     });
   }
   return lines;
 }
 
 /** One wording for "an unreadable selection may hide another destination". */
-function UNVERIFIED_NOTE(unverified: boolean): string {
+function unverifiedNote(unverified: boolean): string {
   return unverified ? " (unverified: another selection on this site is unknown)" : "";
 }
 
 /** The per-selection counts: candidates kept, and the tickets it lost because
  *  more than one destination promises them. */
 function describeCandidates(source: KnownJiraSourceView): string {
-  if (source.candidates.length === 0 && source.held === 0) return "none";
+  const notes: string[] = [];
+  if (source.held > 0) notes.push(`${source.held} held as ambiguous`);
+  if (source.repeated > 0) notes.push(`${source.repeated} already listed by another rule`);
+  if (source.candidates.length === 0 && notes.length === 0) return "none";
   const candidates = `${source.candidates.length} candidate${source.candidates.length === 1 ? "" : "s"}`;
-  return source.held === 0 ? candidates : `${candidates}, ${source.held} held as ambiguous`;
+  return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;
 }
 
 /** One capped list: the entries, then the omission marker past the cap. */

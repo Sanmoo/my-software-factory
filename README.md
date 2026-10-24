@@ -59,9 +59,10 @@ environment variable that holds it. One Jira project may feed several
 repositories: one source per selection rule, each with its own JQL and
 destination. When readable rules promise one ticket to different destinations,
 `msf status` holds it with the reason instead of a destination; an unreadable
-selection leaves that overlap unverified. This release only reads Jira: `msf status` lists the candidates (no claim, comment
-or launch), and `msf run` refuses a Jira configuration before any claim. A
-Jira-only factory writes `repos: []`.
+selection leaves that overlap unverified. This release only reads Jira: `msf
+status` lists the candidates (no claim, comment or launch), and `msf run`
+refuses a Jira configuration before any claim. A Jira-only factory writes
+`repos: []`.
 
 ## Usage
 
