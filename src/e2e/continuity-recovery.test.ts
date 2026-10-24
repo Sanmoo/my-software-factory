@@ -954,6 +954,47 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the recovery ruler applies");
   });
 
+  test("issue 173 — a partial session tail needs the guardrail's record before the pause may clear", async () => {
+    // The session ends with an incomplete entry: its discarded tail is safe
+    // only when the journal proves the session ran under the guardrail. Without
+    // that record the recheck must not read the intact prefix as if the tail
+    // could have run nothing.
+    const ref: IssueRef = { repo: REPO, number: 7 };
+    seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
+    const target = workDir(layout, REPO, 7);
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "log-2.jsonl"), '{"event":"session-start","attempt":2}\n', "utf8");
+    const session = seedSession(target, ref, 2);
+    writeFileSync(session.file, `${readFileSync(session.file, "utf8")}{"type":"message","id":"cut`, "utf8");
+    persistAnnouncedPause(ref, 2, "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1222", {
+      reason: "tool-evidence-missing",
+      detail: "the calls the attempt ran cannot be read",
+    });
+    const pausedBytes = readFileSync(join(target, "pausa.json"), "utf8");
+    const cfg = config();
+
+    // 1. No guardrail record for this session: the intact prefix proves nothing
+    //    about the tail, so the pause stands and nothing is written or asked.
+    const waiting = await runOnce(deps(cfg));
+
+    assert.equal(waiting.launched.length, 0, "no launch without the guardrail's proof");
+    assert.equal(readFileSync(join(target, "pausa.json"), "utf8"), pausedBytes, "the pause is not rewritten");
+    assert.equal(existsSync(join(target, "efeitos.jsonl")), false, "the recheck writes no journal");
+    assert.equal((await agentComments(7)).length, 0, "the announced pause is not asked again");
+    assert.match(logs.join("\n"), /discarded tail/, "the doubt names what the discarded tail could have run");
+
+    // 2. The session-start proves the guardrail ran: the intact prefix has no
+    //    unjournaled non-safe call, so the normal cycle settles the pause.
+    appendJournalStart(target, { attempt: 2, sessionId: session.sessionId });
+    const settled = await runOnce(deps(cfg));
+
+    assert.equal(settled.launched.length, 1, "the guardrail's record releases the work");
+    assert.deepEqual(settled.launched[0]!.request.session, { mode: "resume", sessionId: session.sessionId });
+    assert.equal(readPause(target), null, "the pause is resolved");
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the block left with the pause");
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the recovery ruler applies");
+  });
+
   test("issue 173 — without a terminal result the pause stands sweep after sweep, spending nothing", async () => {
     interruptedAttempt2({ pending: "unknown" });
     seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
