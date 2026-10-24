@@ -210,7 +210,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 }
 
 /** The Jira report: one ordered set per site. A candidate count per selection
- *  would read an unreadable selector as empty and a concatenated queue as the
+ *  would read an unreadable selection as empty and a concatenated queue as the
  *  site's Rank; the header therefore counts sites, never candidates. */
 function renderJiraSites(sites: readonly JiraSiteView[], cap: number): string[] {
   if (sites.length === 0) return [];
@@ -223,7 +223,7 @@ function renderJiraSites(sites: readonly JiraSiteView[], cap: number): string[] 
     const heading = `  ${site.site} (${plural(site.selections.length, "selection")}) → ${destinations}: `;
     if (site.state === "unknown") {
       lines.push(`${heading}unknown (${site.reason})`);
-      renderSelections(lines, site.selections);
+      renderSelections(lines, site.selections, site.reason);
       continue;
     }
     lines.push(`${heading}${describeSite(site)}`);
@@ -245,7 +245,6 @@ function describeSite(site: KnownJiraSiteView): string {
   return facts.join(", ");
 }
 
-/** One candidate: its Work (ticket source + destination), title and assignee. */
 function renderCandidate(candidate: JiraCandidate, index: number): string {
   const assignee = candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
   return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}${unverifiedNote(candidate.unverified)}`;
@@ -258,16 +257,22 @@ function renderAmbiguous(entry: AmbiguousJiraTicket, index: number): string {
   return `      ${index + 1}. ${renderTicketIdentity(entry.ticket)} — ${entry.title}${assignee} → ${destinations}${unverifiedNote(entry.unverified)}`;
 }
 
-/** Each selector's contribution when a site has several. A single selector is
- *  the site line itself; an unknown selector is always named, because it may
+/** Each selection's contribution when a site has several. A single selection is
+ *  the site line itself; an unknown selection is always named, because it may
  *  hide a destination. */
-function renderSelections(lines: string[], selections: readonly JiraSelectionView[]): void {
+function renderSelections(
+  lines: string[],
+  selections: readonly JiraSelectionView[],
+  siteReason?: string,
+): void {
   const several = selections.length > 1;
   for (const view of selections) {
     const destination = renderRepositoryIdentity(view.selection.destination);
     const query = view.selection.jql ?? "no JQL";
     if (view.state === "unknown") {
-      lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
+      if (view.reason !== siteReason) {
+        lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
+      }
       continue;
     }
     if (!several) continue;
