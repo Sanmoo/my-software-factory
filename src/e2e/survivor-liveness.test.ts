@@ -526,7 +526,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
     // The operator's view, derived on demand from the same probe and tracker.
-    const view = await deriveStatus(tracker, config, layout, probe);
+    const view = await deriveStatus({ github: tracker }, config, layout, probe);
     assert.equal(view.liveness.state, "known");
     if (view.liveness.state !== "known") return;
     assert.equal(
@@ -558,7 +558,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     bindTracker(tracker);
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    const view = await deriveStatus(tracker, config, layout, probe);
+    const view = await deriveStatus({ github: tracker }, config, layout, probe);
     assert.deepEqual(view.liveness, { state: "unknown" }, "status never guesses a worker set");
 
     const sweep = await runOnce(deps);

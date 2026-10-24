@@ -59,7 +59,7 @@ function renderBlock(node: unknown, depth: number, lines: string[]): void {
       return;
     case "codeBlock": {
       lines.push(`  ${String(shape.attrs?.["language"] ?? "code")} block:`);
-      for (const line of inlineText(shape).split("\n")) lines.push(`    ${line}`);
+      for (const line of inline(shape).split("\n")) lines.push(`    ${line}`);
       lines.push("");
       return;
     }
@@ -78,7 +78,7 @@ function renderBlock(node: unknown, depth: number, lines: string[]): void {
       return;
     case "table": {
       for (const row of children(shape)) {
-        const cells = children(row).map((cell) => inlineText(cell).replace(/\s+/g, " ").trim());
+        const cells = children(row).map((cell) => inline(cell).replace(/\s+/g, " ").trim());
         lines.push(`| ${cells.join(" | ")} |`);
       }
       lines.push("");
@@ -135,11 +135,6 @@ function inline(node: unknown): string {
   }
   if (shape.type === "mediaInline" || shape.type === "media") return mediaText(shape);
   return children(shape).map(inline).join("");
-}
-
-/** The plain text of a subtree, used where marks do not matter (code, cells). */
-function inlineText(node: unknown): string {
-  return inline(node);
 }
 
 function applyMarks(text: string, marks: unknown): string {

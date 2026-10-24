@@ -24,11 +24,11 @@ import { withNativeRankOrdering } from "./tracker/jira-jql.js";
  *       jql: project = ABC AND assignee = currentUser()
  *       destination: Sanmoo/my-tasks      # the GitHub repository the Work delivers to
  *
- * `worker-gh-account`, `worker-model` and `repos` are required; `repos` may be
- * omitted when a Jira source supplies its own explicit destinations. Every
- * optional field defaults in the factory — a missing optional field is never an
- * error. A Jira API token is never a YAML value: only the name of the local
- * environment variable that holds it (`token-env`).
+ * `worker-gh-account`, `worker-model` and `repos` are required (a Jira-only
+ * factory writes `repos: []`). Every optional field defaults in the factory — a
+ * missing optional field is never an error. A Jira API token is never a YAML
+ * value: only the name of the local environment variable that holds it
+ * (`token-env`).
  */
 
 export const DEFAULT_CONCURRENCY = 2;
@@ -193,9 +193,7 @@ export function loadConfig(filePath: string): Config {
     throw new ConfigError('config field "worker-model" must be "provider/model-id"');
   }
   const jira = optionalJiraSources(doc);
-  // A Jira source names its own destination repository: a Jira-only factory
-  // needs no GitHub Issues repo list, never a fabricated one.
-  const repos = doc["repos"] === undefined && jira.length > 0 ? [] : requireRepos(doc);
+  const repos = requireRepos(doc);
   const concurrency = optionalConcurrency(doc);
   const workspace = optionalWorkspace(doc);
   const labels = optionalLabels(doc);
@@ -243,7 +241,7 @@ function optionalJiraSources(doc: Record<string, unknown>): JiraSourceConfig[] {
   if (!Array.isArray(value)) {
     throw new ConfigError(`config field "jira" must be a list of Jira sources when given`);
   }
-  const sources = value.map((entry, index) => jiraSource(entry, index));
+  const sources = value.map((entry, index) => parseJiraSource(entry, index));
   assertOneIdentityPerSite(sources);
   return sources;
 }
@@ -256,7 +254,7 @@ const JIRA_SECRET_FIELDS = ["token", "api-token", "apiToken", "apitoken", "passw
 const JIRA_CLOUD_SITE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.atlassian\.net$/;
 const JIRA_TOKEN_ENV = /^[A-Z][A-Z0-9_]*$/;
 
-function jiraSource(value: unknown, index: number): JiraSourceConfig {
+function parseJiraSource(value: unknown, index: number): JiraSourceConfig {
   const label = `jira[${index}]`;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(`config field "${label}" must be a mapping when given`);

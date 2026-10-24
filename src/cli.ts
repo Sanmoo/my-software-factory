@@ -23,7 +23,7 @@ import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { GitWork } from "./git/port.js";
-import { jiraSelections, renderWorkIdentity } from "./tracker/identity.js";
+import { jiraSelectionOf, renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
@@ -179,9 +179,8 @@ function jiraStatusSources(config: Config): JiraCandidateSource[] {
     adapters.set(entry.site, created);
     return created;
   };
-  const selections = jiraSelections(config.jira);
-  return config.jira.map((entry, index) => ({
-    selection: selections[index]!,
+  return config.jira.map((entry) => ({
+    selection: jiraSelectionOf(entry),
     tickets: adapterFor(entry),
   }));
 }
@@ -348,15 +347,19 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
 
   // Ticket 18: status reads the REAL tracker — the trail it shows is the
   // work's real trail (issue labels, PR, the works the registry holds on
-  // disk). Only the keyring read at boot touches the machine; the reads
-  // themselves are the same REST reads the sweep does, and the command
-  // writes NOTHING to the tracker. Without the bot credential in the
-  // keyring, status fails with the same clear boot message as run.
-  const tickets = await createGitHubAdapter({ account: config.workerGhAccount });
+  // disk). Only the keyring read at boot touches the machine (and only when a
+  // GitHub Issues repo is configured); the reads themselves are the same REST
+  // reads the sweep does, and the command writes NOTHING to the tracker.
+  const github = config.repos.length === 0 ? null : await createGitHubAdapter({ account: config.workerGhAccount });
   // The Jira sources are read through their own adapters — the same read-only
   // selection and native Rank order the adapter contract suite proves. A source
   // whose credential is missing is reported as unknown, never skipped.
-  const view = await deriveStatus(tickets, config, layout, workspaceLivenessProbe(layout), jiraStatusSources(config));
+  const view = await deriveStatus(
+    { github, jira: jiraStatusSources(config) },
+    config,
+    layout,
+    workspaceLivenessProbe(layout),
+  );
   console.log(renderStatus(view, { all: args.all }));
 }
 

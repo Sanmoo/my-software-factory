@@ -101,7 +101,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.pool.map((e) => githubTicketNumber(e.work.ticket)), [1]);
     assert.deepEqual(
       known(view),
@@ -125,7 +125,7 @@ describe("status — derivation on demand + local registry scan", () => {
       "utf8",
     );
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.registry.reservedWithoutAttempt, [`${REPO}#1`], "the bare reservation is not an orphan");
     assert.deepEqual(view.registry.attemptsWithoutOwnOutcome, [
       { key: `${REPO}#4`, attempt: 1, recordedAttempt: null },
@@ -144,7 +144,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedAttempt(4, 1, 2);
 
     const view = await deriveStatus(
-      tracker,
+      { github: tracker },
       makeConfig(),
       layout,
       fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000 }),
@@ -166,7 +166,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedAttempt(4, 1);
 
     const view = await deriveStatus(
-      tracker,
+      { github: tracker },
       makeConfig(),
       layout,
       fakeProbe(
@@ -214,7 +214,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const shell = fakeDocker({ listing, inspect: JSON.stringify(inspect) });
     const probe = dockerWorkerProbe({ worksRoot: layout.works, run: shell.run });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, probe);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, probe);
 
     const knownView = known(view);
     assert.deepEqual(
@@ -248,7 +248,7 @@ describe("status — derivation on demand + local registry scan", () => {
     );
 
     const view = await deriveStatus(
-      tracker,
+      { github: tracker },
       makeConfig(),
       layout,
       fakeProbe({ key: `${REPO}#90`, containerId: "bbbb00000090", ageMs: 2 * 60_000 }),
@@ -264,7 +264,7 @@ describe("status — derivation on demand + local registry scan", () => {
   test("a live worker whose work dir is gone shows no attempt number — the registry never invents one", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const view = await deriveStatus(
-      tracker,
+      { github: tracker },
       makeConfig(),
       layout,
       fakeProbe({ key: `${REPO}#77`, containerId: "cccc00000077", ageMs: 5 * 60_000 }),
@@ -285,7 +285,7 @@ describe("status — derivation on demand + local registry scan", () => {
     mkdirSync(join(layout.archive, `${REPO}#3-2026-02-01`), { recursive: true });
 
     const unreachable: LivenessProbe = () => Promise.reject(new Error("docker: command not found"));
-    const view = await deriveStatus(tracker, makeConfig(), layout, unreachable);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, unreachable);
 
     assert.deepEqual(
       view.liveness,
@@ -320,7 +320,7 @@ describe("status — derivation on demand + local registry scan", () => {
     mkdirSync(join(layout.archive, `${REPO}#3-2026-02-01`), { recursive: true });
 
     const view = await deriveStatus(
-      tracker,
+      { github: tracker },
       makeConfig(),
       layout,
       fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 13 * 60_000 }),
@@ -368,7 +368,7 @@ describe("status — derivation on demand + local registry scan", () => {
       "utf8",
     );
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(view.registry.continuityPauses.map((entry) => entry.pause.reason), ["session-missing"]);
     assert.match(
@@ -527,7 +527,7 @@ describe("status — derivation on demand + local registry scan", () => {
       "utf8",
     );
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     // The record is attempt 1's history: attempt 2 is the current, fallen one.
     assert.deepEqual(known(view).orphaned, [
@@ -562,7 +562,7 @@ describe("status — derivation on demand + local registry scan", () => {
       },
     });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
     assert.match(text, /repair \(unpublished attempts, local work, pending reconciliation\): 1/);
@@ -594,7 +594,7 @@ describe("status — derivation on demand + local registry scan", () => {
       },
     });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
     assert.match(text, /event log trabalhos\/Sanmoo\/my-tasks#23\/log-2\.jsonl present/);
     assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
@@ -611,7 +611,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const failed = seedAttempt(31, 1);
     await recordFailure(failed, 1, "clean-without-pr", now);
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
     assert.match(
@@ -659,7 +659,7 @@ describe("status — derivation on demand + local registry scan", () => {
       identity: at,
     });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
     assert.match(
@@ -688,7 +688,7 @@ describe("status — derivation on demand + local registry scan", () => {
       identity: at,
     });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
     assert.match(
@@ -709,7 +709,7 @@ describe("status — derivation on demand + local registry scan", () => {
     // The retry session started and was killed before writing any message.
     appendAttemptEvent(dir, 1, { event: "session-start" });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
     assert.match(
@@ -732,7 +732,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const unconfirmed = seedAttempt(34, 2);
     await recordUnconfirmedStop(unconfirmed, 2, "a worker of this work is still alive");
 
-    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS));
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
 
     assert.match(
       text,
@@ -759,7 +759,7 @@ describe("status — derivation on demand + local registry scan", () => {
       "utf8",
     );
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(view.registry.recovery, []);
     assert.match(
@@ -782,7 +782,7 @@ describe("status — derivation on demand + local registry scan", () => {
       "utf8",
     );
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
     assert.match(text, /#22 \(rounds 1\/2; falls 0\/2\)/, "the legacy cycle is shown without invented facts");
   });
@@ -793,7 +793,7 @@ describe("status — derivation on demand + local registry scan", () => {
       seedIssue(tracker, { repo: REPO, number, labels: [DEFAULT_LABELS.ready] });
       mkdirSync(join(layout.archive, `${REPO}#${number}-2026-02-01`), { recursive: true });
     }
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     const capped = renderStatus(view);
     const archivedLines = capped.split("\n").filter((line) => /^\s+\S+#\d+-2026-02-01$/.test(line));
@@ -808,7 +808,7 @@ describe("status — derivation on demand + local registry scan", () => {
     for (let number = 1; number <= 12; number += 1) {
       mkdirSync(join(layout.archive, `${REPO}#${number}-2026-02-01`), { recursive: true });
     }
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     const all = renderStatus(view, { all: true });
     const archivedLines = all.split("\n").filter((line) => /^\s+\S+#\d+-2026-02-01$/.test(line));
@@ -822,14 +822,14 @@ describe("status — derivation on demand + local registry scan", () => {
     seedAttempt(4, 1);
     const before = readdirSync(layout.root, { recursive: true });
 
-    await deriveStatus(tracker, makeConfig(), layout, fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 60_000 }));
+    await deriveStatus({ github: tracker }, makeConfig(), layout, fakeProbe({ key: `${REPO}#4`, containerId: "aaaa00000004", ageMs: 60_000 }));
 
     assert.deepEqual(readdirSync(layout.root, { recursive: true }), before);
   });
 
   test("an empty workspace and empty pool render a clean, never-crashing status", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
     assert.match(text, /pool \(eligible\): none/);
     assert.match(text, /running \(worker alive\): none/);
@@ -841,7 +841,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedIssue(tracker, { repo: REPO, number: 10, labels: [DEFAULT_LABELS.claimed] });
     await tracker.claim({ repo: REPO, number: 10 }, "bot-do-samuca", DEFAULT_LABELS.ready);
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     assert.equal(view.unbackedClaims.length, 1);
     assert.match(view.unbackedClaims[0]!.command!, /gh issue edit 10 --repo Sanmoo\/my-tasks/);
 
@@ -856,7 +856,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedIssue(tracker, { repo: REPO, number: 11, labels: [] });
     mkdirSync(workDir(layout, REPO, 11), { recursive: true });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     assert.equal(view.unmarkedReservations.length, 1);
 
     const text = renderStatus(view);
@@ -872,7 +872,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedIssue(tracker, { repo: REPO, number: 13, labels: [DEFAULT_LABELS.ready] });
     mkdirSync(workDir(layout, REPO, 13), { recursive: true });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     assert.deepEqual(view.unbackedClaims, []);
     assert.deepEqual(view.unmarkedReservations, []);
     const text = renderStatus(view);
@@ -1021,14 +1021,16 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     const broken = new JiraSim({ site: "beta.atlassian.net" });
 
     const view = await deriveStatus(
-      new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("acme.atlassian.net"), tickets: jiraAdapter(healthy) },
+          { selection: selection("beta.atlassian.net"), tickets: jiraAdapter(broken, {}) },
+        ],
+      },
       statusConfig(),
       layout,
       NO_WORKERS,
-      [
-        { selection: selection("acme.atlassian.net"), tickets: jiraAdapter(healthy) },
-        { selection: selection("beta.atlassian.net"), tickets: jiraAdapter(broken, {}) },
-      ],
     );
 
     const [first, second] = view.jira;
@@ -1061,11 +1063,13 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: { accountId: "h", emailAddress: "ana@acme.example", displayName: "Ana Silva" } });
 
     const view = await deriveStatus(
-      new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [{ selection: selection("acme.atlassian.net"), tickets: jiraAdapter(sim) }],
+      },
       statusConfig(),
       layout,
       NO_WORKERS,
-      [{ selection: selection("acme.atlassian.net"), tickets: jiraAdapter(sim) }],
     );
     const text = renderStatus(view);
 

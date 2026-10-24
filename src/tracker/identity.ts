@@ -102,13 +102,14 @@ export function jiraSource(site: string): TicketSource {
 /** One selection per configured Jira source: the site, the operator's JQL and
  *  the explicit GitHub destination. Two queries may share a site; each entry
  *  stays its own selection, so no destination is guessed. */
-export function jiraSelections(sources: readonly JiraSourceConfig[]): TicketSelection[] {
-  return sources.map((source) => ({
+export function jiraSelectionOf(source: JiraSourceConfig): TicketSelection {
+  return {
     source: jiraSource(source.site),
     destination: githubRepository(source.destination),
     jql: source.jql,
-  }));
+  };
 }
+
 
 export function githubTicket(repo: string, number: number): GitHubTicketIdentity {
   return githubTicketAt(GITHUB_SITE, repo, number);

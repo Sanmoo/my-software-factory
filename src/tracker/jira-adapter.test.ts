@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 
 import { githubRepository, jiraTicket, type TicketIdentity } from "./identity.js";
 import type { TicketSelection } from "./expanded-port.js";
-import { JiraTicketAdapter } from "./jira-adapter.js";
+import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount } from "./jira-sim.js";
 
 /**
@@ -180,6 +180,27 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
       sim.requests.map((request) => request.path),
       ["/rest/api/3/myself"],
       "no search runs under the wrong identity",
+    );
+  });
+
+  test("an unidentified authenticated account is refused, never relabelled as the configured one", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ key: "ABC-1", summary: "One" });
+    // A site that authenticates the token but does not report which account it is.
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (url.endsWith("/rest/api/3/myself")) {
+        return { status: 200, text: JSON.stringify({ accountId: "someone-else", active: true }) };
+      }
+      return response;
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    await assert.rejects(adapter.listOpenTickets(selectionFor(sim, "project = ABC")), /cannot be verified/);
+    assert.deepEqual(
+      sim.requests.map((request) => request.path),
+      ["/rest/api/3/myself"],
+      "no listing runs under an identity the config cannot verify",
     );
   });
 

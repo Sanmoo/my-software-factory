@@ -55,8 +55,6 @@ export interface SimJiraFaults {
   issue?: SimJiraFault;
 }
 
-const JSON_HEADERS = { "content-type": "application/json" };
-
 export class JiraSim {
   readonly site: string;
   readonly token: string;
@@ -227,6 +225,6 @@ function basicCredential(header: string | null): { account: string; token: strin
   return { account: decoded.slice(0, separator), token: decoded.slice(separator + 1) };
 }
 
-function answer(status: number, body: unknown): { status: number; text: string; headers: Record<string, string> } {
-  return { status, text: JSON.stringify(body), headers: JSON_HEADERS };
+function answer(status: number, body: unknown): { status: number; text: string } {
+  return { status, text: JSON.stringify(body) };
 }
