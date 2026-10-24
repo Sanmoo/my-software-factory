@@ -111,6 +111,38 @@ test("a partial Claim is never authority and is not cleaned up", () => {
   assert.equal(o["attemptsB"], 0);
   assert.equal(o["padlock"], true);
   assert.equal(o["claims"], 0);
+  assert.equal(o["resweepA"], "uncertain");
+  assert.equal(o["resweepWrote"], 0);
+});
+
+test("an uncertain acquisition re-verifies its own claim and writes no second one", () => {
+  const o = observations("uncertain-resweep");
+  assert.equal(o["writeStatus"], "lost");
+  assert.equal(o["observeAgain"], "uncertain");
+  assert.equal(o["wroteBetween"], 0);
+  assert.equal(o["decision"], "authorized");
+  assert.notEqual(o["worker"], null);
+  assert.equal(o["attempts"], 1);
+  assert.equal(o["claims"], 1);
+});
+
+test("an unbacked Claim is not a takeover even when the factory id matches", () => {
+  const o = observations("same-installation-without-reservation");
+  assert.equal(o["observation"], "unavailable");
+  assert.equal(o["wrote"], 0);
+  assert.equal(o["worker"], null);
+  assert.equal(o["attempts"], 0);
+  assert.equal(o["claims"], 1);
+});
+
+test("a stale observation does not create authority; the verification read decides", () => {
+  const o = observations("stale-observation");
+  assert.equal(o["observationB"], "free");
+  assert.equal(o["decisionB"], "unavailable");
+  assert.equal(o["workerB"], null);
+  assert.equal(o["decisionA"], "authorized");
+  assert.notEqual(o["workerA"], null);
+  assert.equal(o["live"], 1);
 });
 
 test("an unreadable claim marker is uncertain, never ignored", () => {

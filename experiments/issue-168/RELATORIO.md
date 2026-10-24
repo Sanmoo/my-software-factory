@@ -19,9 +19,12 @@ documenta**:
 
 Sem P1, um escritor posterior pode receber um `id` menor e também se declarar
 vencedor. Sem P2, cada fábrica pode ver só o próprio Claim e ambas se
-autorizarem. O harness reproduz os dois contraexemplos; com as duas premissas
-garantidas, o argumento de segurança fecha e o protocolo autoriza exatamente
-uma fábrica em todas as intercalações exploradas.
+autorizarem. O harness reproduz os dois contraexemplos; com as duas premissas e
+leitura de verificação fresca, o argumento de segurança fecha e o protocolo
+autoriza exatamente uma fábrica em todas as intercalações exploradas. Com
+visibilidade apenas em prefixo, ele ainda nunca autoriza duas, mas uma
+verificação que não vê o próprio registro termina em incerteza — nenhum
+vencedor naquele traço, e a fábrica repete a verificação.
 
 Os demais candidatos são **inadequados** mesmo sob as leituras mais fortes:
 
@@ -86,7 +89,7 @@ parte que importa: é onde a intuição de “editei e reli, então adquiri” f
 | [Add assignees](https://docs.github.com/en/rest/issues/assignees#add-assignees-to-an-issue) | “Adds up to 10 assignees to an issue. Users already assigned to an issue are not replaced.” | Atribuição é **aditiva** e múltipla: com contas distintas, ambas ficam atribuídas; com a mesma conta, as duas leem “eu estou atribuído”. Atribuição não identifica instância nem autoridade exclusiva. |
 | [Lock an issue](https://docs.github.com/en/rest/issues/issues#lock-an-issue) | “Users with push access can lock an issue or pull request's conversation.” O snapshot expõe `locked` (booleano) e `active_lock_reason`. | É um lock de **conversa**, sem dono documentado. O `locked` não diz quem travou; dois `PUT /lock` não elegem vencedor. |
 | [Create an issue comment](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment) | Anexa um comentário e devolve o objeto criado, com `id`; sujeito a secondary rate limiting; token com “Issues” write. | Não há chave de idempotência nem pré-condição documentada; repetir por timeout pode criar dois comentários. A resposta não prova que nenhum concorrente também escreveu. |
-| [List issue comments](https://docs.github.com/en/rest/issues/comments#list-issue-comments) | “Issue comments are ordered by ascending ID.” Paginação (`per_page` máx. 100). | Ordenar a **apresentação** por `id` não estabelece que os `id` sejam atribuídos na ordem de aplicação das requisições concorrentes, nem que a listagem contenha todo comentário já aplicado (pode faltar um). |
+| [List issue comments](https://docs.github.com/en/rest/issues/comments#list-issue-comments) | “By default, issue comments are ordered by ascending ID.” Paginação (`per_page` máx. 100). | Ordenar a **apresentação** por `id` não estabelece que os `id` sejam atribuídos na ordem de aplicação das requisições concorrentes, nem que a listagem contenha todo comentário já aplicado (pode faltar um). |
 | [Rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) | 5.000 requisições/hora para usuário autenticado; limites secundários; recomenda-se serializar e espaçar requisições mutativas em ≥ 1 s. | Não há prioridade, reserva ou exclusão entre clientes que compartilham o mesmo token/conta. |
 
 Nenhuma operação acima, isolada ou em conjunto, é um **create-if-absent** ou um
@@ -106,8 +109,8 @@ minha conta está atribuída”. **Não pergunta quem escreveu.** Com a mesma co
 (as duas fábricas podem usar a conta do operador; a v0.1 usa), as duas leem a
 própria conta atribuída. Com contas distintas, a atribuição é aditiva e as duas
 também leem a própria conta. Resultado no harness: **20/20 intercalações com
-leitura fresca autorizam as duas**; 380/812 até com leituras em prefixo. Editar,
-atribuir e reler não demonstra aquisição exclusiva.
+leitura fresca autorizam as duas**; 132/420 até com leituras em prefixo.
+Editar, atribuir e reler não demonstra aquisição exclusiva.
 
 ### C2 — label único por fábrica, “só autorizo se nenhum outro Claim aparecer”
 
@@ -146,10 +149,13 @@ as instalações antigas vendo o Ticket reservado e tornam a superfície
 compatível com o Claim atual, mas **não** são prova de autoridade. Só o registro
 e seu `id` decidem.
 
-Sob P1 + P2, é seguro e sempre encontra um vencedor (20/20 intercalações com
-leitura fresca e `id` ordenado). Sem P1 (8/20 com `id` fora da ordem de
-aplicação) ou sem P2 (1120/7040 com uma leitura que omite um Claim já aplicado;
-1472/7040 no perfil mais fraco), aparecem dois vencedores. A seção 5 dá o
+Sob P1 + P2 e leitura de verificação fresca, é seguro e sempre encontra um
+vencedor (20/20 intercalações). Com visibilidade em prefixo, continua seguro
+(0/812 com dois), mas 420/812 traços terminam sem vencedor porque a verificação
+não viu o próprio registro — incerteza, e a fábrica repete a verificação. Sem P1
+(8/20 com `id` fora da ordem de aplicação) ou sem P2 (1120/7040 com uma leitura
+que omite um Claim já aplicado; 1472/7040 no perfil mais fraco), aparecem dois
+vencedores. A seção 5 dá o
 protocolo completo e a seção 6, o argumento.
 
 ## 4. Protocolo C5 ponta a ponta
@@ -164,9 +170,11 @@ protocolo completo e a seção 6, o argumento.
   configuração, estável entre reinícios e **única entre instalações
   concorrentes**. Não é a Acting account. É o que a condição de parada
   identifica.
-- **Nonce** — identificador do escrito de aquisição, apenas para correlacionar
-  uma resposta perdida e para o log. Não é lease, não expira e **não** é a
-  autoridade.
+- **Nonce** — identificador do escrito de aquisição, único por incarnação do
+  processo (um reinício gera outro). Correlaciona a resposta perdida e
+  identifica **qual** registro é desta aquisição; não é lease e não expira. A
+  autoridade é o registro (factory id + nonce) que a própria aquisição escreveu
+  e a Reservation local conserva.
 - **Acting account** — autentica as escritas e recebe a atribuição. Pode ser a
   mesma conta em todas as fábricas; por isso a atribuição é apresentação, nunca
   identidade. O comentário é autorado por essa conta, mas o corpo carrega o
@@ -174,7 +182,7 @@ protocolo completo e a seção 6, o argumento.
 
 Formato do registro (um comentário; marcador `<!-- msf:claim -->`):
 
-```
+```text
 <!-- msf:claim -->
 factory: <factory-id>
 claim: <nonce>
@@ -201,9 +209,11 @@ outro Ticket é **malformado**: incerteza, nunca “sem Claim”.
    única requisição; não há retry cego depois de resposta perdida.
 5. **Leitura de verificação** — listar os comentários novamente.
    - Marcador malformado ou nenhum registro válido visível → **incerto**.
-   - Menor `id` entre os registros válidos tem `factory` igual ao meu factory id
-     → **autorizado**.
-   - Menor `id` é de outra instalação → **indisponível**.
+   - O menor `id` entre os registros válidos é **o meu registro** (mesmo
+     factory id **e** mesmo nonce desta aquisição) → **autorizado**.
+   - Qualquer outro registro é o menor, ou existe registro sem que o meu
+     apareça → **indisponível**. Um Claim da mesma instalação sem a Reservation
+     local que o comprove não é meu por semelhança de nome.
 6. **Lançamento** — somente com **autorizado**. A Reservation local é criada
    antes do Worker. Um Attempt só é consumido no lançamento.
 
@@ -223,7 +233,14 @@ numa varredura seguinte; ela **não** descarta o pendente e faz uma observação
 nova (isso poderia escrever um segundo Claim). Se a Reservation local se perdeu
 por completo, o Claim fica sem registro neste workspace: a fábrica o trata como
 alheio e o operador decide — “Unbacked claim” continua sendo uma observação
-local, não prova de abandono global.
+local, não prova de abandono global. Isso vale também para um Claim da **mesma**
+instalação: sem o registro local que o comprove (factory id + nonce), ele não
+autoriza takeover.
+
+Um Claim parcial (padlock aplicado, registro não) é o caso terminal simétrico:
+o dono não reescreve (a resposta pode ter se perdido), nenhuma outra fábrica
+pode assumir, e o Ticket fica indisponível até a liberação manual — o mesmo
+desfecho do deadlock do `strict-unique`, mas por incerteza, não por dois Claims.
 
 Uma leitura posterior, **isolada**, não é tratada como resolução da corrida: a
 confirmação é a verificação do Claim que a própria fábrica já escreveu. Se o
@@ -302,12 +319,14 @@ de menor id — o primeiro aplicado. Uma fábrica que decide depois de escrever
 o próprio Claim faz a leitura de verificação depois da própria escrita, que é
 posterior à aplicação de `c*`. Por P2, essa leitura vê `c*` (se vê um Claim
 posterior, vê os anteriores; se é fresca, vê todos). O menor id é `c*`; só a
-instalação dona de `c*` recebe `authorized`; qualquer outra recebe
-`unavailable`. A própria dona de `c*`, se verificar antes de qualquer outro
-Claim, autoriza `c*` e lança; Claims posteriores veem `c*` e recusam. Logo, no
-máximo uma instância autoriza. Se a dona de `c*` não vê o próprio registro na
-verificação, o resultado é incerto e ela não lança; ninguém mais autoriza —
-segurança preservada, progresso adiado para uma nova verificação.
+instalação que possui o **registro** `c*` (factory id + nonce da sua aquisição)
+recebe `authorized`; qualquer outra recebe `unavailable`, inclusive a mesma
+instalação numa aquisição posterior ou sem Reservation local. A própria dona de
+`c*`, se verificar antes de qualquer outro Claim, autoriza `c*` e lança; Claims
+posteriores veem `c*` e recusam. Logo, no máximo uma instância autoriza. Se a
+dona de `c*` não vê o próprio registro na verificação, o resultado é incerto e
+ela não lança; ninguém mais autoriza — segurança preservada, progresso adiado
+para uma nova verificação.
 
 Progresso: um Ticket livre, sem concorrência, escreve `c*`, a verificação vê
 `c*` e autoriza; um Worker inicia. Esse caso não depende de ordenação
@@ -346,10 +365,13 @@ API:
 
 - escritas são cegas e cada requisição é aplicada por inteiro; um Claim de
   várias escritas pode ficar parcial;
-- uma leitura pode devolver uma projeção de escritas já aplicadas: `all`
-  (premissa mais forte), um `prefixo` (visibilidade monotônica, ainda premissa)
-  ou uma **omissão** de até duas escritas aplicadas (admissão mais fraca; a doc
-  não exclui);
+- a **leitura de verificação** pode devolver uma projeção de escritas já
+  aplicadas: `all` (premissa mais forte), um `prefixo` (visibilidade monotônica,
+  ainda premissa) ou uma **omissão** de até duas escritas aplicadas (admissão
+  mais fraca; a doc não exclui); a matriz fixa as duas observações iniciais
+  como frescas — a barreira exige que ambas tenham visto o Ticket livre. Uma
+  observação desatualizada tem cenário próprio: ela pode mostrar “livre” com
+  Claim existente, mas não cria autoridade; a verificação é que decide;
 - o `id` do comentário é atribuído na aplicação, mas a ordem em relação às
   escritas concorrentes é uma escolha explícita do ambiente (`apply` ou
   `reverse`), não um presente do simulador;
@@ -361,7 +383,7 @@ registrada; `runs/evidence.json` contém a matriz e os cenários, com um exemplo
 
 | protocolo | holey+unordered | fresh+unordered | prefix+ordered | linearizable | holey+ordered |
 | --- | --- | --- | --- | --- | --- |
-| current-mark | UNSAFE 5120/7040 | UNSAFE 20/20 | UNSAFE 380/812 | UNSAFE 20/20 | UNSAFE 5120/7040 |
+| current-mark | UNSAFE 1044/1804 | UNSAFE 20/20 | UNSAFE 132/420 | UNSAFE 20/20 | UNSAFE 1044/1804 |
 | strict-unique | UNSAFE 460/7040 | safe 8/20 (12 sem vencedor) | safe 308/812 (504 sem vencedor) | safe 8/20 (12 sem vencedor) | UNSAFE 460/7040 |
 | min-label | UNSAFE 1296/7040 | UNSAFE 4/20 | UNSAFE 22/812 | UNSAFE 4/20 | UNSAFE 1296/7040 |
 | conversation-lock | UNSAFE 480/1804 | UNSAFE 20/20 | UNSAFE 44/420 | UNSAFE 20/20 | UNSAFE 480/1804 |
@@ -387,7 +409,10 @@ Cenários (cada um com o tracker, o registry de Workers e workspaces próprios):
 | `existing-claim-no-takeover` | Claim de A sem Reservation em B: B `unavailable`, 0 escritas, 0 Attempts |
 | `lost-response` | escrita aplicada + resposta perdida: 0 lançamento, 0 Attempt, Claim preservado; B respeita; a verificação posterior da mesma fábrica confirma e lança 1 |
 | `failed-before-write` | nada aplicado; A incerta, 0 Attempt; B adquire o Ticket livre e lança 1 |
-| `partial-claim` | só o padlock aplicado: A incerta, B indisponível, 0 lançamento, 0 Attempt; Claim preservado |
+| `partial-claim` | só o padlock aplicado: A incerta, B indisponível, 0 lançamento, 0 Attempt; Claim preservado; a nova varredura de A continua incerta e não escreve — parado até liberação manual |
+| `uncertain-resweep` | resposta perdida: a nova observação de A é incerta e não escreve; a verificação do MESMO Claim autoriza e lança 1 |
+| `same-installation-without-reservation` | Claim da mesma instalação sem Reservation local: indisponível, 0 escritas, 0 Attempt |
+| `stale-observation` | B observa “livre” com Claim de A aplicado; verifica e vê A: indisponível; A autoriza e lança 1 |
 | `unreadable-claim` | marcador incompleto: incerto; 0 lançamento; 0 Attempt |
 | `stale-read-two-winners` | duas leituras omitem o Claim alheio: 2 Workers vivos |
 | `unordered-ids-two-winners` | ids fora da ordem de aplicação: 2 Workers vivos |
@@ -409,8 +434,8 @@ npm run run   # matriz + cenários + runs/evidence.json
 
 Os testes do harness **não** integram o quality gateway da fábrica: são a
 demonstração desta investigação, não um check de prontidão da produção. A
-#170 decidirá, na futura implementação, quais viram checks obrigatórios do
-gateway (e com que orçamento).
+issue #170 decidirá, na futura implementação, quais viram checks obrigatórios
+do gateway (e com que orçamento).
 
 ## 7. O que ficou fora e o que não foi provado
 
@@ -420,8 +445,9 @@ gateway (e com que orçamento).
 - **Não é prova de impossibilidade** de todo protocolo tracker-only. O escopo
   examinou os candidatos mínimos com as operações documentadas; outro desenho
   (não identificado) poderia depender de outra garantia do provedor.
-- **Modelo de staleness amostrado** (até duas omissões por leitura, mais
-  prefixos e leituras frescas), não o conjunto potência completo. A conclusão
+- **Modelo de staleness amostrado** (até duas omissões por leitura de
+  verificação, mais prefixos e leituras frescas; a observação inicial é fresca
+  por premissa de cenário), não o conjunto potência completo. A conclusão
   de insegurança usa contraexemplos admitidos; a de segurança usa P1/P2
   declaradas. Um modelo mais adversarial só reforçaria a necessidade de uma
   garantia documentada.

@@ -130,17 +130,17 @@ function uniqueLabelPlan(input: ProtocolInput): readonly Mutation[] {
 }
 
 /**
- * C1 — the current Claim, in protocol terms. The padlock label plus assignment
- * to the Acting account; the informational comment is not consulted. The
- * verification read only proves that the shared mark exists and that this
- * account is assigned — it never proves WHICH factory wrote it.
+ * C1 — the current Claim, in protocol terms: the padlock label plus assignment
+ * to the Acting account. The verification read only proves that the shared
+ * mark exists and that this account is assigned — it never proves WHICH factory
+ * wrote it.
  */
 export const currentMark: ClaimProtocol = {
   name: "current-mark",
   summary: "padlock label + assignment to the Acting account, re-read for the same mark",
   observe: freeOrBlocked,
   writes(input) {
-    return [padlock(), assignment(input), claimComment(input)];
+    return [padlock(), assignment(input)];
   },
   decide(snapshot, input) {
     const hasMark = snapshot.labels.includes(PADLOCK_LABEL);
@@ -238,16 +238,17 @@ export const claimSequence: ClaimProtocol = {
   decide(snapshot, input) {
     const view = claimView(snapshot, input.ticket);
     if (view.malformed > 0) return "uncertain";
-    // The padlock alone (a partial claim) is never authority.
     if (view.valid.length === 0) return "uncertain";
+    const own = ownClaim(view, input);
+    // A Claim is this acquisition's own only when its RECORD (factory id and
+    // nonce) is the one this acquisition holds. A record left by the same
+    // installation but a different acquisition — including a lost workspace —
+    // is not proof: the operator decides, never an autonomous takeover.
+    if (own === undefined) return "unavailable";
     const first = view.valid.reduce((left, right) =>
       left.commentId <= right.commentId ? left : right,
     );
-    // Authority is the winning record's installation identity, not the
-    // nonce and not the Acting account. The nonce only correlates this
-    // acquisition's write; it never disqualifies an earlier claim of the
-    // SAME installation (a lost reservation must not strand the Ticket).
-    return first.record.factoryId === input.claim.factoryId ? "authorized" : "unavailable";
+    return first.commentId === own.commentId ? "authorized" : "unavailable";
   },
 };
 

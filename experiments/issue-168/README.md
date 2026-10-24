@@ -19,7 +19,7 @@ documenta. Fechar esta investigação não autoriza a implementação.
 
 ```bash
 npm install
-npm test          # 41 testes: matriz exaustiva + cenários
+npm test          # matriz exaustiva + cenários
 npm run run       # imprime a matriz protocolo × leitura e os cenários
 ```
 

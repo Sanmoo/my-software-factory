@@ -339,6 +339,9 @@ export function partialClaim(): ScenarioResult {
   const workerA = w.a.launch(w.workers, w.ticket);
   const observationB = w.b.observe(w.tracker, w.ticket, FRESH);
   const workerB = w.b.launch(w.workers, w.ticket);
+  const beforeResweep = w.tracker.appliedCount;
+  const resweepA = w.a.observe(w.tracker, w.ticket, FRESH);
+  const resweepWrote = w.tracker.appliedCount - beforeResweep;
   const snapshot = w.tracker.snapshot();
 
   return {
@@ -355,6 +358,83 @@ export function partialClaim(): ScenarioResult {
       attemptsB: w.b.attempts(w.ticket),
       padlock: snapshot.labels.includes(PADLOCK_LABEL),
       claims: snapshot.comments.length,
+      resweepA: resweepA.decision,
+      resweepWrote,
+    },
+  };
+}
+
+/** The uncertain acquisition is not replaced by a new observation: the
+ *  factory re-verifies ITS pending claim, never writes a second one. */
+export function uncertainResweep(): ScenarioResult {
+  const w = world(claimSequence);
+  observeFree(w.a, w);
+  const write = w.a.write(w.tracker, w.ticket, { lostAfter: 3 });
+  const before = w.tracker.appliedCount;
+  const again = w.a.observe(w.tracker, w.ticket, FRESH);
+  const wroteBetween = w.tracker.appliedCount - before;
+  const decision = w.a.verify(w.tracker, w.ticket, FRESH);
+  const worker = w.a.launch(w.workers, w.ticket);
+  return {
+    name: "uncertain-resweep",
+    expectation: "an uncertain acquisition re-verifies its own claim; it never writes a second one",
+    observations: {
+      writeStatus: write.status,
+      observeAgain: again.decision,
+      wroteBetween,
+      decision,
+      worker: worker?.id ?? null,
+      attempts: w.a.attempts(w.ticket),
+      claims: w.tracker.snapshot().comments.length,
+    },
+  };
+}
+
+/** A Claim left by the same installation but no longer backed by a local
+ *  Reservation is not this acquisition's authority. */
+export function sameInstallationWithoutReservation(): ScenarioResult {
+  const w = world(claimSequence);
+  observeFree(w.a, w);
+  equal(w.a.write(w.tracker, w.ticket).status, "applied", "A claim write");
+  const before = w.tracker.appliedCount;
+  const again = newFactory("zeta", claimSequence);
+  const observation = again.observe(w.tracker, w.ticket, FRESH);
+  const worker = again.launch(w.workers, w.ticket);
+  return {
+    name: "same-installation-without-reservation",
+    expectation: "an unbacked Claim is not a takeover, even when the factory id matches",
+    observations: {
+      observation: observation.decision,
+      wrote: w.tracker.appliedCount - before,
+      worker: worker?.id ?? null,
+      attempts: again.attempts(w.ticket),
+      claims: w.tracker.snapshot().comments.length,
+    },
+  };
+}
+
+/** A stale observation can show a free Ticket while a Claim exists; under P2
+ *  the verification read still binds both writers to the same winner. */
+export function staleObservation(): ScenarioResult {
+  const w = world(claimSequence);
+  observeFree(w.a, w);
+  w.a.write(w.tracker, w.ticket); // A's claim is applied here...
+  const observationB = w.b.observe(w.tracker, w.ticket, { kind: "omit", indices: [0, 1, 2] });
+  w.b.write(w.tracker, w.ticket);
+  const decisionB = w.b.verify(w.tracker, w.ticket, FRESH);
+  const workerB = w.b.launch(w.workers, w.ticket);
+  const decisionA = w.a.verify(w.tracker, w.ticket, FRESH);
+  const workerA = w.a.launch(w.workers, w.ticket);
+  return {
+    name: "stale-observation",
+    expectation: "a stale observation does not create authority; the verification read decides",
+    observations: {
+      observationB: observationB.decision,
+      decisionB,
+      workerB: workerB?.id ?? null,
+      decisionA,
+      workerA: workerA?.id ?? null,
+      live: w.workers.liveFor(w.ticket).length,
     },
   };
 }
@@ -637,6 +717,9 @@ export const SCENARIOS: readonly { readonly name: string; readonly run: Scenario
   { name: "lost-response", run: lostResponse },
   { name: "failed-before-write", run: failedBeforeWrite },
   { name: "partial-claim", run: partialClaim },
+  { name: "uncertain-resweep", run: uncertainResweep },
+  { name: "same-installation-without-reservation", run: sameInstallationWithoutReservation },
+  { name: "stale-observation", run: staleObservation },
   { name: "unreadable-claim", run: unreadableClaim },
   { name: "stale-read-two-winners", run: staleReadTwoWinners },
   { name: "unordered-ids-two-winners", run: unorderedIdsTwoWinners },
