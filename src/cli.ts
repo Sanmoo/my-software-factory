@@ -4,25 +4,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
-<<<<<<< HEAD
-<<<<<<< HEAD
 import { collectFinishedWorks } from "./retro/window.js";
 import { anchorOfKey } from "./pool/work-key.js";
 import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
 import { liveRoundInFlight } from "./retro/marker.js";
-=======
-import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
-import { planManualRound, runRetroRound } from "./retro/round.js";
->>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
-=======
-import { collectFinishedWorks } from "./retro/window.js";
-<<<<<<< HEAD
-import { emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
->>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
-=======
-import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
-import { liveRoundInFlight } from "./retro/marker.js";
->>>>>>> da4fc8f1 (fix(141): one round at a time, enforced by the lane's marker)
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -32,7 +17,6 @@ import { stopConfirmed, type StopReport } from "./pool/stop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { appendOperationalLog, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
-<<<<<<< HEAD
 import { deriveStatus, type JiraSelectionReader } from "./state/status.js";
 import {
   carriedWorkKeys,
@@ -40,19 +24,6 @@ import {
   workspaceLivenessProbe,
   type LivenessProbe,
 } from "./state/liveness.js";
-=======
-import { deriveStatus } from "./state/status.js";
-<<<<<<< HEAD
-import { carriedKeys, probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
->>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
-=======
-import {
-  carriedWorkKeys,
-  probeLiveness,
-  workspaceLivenessProbe,
-  type LivenessProbe,
-} from "./state/liveness.js";
->>>>>>> 6baa5aef (fix(141): the final pass — one home for the launch hooks, the flags and the clone path)
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -423,14 +394,12 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   }
 
   const workspace = ensureWorkspace(config.workspace);
-<<<<<<< HEAD
-=======
   const lock = await acquireRunLock(config.configPath);
   try {
-    // One round at a time (issue 141): the lane's marker names the process that
-    // owns the round in flight, and a live owner is never overridden — the
-    // round that started first keeps it. A record left by a dead owner is
-    // cleared here, so a crash never blocks the lane.
+    // One round at a time: the lane's marker names the process that owns the
+    // round in flight, and a live owner is never overridden — the round that
+    // started first keeps it. A record left by a dead owner is cleared here, so
+    // a crash never blocks the lane.
     const running = await liveRoundInFlight(workspace);
     if (running !== null) throw new RetroBusyError(running.round);
 
@@ -447,63 +416,41 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
       writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
       return;
     }
->>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
 
-  // One round at a time, enforced by the lane's marker: it names the process
-  // that owns the round in flight, so the exclusivity holds across processes —
-  // including a `msf run` that is sweeping right now, which is exactly when the
-  // operator forces a round. A record left by a dead owner is cleared here, so a
-  // crash never blocks the lane.
-  const running = await liveRoundInFlight(workspace);
-  if (running !== null) throw new RetroBusyError(running.round);
+    // The window's premise is that no live worker carries its works. An unknown
+    // liveness cannot confirm it, so no round is launched on a guess: the sweep
+    // defers for the same reason.
+    if (observation.state !== "known") {
+      throw new Error(
+        `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
+          "worker carries its works, so no round was launched; retry when Docker answers",
+      );
+    }
 
-  // The window is planned before any credential or runtime is demanded: an
-  // empty window is a notice, so the operator's command answers without the
-  // keyring. The liveness answer is read once here — it feeds the window and
-  // gates a window that has work to analyze — and an empty window still wins
-  // over it: nothing is launched, so nothing needs the premise.
-  const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-  const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
-  const plan = await planManualRound(config, workspace, finished, {
-    ...(work === undefined ? {} : { work }),
-    ...(args.language === undefined ? {} : { language: args.language }),
-  });
-  if ("empty" in plan) {
-    writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
-    return;
-  }
-
-  // The window's premise is that no live worker carries its works. An unknown
-  // liveness cannot confirm it, so no round is launched on a guess: the sweep
-  // defers for the same reason.
-  if (observation.state !== "known") {
-    throw new Error(
-      `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
-        "worker carries its works, so no round was launched; retry when Docker answers",
+    const deps = await wireRunDeps(config, workspace);
+    const log = operationalLog(deps.log);
+    const result = await runRetroRound(
+      {
+        config,
+        runtime: deps.runtime,
+        workspace,
+        log,
+        ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
+      },
+      plan,
     );
+    if (result.reportPath === null) {
+      log(`retro round ${result.round}: no report was written — nothing was marked`);
+      process.exitCode = 1;
+      return;
+    }
+    log(
+      `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
+        `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
+    );
+  } finally {
+    await lock.close();
   }
-
-  const deps = await wireRunDeps(config, workspace);
-  const log = operationalLog(deps.log);
-  const result = await runRetroRound(
-    {
-      config,
-      runtime: deps.runtime,
-      workspace,
-      log,
-      ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
-    },
-    plan,
-  );
-  if (result.reportPath === null) {
-    log(`retro round ${result.round}: no report was written — nothing was marked`);
-    process.exitCode = 1;
-    return;
-  }
-  log(
-    `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
-      `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
-  );
 }
 
 // The binary runs main(); the module imported (by the tests of the wiring)
