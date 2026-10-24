@@ -37,7 +37,6 @@ repos:
 # liveness:                       # Docker silence suspends launches (issue 118)
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
-<<<<<<< HEAD
 # jira:                           # Jira Cloud selections
 #   - site: acme.atlassian.net    # a Cloud site; one authenticated identity per site
 #     account: bot@acme.example   # the Atlassian login the API token belongs to
@@ -50,11 +49,7 @@ repos:
 #     jql: project = ABC AND labels = backend
 #     destination: Sanmoo/backend
 # retro:                          # the retrospective job (ADR 0006)
-#   enabled: false                # automatic rounds and msf retro
-=======
-# retro:                          # the retrospective job (issue 141, ADR 0006)
 #   enabled: false                # the whole job: automatic rounds and msf retro
->>>>>>> 6baa5aef (fix(141): the final pass — one home for the launch hooks, the flags and the clone path)
 #   threshold: 5                  # archived works since the last report
 #   model: anthropic/claude-opus-4.5  # dedicated model; defaults to worker-model
 #   language: en                  # the report and every filed item, one per round
