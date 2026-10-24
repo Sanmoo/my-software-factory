@@ -356,7 +356,7 @@ function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): R
 
 /** One notice per destination: the operator learns the triage queue grew. */
 async function notifyFiled(deps: RetroDeps, filed: readonly FiledImprovementItem[]): Promise<void> {
-  const log = deps.log ?? (() => {});
+  const log = deps.log ?? NOOP_LOG;
   const notifier = deps.notifier;
   if (notifier === undefined) return;
   const counts = new Map<string, number>();

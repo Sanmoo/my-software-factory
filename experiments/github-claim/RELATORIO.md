@@ -1,4 +1,4 @@
-# Viabilidade — Claim exclusivo entre fábricas pelo GitHub Issues (#168)
+# Viabilidade — Claim exclusivo entre fábricas pelo GitHub Issues
 
 ## Conclusão
 
@@ -39,8 +39,8 @@ Os demais candidatos são **inadequados** mesmo sob as leituras mais fortes:
 
 **Isto é um resultado inconclusivo para produção, não uma autorização.** O
 protocolo escolhido, as premissas que faltam confirmar e os próximos passos
-retornam ao operador. A issue #170 (`needs-info`) permanece sem autorização de
-implementação; o requisito não foi enfraquecido para “melhor esforço”, lease,
+retornam ao operador. A implementação seguinte (`needs-info`) permanece sem
+autorização; o requisito não foi enfraquecido para “melhor esforço”, lease,
 expiração, particionamento ou alocação manual.
 
 ## 1. Objeto e método
@@ -366,7 +366,7 @@ documentadas examinadas, a garantia não foi demonstrada.
 
 ## 6. Demonstração reproduzível
 
-O harness está em `experiments/issue-168` (isolamento e comandos no README). Duas
+O harness está em `experiments/github-claim` (isolamento e comandos no README). Duas
 `FactoryInstance` independentes (factory ids `zeta` e `alpha`, sem estado
 compartilhado) disputam um Ticket; o único meio entre elas é o `SimTracker`; os
 Workers são controláveis; os fatos ficam no tracker.
@@ -437,12 +437,12 @@ ids em ordem de aplicação e leitura fresca — as premissas P1/P2 da seção 5
 | `release-refuses-malformed` | marcador ilegível: a liberação manual recusa antes de apagar; Claim e padlock intactos |
 | `claim-for-another-ticket` | marcador de outro Ticket: incerto, 0 lançamento |
 
-Comandos e isolamento: `experiments/issue-168/README.md`.
+Comandos e isolamento: `experiments/github-claim/README.md`.
 
 Os testes do harness **não** integram o quality gateway da fábrica: são a
 demonstração desta investigação, não um check de prontidão da produção. A
-issue #170 decidirá, na futura implementação, quais viram checks obrigatórios
-do gateway (e com que orçamento).
+implementação seguinte decidirá quais viram checks obrigatórios do gateway (e
+com que orçamento).
 
 ## 7. O que ficou fora e o que não foi provado
 
@@ -508,7 +508,7 @@ operador decide:
 
 ## 9. Evidências recuperáveis
 
-- Código e cenários: `experiments/issue-168/src` (este diretório).
+- Código e cenários: `experiments/github-claim/src` (este diretório).
 - Protocolos: `src/protocols.ts`; modelo do tracker: `src/tracker.ts`;
   explorador: `src/explorer.ts`; operador: `src/operator.ts`.
 - Testes: `npm test` (a matriz é recomputada em memória).
