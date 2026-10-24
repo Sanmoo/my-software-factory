@@ -34,7 +34,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber, launchedNumber } from "./work-fixtures.js";
 
 /**
- * e2e of issue 118 at the PUBLIC cycle boundary (`runOnce` / `runForever`):
+ * e2e of liveness at the PUBLIC cycle boundary (`runOnce` / `runForever`):
  * the liveness probe is the only controlled seam, the tracker, the runtime,
  * the git host and the notifier are the adapters the other suites use, and
  * the work artifacts are real files in a temp workspace. Recognition never
@@ -102,7 +102,7 @@ const failingProbe =
   () =>
     Promise.reject(new Error(message));
 
-describe("e2e: surviving workers and liveness on the operational cycle (issue 118)", () => {
+describe("e2e: surviving workers and liveness on the operational cycle", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -173,7 +173,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     mkdirSync(target, { recursive: true });
     for (const attempt of attempts) {
       writeFileSync(join(target, eventLogName(attempt)), "{}\n", "utf8");
-      // The launch also recorded the session of that attempt (issue 119): an
+      // The launch also recorded the session of that attempt: an
       // interrupted attempt whose session exists is recoverable.
       seedSession(target, { repo: REPO, number }, attempt);
     }
@@ -253,7 +253,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     const config = makeConfig(1);
     // A container carries a ticket this composition does not serve, and the
     // workspace has no reservation for it: its Work is unknown, so nothing is
-    // invented from the key, the selection or the config (issue 126, AC4).
+    // invented from the key, the selection or the config.
     const heldKey = workKeyOf({
       ticket: jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
       destination: githubRepository(REPO),
@@ -601,7 +601,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     );
   });
 
-  test("a worker launched before the image tag moved is a survivor — no substitute, no recovery, no attempt spent (issue 160)", async () => {
+  test("a worker launched before the image tag moved is a survivor — no substitute, no recovery, no attempt spent", async () => {
     const work = join(layout.works, `${REPO}#61`);
     const containerId = "d".repeat(64);
     const shell = fakeDocker({
@@ -620,7 +620,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     );
   });
 
-  test("a container the listing did not describe is recognised before its attempt is presumed interrupted (issue 160)", async () => {
+  test("a container the listing did not describe is recognised before its attempt is presumed interrupted", async () => {
     const work = join(layout.works, `${REPO}#60`);
     const containerId = "e".repeat(64);
     // The listing rendered no mount source for the row: the inspect — the
@@ -830,7 +830,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     // A retomada: blocked with a human answer after the marker.
     seedIssue(tracker, { repo: REPO, number: 72, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
     tracker.addComment({ repo: REPO, number: 72 }, "Sanmoo", "go ahead, the API is approved");
-    // A continuity pause waiting for the operator (issue 119).
+    // A continuity pause waiting for the operator.
     seedIssue(tracker, { repo: REPO, number: 73, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     for (const number of [70, 71, 72, 73]) {
       const target = workDir(layout, REPO, number);

@@ -112,9 +112,9 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     assert.equal(third.outcome, "abrupt-death");
   });
 
-  // ---- ticket 13: the per-work artifacts the runtime writes ----
+  // ---- the per-work artifacts the runtime writes ----
 
-  describe("per-work artifacts on real disk (ticket 13)", () => {
+  describe("per-work artifacts on real disk", () => {
     test("every launch writes the session dir and the attempt's event log", async () => {
       const runtime = makeRuntime(["pr-open"]);
       const dir = workDir(layout, "Sanmoo/a", 3);
@@ -163,7 +163,7 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     });
   });
 
-  describe("ticket 14 — a feedback round is the same branch and the same PR", () => {
+  describe("a feedback round is the same branch and the same PR", () => {
     test("a pr-open with an open PR already on the branch REUSES it — the worker never opens a second PR", async () => {
       const runtime = makeRuntime(["pr-open"]);
       const dir = workDir(layout, "Sanmoo/a", 3);
@@ -184,7 +184,7 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
       assert.ok(allPrs.known && allPrs.value.pr !== null);
     });
 
-    test("ending a feedback round, the worker comments on the PR (the norma of ticket 07)", async () => {
+    test("ending a feedback round, the worker comments on the PR (the norm)", async () => {
       const runtime = makeRuntime(["pr-open"]);
       const dir = workDir(layout, "Sanmoo/a", 3);
 

@@ -21,7 +21,7 @@ function cliPath(): string {
  * suite, so the factory's per-user state stays with the suite, and the ambient
  * token vars plus `GH_CONFIG_DIR` are cleared, so a child never reaches the
  * operator's credential store. That keeps the tests off GitHub, credentials,
- * the network and the operator's dirs (issue #90, Testing Decisions).
+ * the network and the operator's dirs.
  *
  * Markers let a test observe, hold and break the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
@@ -72,7 +72,7 @@ const CREDENTIAL_ENV_VARS = new Set<string>([...AMBIENT_TOKEN_ENV_VARS, "GH_CONF
 /**
  * The environment of a spawned CLI, owned by the suite's temp dir: HOME, the
  * XDG config and state dirs all live there (the factory keeps its per-user
- * state — the run lock of issue #90 — under them), and the variables that
+ * state — the run lock — under them), and the variables that
  * would point `gh` at the operator's credential store carried by the parent
  * environment are cleared. Every CLI-spawning suite uses it.
  *

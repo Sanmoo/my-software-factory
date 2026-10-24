@@ -49,7 +49,7 @@ import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 
 /**
- * End-to-end of issue 141: the retrospective is a factory job in the Repair
+ * End-to-end of the retrospective: it is a factory job in the Repair
  * mold — internally triggered at sweep time by the archived-works threshold,
  * on its own lane (never a worker slot), with a dedicated model, a window of
  * finished works, a dated report that IS the marker of the next window, and
@@ -91,7 +91,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the retrospective round — threshold, marker, window and filing (issue 141)", () => {
+describe("e2e: the retrospective round — threshold, marker, window and filing", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -601,7 +601,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
   test("a window covers works of any source, not only the legacy GitHub keys", async () => {
     const config = makeConfig({ threshold: 1 });
     const { runtime, deps } = makeFactory(config);
-    // The record-form key of a Jira work (issue 126): its destination repo is
+    // The record-form key of a Jira work: its destination repo is
     // encoded in the key, never reconstructed from the configuration.
     const key = "jira@https%3A%2F%2Facme.atlassian.net@ABC-1@Sanmoo%2Fmy-tasks";
     const workArchive = join(layout.archive, `${key}-2026-02-05`);

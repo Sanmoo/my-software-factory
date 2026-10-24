@@ -9,7 +9,7 @@ import { acquireRunLock } from "../run-lock.js";
 import { RETRO_IN_FLIGHT_FILENAME, RETRO_STATE_FILENAME } from "../retro/marker.js";
 
 /**
- * The command surface of the retrospective (issue 141), end-to-end through the
+ * The command surface of the retrospective, end-to-end through the
  * built CLI and the hermetic `gh` shim: config validation at boot, the
  * disabled job, the manual trigger's window (including a window of one) and
  * the empty-window notice. The round's behavior inside the sweep is driven
@@ -19,7 +19,7 @@ import { RETRO_IN_FLIGHT_FILENAME, RETRO_STATE_FILENAME } from "../retro/marker.
 
 const REPO = "Sanmoo/my-tasks";
 
-describe("e2e: `msf retro` — the manual trigger and the config validation (issue 141)", () => {
+describe("e2e: `msf retro` — the manual trigger and the config validation", () => {
   let dir: string;
   let workspace: string;
 

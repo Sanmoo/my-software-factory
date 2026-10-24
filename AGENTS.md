@@ -34,3 +34,7 @@ Comment only what is essential: the non-obvious *why* and the contracts a reader
 ### Documentation
 
 `README.md` and `docs/RUNBOOK.md` serve the operator and stay extremely succinct: only what the operator needs, each fact in a single place. Implementation detail belongs in the code, and the README never lists the file structure.
+
+### Repository prose
+
+The repository outlives its issues. Never cite a ticket or issue number in code, comments, test names, ADRs or documentation: an issue is ephemeral, a versioned file is not. Write in the declarative present — state what the code and the process are today, never what changed, when, or how they used to be. The one exception is a migration procedure kept for compatibility, where the old shape has to be named. Decisions live in `docs/adr/`, terms in `GLOSSARY.md`.

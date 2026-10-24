@@ -3,8 +3,8 @@ import type { CommandRunner } from "./github-adapter.js";
 /**
  * An in-memory GitHub that speaks the exact REST dialect the real adapter
  * uses over `gh api` — the gh/process-boundary double for the
- * offline contract suite (ticket 16: the suite must pass against the REAL
- * adapter, the same checks the fake satisfies; here the real adapter runs
+ * offline contract suite: the same checks the fake satisfies, run against the
+ * REAL adapter over a simulated GitHub
  * against a simulated GitHub instead of the network).
  *
  * What it models: issues and PRs sharing the numbering (a PR IS an issue),

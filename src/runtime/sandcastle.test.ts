@@ -36,7 +36,7 @@ import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
- * The Sandcastle runtime (ticket 17): the real launch behind the WorkerRuntime
+ * The Sandcastle runtime: the real launch behind the WorkerRuntime
  * port, tested with the container call MOCKED AT THE PROCESS BOUNDARY — the
  * `run()` seam plus the `docker()` provider seam. The mechanics (mounts,
  * prompt, flags, env, network absence) are asserted on the options the runtime
@@ -48,7 +48,7 @@ import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 const MODEL = "opencode-go/glm-5.3-flash";
 
-describe("the clone a retrospective anchors in (issue 141)", () => {
+describe("the clone a retrospective anchors in", () => {
   let reposDir: string;
 
   beforeEach(() => {
@@ -257,7 +257,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.ok(existsSync(join(miseDir, "go")), "the mise volume survives across launches");
   });
 
-  test("the worker's capability set: the pi-subagent tools ride the print command (ticket 85)", async () => {
+  test("the worker's capability set: the pi-subagent tools ride the print command", async () => {
     // The tool list alone is not proof of function — but a print command
     // WITHOUT the subagent tools is proof of absence. The launch must
     // deliver the capability the /code-review procedure demands.
@@ -427,7 +427,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   });
 });
 
-describe("sandcastle runtime — the artifact contract on real disk (ticket 13's)", () => {
+describe("sandcastle runtime — the artifact contract on real disk", () => {
   let root: string;
   let request: WorkRequest;
 
@@ -534,7 +534,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.equal(await readOutcomeRecord(request.workDir), null);
   });
 
-  test("a record left by another attempt is never this attempt's outcome: attempt 2 reads the attempt-1 record as an abrupt death (issue 143)", async () => {
+  test("a record left by another attempt is never this attempt's outcome: attempt 2 reads the attempt-1 record as an abrupt death", async () => {
     const result = await runtimeThat({ outcome: "pr-open", recordAttempt: 1 }).launch({
       ...request,
       attempt: 2,
@@ -573,7 +573,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     );
   });
 
-  test("a legacy record without an attempt field is not accepted as this attempt's outcome (issue 143)", async () => {
+  test("a legacy record without an attempt field is not accepted as this attempt's outcome", async () => {
     const result = await runtimeThat({
       rawRecord: JSON.stringify({ class: "pr-open" }),
     }).launch(request);
@@ -588,7 +588,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     assert.ok(existsSync(join(request.workDir, "sessao")));
   });
 
-  test("a provider error in the stream is readable from the attempt's own log (issue 144)", async () => {
+  test("a provider error in the stream is readable from the attempt's own log", async () => {
     const at = 1_792_571_444_513;
     const emitting = new SandcastleRuntime({
       model: MODEL,
@@ -1156,7 +1156,7 @@ function dummySandbox(): SandboxProvider {
   } as unknown as SandboxProvider;
 }
 
-describe("sandcastle runtime — the idle limit measured on verifiable activity (issue 112)", () => {
+describe("sandcastle runtime — the idle limit measured on verifiable activity", () => {
   let root: string;
   let request: WorkRequest;
 
@@ -1298,7 +1298,7 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
   });
 });
 
-describe("sandcastle runtime — the requested stop and the native session resume (issue #146)", () => {
+describe("sandcastle runtime — the requested stop and the native session resume", () => {
   let root: string;
   let workDir: string;
   let request: WorkRequest;
@@ -1351,7 +1351,7 @@ describe("sandcastle runtime — the requested stop and the native session resum
 
   test("a resume reopens the session the attempt's OWN association records; a new execution is born with its id", async () => {
     // Two sessions of the attempt's history and one of another work sit in the
-    // same dir: the newest file is NOT the selection rule (issue 119).
+    // same dir: the newest file is NOT the selection rule.
     const sessionsDir = join(workDir, "sessao", "--sandbox-cwd--");
     mkdirSync(sessionsDir, { recursive: true });
     const recorded = "22222222-2222-2222-2222-222222222222";

@@ -27,7 +27,7 @@ import {
 /**
  * `msf status`: derivation on demand through the port (it works with the
  * factory stopped — the tracker is the truth) plus the local registry scan
- * (ticket 07 Q7) and the read-only Docker probe (issue 102, ADR 0002). The
+ * and the read-only Docker probe (ADR 0002). The
  * registry knows what was written to disk; only Docker knows what is alive
  * now, so the two together say Running (a live worker carries the work) or
  * Orphaned (no outcome record, no live worker). A work whose outcome is
@@ -54,7 +54,7 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
-/** An interrupted attempt as the status names it (issues 112/123): the
+/** An interrupted attempt as the status names it: the
  *  registry's own fact, under the status vocabulary — the attempt with no
  *  record of its own, and the attempt the record on disk belongs to (history,
  *  never its result). */
@@ -67,12 +67,12 @@ export type Liveness =
       state: "known";
       /** One row per container: two workers of one work are two rows. */
       running: RunningWorker[];
-      /** The works carried by more than one container (issue 118). */
+      /** The works carried by more than one container. */
       duplicates: DuplicateWorkers[];
       orphaned: OrphanedAttempt[];
     };
 
-/** The retrospective job as `msf status` names it (issue 141, ADR 0006): the
+/** The retrospective job as `msf status` names it (ADR 0006): the
  *  last report written, the boundary it advanced, and the round in flight. */
 export interface RetroStatus {
   /** The file name of the last report written; null before any. */
@@ -99,7 +99,7 @@ export interface StatusView {
   liveness: Liveness;
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
-  /** The configured model provider budget (issue 144). */
+  /** The configured model provider budget. */
   modelProviderBudget: ModelProviderBudget;
   /** The retrospective job's visible state; null when the job is disabled. */
   retro: RetroStatus | null;
@@ -152,7 +152,7 @@ async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
 }
 
 /**
- * The two states, from the registry and the probe together (issue 102): a work
+ * The two states, from the registry and the probe together: a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
  * when nothing does. A bare reservation is neither — no attempt ended, so it
  * stays its own line. An unreachable probe is unknown, never "none": without
@@ -179,7 +179,7 @@ async function classifyLiveness(
     running,
     duplicates: duplicateWorkers(observation.workers),
     // A work whose attempt waits for the operator is not "orphaned, awaiting
-    // the factory's next reconciliation" (issue 119): it has its own section.
+    // the factory's next reconciliation" : it has its own section.
     orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key) && !paused.has(entry.key)),
   };
 }

@@ -6,7 +6,7 @@ import type { RecoveryBudget } from "../config.js";
 import type { OutcomeClass } from "../state/outcome.js";
 
 /**
- * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
+ * The interruption-recovery budget of a work (terms in GLOSSARY):
  * an attempt that ended with no outcome record is interrupted, not failed, so
  * the factory absorbs it with a finite allowance scoped to the attempt instead
  * of consuming it. The ledger is an artifact of the work
@@ -32,7 +32,7 @@ export interface RecoveryEvent {
  * What ended the last attempt, as the factory settled it: an interruption
  * (absorbed by this budget), a failure (a written failure/abandon outcome,
  * which consumes the attempt and enters the fall ruler), or the operator's
- * requested stop (issue #146) — a lifecycle condition that spends nothing and
+ * requested stop — a lifecycle condition that spends nothing and
  * resumes the same attempt. `stop-unconfirmed` means the requested stop could
  * not be confirmed: the next invocation must not relaunch the work until the
  * previous worker is known to be gone.
@@ -131,8 +131,8 @@ async function writeLedger(workDir: string, ledger: RecoveryLedger): Promise<voi
 
 /**
  * One writer per work's ledger: the requested stop and a collection can
- * reach the same artifact concurrently (issue #146 — the stop bookkeeping and
- * the admission it cancels), and two read-modify-write cycles interleaved
+ * reach the same artifact concurrently (the stop bookkeeping and the
+ * admission it cancels), and two read-modify-write cycles interleaved
  * would lose one of the updates. Each mutation below queues behind the
  * previous one for the same dir; the chain survives a rejected writer.
  */
@@ -292,7 +292,7 @@ export async function consumeStopRequest(workDir: string, attempt: number): Prom
 }
 
 /**
- * Return a recovery whose relaunch the requested stop cancelled (issue #146):
+ * Return a recovery whose relaunch the requested stop cancelled:
  * the grant was persisted before the backoff, but no worker ever started with
  * it, so spending it would penalize a requested restart. Only the grant named
  * by its ledger event index is returned — earlier, legitimate consumption and

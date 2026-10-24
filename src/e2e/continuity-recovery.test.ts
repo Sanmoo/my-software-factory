@@ -28,7 +28,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
- * e2e of issue 119 on the operational cycle: a recovery continues the SAME
+ * e2e of continuity on the operational cycle: a recovery continues the SAME
  * attempt by reopening ITS persisted session, and when it cannot prove the
  * continuation safe the work pauses for the operator — persisted, without
  * spending a recovery, without repeating the request every cycle, and without
@@ -66,7 +66,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
+describe("e2e: continuity of the interrupted attempt", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let tracker: FakeTrackerAdapter;

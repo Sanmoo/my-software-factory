@@ -1,5 +1,5 @@
 /**
- * The external effects a worker session can produce (issue 119) — the shared
+ * The external effects a worker session can produce — the shared
  * vocabulary of the host-side continuity check and of the guardrail that runs
  * inside the worker container. One classifier, one set of keys: the host reads
  * a session's journal with exactly the rules the guardrail writes it with, so
@@ -11,8 +11,8 @@
  * supported effects are recognised from their arguments; ANYTHING ELSE is
  * "unknown" — never safe by omission, never safe because it looks read-only to
  * a model. An unknown call that was interrupted therefore stops the recovery
- * instead of being replayed (issue 119: the safe delivery of an unresolvable
- * mutation is a pause, not a repetition).
+ * instead of being replayed: the safe delivery of an unresolvable mutation is
+ * a pause, not a repetition.
  */
 
 import { createHash } from "node:crypto";

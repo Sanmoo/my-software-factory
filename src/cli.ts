@@ -37,8 +37,8 @@ import type { Notifier } from "./notify/port.js";
 
 /**
  * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal CLI
- * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
- * from the gh keyring (boot check, ticket 16: no token → clear failure),
+ * The run loads msf.yaml from the cwd, reads the bot token from the gh
+ * keyring (boot check: no token → clear failure),
  * guarantees the workspace and hands the thin loop its four seams.
  *
  * Ticket 18: `msf run` (both --once and continuous) is wired with ALL REAL
@@ -64,7 +64,7 @@ export interface WiredSeams {
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
   /** The liveness probe; default is the real read-only Docker probe over the
-   *  workspace (issue 118) — tests pass a fake one, the binary has no flag. */
+   * workspace — tests pass a fake one, the binary has no flag. */
   probe?: LivenessProbe;
 }
 
@@ -94,7 +94,7 @@ export async function wireRunDeps(
   }
   if (tickets === undefined || pullRequests === undefined) {
     // The real adapter serves both expanded ports: GitHub owns the issues and
-    // the PRs of a GitHub-selected Work (issue 124/126).
+    // the PRs of a GitHub-selected Work.
     const githubTracker = await createGitHubAdapter({
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
@@ -105,7 +105,7 @@ export async function wireRunDeps(
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   const notifier = seams.notifier ?? new LinuxNotifier();
-  // The operational liveness read (issue 118): the same read-only Docker probe
+  // The operational liveness read: the same read-only Docker probe
   // `msf status` uses, so the two never disagree about the same facts.
   const probe = seams.probe ?? workspaceLivenessProbe(workspace);
   return {
@@ -205,7 +205,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const overridePath = args.configPath;
 
   // The operator's stop is armed BEFORE any startup step that leaves a
-  // resource active (issue #146): config, run lock, workspace and reservation
+  // resource active: config, run lock, workspace and reservation
   // all live inside the handler's window, for the continuous run and for
   // `run --once` alike.
   const stop = installStopSignals();
@@ -221,14 +221,14 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
       process.exit(1);
     }
 
-    // One `run` per REAL config path (issue 90), established before ANY
+    // One `run` per REAL config path, established before ANY
     // operational activity — the workspace below included. A second run for the
     // same configuration is refused here and never touches the factory.
     const lock = await acquireRunLock(config.configPath);
     try {
       // A stop requested during the startup is honoured where it is observed:
       // the engine listens from its construction, so an already-aborted signal
-      // closes admission before the first reservation (issue #146).
+      // closes admission before the first reservation.
       report = await executeRun(config, once, runtimeName, stop);
     } finally {
       await lock.close();
@@ -325,7 +325,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
 
 /**
  * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
- * manual trigger of a retrospective round (issue 141). A full window since the
+ * manual trigger of a retrospective round. A full window since the
  * last report ignores the threshold; `<work>` (the work's on-disk key) analyzes
  * exactly that finished work.
  */
@@ -348,7 +348,7 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
 
   const workspace = ensureWorkspace(config.workspace);
 
-  // One round at a time (issue 141), enforced by the lane's marker: it names
+  // One round at a time, enforced by the lane's marker: it names
   // the process that owns the round in flight, so the exclusivity holds across
   // processes — including a `msf run` that is sweeping right now, which is
   // exactly when the operator forces a round. A record left by a dead owner is
@@ -370,7 +370,7 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     return;
   }
 
-  // The window's premise is that no live worker carries its works (issue 141).
+  // The window's premise is that no live worker carries its works.
   // An unknown liveness cannot confirm it, so no round is launched on a guess:
   // the sweep defers for the same reason.
   if (observation.state !== "known") {

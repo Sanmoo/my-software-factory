@@ -156,8 +156,8 @@ import { join } from "node:path";
  * boundary and of waking by event (end of worker vs tick). It interlaces the
  * four phases deciding nothing of the domain: the states live in state/, the
  * liveness policy and the survivor ledger in state/ + pool/, and IO in
- * tracker/ + pool/ + git/ + runtime/ (ticket 07) — the loop only reads the
- * facts and applies what they decide (issue 118).
+ * tracker/ + pool/ + git/ + runtime/ — the loop only reads the
+ * facts and applies what they decide.
  *
  * Ticket 14: the derivation of the tick covers the states of ALL reserved
  * works (done · done-fallback · rejected · feedback · resumable — state/
@@ -178,7 +178,7 @@ export interface LoopDeps {
   /** PR/code-host facts: linkage, feedback, checks, the branch. */
   pullRequests: PullRequestTracker;
   runtime: WorkerRuntime;
-  /** The git host side: one clone per target repo, work branch per work (ticket 15). */
+  /** The git host side: one clone per target repo, work branch per work. */
   git: GitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
@@ -186,7 +186,7 @@ export interface LoopDeps {
   /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
   /** The liveness probe the operational cycle reads before deciding anything
-   *  that could replace a worker (issue 118). The composition (wireRunDeps)
+   * that could replace a worker. The composition (wireRunDeps)
    *  supplies the real read-only Docker probe; absent means this process sees
    *  only its own launches. Never a CLI flag — tests inject a fake probe. */
   probe?: LivenessProbe;
@@ -194,12 +194,12 @@ export interface LoopDeps {
   probeTimeoutMs?: number;
   /** The cycle's clock; tests inject one to exercise deadlines without waiting. */
   now?: () => number;
-  /** The backoff seam before a recovery relaunch (issue 123): production waits
+  /** The backoff seam before a recovery relaunch: production waits
    *  on a real timer; a test injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
 }
 
-/** The ruler's decided transition, as the sweep reports it (ticket 13). */
+/** The ruler's decided transition, as the sweep reports it. */
 export interface AppliedRuling {
   decision: OutcomeRuling["decision"];
   because: string;
@@ -210,11 +210,11 @@ export interface CollectedWork {
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
-  /** The ruler's decided transition, applied at the act (ticket 13). */
+  /** The ruler's decided transition, applied at the act. */
   ruling: AppliedRuling;
 }
 
-/** The facts that settle one attempt's end (issue 118): its own dir, its
+/** The facts that settle one attempt's end: its own dir, its
  *  number, its consecutiveness and who ended it. */
 interface AttemptEnd {
   dir: string;
@@ -234,18 +234,18 @@ interface RulingApplied {
 
 export interface SweepResult {
   pool: PoolEntry[];
-  /** The states derived for every reserved work this sweep (ticket 14). */
+  /** The states derived for every reserved work this sweep. */
   reserved: ReservedDerivation[];
-  /** The tracker↔workspace reconciliation reported this sweep (issue 100). */
+  /** The tracker↔workspace reconciliation reported this sweep. */
   reconciliation: Reconciliation;
   launched: SessionResult[];
   collected: CollectedWork[];
-  /** What the operator's stop left behind (issue #146); null when none was requested. */
+  /** What the operator's stop left behind; null when none was requested. */
   stop: StopReport | null;
 }
 
 /**
- * The operator's stop as the run receives it (issue #146): the first signal and
+ * The operator's stop as the run receives it: the first signal and
  * the second (the escalation), plus the cooperative window — a seam the tests
  * shorten to observe the deadline deterministically.
  */
@@ -341,7 +341,7 @@ const RESERVED_OPERATIONAL_CLASS = {
 } satisfies Record<ReservedDerivation["state"], OperationalClass | null>;
 
 /**
- * The derivations that presume a worker has stopped (issue 118): while Docker
+ * The derivations that presume a worker has stopped: while Docker
  * cannot answer, archiving an attempt whose worker may be alive, spending an
  * attempt or recovery on a silence, or publishing a block over a worker that
  * may still be writing are exactly the presumptions to avoid.
@@ -503,8 +503,8 @@ function renderPoolSummary(
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
  *  repair — or the continuation of an attempt that ended without its own
- *  outcome: the recovery of an interruption (issue 123) or the retry of a
- *  model provider failure (issue 144). */
+ * outcome: the recovery of an interruption or the retry of a
+ * model provider failure. */
 type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 interface Launchable {
@@ -525,19 +525,19 @@ interface Launchable {
   issueReplies?: IssueComment[];
   /** The confirmed impediments, only for a repair round. */
   repair?: RepairTrigger;
-  /** The unpublished attempt this repair takes over (issue 112), when resuming. */
+  /** The unpublished attempt this repair takes over, when resuming. */
   resuming?: RepairAttempt | null;
   /** The attempt a recovery or a model provider retry continues — the SAME
-   *  number (issues 123, 144). */
+   * number. */
   attempt?: number;
-  /** The attempt was ended by the operator's requested stop (issue #146): it
+  /** The attempt was ended by the operator's requested stop: it
    *  resumes now, spending no recovery. */
   requestedStop?: boolean;
   callRecovery?: CallRecovery;
 }
 
 /**
- * One sweep engine, four phases (ticket 07): derivation (+ the reserved
+ * One sweep engine, four phases: derivation (+ the reserved
  * actions decided by state/), launches into free slots (parked reserved
  * first, then new claims by age), collection at the act of each worker's
  * end (régua applied, slot replenished in the same cycle), and the wait for
@@ -554,7 +554,7 @@ export class SweepEngine {
   private parkedQueue: Launchable[] = [];
   private readonly pending = new Set<Promise<void>>();
   private stopping = false;
-  /** The requested stop in progress (issue #146); null before any request. */
+  /** The requested stop in progress; null before any request. */
   private requestedStopRun: Promise<StopReport> | null = null;
   /** Resolves the moment a requested stop begins — the boundary's wake. */
   private readonly requestedStopBegan = deferred();
@@ -580,10 +580,10 @@ export class SweepEngine {
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
-  /** The retrospective round in flight (issue 141) — its own lane, never a slot. */
+  /** The retrospective round in flight — its own lane, never a slot. */
   private retroRun: Promise<void> | null = null;
 
-  // ---- liveness and the surviving workers (issue 118) ----
+  // ---- liveness and the surviving workers ----
   /** The latest probe answer — read before every decision that could replace
    *  a worker; `unknown` suspends launches instead of guessing. */
   private liveness: LivenessObservation = { state: "known", workers: [] };
@@ -598,19 +598,18 @@ export class SweepEngine {
   /** The works whose duplicate containers were already reported. */
   private announcedDuplicates: ReadonlySet<string> = new Set();
   /** Live containers whose reservation names no Work this composition can
-   *  address: said once, and once more when the worker is gone (issue 126) —
+   * address: said once, and once more when the worker is gone —
    *  never a line per tick. */
   private readonly heldSurvivors = new Set<string>();
   /** The reason each held reservation was last reported: said once per
-   *  appearance, re-said only when the reason changes (issue 126). */
+   * appearance, re-said only when the reason changes. */
   private reportedReservationHolds = new Map<string, string>();
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
   // Prepare (clone/fetch/branch) touches the shared clone of a repo — two
-  // first-launches of the same repo must not race inside it (ticket 12
-  // introduced the parallelism; the serialization stays local to prepares,
-  // the launches themselves run concurrently).
+  // first-launches of the same repo must not race inside it. The serialization
+  // stays local to prepares; the launches themselves run concurrently.
   private readonly preparing = new Map<string, Promise<void>>();
 
   private readonly log: (message: string) => void;
@@ -622,7 +621,7 @@ export class SweepEngine {
     this.slots = new Slots(deps.config.concurrency);
     this.log = operationalLog(deps.log);
     this.cooperativeMs = stop.cooperativeMs ?? COOPERATIVE_STOP_MS;
-    // The signals are listened to from the START of the run (issue #146): a
+    // The signals are listened to from the START of the run: a
     // stop requested during the derivation, before the first admission, is
     // honoured exactly like one during a worker.
     if (stop.signal?.aborted === true) {
@@ -651,17 +650,17 @@ export class SweepEngine {
   async deriveAndAct(): Promise<ReservedDerivation[]> {
     const { config, workspace } = this.deps;
 
-    // The liveness facts come FIRST (issue 118): a decision that could
+    // The liveness facts come FIRST: a decision that could
     // substitute a worker or end its resources reads them, and the survivor
     // ledger keeps the executions that outlived a previous factory process.
     await this.observeLiveness();
     // WHO is reserved is what the reservation on disk says — a work's source is
-    // never reconstructed from the current selection configuration (issue 126).
+    // never reconstructed from the current selection configuration.
     const reservations = await scanReservations(workspace);
     // The guard is about the SOURCES the composed adapter serves, never about
     // the configured repos: a repo leaving the selection never strands a
-    // reserved Work — done, archive and recovery still apply to it (issue 126,
-    // AC4). A Work from a source the composition does not serve is held where
+    // reserved Work — done, archive and recovery still apply to it. A Work from
+    // a source the composition does not serve is held where
     // it is: no adapter is substituted, no tracker migration happens.
     const served = new Set(composedTicketSources().map(sourceKey));
     const serveable: IdentifiedReservation[] = [];
@@ -702,15 +701,15 @@ export class SweepEngine {
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
     // re-launch it and does not act on a terminal state mid-flight). The
-    // in-flight set also goes INTO the derivation (ticket 18): a zero-
+    // in-flight set also goes INTO the derivation: a zero-
     // footprint claim inside it is a legit launch between the claim and the
     // worker's first write — held; outside it, an interruption to recover.
-    // Surviving workers and the works just settled join it (issue 118): a
+    // Surviving workers and the works just settled join it: a
     // live worker keeps its work reserved, and a settled exit is not decided
     // twice in the same sweep.
     const inFlight = new Set([...this.slots.workKeys, ...surviving, ...settled]);
     // The pool is read from the configured selections — the same repos the
-    // operator names, never a second source of truth (issue 126).
+    // operator names, never a second source of truth.
     const selections = githubSelections(config.repos);
     const allReserved: ReservedWorkInput[] = serveable.map((entry) => ({
       work: entry.work,
@@ -718,11 +717,11 @@ export class SweepEngine {
     }));
     const reservedWorks = allReserved.filter((work) => !inFlight.has(workKeyOf(work.work)));
 
-    // The repair reconciliation runs BEFORE the derivation (issue 112): a
+    // The repair reconciliation runs BEFORE the derivation: a
     // repair attempt that fell is settled against the remote first, so the
     // derivation reads the verdict (resume, block, or uncertainty) instead of
-    // a charged round that never published. Unknown liveness holds it too
-    // (issue 118): a worker may still be writing the branch its verdict reads.
+    // a charged round that never published. Unknown liveness holds it too:
+    // a worker may still be writing the branch its verdict reads.
     if (!suspended && !this.stopping) {
       await processRecoveryRequests(config, {
         probe: this.deps.probe ?? (async () => []), inFlight,
@@ -732,7 +731,7 @@ export class SweepEngine {
     if (!suspended) await this.reconcileRepairAttempts(allReserved, inFlight);
 
     // A stop whose confirmation failed on the previous invocation is settled
-    // BEFORE the derivation (issue #146): the work only resumes once the
+    // BEFORE the derivation: the work only resumes once the
     // previous worker is known to be gone.
     await this.reconcileUnconfirmedStops(allReserved, inFlight);
 
@@ -752,7 +751,7 @@ export class SweepEngine {
     const parked: Launchable[] = [];
     const heldWhileUnknown: string[] = [];
     for (const decision of derived) {
-      // Liveness unknown means no worker can be ruled out (issue 118): a
+      // Liveness unknown means no worker can be ruled out: a
       // decision that would archive/clean, spend the attempt or its recovery
       // budget must wait for a reliable answer — never presume a stop.
       if (suspended && HOLDS_WHILE_LIVENESS_UNKNOWN.has(decision.state)) {
@@ -788,7 +787,7 @@ export class SweepEngine {
         }
         case "fall": {
           // A WRITTEN failure the factory died before ruling: it consumes the
-          // attempt and the ruler applies as at collection (issue 123).
+          // attempt and the ruler applies as at collection.
           const dir = decision.dir;
           await this.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
           if (decision.decision === "release") {
@@ -810,7 +809,7 @@ export class SweepEngine {
         }
         case "interrupted": {
           // The same attempt continues within its budget; an exhausted budget
-          // pauses it and asks the operator for help (issue 123).
+          // pauses it and asks the operator for help.
           if (decision.recovery.decision === "pause-help") {
             await this.pauseInterrupted(decision.work, decision.dir, decision.attempt, decision.recovery);
           } else {
@@ -833,7 +832,7 @@ export class SweepEngine {
           break;
         }
         case "model-provider-failure": {
-          // A model provider outage is not an interruption of the agent (issue 144):
+          // A model provider outage is not an interruption of the agent:
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
           if (decision.modelProvider.decision === "awaiting-model-provider") {
@@ -858,7 +857,7 @@ export class SweepEngine {
           break;
         }
         case "stop-resume": {
-          // The operator's requested stop (issue #146): the same attempt
+          // The operator's requested stop: the same attempt
           // resumes on this invocation, without spending the budget.
           this.log(
             `derived ${key}: attempt ${decision.attempt} ended by the operator's ` +
@@ -995,7 +994,7 @@ export class SweepEngine {
       );
     }
     parked.sort(byParkedPriority);
-    // A recovery for a survivor's ended attempt joins the queue (issue 118);
+    // A recovery for a survivor's ended attempt joins the queue;
     // while liveness is unknown the pending recoveries are preserved untouched
     // — the launch gate keeps them from starting.
     this.parkedQueue = suspended
@@ -1003,7 +1002,7 @@ export class SweepEngine {
       : [...this.survivorRecoveries.splice(0), ...parked].sort(byParkedPriority);
 
     // The pool AND the reconciliation from ONE open-issues read per repo
-    // (issue 100): the cached pool of the latest derivation (replenishment
+    // : the cached pool of the latest derivation (replenishment
     // draws from it; a cache drained empty waits for the next tick) and the
     // leftovers the reconciliation reports. No action: the report touches
     // nothing, and the sweep continues normally.
@@ -1023,7 +1022,7 @@ export class SweepEngine {
     };
     this.reportReconciliation(this.lastReconciliation);
     this.observeOperationalState(this.lastPool, derived, inFlight);
-    // The retrospective trigger is checked at each sweep (issue 141): the
+    // The retrospective trigger is checked at each sweep: the
     // archived works are the pulse and the report is the marker — no separate
     // scheduler exists. The round runs on its own lane: it takes no slot and
     // the sweep never waits for it.
@@ -1032,7 +1031,7 @@ export class SweepEngine {
   }
 
   /**
-   * Start a retrospective round when the trigger asks for one (issue 141).
+   * Start a retrospective round when the trigger asks for one.
    * The round is fire-and-forget for the sweep — it never consumes a slot and
    * never delays a launch — but a failure is logged, never silent, and the
    * `--once` boundary waits for it (settle). One round at a time: this engine
@@ -1140,7 +1139,7 @@ export class SweepEngine {
     this.announced.set(workKeyOf(work), resulting);
   }
 
-  // ---- liveness and the surviving workers (issue 118) ----
+  // ---- liveness and the surviving workers ----
 
   /**
    * Ask the probe (bounded) and keep the episode bookkeeping. One observation
@@ -1273,7 +1272,7 @@ export class SweepEngine {
 
   /**
    * Verifiable activity keeps a survivor accounted for; silence past the
-   * runtime's idle limit only WARNS (issue 118) — never a kill, a substitute
+   * runtime's idle limit only WARNS — never a kill, a substitute
    * or a freed slot, and never the same warning twice.
    */
   private async watchSurvivorActivity(key: string): Promise<void> {
@@ -1368,7 +1367,7 @@ export class SweepEngine {
   }
 
   /**
-   * The capacity verdict (issue 118): survivors above the configured
+   * The capacity verdict: survivors above the configured
    * concurrency suspend launches and END NOBODY; when the live workforce drops
    * back below the limit, capacity returns without any human act.
    */
@@ -1400,7 +1399,7 @@ export class SweepEngine {
   fillSlots(): Promise<void>[] {
     const started: Promise<void>[] = [];
     // Unknown liveness suspends EVERY launch — including the replenishment a
-    // collection triggers (issue 118): without a reliable answer the factory
+    // collection triggers: without a reliable answer the factory
     // could put a substitute over a live worker.
     if (this.stopping || this.liveness.state !== "known") return started;
     while (!this.slots.full && this.hasCapacity()) {
@@ -1413,7 +1412,7 @@ export class SweepEngine {
       // Bookkeeping only: the rejection belongs to the caller (runOnce awaits
       // it, runForever logs it). A `.finally` derivative would be a second,
       // unowned rejection — which kills the process on the very failure the
-      // next tick must retry (issue 98).
+      // next tick must retry.
       void run.then(
         () => this.pending.delete(run),
         () => this.pending.delete(run),
@@ -1424,7 +1423,7 @@ export class SweepEngine {
   }
 
   /** The parked reserved works first, then the cached pool — each by age. A
-   *  work a live container carries is never relaunched (issue 118): a survivor
+   * work a live container carries is never relaunched: a survivor
    *  keeps its work reserved whatever the tracker's label says. */
   private takeNextLaunchable(): Launchable | undefined {
     for (;;) {
@@ -1449,7 +1448,7 @@ export class SweepEngine {
   }
 
   /**
-   * Free capacity for one more launch (issue 118): every live container counts
+   * Free capacity for one more launch: every live container counts
    * once — a local launch Docker already shows is not counted twice — and a
    * survivor set above the configured concurrency suspends launches without
    * ending anybody.
@@ -1463,7 +1462,7 @@ export class SweepEngine {
   }
 
   /**
-   * The cooperative window ends here (issue #146): a second signal forces the
+   * The cooperative window ends here: a second signal forces the
    * remaining workers NOW, without skipping the confirmation of their end.
    */
   private escalate(): void {
@@ -1494,7 +1493,7 @@ export class SweepEngine {
       `stop requested: no new worker is admitted; asking ${entries.length} in-flight launch(es) to stop ` +
         `(cooperative window ${formatDuration(this.cooperativeMs)})`,
     );
-    // The workers a previous factory process left (issue 118) are the
+    // The workers a previous factory process left are the
     // operator's workers too: this process has no session to ask, so they get
     // the same window to end on their own and are forced with the rest.
     if (this.survivors.size > 0) {
@@ -1567,9 +1566,9 @@ export class SweepEngine {
   }
 
   /**
-   * Every worker this stop is answerable for (issue #146), with the attempt
+   * Every worker this stop is answerable for, with the attempt
    * already known when the caller has it: the launches this run carried, the
-   * survivors it recognised (issue 118) — which it knows were alive even when
+   * survivors it recognised — which it knows were alive even when
    * the probe stops answering — and whatever a live container names right now.
    * An unreadable probe cannot LOSE a known worker, it only fails to add one.
    */
@@ -1658,9 +1657,9 @@ export class SweepEngine {
   }
 
   /**
-   * The confirmation the factory never skips (issue #146): no worker of this
+   * The confirmation the factory never skips: no worker of this
    * workspace may survive — neither the launches this process started nor the
-   * ones it found alive (issue 118). The liveness probe answers, freshly,
+   * ones it found alive. The liveness probe answers, freshly,
    * because the workers just ended or were forced; an unreadable answer is
    * uncertainty, never an empty factory. An unconfirmed work is persisted so
    * the next invocation holds it.
@@ -1734,7 +1733,7 @@ export class SweepEngine {
     // unconfirmed end; the report carries the uncertainty).
     await Promise.race([this.awaitAllLaunched(), this.requestedStopBegan.promise]);
     // The retrospective lane is outside the slots, so the boundary waits for
-    // it explicitly (issue 141). A requested stop does not wait: the stop is
+    // it explicitly. A requested stop does not wait: the stop is
     // the operator's act and the round advances no marker without its report.
     if (this.requestedStopRun === null && this.retroRun !== null) await this.retroRun;
     return this.requestedStopRun === null ? null : this.requestedStopRun;
@@ -1774,13 +1773,13 @@ export class SweepEngine {
   }
 
   /** One launch start to finish, releasing the slot even on failure — a leaked
-   *  slot would never retry the work (issue 98). The rejection belongs to the
+   * slot would never retry the work. The rejection belongs to the
    *  caller (runOnce awaits it, runForever logs it as a failed launch). */
   private async launchAndCollect(launchable: Launchable): Promise<void> {
     const key = workKeyOf(launchable.work);
     try {
       // An interruption inside the session returns the SAME attempt as a
-      // recovery to launch next, in the same held slot (issue 123).
+      // recovery to launch next, in the same held slot.
       let next: Launchable | null = launchable;
       while (next !== null) next = await this.launchOnce(next);
     } finally {
@@ -1832,9 +1831,9 @@ export class SweepEngine {
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      // The dir is the safety footprint of issue 98 and lands before the claim;
-      // the record is the Work's own facts (issue 125). An unknown or
-      // unwritable record is reported and never blocks the claim — nor is it
+      // The dir is the safety footprint and lands before the claim; the record
+      // is the Work's own facts. An unknown or unwritable record is reported and
+      // never blocks the claim — nor is it
       // overwritten.
       mkdirSync(dir, { recursive: true });
       const url = ticketUrl(work.ticket);
@@ -1872,9 +1871,9 @@ export class SweepEngine {
             : `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
                 "the same attempt continues (no new attempt, branch preserved)",
       );
-      // The claim swap itself may have been interrupted (issue 98) — or the
-      // outage of issue 144 killed it: re-asserting the idempotent claim heals
-      // it without releasing the work to the pool.
+      // The claim swap itself may have been interrupted — or a model provider
+      // outage killed it: re-asserting the idempotent claim heals it without
+      // releasing the work to the pool.
       if (launchable.callRecovery !== undefined) await tickets.resumeTicketClaim(work.ticket, config.labels);
       await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
     } else if (kind === "feedback") {
@@ -1883,7 +1882,7 @@ export class SweepEngine {
     // Every launch kind holds the claim, so the work is reserved from here.
     this.announce(work, "reserved");
 
-    // Git host (ticket 15): clone once + delta fetch + work branch born from
+    // Git host: clone once + delta fetch + work branch born from
     // the default the clone reveals; relaunches reuse the branch untouched.
     const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
 
@@ -1892,7 +1891,7 @@ export class SweepEngine {
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const derivedTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
-    // The launch context of a repair round (issue 112), created once here and
+    // The launch context of a repair round, created once here and
     // filled with the local work below: the confirmed trigger, the unpublished
     // attempt it takes over (when resuming) and the lease value — the head
     // observed before the intervention (for a resumption, the head its fallen
@@ -1911,7 +1910,7 @@ export class SweepEngine {
           };
     let baseBranch = prepared.baseBranch;
     if (repair !== undefined) {
-      // The facts are re-read before the round spends work (issue 149): the
+      // The facts are re-read before the round spends work: the
       // impediment that opened it may have been resolved meanwhile — by a
       // human pushing the resolution, by a base advance. Only a confirmed
       // premise buys a session; an obsolete one returns the round unspent,
@@ -1937,7 +1936,7 @@ export class SweepEngine {
       // A FRESH round follows the facts as they read now: when the head moved
       // while the impediment persists, the evidence was recalculated, so the
       // round opens on the current head and is charged on the new evidence
-      // (issue 149). A resumption keeps its observed head — moving it would
+      // . A resumption keeps its observed head — moving it would
       // publish the fallen attempt's local history over a concurrent one.
       if (resuming === null) {
         if (confirmed.facts.headSha !== repair.pinnedHeadSha) {
@@ -1984,7 +1983,7 @@ export class SweepEngine {
     // A work branch reaches the remote only when the worker publishes it
     // (push + PR): a relaunch of a work that fell before publishing reuses a
     // branch the remote never saw, so the reuse has nothing to fast-forward.
-    // Said once per launch, next to the launch it explains (issue 96) — the
+    // Said once per launch, next to the launch it explains — the
     // runtime's reuse fetch then reads as expected instead of a broken remote.
     if (!prepared.branchCreated && !prepared.branchOnOrigin) {
       this.log(
@@ -1994,8 +1993,8 @@ export class SweepEngine {
     }
 
     // The registry numbers the attempt and remembers the previous WRITTEN
-    // failure — both are disk facts of this work, not process state (ticket
-    // 13; an interruption never counts as a fall, issue 123).
+    // failure — both are disk facts of this work, not process state; an
+    // interruption never counts as a fall.
     const continuesAttempt = kind === "recover" || kind === "model-provider-retry";
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     entry.attempt = facts.attempt;
@@ -2007,17 +2006,17 @@ export class SweepEngine {
     }
     if (kind === "resume") {
       // A human answer that unblocks the work also renews the automatic
-      // repair budget (issue 107 story 23); new commits never do.
+      // repair budget; new commits never do.
       await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
     // The local work the round takes over, read from real git only once the
     // round is really going out: existing commits are reused, changes are
     // inspected, an unfinished operation is continued — the resumption never
-    // restarts the work blind (issue 112).
+    // restarts the work blind.
     if (repair !== undefined) {
       repair.localWork = await this.inspectLocalWork(work);
     }
-    // The launch material (ticket 17): the issue, the open PR with its
+    // The launch material: the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
     const material = await launchMaterial(tickets, pullRequests, git, launchable, repair);
@@ -2030,7 +2029,7 @@ export class SweepEngine {
       return null;
     }
 
-    // Continuity (issue 119): which Pi session this launch opens, and whether
+    // Continuity: which Pi session this launch opens, and whether
     // it may open it at all. A human's answer to a paused work is orientation,
     // not proof about the world: the facts are read again before acting, and
     // an effect that is still ambiguous keeps the work paused.
@@ -2090,11 +2089,11 @@ export class SweepEngine {
     }
 
     // The recovery is GRANTED and persisted before the wait and the relaunch
-    // (issue 123): a death during the backoff or the session continues the
+    // : a death during the backoff or the session continues the
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     //
-    // The resume after the operator's requested stop (issue #146) spends
+    // The resume after the operator's requested stop spends
     // nothing and waits nothing: it continues the SAME attempt.
     if (kind === "recover" && launchable.requestedStop !== true) {
       const decision = await consumeRecovery(dir, config.recovery, facts.attempt);
@@ -2122,9 +2121,9 @@ export class SweepEngine {
         return null;
       }
     }
-    // The model provider retry is settled and persisted before the wait (issue 144):
+    // The model provider retry is settled and persisted before the wait:
     // a death during the backoff continues the model provider count instead of
-    // renewing it, and the recovery budget of issue 123 is never touched.
+    // renewing it, and the interruption recovery budget is never touched.
     if (kind === "model-provider-retry") {
       const failure = await readTurnModelProviderError(dir, facts.attempt);
       if (failure === null) {
@@ -2221,7 +2220,7 @@ export class SweepEngine {
 
   /**
    * Whether the operator's own requested stop owns the end of this attempt
-   * (issue #146): the persisted stop-requested, or a stop-unconfirmed one whose
+   * : the persisted stop-requested, or a stop-unconfirmed one whose
    * worker this invocation just confirmed gone (promoted, so the launch
    * consumes it like any other requested stop). A stop of another attempt, or
    * a failure, never answers yes.
@@ -2293,7 +2292,7 @@ export class SweepEngine {
   }
 
   /**
-   * A continuity pause (issue 119): the interrupted attempt cannot be reopened
+   * A continuity pause: the interrupted attempt cannot be reopened
    * safely, so the work stops and asks for help instead of pretending a fresh
    * session is a continuation. The record is written FIRST and survives a
    * restart; the issue comment, the blocked label and the notice happen only
@@ -2435,7 +2434,7 @@ export class SweepEngine {
   }
 
   /**
-   * Settle one model provider failure and apply its decision (issue 144): the
+   * Settle one model provider failure and apply its decision: the
    * attempt's own log records the failure and each granted retry, the ledger
    * persists the count, and an exhausted budget comments the help request on
    * the issue — keeping the claim, never the blocked label. Idempotent: the
@@ -2515,7 +2514,7 @@ export class SweepEngine {
   }
 
   /**
-   * The repair reconciliation of the tick (issue 112): every repair attempt
+   * The repair reconciliation of the tick: every repair attempt
    * that wrote its facts on disk and is not carried by a live worker is
    * settled against the remote BEFORE the derivation reads the cycle. The
    * settlement is idempotent — a settled attempt is never charged, refunded or
@@ -2572,7 +2571,7 @@ export class SweepEngine {
       }
 
       const remote = await this.observeRemote(work.work);
-      // The premise is part of the verdict (issue 149): a remote the attempt
+      // The premise is part of the verdict: a remote the attempt
       // did not produce is a concurrent change ONLY while the impediment the
       // round addressed still exists — a human's own resolution is never
       // taken for a reason to ask for help. The read happens once per
@@ -2591,7 +2590,7 @@ export class SweepEngine {
 
   /**
    * A requested stop whose confirmation failed on a previous invocation
-   * (issue #146): the work is held until a probe proves the previous worker
+   * : the work is held until a probe proves the previous worker
    * gone, and only then becomes the requested-stop resume it was meant to be. An
    * unreadable probe is uncertainty: the work stays held, the reason said out
    * loud, and no worker is launched on top of it.
@@ -2652,7 +2651,7 @@ export class SweepEngine {
     );
   }
 
-  /** The cycle a legacy reparo.json implies (issue 112): the budget was charged
+  /** The cycle a legacy reparo.json implies: the budget was charged
    *  and the registry shows an attempt after the last recorded outcome — the
    *  attempt whose observed head only the evidence signature names. */
   private async adoptLegacyCycle(work: ReservedWorkInput, cycle: RepairCycle): Promise<RepairCycle | null> {
@@ -2713,7 +2712,7 @@ export class SweepEngine {
   }
 
   /** Record that the remote moved to a head the attempt did not produce: the
-   *  derivation then blocks the work with the help request (issue 112). */
+   * derivation then blocks the work with the help request. */
   private async markConcurrentChange(
     work: WorkIdentity,
     attempt: RepairAttempt,
@@ -2754,7 +2753,7 @@ export class SweepEngine {
   /** Charge one automatic repair round before its session: the budget, the
    *  consumed evidence and the attempt's own facts persist on disk, so a
    *  restart neither renews the cap nor repeats the same round, and a death is
-   *  attributable once the remote answers (issue 112). */
+   * attributable once the remote answers. */
   private async recordRepairRound(
     dir: string,
     work: WorkIdentity,
@@ -2806,11 +2805,11 @@ export class SweepEngine {
   }
 
   /**
-   * The ruler at the act of an end (ticket 13, extended by 14/123; survivor
-   * ends by issue 118) on structured facts alone — the outcome record (absence
+   * The ruler at the act of an end — the survivor ends included — on structured
+   * facts alone: the outcome record (absence
    * = an interruption), the PR fact and the label facts from the port, and the
    * registry's consecutiveness. The decided transition is applied here; an
-   * interruption returns the SAME attempt as the next launch (issue 123).
+   * interruption returns the SAME attempt as the next launch.
    * `origin` only names the actor in the operator's log: a survivor's end is
    * reconciled by these same facts, never by the launch object this process
    * never had.
@@ -2848,7 +2847,7 @@ export class SweepEngine {
     if (ruling.decision !== "interrupt") clearPause(dir);
 
     // A known PR — open, merged or closed — is persisted beside the Work
-    // (issue 125): the facts survive a restart, and a later attempt appends
+    // : the facts survive a restart, and a later attempt appends
     // its own. Persistence never changes the ruling above.
     if (pr !== null) {
       try {
@@ -2872,8 +2871,8 @@ export class SweepEngine {
       // The terminal state was reached while this claim was held: archive the
       // artifacts and clean the branches, nothing is released or recorded. A
       // merge that did not close the issue is closed here first — done must
-      // always be reflected on the tracker (ticket 04 Q11), including a merge
-      // that landed mid-round (issue 149).
+      // always be reflected on the tracker, including a merge
+      // that landed mid-round.
       if (ruling.because === "pr-merged") {
         this.log(
           `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
@@ -2892,16 +2891,16 @@ export class SweepEngine {
       this.log(`${origin} ${key}: blocked self-report — the factory only records the outcome`);
       resulting = "reserved";
     } else if (ruling.decision === "interrupt") {
-      // No attempt is consumed and the fall ruler never applies (issue 123). A
-      // repair round is settled by its own reconciliation (issue 112) instead.
+      // No attempt is consumed and the fall ruler never applies. A
+      // repair round is settled by its own reconciliation instead.
       resulting = "reserved";
       if (launchable.kind === "repair") {
         this.log(
           `${origin} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
-            "settles its publication before another round (issue 112)",
+            "settles its publication before another round ",
         );
       } else if (this.stopping) {
-        // The operator's requested stop (issue #146): the attempt is left for
+        // The operator's requested stop: the attempt is left for
         // the next invocation to resume, never relaunched inside a requested stop.
         this.log(
           `collected ${key}: attempt ${attempt} ended without an outcome record while the factory stops — ` +
@@ -2927,7 +2926,7 @@ export class SweepEngine {
         };
       } else {
         // The attempt's own stream decides whether this was the agent's
-        // interruption or a model provider failure (issue 144): the latter
+        // interruption or a model provider failure: the latter
         // gets its own budget and backoff.
         const failure = await readTurnModelProviderError(dir, attempt);
         if (failure === null) {
@@ -2940,8 +2939,9 @@ export class SweepEngine {
           work,
           dir,
           // A model provider failure retries on its own budget; an interruption of
-          // the agent keeps issue 123's recovery. Either way the SAME attempt
-          // continues, with the material of the interrupted launch preserved.
+          // the agent keeps its interruption recovery. Either way the SAME
+          // attempt continues, with the material of the interrupted launch
+          // preserved.
           kind: failure === null ? "recover" : "model-provider-retry",
           createdAt: null,
           pr,
@@ -2973,7 +2973,7 @@ export class SweepEngine {
     // untouched. The self-report counts only for THIS attempt — desfecho.json
     // survives between attempts. A survivor's end is a review occurrence too:
     // its open PR reaches the operator even though this process never
-    // launched it (issue 118).
+    // launched it.
     if (needsOccurrenceNotice(ruling)) {
       const selfReportedNow = selfReportedBlocked(record, attempt);
       const isReviewLaunch =
@@ -2988,7 +2988,7 @@ export class SweepEngine {
   }
 
   /**
-   * Persist the WRITTEN failure that ended the attempt (issue 123): the next
+   * Persist the WRITTEN failure that ended the attempt: the next
    * attempt starts with a full interruption budget, and `msf status` says the
    * attempt was consumed. A missing or other-attempt record, or a class that
    * is not a failure (pr-open, self-report), settles nothing.
@@ -3028,8 +3028,8 @@ export class SweepEngine {
 
   /** The delivery a merge without closure implies: close the issue with the
    *  short fallback comment, then archive and clean — done must always be
-   *  reflected on the tracker (ticket 04 Q11). Shared by the derivation's
-   *  done-fallback and by a merge that landed mid-round (issue 149). */
+   * reflected on the tracker. Shared by the derivation's
+   * done-fallback and by a merge that landed mid-round. */
   private async completeMergedWork(work: WorkIdentity, comment: string): Promise<void> {
     const { tickets } = this.deps;
     await tickets.markTicketDone(work.ticket);
@@ -3081,7 +3081,7 @@ const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
 
 /**
- * One sweep with the --once boundary (ticket 07 Q6): derive the pool AND the
+ * One sweep with the --once boundary: derive the pool AND the
  * reserved states through the port, act on what the derivation decided
  * (archive dones, close fallbacks, block rejections), claim and launch up to
  * `y` workers concurrently — parked reserved first, then new claims by age —
@@ -3112,7 +3112,7 @@ function logLaunchFailure(log: (message: string) => void, run: Promise<void>): v
 }
 
 /**
- * A failed sweep never takes the continuous factory down (issue 158): a
+ * A failed sweep never takes the continuous factory down: a
  * tracker read that GitHub did not answer — or any other error escaping the
  * derivation — ends the sweep, not the factory. Nothing of the sweep is
  * applied, so the pooled work and the parked queue still hold the PREVIOUS
@@ -3133,7 +3133,7 @@ async function sweepOrLog(
 }
 
 /**
- * The continuous run (ticket 14): the idle factory keeps sweeping on the
+ * The continuous run: the idle factory keeps sweeping on the
  * fixed tick forever — ending it is a human act (the signal below). The
  * wake is hybrid: end of worker ends the wait immediately (the collection
  * and the slot replenishment already happened at the act); the tick drives
@@ -3180,7 +3180,7 @@ export async function runForever(
   }
 }
 
-/** The repair context a session is launched with (issue 112): the confirmed
+/** The repair context a session is launched with: the confirmed
  *  trigger, the unpublished attempt it takes over (when resuming) and the
  *  local work read from the host. */
 interface RepairLaunchContext {
@@ -3192,7 +3192,7 @@ interface RepairLaunchContext {
 }
 
 /**
- * Gather the launch material of a work from the port + git host (ticket 17):
+ * Gather the launch material of a work from the port + git host:
  * the issue (title/body), human issue replies on a blocked retomada, the open
  * PR's conversation on a feedback round, the repair context above, and the
  * diff. Unknown reads degrade to empty — the prompt still carries whatever is

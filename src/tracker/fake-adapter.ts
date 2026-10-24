@@ -108,7 +108,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
    *  so `pullListings` stays 0. */
   private readonly readCounts: ReadCost = { issueListings: 0, pullListings: 0, issueReads: 0 };
 
-  /** Test-only fault injection (the interruption rows of the swaps, issue 98):
+  /** Test-only fault injection (the interruption rows of the swaps):
    *  an armed key makes the NEXT matching step fail with a real error — never
    *  the tolerated absent-label case. Keys: "claim:label", "claim:assignee",
    *  "release:relabel", "release:unassign", "block:label", "resume:label" and
@@ -307,7 +307,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
     const issue = this.mustGet(ref);
     const performed: string[] = [];
     this.claimedOrder.push(this.key(ref));
-    // The order is the decision (issue 98): the padlock lands first, the pool
+    // The order is the decision: the padlock lands first, the pool
     // label leaves last, so an interruption leaves the work claimed with its
     // reservation.
     this.armed("claim:label");
@@ -328,7 +328,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // Mirrored order (issue 98): the pool label returns first, the padlock
+    // Mirrored order: the pool label returns first, the padlock
     // leaves last — an interrupted release stays recoverable.
     if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
       this.armed("release:relabel");
@@ -349,7 +349,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // Same order as the claim (issue 98): the blocked label lands first, the
+    // Same order as the claim: the blocked label lands first, the
     // padlock leaves last.
     this.armed("block:label");
     issue.labels.add(labels.blocked);
@@ -449,7 +449,7 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
     return known(null);
   }
 
-  // ---- expanded ticket/PR contracts (issue 124) ----
+  // ---- expanded ticket/PR contracts ----
 
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
     if (!isGitHubSource(selection.source)) {

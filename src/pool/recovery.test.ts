@@ -21,10 +21,10 @@ import {
 } from "./recovery.js";
 
 /**
- * The interruption-recovery budget (issue 123): a finite allowance counted per
+ * The interruption-recovery budget: a finite allowance counted per
  * work, persisted so a restart continues it, scoped to the attempt, with the
  * configured backoff and a pause + help request when it runs out. The reference
- * behavior is `experiments/issue-111/src/recovery.ts`; this is the product
+ * behavior is `experiments/continuity/src/recovery.ts`; this is the product
  * version, next to the other artifacts of the work.
  */
 

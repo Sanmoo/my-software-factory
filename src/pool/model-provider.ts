@@ -7,10 +7,10 @@ import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { renderWaits } from "./recovery.js";
 
 /**
- * The model provider failure budget of a work (issue 144; terms in GLOSSARY):
+ * The model provider failure budget of a work (terms in GLOSSARY):
  * an attempt whose stream ended in a model provider error is not an
  * interruption of the agent, so it retries on this dedicated allowance
- * instead of spending the interruption budget of issue 123. The ledger is an
+ * instead of spending the interruption budget. The ledger is an
  * artifact of the work (trabalhos/<repo>#<n>/provedor.json), so a restart
  * continues the count instead of renewing it; exhausting it parks the work
  * "awaiting model provider" and asks the operator for help — never a block,

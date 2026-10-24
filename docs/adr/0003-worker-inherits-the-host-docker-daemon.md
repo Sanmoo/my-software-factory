@@ -1,10 +1,10 @@
 # The worker inherits the host Docker daemon
 
-A worker container had no Docker: a round whose work needed it (issue 113's
-quality gateway runs the repo's real Docker test) self-reported blocked, and
-nothing in the container could tell "this repository needs Docker" from "this
-host has none". Some of the work the factory takes on IS running containers, so the worker
-needs a daemon.
+A worker container has no Docker unless the host's daemon is bound into it: a
+round whose work needs it — the quality gateway runs the repo's real Docker
+test — self-reports blocked, and nothing in the container can tell "this
+repository needs Docker" from "this host has none". Some of the work the
+factory takes on IS running containers, so the worker needs a daemon.
 
 We bind the host's daemon socket into every worker container and add the
 socket's own gid as a supplementary group (`--group-add`), with `DOCKER_HOST`

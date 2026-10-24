@@ -28,7 +28,7 @@ const jiraWork = workIdentity(
 const review: WorkNotification = reviewNotice(github, 7);
 const help: WorkNotification = helpNotice(github);
 
-describe("notify: the factory's own occurrence (issue 118)", () => {
+describe("notify: the factory's own occurrence", () => {
   test("a Docker-unavailable notice is identified as the factory's, names no work and invents no issue", () => {
     const { title, body } = renderNotification(factoryUnavailableNotice(3 * 60_000));
 
@@ -137,7 +137,7 @@ describe("notify: the Linux desktop backend", () => {
   });
 });
 
-describe("notify: the retrospective's occurrence (issue 141)", () => {
+describe("notify: the retrospective's occurrence", () => {
   test("a retro-items notice points at the triage destination and names the operator's gate", () => {
     const { title, body } = renderNotification(retroItemsNotice("Sanmoo/my-software-factory", 3));
 

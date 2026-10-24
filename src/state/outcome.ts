@@ -15,7 +15,7 @@ import { pauseMarker } from "../tracker/port.js";
 
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
- * tracker transitions (tickets 04/05; fleshed out by tickets 12-14).
+ * tracker transitions.
  *
  * The two-rulers contract: the worker's ruler (its obligations) lives in the
  * prompt; the factory's ruler (this module) NEVER reads what the agent wrote
@@ -27,10 +27,10 @@ import { pauseMarker } from "../tracker/port.js";
  * natural-language parsing in the critical path.
  */
 
-/** Disk name is a taken decision (tickets 05/10) and stays in PT-BR. */
+/** Disk name is a taken decision and stays in PT-BR. */
 export const DESFECHO_FILENAME = "desfecho.json";
 
-/** The class field of the outcome record — vocabulary of ticket 05. */
+/** The class field of the outcome record. */
 export type OutcomeClass =
   /** The work ended with an open PR: stays reserved, waiting for the human. */
   | "pr-open"
@@ -71,7 +71,7 @@ export type OutcomeRuling =
   /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
   | { decision: "record-only"; because: "blocked-self-report" }
   /** The attempt wrote no outcome record: an INTERRUPTION, not a failure
-   * (issue 123). The loop absorbs it with the recovery budget; the attempt
+   * . The loop absorbs it with the recovery budget; the attempt
    * keeps its number and never enters the fall ruler. */
   | { decision: "interrupt"; because: "no-outcome" }
   /** A written failure/abandon without PR, 1st consecutive — release
@@ -91,19 +91,19 @@ export interface OutcomeFacts {
   /** The port's fact: an open PR linked to the issue (recorded now or pre-existing). */
   prOpen: boolean;
   /** The port's fact: the PR linked to the issue was merged — delivery, even
-   *  when the attempt wrote nothing (issue 149). Never a fall. */
+   * when the attempt wrote nothing. Never a fall. */
   prMerged: boolean;
   /** The operator ended this attempt: an already-open PR cannot complete it. */
   requestedStop?: boolean;
   /** The port's fact: the blocked label is on the issue (the worker's self-report). */
   blockedLabelOnIssue: boolean;
   /** The registry's fact from launch time: the previous attempt on this branch
-   *  also ended in a written failure. Interruptions never set it (issue 123). */
+   * also ended in a written failure. Interruptions never set it. */
   consecutiveFall: boolean;
   /** The attempt being collected (the registry's launch fact) — names the fall in the
    *  blocked comment, and owns the record: a record of another attempt is absent here. */
   attempt: number;
-  /** The port's fact: the issue itself is closed — the terminal state was reached while this claim was held (ticket 14). */
+  /** The port's fact: the issue itself is closed — the terminal state was reached while this claim was held. */
   issueClosed: boolean;
   /** The attempt's dir as the runtime/registry used it — the same dir the evidence probes. */
   workDir: string;
@@ -112,12 +112,12 @@ export interface OutcomeFacts {
 }
 
 /**
- * The factory's ruler (ticket 13; amended by issue 123), applied at collection
+ * The factory's ruler, applied at collection
  * (loop) on structured facts alone. Priority is the vocabulary of the classes:
  *   1/5. PR open → reserve, no fall recorded (pre-existing PR included);
  *   6. blocked self-report → only recorded (the worker posted marker + label);
  *   4. no own record → INTERRUPTION: the recovery budget absorbs it and the
- *      same attempt is relaunched — never the fall ruler (issue 123);
+ * same attempt is relaunched — never the fall ruler;
  *   2/3. a written failure/abandon without PR: 1st consecutive → release,
  *      2nd consecutive → blocked + comment.
  *
@@ -126,7 +126,7 @@ export interface OutcomeFacts {
  */
 export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
-  // A merged PR is delivery (issue 149): the attempt's own record never turns
+  // A merged PR is delivery: the attempt's own record never turns
   // a delivered work into a release or a 2nd-fall block. The closed issue is
   // still the primary fact; this one closes it (the linkage fallback).
   if (facts.prMerged) return { decision: "done", because: "pr-merged" };
@@ -154,7 +154,7 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
 /**
  * The record OF THIS ATTEMPT, or null: the ONE place the criterion "is this
  * record this attempt's?" lives — the collection path, the ruler and the
- * status call it, so they cannot diverge (issue 143). A record without an
+ * status call it, so they cannot diverge. A record without an
  * `attempt` (legacy) never parses, so it is absence too.
  */
 export function ownOutcomeRecord(
@@ -167,7 +167,7 @@ export function ownOutcomeRecord(
 /**
  * The written failure the ruler counts for CONSECUTIVENESS at launch: a clean
  * end without a PR. A `pr-open` record is a success and resets the count; a
- * self-report is the worker's own stop, not a failure (issue 123).
+ * self-report is the worker's own stop, not a failure.
  */
 export function isRecordedFailure(record: OutcomeRecord | null): boolean {
   return record?.class === "clean-without-pr";
@@ -176,7 +176,7 @@ export function isRecordedFailure(record: OutcomeRecord | null): boolean {
 /**
  * The attempt's own written outcome, unless it is the blocked self-report the
  * `record-only` ruling handles: the record that lets the fall ruler decide
- * (issue 123). One rule, shared by collection and by the derivation that
+ * . One rule, shared by collection and by the derivation that
  * settles an unreconciled attempt.
  */
 export function ownWrittenOutcome(
@@ -188,7 +188,7 @@ export function ownWrittenOutcome(
 }
 
 /** The ACTUAL blocked self-report of one attempt — a record left by another
- *  attempt is never the current attempt's self-report (issue 103). */
+ * attempt is never the current attempt's self-report. */
 export function selfReportedBlocked(record: OutcomeRecord | null, attempt: number): boolean {
   return ownOutcomeRecord(record, attempt)?.class === "blocked-self-report";
 }
@@ -206,7 +206,7 @@ type AttemptCommentInput = Pick<
 >;
 
 /**
- * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
+ * The blocked comment: the human must SEE why it fell
  * before deciding to resume. The header names the failed attempt; the outcome
  * is the current attempt's own record — a divergent record is named as such
  * instead of being presented as this attempt's outcome. The evidence of the
@@ -261,7 +261,7 @@ export interface ModelProviderAwaitingInput {
   workspace: WorkspaceLayout;
 }
 
-/** What the continuity pause of issue 119 says to the operator. */
+/** What the continuity pause says to the operator. */
 export interface ContinuityPausedInput {
   attempt: number;
   /** The last attempt the disk evidences (the attempt ledger): the launch path
@@ -278,7 +278,7 @@ export interface ContinuityPausedInput {
 }
 
 /**
- * The help request of an exhausted model provider budget (issue 144): the
+ * The help request of an exhausted model provider budget: the
  * attempt ended by a model provider failure, the factory stopped retrying, and the work is
  * NOT blocked — it waits for the operator. It names the model provider's own message
  * and the configured allowance, and says how to go on (raise the budget, or
@@ -300,7 +300,7 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
 }
 
 /**
- * The block comment of a continuity pause (issue 119): the interrupted attempt
+ * The block comment of a continuity pause: the interrupted attempt
  * cannot be continued safely — its session is missing, unreadable or of the
  * wrong identity, or an external effect stayed ambiguous — so the factory
  * stopped instead of relaunching. The reason and the attempt's evidence are
@@ -402,11 +402,11 @@ export interface RepairFallCommentInput {
 }
 
 /**
- * The block comment of a Repair that stopped without publishing (issue 112).
+ * The block comment of a Repair that stopped without publishing.
  * It names the attempt that actually fell, the abrupt end and the divergent
  * record on disk — never presenting an older attempt's outcome as this one's —
  * plus the publication verdict, the preserved local work and the attempt's own
- * evidence paths (#103's contract, reused verbatim).
+ * evidence paths (the same contract, reused verbatim).
  */
 export async function repairFallComment(input: RepairFallCommentInput): Promise<string> {
   const { attempt } = input;
@@ -439,8 +439,8 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
  * How the attempt ended without publishing, from the record facts alone: a
  * normal end (its own record exists) or an end with no record at all, with an
  * older attempt's record named as history, never as this attempt's outcome
- * (issue 103's rule, reused here). The repair ledger, not the attempt ruler,
- * counts this end (issue 112/123).
+ * (the ruler's rule, reused here). The repair ledger, not the attempt ruler,
+ * counts this end.
  */
 function describeRepairEnding(record: OutcomeRecord | null, attempt: number): string {
   const own = ownOutcomeRecord(record, attempt);
@@ -456,7 +456,7 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
 
 /**
  * The one rendering of the history fact "the record on disk is another
- * attempt's", so the operator's wording cannot drift apart (issue 143).
+ * attempt's", so the operator's wording cannot drift apart.
  */
 export function describeForeignRecord(attempt: number): string {
   return `the record on disk belongs to attempt ${attempt}`;
@@ -464,7 +464,7 @@ export function describeForeignRecord(attempt: number): string {
 
 /**
  * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt. Absence is the FACT "no-outcome" (issue 123): the
+ * invalid or corrupt. Absence is the FACT "no-outcome" : the
  * recovery budget, never the fall ruler, answers it.
  */
 export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {

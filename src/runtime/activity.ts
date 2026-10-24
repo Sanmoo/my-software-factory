@@ -5,7 +5,7 @@ import { SESSIONS_SUBDIR } from "../layout.js";
 import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "./attempt-logs.js";
 
 /**
- * Verifiable activity of a worker session (issue 112): the files the agents
+ * Verifiable activity of a worker session: the files the agents
  * THEMSELVES write under the dirs the container binds — the session dir (pi's
  * transcripts, the worker's own and its reviewer subagents') and the work dir
  * (the artifacts the session produces). Sandcastle's idle timeout only sees
@@ -21,8 +21,8 @@ import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "./attempt-logs.js";
  */
 
 /**
- * The factory's idle limit (issue 112), shared with the survivor watch of the
- * operational cycle (issue 118): how long a session may go without verifiable
+ * The factory's idle limit, shared with the survivor watch of the
+ * operational cycle: how long a session may go without verifiable
  * activity before it counts as idle. The runtime measures it to end its own
  * session; for a worker the process did not launch it only raises a warning.
  */

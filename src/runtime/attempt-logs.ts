@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * The factory's own records of an attempt (issues 102/112/118/144), named once:
+ * The factory's own records of an attempt, named once:
  * the per-attempt event log (the JSONL the loop and the runtime append to) and
  * Sandcastle's stdout log. Both live under the work dir, and both are DERIVED
  * from the agent's output — which is why the verifiable-activity observation

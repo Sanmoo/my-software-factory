@@ -14,7 +14,7 @@ import { workKeyOf } from "../pool/work-key.js";
 import { githubWork } from "./work-fixtures.js";
 
 /**
- * The driver of the real-runtime stop proof (issue #146). It runs INSIDE a
+ * The driver of the real-runtime stop proof. It runs INSIDE a
  * container of the worker image that shares the host's paths and daemon
  * socket: the launch it starts is a real Sandcastle worker container, so the
  * stop contract — cooperative and forced — is proven against real containers,

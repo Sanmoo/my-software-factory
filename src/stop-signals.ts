@@ -1,5 +1,5 @@
 /**
- * The operator's stop of the factory (issue #146): a lifecycle condition, not
+ * The operator's stop of the factory: a lifecycle condition, not
  * a Cancellation, a Delivery or a new Attempt. The first Ctrl-C/SIGTERM closes
  * admissions and requests a cooperative stop of the running workers; a second
  * signal escalates to the forced stop. The cooperative window bounds only the

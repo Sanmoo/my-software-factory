@@ -50,7 +50,7 @@ import {
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
- * derives the states of all works and the pool of eligibles (ticket 07).
+ * derives the states of all works and the pool of eligibles.
  * Reads only; all writes to the tracker are commanded from here, executed
  * elsewhere. On GitHub the honest rank is null — order falls back to
  * createdAt ("eligible the longest").
@@ -66,7 +66,7 @@ export interface PoolEntry {
 /**
  * A work the tracker marks as claimed (the claim or the blocked label) but
  * whose registry dir does not exist in this workspace: the factory marked it
- * and left no reservation here (issues 93/97). The command is the operator's
+ * and left no reservation here. The command is the operator's
  * safe way back to the pool; the caveat warns that ANOTHER factory or
  * workspace may be the one holding the claim.
  */
@@ -97,7 +97,7 @@ export interface TrackerState extends Reconciliation {
   pool: PoolEntry[];
 }
 
-/** How many blocker reads may be in flight at once (issue 147): independent
+/** How many blocker reads may be in flight at once: independent
  *  round-trips, bounded so the tracker's rate budget still holds. */
 export const BLOCKER_READS_IN_FLIGHT = 8;
 
@@ -112,11 +112,11 @@ export const unmarkedReservationKey = (reservation: UnmarkedReservation): string
 
 /**
  * The single derivation that returns the pool and the reconciliation from ONE
- * open-tickets read per selection (issue 100): the neutral listing is filtered
+ * open-tickets read per selection: the neutral listing is filtered
  * by the pool's own rules and cross-referenced with the workspace's reservations
  * and the in-flight set. Reads only; never acts. Ticket facts come from the
  * ticket port; a Work is the listed ticket plus the selection's explicit
- * destination (issue 126).
+ * destination.
  */
 export async function deriveTrackerState(
   tickets: TicketTracker,
@@ -156,7 +156,7 @@ export async function deriveTrackerState(
   }
 
   // The blocker read is the only per-candidate round-trip the listing could
-  // not answer, and it is issued with bounded concurrency (issue 147).
+  // not answer, and it is issued with bounded concurrency.
   const verdicts = await mapBounded(candidates, BLOCKER_READS_IN_FLIGHT, async (entry) => ({
     entry,
     unblocked: await hasNoOpenBlocker(tickets, entry.ticket.ticket),
@@ -218,7 +218,7 @@ function compareLeftoverWorks(a: { work: WorkIdentity }, b: { work: WorkIdentity
 }
 
 /** A stable presentation order that keeps GitHub's historical repo-then-number
- *  comparison (#2 before #10) and falls back to the Work key for other sources. */
+ *  comparison and falls back to the Work key for other sources. */
 function compareWorks(a: WorkIdentity, b: WorkIdentity): number {
   if (a.ticket.provider === "github" && b.ticket.provider === "github") {
     return (
@@ -260,11 +260,11 @@ function releaseCommand(issue: OpenTicket, labels: Labels): string | null {
 
 /** The pool's label rules, over the neutral read — never in the adapter. An
  *  assigned issue is claimed by decoration; a linked PR is already in the PR
- *  channel (ticket 12). */
+ * channel. */
 function isEligible(issue: OpenTicket, labels: Labels): boolean {
   if (!issue.labels.includes(labels.ready)) return false;
   if (issue.labels.includes(labels.claimed)) return false;
-  // Blocked works listen to the issue channel, never to the pool (ticket 14).
+  // Blocked works listen to the issue channel, never to the pool.
   if (issue.labels.includes(labels.blocked)) return false;
   if (issue.assignees.length > 0) return false;
   if (issue.hasOpenPr) return false;
@@ -278,7 +278,7 @@ async function hasNoOpenBlocker(tickets: TicketTracker, ticket: OpenTicket["tick
   return blockers.value.every((blocker) => blocker.state === "closed");
 }
 
-// ---- the reserved states — the tick's full derivation (ticket 14) ----
+// ---- the reserved states — the tick's full derivation ----
 
 /** A confirmed impediment of an open PR, read from structured facts alone. */
 export interface RepairTrigger {
@@ -321,7 +321,7 @@ export type RepairPremiseReading =
   | { premise: "obsolete" }
   | { premise: "unknown" };
 
-/** The premise of a repair round read from the PR's current facts (issue 149):
+/** The premise of a repair round read from the PR's current facts:
  *  a confirmed trigger persists; only a mergeable PR with a known required set
  *  is obsolete (an unknown mergeability, or an undetermined required set,
  *  proves nothing); an unreadable read is unknown, never an invented clean
@@ -338,7 +338,7 @@ export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseRea
 /** Confirmed recovery (story 22): no conflicts and every required check
  *  approved — narrower than an obsolete premise, which also holds for pending,
  *  neutral or skipped checks. The required set must be KNOWN: the empty set a
- *  repository without CI declares is a confirmation (issue 149); null
+ * repository without CI declares is a confirmation; null
  *  (unknown) is never one. */
 function repairRecovered(facts: PrRepairFacts): boolean {
   if (facts.mergeState !== "mergeable") return false;
@@ -359,7 +359,7 @@ export type ReservedDerivation = ReservedWorkInput &
     /** The terminal state: issue closed (by linkage or by any human act). */
     | { state: "done" }
     /** PR merged but issue open: the sweep closes the issue with a short
-     * comment first — done must always be reflected on the tracker (ticket 04 Q11). */
+     * comment first — done must always be reflected on the tracker. */
     | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
     /** PR closed without merge: rejected — blocked + comment pointing at the PR. */
     | { state: "rejected"; pr: PullRequestRecord; comment: string }
@@ -368,8 +368,8 @@ export type ReservedDerivation = ReservedWorkInput &
     /**
      * Confirmed impediments of the open PR (conflicts with the current base or
      * required checks concluded with failure/timeout) reactivate the worker in
-     * ONE round (issue 107) — the repair budget permits it. Same branch, same PR.
-     * `resuming` is the unpublished attempt this round takes over (issue 112):
+     * ONE round — the repair budget permits it. Same branch, same PR.
+     * `resuming` is the unpublished attempt this round takes over:
      * its local commits, changes and interrupted operation are inspected
      * before continuing — never redone from scratch.
      */
@@ -381,7 +381,7 @@ export type ReservedDerivation = ReservedWorkInput &
         resuming: RepairAttempt | null;
       }
     /** The PR is confirmed clean (no conflicts, every required check approved):
-     *  the repair budget resets (issue 107 story 22). */
+     * the repair budget resets. */
     | { state: "repair-recovered"; pr: PullRequestRecord }
     /** A confirmed trigger after the two automatic rounds: block and ask help. */
     | {
@@ -392,7 +392,7 @@ export type ReservedDerivation = ReservedWorkInput &
         comment: string;
       }
     /**
-     * Repair stopped without publishing (issue 112): two consecutive attempts
+     * Repair stopped without publishing: two consecutive attempts
      * fell before publishing, or the remote moved to a head the attempt did not
      * produce. The block holds even with the PR open — the fall is never hidden
      * by the PR's state.
@@ -412,24 +412,24 @@ export type ReservedDerivation = ReservedWorkInput &
     | { state: "idle" }
     /** A written failure the factory did not rule yet (it died between the
      *  record and the transition): release, or block on the 2nd consecutive
-     *  failure — the ruler applies as at collection (ticket 05 Q3). */
+     * failure — the ruler applies as at collection. */
     | { state: "fall"; decision: "release"; attempt: number }
     | { state: "fall"; decision: "block"; comment: string; attempt: number }
-    /** An INTERRUPTION (issue 123): the claimed work's attempt ended without an
+    /** An INTERRUPTION: the claimed work's attempt ended without an
      *  outcome record (a dead factory/worker/container, a hard stop). It is not
      *  a failure: the same attempt is recovered within the persisted budget, or
      *  the exhausted budget pauses the work and asks the operator for help. A
      *  requested stop is persisted as itself and is never read here. */
     | { state: "interrupted"; attempt: number; recovery: RecoveryDecision }
-    /** The attempt ended by the operator's REQUESTED stop (issue #146): the same
+    /** The attempt ended by the operator's REQUESTED stop: the same
      *  attempt resumes on the next run, spending no recovery — a requested stop
      *  is a lifecycle condition, never a fall or an interruption. */
     | { state: "stop-resume"; attempt: number }
-    /** The requested stop could not be confirmed (issue #146): the previous
+    /** The requested stop could not be confirmed: the previous
      *  worker may still be alive, so the work is held with the reason until a
      *  later probe proves it gone. */
     | { state: "stop-unconfirmed"; attempt: number; because: string }
-    /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
+    /** A MODEL PROVIDER FAILURE: the attempt's stream ended in a
      *  model provider error, so it retries on its own budget instead of the
      *  interruption's — or awaits the operator when that budget is exhausted
      *  (never a block). */
@@ -440,7 +440,7 @@ export type ReservedDerivation = ReservedWorkInput &
         modelProvider: ModelProviderDecision;
       }
     /** The work waits for the operator because its interrupted attempt cannot be
-     *  continued safely (issue 119): its session is missing/unreadable, its
+     * continued safely: its session is missing/unreadable, its
      *  identity does not match, or an external effect stayed ambiguous. The
      *  pause is persisted, so no cycle re-attempts the recovery. */
     | { state: "continuity-paused"; attempt: number; pause: PauseRecord }
@@ -492,7 +492,7 @@ async function deriveReservedWork(
   const issue = await tickets.readTicket(work.ticket);
   if (!issue.known) return { work, dir, state: "unknown", because: "issue-not-found" };
 
-  // Done is the ticket's state (ticket 04): closed as completed is done —
+  // Done is the ticket's state: closed as completed is done —
   // linkage primary (the merge closes it), fallback second (below).
   if (issue.value.state === "closed") {
     if (issue.value.stateReason === "not-planned") {
@@ -517,8 +517,8 @@ async function deriveReservedWork(
         : humanCommentsForPause(comments.value, pause.pause)
       : [];
     if (issueReplies.length > 0) {
-      // A pending reconciliation outranks the human answer (issue 112, story
-      // 21): the remote may already carry this attempt's commit, so starting a
+      // A pending reconciliation outranks the human answer: the remote may
+      // already carry this attempt's commit, so starting a
       // worker would duplicate it — and the resume renews a budget the
       // reconciliation has not settled yet. The answer survives and applies as
       // soon as the next sweep gets its verdict; until then this hold is what
@@ -562,7 +562,7 @@ async function deriveReservedWork(
       }
     }
 
-    // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
+    // The repair channel: only CONFIRMED facts of the CURRENT head
     // trigger — conflicts with the current base, or required checks concluded
     // with failure/timeout. Unknown mergeability and pending/optional checks
     // never do, and the Block above already won over all of it.
@@ -572,7 +572,7 @@ async function deriveReservedWork(
     const attempt = cycle.attempt;
 
     // The attempt's own state comes before the trigger and the evidence
-    // consumption (issue 112): two consecutive falls and an unattributable
+    // consumption: two consecutive falls and an unattributable
     // remote change block the work EVEN with the PR open and even when the
     // tracker's current facts are not confirmed — the open PR never hides a
     // fall. An attempt that fell without publishing is taken over instead of
@@ -595,7 +595,7 @@ async function deriveReservedWork(
     if (trigger !== null) {
       const signature = repairSignature(work, trigger);
       // A resumption takes over the attempt whose evidence is still the one
-      // this head presents (issue 112): a fall on OLDER evidence is history,
+      // this head presents: a fall on OLDER evidence is history,
       // and the current head gets a round of its own, pinned to its own head.
       if (
         attempt !== null &&
@@ -638,7 +638,7 @@ async function deriveReservedWork(
     // approved — the only thing besides a human unblock that resets the cap.
     // The gate is "this work has a repair cycle", not "a round is charged":
     // after a fall the charged round was returned, and the fall ledger it left
-    // behind is exactly what recovery must clear (issue 112, story 25).
+    // behind is exactly what recovery must clear.
     if (repairFacts.known && hasRepairCycle(cycle) && repairRecovered(repairFacts.value)) {
       return { work, dir, state: "repair-recovered", pr };
     }
@@ -657,19 +657,19 @@ async function deriveReservedWork(
   // No PR, not blocked: a claimed work without a worker in flight ended
   // without the factory settling it (the collection never happened). The
   // registry says whether that end was an interruption or a written failure
-  // (issue 123); anything else is parked — in flight or waiting for the
+  // ; anything else is parked — in flight or waiting for the
   // human — or a released work, whose state is the pool's business.
   if (issue.value.labels.includes(labels.claimed)) {
     // A pending reconciliation holds the claim even when the PR cannot be
     // read: releasing it would hand the work back to the pool while its
-    // publication is still unknown (issue 112).
+    // publication is still unknown.
     const cycle = await readRepairCycle(dir);
     if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
       return { work, dir, state: "idle" };
     }
     const unreconciled = await deriveUnreconciledAttempt(work, dir, workspace, recovery, inFlight);
     // Only an interruption can be a model provider failure: the attempt's own
-    // stream decides it (issue 144) — a written outcome or a bare reservation
+    // stream decides it — a written outcome or a bare reservation
     // never reads the model provider ledger.
     if (unreconciled.state === "interrupted") {
       const providerFailure = await deriveModelProviderFailure(
@@ -691,8 +691,8 @@ async function deriveReservedWork(
 }
 
 /**
- * The claimed work whose attempt the factory did not settle (ticket 05 Q3,
- * derived in 14; orphans in 18; interruption vs failure in 123). The registry
+ * The claimed work whose attempt the factory did not settle — orphans and the
+ * interruption-vs-failure distinction included. The registry
  * decides which question is being asked:
  *
  *  - the last attempt wrote NO outcome record: an INTERRUPTION. Absence is not
@@ -731,7 +731,7 @@ async function deriveUnreconciledAttempt(
     return deriveUnreconciledFailure(work, dir, workspace, ledger.lastAttempt, record);
   }
 
-  // The persisted stop of THIS attempt (issue #146): it says the operator
+  // The persisted stop of THIS attempt: it says the operator
   // ended the attempt deliberately, so it is neither an interruption to charge
   // nor a failure to rule. An unconfirmed stop holds the work.
   const ledgered = await readRecoveryLedger(dir);
@@ -770,7 +770,7 @@ async function deriveUnreconciledAttempt(
   };
 }
 
-/** The persisted continuity pause of THIS attempt, if any (issue 119). A pause
+/** The persisted continuity pause of THIS attempt, if any. A pause
  *  from an older attempt is history: the current attempt's facts decide — but a
  *  record whose own attempt is unreadable waits for whichever attempt is
  *  current, because guessing one is how a pause disappears. */
@@ -794,7 +794,7 @@ async function currentPause(dir: string): Promise<{ pause: PauseRecord; attempt:
 }
 
 /**
- * The model provider failure derivation of an INTERRUPTED attempt (issue 144),
+ * The model provider failure derivation of an INTERRUPTED attempt,
  * or null when the attempt's stream carries no model provider error. One
  * retries on its own budget; exhausted, it awaits the operator — a help
  * request a human answer resumes.
@@ -841,7 +841,7 @@ interface InterruptedAttempt {
 
 /** The retomada: a human answer after the marker resumes the work on its
  *  existing branch and PR — shared by the blocked channel and the awaiting
- *  model provider (issue 144), so their shape cannot drift apart. */
+ * model provider, so their shape cannot drift apart. */
 async function resumableState(
   pullRequests: PullRequestTracker,
   work: WorkIdentity,
@@ -890,7 +890,7 @@ async function deriveUnreconciledFailure(
 /**
  * The last comment of the PR across both channels (conversation + reviews),
  * merged by createdAt. Feedback is "the LAST comment does not carry the
- * agent marker" (ticket 07 Q3, amended in 18) — login cannot separate the
+ * agent marker" — login cannot separate the
  * sides when they are the same account.
  */
 export function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null {
@@ -903,7 +903,7 @@ export function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment
 
 /**
  * The human replies that resume blocked work: all non-agent comments AFTER
- * the last comment carrying the marker (ticket 04 Q6, amended in 18). The
+ * the last comment carrying the marker. The
  * author may be the worker account. Comment order is chronological.
  */
 export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueComment[] {
@@ -919,7 +919,7 @@ export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolea
 }
 
 /**
- * The human replies that answer ONE continuity pause (issue 174): every
+ * The human replies that answer ONE continuity pause: every
  * non-agent comment after the FIRST factory comment carrying that pause's
  * marker. A later factory comment about the same pause — a re-assertion or a
  * diagnostic for a changed cause — never displaces an answer already given.
@@ -935,7 +935,7 @@ export function humanCommentsForPause(comments: IssueComment[], pause: PauseReco
   return comments.slice(request + 1).filter((comment) => !isAgentSpeech(comment.body));
 }
 
-/** The fallback-done comment: short, by decision (ticket 04 Q11). */
+/** The fallback-done comment: short, by decision. */
 export function fallbackDoneComment(): string {
   return "the PR was merged without closing this issue — the factory closes it (done)";
 }
@@ -964,7 +964,7 @@ function repairReasonsPhrase(trigger: RepairTrigger): string {
 }
 
 /**
- * The block of a Repair that stopped without publishing (issue 112): the
+ * The block of a Repair that stopped without publishing: the
  * attempt that fell, its abrupt end, the divergent record on disk and the
  * evidence paths are named by the comment; the local work is never touched.
  */
@@ -990,7 +990,7 @@ async function repairFallBlocked(
   return { work, dir, state: "repair-fall-blocked", pr, comment, attempt: attempt.attempt };
 }
 
-/** The rejection comment: points at the PR (ticket 04 Q5). */
+/** The rejection comment: points at the PR. */
 export function rejectionComment(pr: PullRequestRecord): string {
   return (
     `work rejected: PR #${pr.number} (${pr.headBranch} → ${pr.baseBranch}) was closed without merging. ` +

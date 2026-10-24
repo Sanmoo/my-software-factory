@@ -1,6 +1,6 @@
 # The retrospective is a factory job on its own lane
 
-Retrospectives over the factory's finished works (issue 141) are factory jobs
+Retrospectives over the factory's finished works are factory jobs
 in the Repair mold: the orchestrator triggers a round when the configured
 number of works have been archived since the last report (retro.threshold,
 default 5), runs it in the same Sandcastle runtime with a dedicated model

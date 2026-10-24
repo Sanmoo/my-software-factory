@@ -32,8 +32,7 @@ import {
 } from "./cli-harness.js";
 
 /**
- * End-to-end of the operator's requested stop (issue #146, extending #90's
- * contract): the signal closes new admissions at once, the started workers are
+ * End-to-end of the operator's requested stop: the signal closes new admissions at once, the started workers are
  * asked to stop — and end inside the cooperative window — and the run retains
  * its exclusivity until the stop is CONFIRMED. The in-flight worker's attempt
  * is preserved as the operator's requested stop: the next invocation resumes
@@ -105,7 +104,7 @@ function childWiring(runtimeOptions: string, configPathExpression: string): stri
   ];
 }
 
-describe("e2e: the operator's requested stop — close admissions, stop the workers, resume (issue #146)", { timeout: 60_000 }, () => {
+describe("e2e: the operator's requested stop — close admissions, stop the workers, resume", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];

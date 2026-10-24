@@ -21,7 +21,7 @@ import {
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * A failed sweep (issue 158) at the continuous run's seam, with a real
+ * A failed sweep at the continuous run's seam, with a real
  * workspace on disk: a tracker READ that GitHub does not answer — the shape of
  * the 503 that killed the factory on 2026-10-23 — ends the sweep, never the
  * factory. The failed sweep applies nothing (no launch from the stale pool, no
@@ -33,7 +33,7 @@ const REPO = "Sanmoo/my-tasks";
 const CREATED = "2026-01-01T00:00:00Z";
 const ISSUE = 7;
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
@@ -90,7 +90,7 @@ async function waitFor(condition: () => boolean, what: string, timeoutMs = 5_000
   }
 }
 
-describe("e2e: a failed sweep never kills the continuous factory (issue 158)", () => {
+describe("e2e: a failed sweep never kills the continuous factory", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 

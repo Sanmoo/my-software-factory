@@ -25,7 +25,7 @@ export interface PersistedFile<T> {
 
 /**
  * Read one record synchronously: the launch path must not yield the event
- * loop between its dir reservation and the claim (issue 98's order), and the
+ * loop between its dir reservation and the claim, and the
  * files are tiny.
  */
 export function readPersistedRecord<T>(dir: string, file: PersistedFile<T>): PersistedFacts<T> {

@@ -25,7 +25,7 @@ import { readOutcomeRecord } from "../state/outcome.js";
 const execFile = promisify(execFileCallback);
 
 /**
- * The whole second slice on REAL disk and real local git remotes (issue 125):
+ * The whole second slice on REAL disk and real local git remotes:
  * two Jira sites delivering to the SAME repository, with the same readable key
  * and the same stable ticket id, are reserved, prepared, published, read back
  * after a restart and never mixed — while a pre-existing GitHub reservation
@@ -68,7 +68,7 @@ async function gitAsync(args: string[], cwd: string): Promise<string> {
   return stdout.trim();
 }
 
-describe("e2e: distinct ticket sources, one destination repository (issue 125)", () => {
+describe("e2e: distinct ticket sources, one destination repository", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let remote: FixtureRemote;
@@ -208,7 +208,7 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     const prepared = await git.prepareWorkFor(work);
 
     // The attempt started and died with no outcome record: the interruption's
-    // own footprint on real disk (issue 123), never a fall.
+    // own footprint on real disk, never a fall.
     writeFileSync(join(dir, "log-1.jsonl"), "", "utf8");
     mkdirSync(join(dir, "sessao"), { recursive: true });
 

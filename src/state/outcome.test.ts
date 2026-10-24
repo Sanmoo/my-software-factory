@@ -98,7 +98,7 @@ describe("outcome — the factory's ruler reads only structured facts", () => {
   });
 });
 
-describe("the ruler — six classes, decided transitions (ticket 13)", () => {
+describe("the ruler — six classes, decided transitions", () => {
   describe("class 1 — outcome record says pr-open: the claim is held, awaiting the human", () => {
     test("a pr-open record with the PR confirmed open stays reserved", async () => {
       const ruling = await classifyOutcome(
@@ -136,7 +136,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  describe("class 4 — NO outcome record: an interruption, never a failure (issue 123)", () => {
+  describe("class 4 — NO outcome record: an interruption, never a failure", () => {
     test("an absent record interrupts the attempt — no release, no block, no fall counted", async () => {
       const ruling = await classifyOutcome(facts({ record: null, consecutiveFall: false }));
       assert.equal(ruling.decision, "interrupt");
@@ -162,7 +162,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  describe("issue 149 — a merged PR is delivery, never a fall", () => {
+  describe("a merged PR is delivery, never a fall", () => {
     test("a merged PR outranks a fall record and the consecutive count: done, not a block", async () => {
       const ruling = await classifyOutcome(
         facts({
@@ -236,7 +236,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     });
   });
 
-  test("a pr-open record is the attempt's own written outcome but never a failure (issue 123)", () => {
+  test("a pr-open record is the attempt's own written outcome but never a failure", () => {
     const record = { class: "pr-open" as const, attempt: 1 };
 
     assert.equal(
@@ -255,7 +255,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
     assert.equal(ruling.decision, "interrupt");
   });
 
-  describe("ticket 14 — the terminal state is read at the act too", () => {
+  describe("the terminal state is read at the act too", () => {
     test("an issue closed (done by linkage while the claim was held) ends the work: archive, no release, no fall", async () => {
       // The human merged while a feedback round was still in flight: the issue
       // is terminal — the claim ends, artifacts are archived, nothing falls.
@@ -305,7 +305,7 @@ describe("the ruler — six classes, decided transitions (ticket 13)", () => {
   });
 });
 
-describe("issue 103 — the outcome record belongs to an attempt; the comment points at the evidence", () => {
+describe("the outcome record belongs to an attempt; the comment points at the evidence", () => {
   let root: string;
   let layout: WorkspaceLayout;
   const ref = { repo: "Sanmoo/my-tasks", number: 91 };

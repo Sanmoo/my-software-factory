@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 
 /**
- * Config of the factory (msf.yaml), verbatim shape from ticket 06:
+ * Config of the factory (msf.yaml):
  *
  *   worker-gh-account: bot-do-samuca
  *   worker-model: provider/model-id
@@ -34,7 +34,7 @@ export const DEFAULT_LABELS: Labels = {
 };
 
 /**
- * The recovery budget (issue 123): an interruption (an attempt that ended
+ * The recovery budget: an interruption (an attempt that ended
  * with no outcome record) is not a failure, so it never consumes an attempt —
  * it spends this finite, persisted allowance instead. Values fixed by the
  * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
@@ -52,12 +52,12 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
 };
 
 /**
- * The model provider's failure budget (issue 144): the worker model's provider
+ * The model provider's failure budget: the worker model's provider
  * is the inference service, never the ticket provider (GLOSSARY: Model
  * provider). An attempt whose stream ended in a model provider error
  * (`stopReason: error` + the model provider's `errorMessage`) is not an interruption
  * of the agent, so it retries on this dedicated schedule
- * instead of spending the interruption budget of issue 123. The waits are
+ * instead of spending the interruption budget. The waits are
  * deliberately longer than the recovery backoff: they must cross a short
  * upstream outage, and every retry also carries the session's own internal
  * retries. Exhausting it parks the work "awaiting model provider" and asks
@@ -76,7 +76,7 @@ export const DEFAULT_MODEL_PROVIDER_BUDGET: ModelProviderBudget = {
 };
 
 /**
- * The liveness observation of the factory (issue 118): while Docker does not
+ * The liveness observation of the factory: while Docker does not
  * answer, the factory cannot tell a live worker from a dead one, so it stops
  * launching instead of guessing. The warning threshold is how long the
  * unavailability must last before the operator is told — the diagnosis starts
@@ -92,7 +92,7 @@ export const DEFAULT_LIVENESS_POLICY: LivenessPolicy = {
 };
 
 /**
- * The retrospective (issue 141, ADR 0006): a factory job triggered by the
+ * The retrospective (ADR 0006): a factory job triggered by the
  * orchestrator once `threshold` works were archived since the last report.
  * The model is optional and defaults to the worker model; the language governs
  * the report and every filed item (one language per round), and
@@ -145,11 +145,11 @@ export interface Config {
   workerAuthFile: string | null;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
-  /** The model provider's failure budget: its own retries and backoff (issue 144). */
+  /** The model provider's failure budget: its own retries and backoff. */
   modelProvider: ModelProviderBudget;
-  /** How the operational cycle reads Docker's silence (issue 118). */
+  /** How the operational cycle reads Docker's silence. */
   liveness: LivenessPolicy;
-  /** The retrospective job's trigger, model, language and destinations (issue 141). */
+  /** The retrospective job's trigger, model, language and destinations. */
   retro: RetroConfig;
   notifications: boolean;
   /** Where the config was loaded from. */
@@ -363,7 +363,7 @@ function optionalLiveness(doc: Record<string, unknown>): LivenessPolicy {
 }
 
 /**
- * The `retro:` block (issue 141). Every field defaults except the destination:
+ * The `retro:` block. Every field defaults except the destination:
  * enabling the job without `factory-items-destination` is a boot failure, so a
  * round can never run with nowhere to file its factory-axis items.
  */

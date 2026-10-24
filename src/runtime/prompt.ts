@@ -79,7 +79,7 @@ function outcomeSchemaExample(request: WorkRequest): string {
 }
 
 /**
- * Where the round's review reports live (ticket 85): the Standards and Spec
+ * Where the round's review reports live: the Standards and Spec
  * reports of each attempt, distinguishable across attempts, referenced in
  * the outcome record's "paths". Relative to the work dir.
  */
@@ -165,7 +165,7 @@ function implementationProcedure(request: WorkRequest, layout: AgentLayout): str
 }
 
 /**
- * The repair procedure (issue 107): the factory reactivated the work because
+ * The repair procedure: the factory reactivated the work because
  * the open PR has confirmed impediments on its CURRENT head. Conflicts are
  * resolved first by rebasing onto the PR's current base; the still-relevant
  * check failures are investigated after. The force-with-lease is pinned to
@@ -427,7 +427,7 @@ export const WORKER_OUTCOME_CLASSES: readonly OutcomeClass[] = [
 ];
 
 /**
- * The retrospective prompt (issue 141): the factory-owned instructions, the
+ * The retrospective prompt: the factory-owned instructions, the
  * window's evidence paths, the factual summary and the two artifact paths the
  * round must write. It carries no worker obligation — the round is not a Work:
  * it files nothing into the tracker beyond `needs-triage` issues, writes no

@@ -10,7 +10,7 @@ import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-ar
 import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 
 /**
- * `msf status` at the CLI seam over the REAL adapter (issue 147): the spawned
+ * `msf status` at the CLI seam over the REAL adapter: the spawned
  * command reads the tracker through a hermetic `gh` whose REST answers the
  * suite declares, so the complete report — derivation on demand, registry scan,
  * repository state, caps, reconciliation and archive — is exercised without

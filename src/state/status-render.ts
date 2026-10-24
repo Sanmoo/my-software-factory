@@ -17,7 +17,7 @@ import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
 /**
- * The rendering half of `msf status` (issue 102): the human view, one line per
+ * The rendering half of `msf status` : the human view, one line per
  * answer in the order a human asks for them, with every list capped and an
  * omission marker past the cap. Pure view → string: no reads, no writes.
  */
@@ -36,10 +36,10 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt ended by a model provider failure (issue 144), by the
-  // operator's requested stop (issue 146) or by a continuity pause (issue 119)
-  // is NOT an interruption: the section that owns the cause already names it,
-  // so it is not repeated under the liveness/interruption wording.
+  // A work whose attempt ended by a model provider failure, by the operator's
+  // requested stop or by a continuity pause is NOT an interruption: the section
+  // that owns the cause already names it, so it is not repeated under the
+  // liveness/interruption wording.
   const explainedKeys = new Set([
     ...view.registry.modelProvider.map((entry) => entry.key),
     ...view.registry.continuityPauses.map((entry) => entry.key),
@@ -61,7 +61,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // Multiplicity is a fact, not a rendering accident (issue 118): two
+  // Multiplicity is a fact, not a rendering accident: two
   // containers of one work are two rows above AND named here, because the
   // operator must decide — the factory neither chooses an owner nor ends one.
   lines.push(
@@ -114,7 +114,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // The model provider's own budget (issue 144): a work whose last attempt
+  // The model provider's own budget: a work whose last attempt
   // ended by a model provider failure is named here — retrying on its own
   // backoff, or awaiting the operator's help.
   lines.push(
@@ -125,7 +125,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // A continuity pause is neither a fall nor Docker's silence (issue 119): the
+  // A continuity pause is neither a fall nor Docker's silence: the
   // attempt cannot be reopened safely, the work waits for the operator, and
   // naming the reason here is what tells it apart from an ordinary reservation.
   lines.push(
@@ -158,7 +158,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
-  // The retrospective job (issue 141): the last report that covered a window
+  // The retrospective job: the last report that covered a window
   // IS the marker of the next one, and a round in flight is visible even with
   // every slot busy — the lane is outside them.
   if (view.retro !== null) {
@@ -252,7 +252,7 @@ function renderOrphaned(orphan: OrphanedAttempt): string {
   return renderInterrupted(orphan.key, orphan.attempt, orphan.recordedAttempt);
 }
 
-/** The interrupted attempt (issues 112/123): the current one named, the
+/** The interrupted attempt: the current one named, the
  *  historical record disowned — a human must not read attempt 1's outcome as
  *  attempt 2's result. */
 function renderInterrupted(key: string, attempt: number, recordedAttempt: number | null): string {
@@ -312,8 +312,8 @@ function collapseWhitespace(message: string): string {
 
 /**
  * One repair cycle: the two ledgers, the attempt's publication, the local work
- * it preserved and the evidence the operator opens by hand (issue 112, story
- * 32 — paths always shown, workspace-relative, whatever their presence).
+ * it preserved and the evidence the operator opens by hand: paths always
+ * shown, workspace-relative, whatever their presence.
  */
 function renderRepair(entry: RepairViewEntry): string {
   const { cycle, evidence } = entry;

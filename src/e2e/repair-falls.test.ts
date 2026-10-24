@@ -36,7 +36,7 @@ import { readRecoveryLedger } from "../pool/recovery.js";
 const execFile = promisify(execFileCallback);
 
 /**
- * End-to-end of issue 112: a Repair attempt that ends WITHOUT publishing must
+ * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing must
  * not burn the round, must stay visible, and must be resumed automatically on
  * the same branch and PR while the remote is still where it was observed. The
  * two ledgers are covered here — the DELIVERED rounds (two before the block)
@@ -91,7 +91,7 @@ class ScenarioGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: a repair attempt that fell before publishing (issue 112)", () => {
+describe("e2e: a repair attempt that fell before publishing", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let logs: string[];
@@ -662,7 +662,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const pr = await seedFirstAttempt(tracker, runtime, deps, 115);
     // The attempt's publication is unknown and the tracker's repair facts are
     // unreadable; a human PR comment is waiting. No worker may start while the
-    // publication is uncertain (issue 112, story 21).
+    // publication is uncertain.
     writeFileSync(
       join(workDir(layout, REPO, 115), REPAIR_FILENAME),
       `${JSON.stringify({
@@ -949,7 +949,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked));
   });
 
-  // ---- issue 149: the impediment the round addressed may vanish mid-round ----
+  // ---- the impediment the round addressed may vanish mid-round ----
 
   test("a round that ends without publishing after the human resolved the conflict returns the round — no block, no help", async () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
@@ -1295,7 +1295,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
   });
 });
 
-describe("e2e: the resumption over REAL git preserves the work (issue 112)", () => {
+describe("e2e: the resumption over REAL git preserves the work", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let reposDir: string;
