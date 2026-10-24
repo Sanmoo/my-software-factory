@@ -132,7 +132,7 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   capacityExcess,
-  carriedKeys,
+  carriedWorkKeys,
   duplicateWorkers,
   occupiedSlots,
   probeLiveness,
@@ -1130,7 +1130,7 @@ export class SweepEngine {
    *  launch and capacity decisions never ask Docker a second question. */
   private get carriedKeys(): ReadonlySet<string> {
     if (this.liveness.state !== "known") return EMPTY_KEYS;
-    return carriedKeys(this.liveness);
+    return carriedWorkKeys(this.liveness);
   }
 
   /** Record the class an action/event lands a work in (`null` = it leaves). */
@@ -1596,7 +1596,7 @@ export class SweepEngine {
    */
   private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
     const { workers, observation } = await this.stopWorkers(entries);
-    const live = carriedKeys(observation);
+    const live = carriedWorkKeys(observation);
     for (const entry of entries) {
       const key = workKeyOf(entry.work);
       if (this.inFlight.has(key) || live.has(key)) continue;

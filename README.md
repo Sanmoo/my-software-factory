@@ -38,7 +38,7 @@ repos:
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
 # retro:                          # the retrospective job (issue 141, ADR 0006)
-#   enabled: false                # automatic rounds at sweep time
+#   enabled: false                # the whole job: automatic rounds and msf retro
 #   threshold: 5                  # archived works since the last report
 #   model: anthropic/claude-opus-4.5  # dedicated model; defaults to worker-model
 #   language: en                  # the report and every filed item, one per round

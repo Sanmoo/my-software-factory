@@ -15,7 +15,12 @@ import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { appendOperationalLog, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
-import { carriedKeys, probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+import {
+  carriedWorkKeys,
+  probeLiveness,
+  workspaceLivenessProbe,
+  type LivenessProbe,
+} from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -359,7 +364,7 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const finished = await collectFinishedWorks(workspace, carriedKeys(observation));
+    const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),

@@ -463,7 +463,6 @@ export function buildRetroPrompt(request: RetroRequest): string {
     `- report (dated Markdown; its file name is what every filed issue cites): \`${request.reportContainerPath}\``,
     `- result record (JSON, the machine contract): \`${request.resultContainerPath}\``,
     `- factory-axis items destination: \`${request.factoryItemsDestination}\``,
-    `- target-repo items: the repository of the work they came from`,
     `- the factory's operational log, when mounted: \`${RETRO_MOUNT_PATHS.operationalLog}\``,
     ``,
     `## Completion signal`,
