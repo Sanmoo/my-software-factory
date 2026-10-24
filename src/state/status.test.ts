@@ -961,9 +961,9 @@ describe("status — derivation on demand + local registry scan", () => {
   });
 });
 
-// ---- Jira candidates: read-only, native Rank order, per-source unknown (issue 128) ----
+// ---- Jira candidates: read-only, native Rank order, per-selection unknown (issue 128) ----
 
-describe("status: Jira candidates are read-only and each source stands alone", () => {
+describe("status: Jira candidates are read-only and each selection stands alone", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -1015,7 +1015,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     };
   }
 
-  test("candidates keep native Rank order; a failing source is unknown while a healthy one lists", async () => {
+  test("candidates keep native Rank order; a failing selection is unknown while a healthy one lists", async () => {
     const healthy = new JiraSim();
     healthy.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: null });
     healthy.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout" });

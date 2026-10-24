@@ -103,11 +103,11 @@ export function jiraSource(site: string): TicketSource {
  *  and the explicit GitHub destination. Two queries may share a site (one
  *  Source, one account); each entry stays its own selection, so no destination
  *  is guessed. */
-export function jiraSelectionOf(source: JiraSelectionConfig): TicketSelection {
+export function jiraSelectionOf(entry: JiraSelectionConfig): TicketSelection {
   return {
-    source: jiraSource(source.site),
-    destination: githubRepository(source.destination),
-    jql: source.jql,
+    source: jiraSource(entry.site),
+    destination: githubRepository(entry.destination),
+    jql: entry.jql,
   };
 }
 

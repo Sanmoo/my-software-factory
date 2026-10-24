@@ -282,9 +282,9 @@ async function executeRun(
   runtimeName: string,
   stop: StopSignals,
 ): Promise<StopReport | null> {
-  // Jira-backed execution is a later slice: a configured Jira source is
+  // Jira-backed execution is a later slice: a configured Jira selection is
   // READ-ONLY in this release. Refuse before the workspace, the keyring read,
-  // any claim or any launch — a sweep that silently ignored its Jira source
+  // any claim or any launch — a sweep that silently ignored its Jira selections
   // would pretend the configured work was handled.
   assertNoJiraExecution(config);
   if (runtimeName === "sandcastle") {
