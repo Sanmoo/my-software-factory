@@ -1,7 +1,7 @@
 # my-software-factory (msf-v2)
 
 The minimal software factory: one headless orchestrator (`msf`) that drains a
-pool of works (issues) from target repos and turns each into a PR from a
+pool of works (tickets) from target repos and turns each into a PR from a
 dedicated bot account. The human is the gate — the factory never merges.
 
 ## Requirements

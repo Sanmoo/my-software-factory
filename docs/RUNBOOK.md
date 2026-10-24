@@ -201,10 +201,9 @@ container and a **duplicate workers** line — the decision is yours.
 occurrence needs you: an open PR to review, a help request or a block, an
 intervention on a work (duplicate workers, a silent survivor), or the factory's
 own Docker warning, which names no work. One notice per occurrence — never a
-reminder — and `msf status` never notifies. A work notice names its ticket
-(GitHub Issues keep the `owner/repo#n` spelling; another source shows its
-readable key and site), the reason, and the PR (review) or ticket (help,
-intervention) address when the source exposes one.
+reminder — and `msf status` never notifies. A work notice names its ticket as
+status does, the reason, and the PR (review) or ticket (help, intervention)
+address when the source exposes one.
 
 On by default; disable with `notifications: false` in `msf.yaml`. Needs a
 Linux desktop session with a notification daemon, and the factory running

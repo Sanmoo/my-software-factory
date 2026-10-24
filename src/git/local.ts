@@ -8,7 +8,7 @@ import {
   branchOfWork,
   repoCloneDirFor,
   workerWorktreePath,
-  type ExpandedGitWork,
+  type GitWork,
   type LocalWorkFacts,
   type PreparedWork,
   type WorkOperation,
@@ -44,7 +44,7 @@ export interface LocalGitWorkOptions {
 const defaultRemoteUrl = (repo: string, site: string): string => `https://${site}/${repo}.git`;
 
 /** The expanded git host side over the real git CLI on the local disk. */
-export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
+export function localGitWork(options: LocalGitWorkOptions): GitWork {
   const remoteUrl = options.remoteUrl ?? defaultRemoteUrl;
 
   async function git(cwd: string, args: string[]): Promise<string> {

@@ -2,7 +2,7 @@ import type { Config } from "./config.js";
 import type { IssueComment } from "./tracker/port.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
-import type { ExpandedGitWork, LocalWorkFacts } from "./git/port.js";
+import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import {
   helpNotice,
   reviewNotice,
@@ -162,7 +162,7 @@ export interface LoopDeps {
   pullRequests: PullRequestTracker;
   runtime: WorkerRuntime;
   /** The git host side: one clone per target repo, work branch per work (ticket 15). */
-  git: ExpandedGitWork;
+  git: GitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
   log?: (message: string) => void;
@@ -262,7 +262,7 @@ export function stopConfirmed(report: StopReport): boolean {
 
 /** What the engine tracks of one launch while it may still be carrying a worker. */
 interface InFlightLaunch {
-  /** The Work as the reservation names it — its origin is never re-derived. */
+  /** The Work as the reservation names it — its source is never re-derived. */
   work: WorkIdentity;
   /** The work's registry dir — where the stop evidence is persisted. */
   dir: string;
@@ -578,7 +578,7 @@ export class SweepEngine {
     // substitute a worker or end its resources reads them, and the survivor
     // ledger keeps the executions that outlived a previous factory process.
     await this.observeLiveness();
-    // WHO is reserved is what the reservation on disk says — a work's origin is
+    // WHO is reserved is what the reservation on disk says — a work's source is
     // never reconstructed from the current selection configuration (issue 126).
     const reservations = await scanReservations(workspace);
     // The guard is about the SOURCES the composed adapter serves, never about
@@ -2878,7 +2878,7 @@ interface RepairLaunchContext {
 async function launchMaterial(
   tickets: TicketTracker,
   pullRequests: PullRequestTracker,
-  git: ExpandedGitWork,
+  git: GitWork,
   launchable: Launchable,
   repair?: RepairLaunchContext,
 ): Promise<WorkerMaterial> {

@@ -4,6 +4,7 @@ import { join, relative, sep } from "node:path";
 
 import { WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import {
+  GITHUB_SITE,
   isRepositoryIdentity,
   isTicketIdentity,
   workIdentity,
@@ -173,13 +174,13 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
           key,
           dir,
           anchor,
-          work: legacyWorkOf(anchor),
+          work: workOfUnrecordedAnchor(anchor),
           reservation: { state: "unreadable", reason: mismatch },
         });
       }
       continue;
     }
-    entries.push({ key, dir, anchor, work: legacyWorkOf(anchor), reservation });
+    entries.push({ key, dir, anchor, work: workOfUnrecordedAnchor(anchor), reservation });
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
@@ -226,12 +227,14 @@ export async function workDirCandidates(
   return dirs;
 }
 
-/** A GitHub dir is the issue of its destination repo itself: the legacy key is
- *  an authoritative identity — the one rule both the scan and any other
- *  anchor-to-Work read share. Any other provider's key carries no readable
- *  ticket key, so no Work is invented without the persisted record. */
-export function legacyWorkOf(anchor: WorkAnchor): WorkIdentity | null {
-  return anchor.provider === "github" ? workOfAnchor(anchor, `#${anchor.stableId}`) : null;
+/** A github.com dir is the issue of its destination repo itself, so its key is
+ *  an authoritative identity. Any other key — another provider, or another
+ *  GitHub site whose destination site the key cannot carry — names no Work on
+ *  its own: the persisted record is required, never a guess. */
+export function workOfUnrecordedAnchor(anchor: WorkAnchor): WorkIdentity | null {
+  return anchor.provider === "github" && anchor.site === GITHUB_SITE
+    ? workOfAnchor(anchor, `#${anchor.stableId}`)
+    : null;
 }
 
 /** A reservation whose Work the disk names: the scan above, narrowed. */

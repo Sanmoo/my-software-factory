@@ -18,7 +18,7 @@ import { acquireRunLock } from "./run-lock.js";
 import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
-import type { ExpandedGitWork } from "./git/port.js";
+import type { GitWork } from "./git/port.js";
 import { renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
@@ -48,7 +48,7 @@ export interface WiredSeams {
   /** The worker runtime; default is the real Sandcastle runtime. */
   runtime?: WorkerRuntime;
   /** The git host; default is the real local git (clone/fetch/branch). */
-  git?: ExpandedGitWork;
+  git?: GitWork;
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
   /** The liveness probe; default is the real read-only Docker probe over the

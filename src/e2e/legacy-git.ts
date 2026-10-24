@@ -1,4 +1,4 @@
-import type { ExpandedGitWork, GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
+import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { IssueRef } from "../tracker/port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
@@ -19,7 +19,7 @@ export interface LegacyGitWork {
   inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts>;
 }
 
-export function expandedGitWorkOf(legacy: LegacyGitWork): ExpandedGitWork {
+export function expandedGitWorkOf(legacy: LegacyGitWork): GitWork {
   /** The ref of the Work's ticket, refused unless it names the same repository
    *  the double must operate on: a silent misroute would test the wrong repo. */
   const refOf = (work: WorkIdentity): IssueRef => {
