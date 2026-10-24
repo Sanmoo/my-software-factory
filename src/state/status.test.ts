@@ -1303,7 +1303,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     sim.pageSize = 2;
     // The site's Rank order deliberately disagrees with both creation age and
     // Jira Priority; neither may reorder the candidates.
-    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend"], created: "2026-06-01T00:00:00.000+0000", priority: "Low" });
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend", "shared"], created: "2026-06-01T00:00:00.000+0000", priority: "Low" });
     sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend first", labels: ["backend"], created: "2026-05-01T00:00:00.000+0000", priority: "Highest" });
     sim.addIssue({ id: "10003", key: "ABC-3", summary: "Touches both layers", labels: ["frontend", "backend"], created: "2026-04-01T00:00:00.000+0000", priority: "Medium", assignee: null });
     sim.addIssue({ id: "10004", key: "ABC-4", summary: "Frontend second", labels: ["frontend"], created: "2026-03-01T00:00:00.000+0000", priority: "Lowest" });
@@ -1311,6 +1311,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     sim.select = selectBy({
       "project = ABC AND labels = frontend": (issue) => issue.labels.includes("frontend"),
       "project = ABC AND labels = backend": (issue) => issue.labels.includes("backend"),
+      "project = ABC AND labels = shared": (issue) => issue.labels.includes("shared"),
     });
 
     const adapter = jiraAdapter(sim);
@@ -1325,6 +1326,10 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
           },
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
+            tickets: adapter,
+          },
+          {
+            selection: selection("acme.atlassian.net", "project = ABC AND labels = shared", "Sanmoo/frontend"),
             tickets: adapter,
           },
         ],
@@ -1358,7 +1363,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     const text = renderStatus(view);
     assert.match(
       text,
-      /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: 4 candidates, 1 held as ambiguous$/m,
+      /acme\.atlassian\.net \(3 selections\) → Sanmoo\/backend, Sanmoo\/frontend: 4 candidates, 1 held as ambiguous$/m,
     );
     const frontendFirst = text.indexOf("1. ABC-1");
     const backendFirst = text.indexOf("2. ABC-2");
@@ -1367,6 +1372,11 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       text,
       /selection \(project = ABC AND labels = backend\) → Sanmoo\/backend: 3 selected, 1 held as ambiguous/,
       "each readable selection's contribution is visible in the report",
+    );
+    assert.equal(
+      (text.match(/ABC-1/g) ?? []).length,
+      1,
+      "a ticket two same-destination selections share is deduplicated in the same integrated read",
     );
     assert.match(
       text,
@@ -1403,7 +1413,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held ticket never reads as an empty JQL result");
   });
 
-  test("an unreadable sibling leaves a readable selection's candidates unverified, even for one destination", async () => {
+  test("any unreadable selection holds the whole site, so no candidate keeps a guessed destination", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One", labels: ["abc"] });
     sim.select = selectBy({ "labels = abc": (issue) => issue.labels.includes("abc") });
@@ -1437,13 +1447,19 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       NO_WORKERS,
     );
     const [site] = view.jira;
-    if (site?.state !== "known") assert.fail("the readable selection still lists");
-    assert.equal(site.candidates[0]?.unverified, true, "the unreadable sibling may hide an interleaved candidate");
+    if (site?.state !== "unknown") assert.fail("the unreadable sibling leaves the site's routing unknown");
+    assert.match(site.reason, /no candidate's destination is exclusive/);
+    assert.deepEqual(site.candidates, [], "a readable selection alone cannot prove the ticket's destination");
+    assert.deepEqual(
+      site.selections.map((entry) => entry.state),
+      ["known", "unknown"],
+      "the readable selection is not mistaken for the whole site",
+    );
     const text = renderStatus(view);
 
-    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: 1 candidate/);
-    assert.match(text, /1\. ABC-1 .*\(unverified: another selection on this site is unknown\)/);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: unknown \(/);
     assert.match(text, /selection \(project = XYZ\) → Sanmoo\/a: unknown \(/);
+    assert.doesNotMatch(text, /^    \d+\. ABC-1 /m, "no candidate is offered while a destination is unknown");
   });
 
   test("a site whose ordered union cannot be read is unknown, never its selections concatenated", async () => {
