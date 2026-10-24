@@ -134,6 +134,7 @@ export interface DockerProbeOptions {
   worksRoot: string;
   /** The bound of the whole query; defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
   timeoutMs?: number;
+  /** The Docker command runner; production spawns the CLI, tests inject a fake. */
   run?: DockerRunner;
 }
 
@@ -143,12 +144,6 @@ export interface DockerProbeOptions {
  * whatever image it was launched from — never by the configured worker image,
  * whose reference Docker resolves to whichever image it points at NOW; `docker
  * inspect` supplies the start time and the authoritative mounts.
- *
- * A container whose mounts the listing did not render is inspected too: the
- * listing never concludes an absence it never saw, so no attempt is presumed
- * stopped on the strength of a mounts column. An empty listing needs no such
- * care — it is not image-filtered, so it hides no worker and stays a decided
- * zero (issue 160).
  */
 export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
   const run = options.run ?? runDocker;
@@ -156,7 +151,7 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     const listing = await run(["ps", "--no-trunc", "--format", "{{.ID}} {{.Mounts}}"], timeoutMs);
     const screened = screenWorkerContainers(listing, options.worksRoot);
-    const inspectable = [...screened.candidates, ...screened.unreadable];
+    const inspectable = [...screened.candidates, ...screened.needsInspect];
     if (inspectable.length === 0) return [];
     return parseWorkerContainers(
       inspectable.join("\n"),
@@ -168,36 +163,34 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
 }
 
 /** The screen's reading of a `docker ps` listing: the containers the mounts
- *  column places under this workspace's works root, and the ones it left
- *  without a usable mounts rendering (issue 160). */
+ *  column places under this workspace's works root, and the ones only the
+ *  inspect can place (issue 160). */
 export interface ScreenedListing {
-  /** Containers whose rendered mounts name a path under the works root. */
   candidates: string[];
-  /** Containers whose mounts column rendered no source at all, or was
-   *  truncated: only `docker inspect` can say what they bind. */
-  unreadable: string[];
+  /** No mount column rendered, or a truncated one: `docker inspect` decides. */
+  needsInspect: string[];
 }
 
 /**
  * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"` listing
- * (issue 160): the containers binding a path under this workspace's works root,
- * and those whose mounts the listing could not show. Nothing is concluded from
- * the column alone — `docker inspect` decides every candidate's identity; the
- * column only spares the inspect of the containers it already places elsewhere.
- * It is searched whole — not split on its comma separator — so a source
- * containing a comma stays visible. Docker marks a truncated column with `…`.
+ * (issue 160). A row whose rendered mounts name a path under the works root is
+ * inspected, as is a row whose mounts column rendered nothing usable — a column
+ * that never showed the paths cannot show their absence. A row whose rendered
+ * mounts place it elsewhere is dropped without an inspect. The column is
+ * searched whole, not split on its comma separator, so a source containing a
+ * comma stays visible; Docker marks a truncated column with `…`.
  */
 export function screenWorkerContainers(psListing: string, worksRoot: string): ScreenedListing {
   const underRoot = worksRoot.endsWith(sep) ? worksRoot : `${worksRoot}${sep}`;
   const candidates: string[] = [];
-  const unreadable: string[] = [];
+  const needsInspect: string[] = [];
   for (const line of psListing.split("\n")) {
     const listed = listedContainer(line);
     if (listed === null) continue;
     if (listed.mounts.includes(underRoot)) candidates.push(listed.id);
-    else if (listed.mounts === "" || listed.mounts.includes("…")) unreadable.push(listed.id);
+    else if (listed.mounts === "" || listed.mounts.includes("…")) needsInspect.push(listed.id);
   }
-  return { candidates, unreadable };
+  return { candidates, needsInspect };
 }
 
 /** One row of the listing: the container's ID and the mount sources Docker
@@ -210,7 +203,7 @@ function listedContainer(line: string): { id: string; mounts: string } | null {
   return { id: trimmed.slice(0, spaceAt), mounts: trimmed.slice(spaceAt + 1).trim() };
 }
 
-/** The probe `msf status` and the operational cycle share for one workspace. */
+/** The production probe for one workspace's layout. */
 export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
   return dockerWorkerProbe({ worksRoot: layout.works });
 }
