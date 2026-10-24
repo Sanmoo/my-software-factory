@@ -1704,18 +1704,18 @@ export class SweepEngine {
     } catch (refundError) {
       refundFailure = describeError(refundError);
     }
+    const staysConsumed = (because: string) =>
+      `the recovery granted to this relaunch could not be refunded (${because}) and stays consumed`;
     let note = "no recovery was granted to this launch";
     if (refunded) note = "the recovery granted to this relaunch is refunded";
-    else if (refundFailure !== null) {
-      note = `the recovery granted to this relaunch could not be refunded (${refundFailure}) and stays consumed`;
-    } else if (grant !== null) {
+    else if (refundFailure !== null) note = staysConsumed(refundFailure);
+    else if (grant !== null) {
       // The ledger answered no: say whether the grant is still consumed
       // instead of claiming a refund that never landed.
-      const stillGranted = (await readRecoveryLedger(entry.dir)).events.some(
+      note = (await readRecoveryLedger(entry.dir)).events.some(
         (event) => event.index === grant && event.attempt === attempt,
-      );
-      note = stillGranted
-        ? "the recovery granted to this relaunch could not be refunded and stays consumed"
+      )
+        ? staysConsumed("the ledger did not return it")
         : "the recovery granted to this relaunch was already refunded";
     }
     this.log(
@@ -1742,9 +1742,18 @@ export class SweepEngine {
     const stop = entry.consumedStop ?? null;
     entry.consumedStop = null;
     if (stop?.kind !== "stop-requested" || stop.attempt !== attempt) return;
-    if (ownWrittenOutcome(await readOutcomeRecord(entry.dir), attempt) !== null) return;
-    if ((await readRecoveryLedger(entry.dir)).lastStop !== null) return;
-    await recordStopRequest(entry.dir, attempt);
+    try {
+      if (ownWrittenOutcome(await readOutcomeRecord(entry.dir), attempt) !== null) return;
+      if ((await readRecoveryLedger(entry.dir)).lastStop !== null) return;
+      await recordStopRequest(entry.dir, attempt);
+    } catch (error) {
+      // The launch's own failure is what the operator must read; a stop record
+      // that could not be re-written is said here, never in place of it.
+      this.log(
+        `the requested stop of ${workKeyOf(entry.work)} could not be re-recorded after a failed launch ` +
+          `(${describeError(error)}) — the next invocation charges the attempt for that interruption`,
+      );
+    }
   }
 
   /** The attempt the pending launch would use, read from the registry. A work

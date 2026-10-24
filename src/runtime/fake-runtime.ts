@@ -127,6 +127,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
         // Any other failure may have left a worker: the session is born before
         // the launch rejects.
         this.startSession(request);
+        await this.holdFor(request, index);
         throw rejection;
       }
       const work = Promise.resolve(this.holdFor(request, index)).then(() => "work");

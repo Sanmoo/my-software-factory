@@ -101,9 +101,8 @@ export interface SessionResult {
  */
 export class LaunchPreconditionError extends Error {
   constructor(message: string, cause?: unknown) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "LaunchPreconditionError";
-    if (cause !== undefined) this.cause = cause;
   }
 }
 
