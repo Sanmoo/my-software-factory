@@ -88,22 +88,22 @@ describe("the clone a retrospective anchors in (issue 141)", () => {
     assert.equal(retroAnchorDir(join(reposDir, "absent"), ["Sanmoo/my-tasks"]), null);
   });
 
-  test("a repos dir the host cannot read is the host's error, never a silent 'no clone'", (t) => {
-    // An owner that can read anything (root, CAP_DAC_OVERRIDE) cannot produce
-    // the denial this test needs: the host's privilege model decides.
-    if (process.getuid?.() === 0) {
-      t.skip("running as root: no directory is unreadable");
-      return;
-    }
-    const unreadable = join(reposDir, "unreadable");
-    mkdirSync(unreadable);
-    chmodSync(unreadable, 0o000);
-    try {
-      assert.throws(() => retroAnchorDir(unreadable, ["Sanmoo/my-tasks"]), /EACCES|EPERM/);
-    } finally {
-      chmodSync(unreadable, 0o755);
-    }
-  });
+  // An owner that is root can read anything, so the denial this test needs is
+  // impossible: the host's privilege model decides, and the skip says so.
+  test(
+    "a repos dir the host cannot read is the host's error, never a silent 'no clone'",
+    { skip: process.getuid?.() === 0 ? "running as root: no directory is unreadable" : false },
+    () => {
+      const unreadable = join(reposDir, "unreadable");
+      mkdirSync(unreadable);
+      chmodSync(unreadable, 0o000);
+      try {
+        assert.throws(() => retroAnchorDir(unreadable, ["Sanmoo/my-tasks"]), /EACCES|EPERM/);
+      } finally {
+        chmodSync(unreadable, 0o755);
+      }
+    },
+  );
 });
 
 /** The daemon socket the launch binds (ADR 0003) — pinned like the token:
