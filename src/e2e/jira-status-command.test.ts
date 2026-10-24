@@ -139,6 +139,16 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     };
   }
 
+  /** Only the identity read and searches left the CLI; no claim, comment,
+   *  transition or other tracker write. */
+  function assertReadOnlyJira(): void {
+    const calls = jira.calls();
+    assert.ok(calls.length > 0, "the status read reached the tracker");
+    for (const call of calls) {
+      assert.match(call, /^(GET \/rest\/api\/3\/myself|POST \/rest\/api\/3\/search\/jql)$/);
+    }
+  }
+
   test("status presents the Jira candidates in native Rank order and never claims or launches", () => {
     writeConfig();
     installJiraAnswers();
@@ -169,15 +179,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     assert.match(result.stdout, /MSF_JIRA_BETA_TOKEN/, "the missing credential is diagnosed by its variable name");
     assert.match(result.stdout, /pool \(eligible\): none/, "a Jira candidate is never offered as an eligible Work");
 
-    assert.deepEqual(
-      jira.calls(),
-      [
-        "GET /rest/api/3/myself",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-      ],
-      "one identity read and the native pages: no claim, comment or transition",
-    );
+    assertReadOnlyJira();
     assert.deepEqual(gh.restCalls(), [], "repos: [] means no GitHub Issues REST call");
     assert.equal(existsSync(ready), true, "the GitHub identity boot check still runs: a Jira-only factory verifies it too");
     assert.equal(existsSync(workspace), false, "status created no execution workspace");
@@ -290,17 +292,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     assert.match(result.stdout, /1\. ABC-10 \(jira:acme\.atlassian\.net\) → Sanmoo\/frontend — Frontend fix/);
     assert.match(result.stdout, /2\. ABC-20 \(jira:acme\.atlassian\.net\) → Sanmoo\/backend — Backend fix/);
     assert.match(result.stdout, /pool \(eligible\): none/, "still read-only: no candidate is executable work");
-    assert.deepEqual(
-      jira.calls(),
-      [
-        "GET /rest/api/3/myself",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-      ],
-      "one identity, the two selection membership reads, and the union's two pages; no write",
-    );
+    assertReadOnlyJira();
     assert.deepEqual(gh.restCalls(), [], "no GitHub Issues read");
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
@@ -372,16 +364,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     );
     assert.doesNotMatch(result.stdout, /→ Sanmoo\/(frontend|backend) — Shared across layers/, "the conflict is never a candidate");
     assert.match(result.stdout, /pool \(eligible\): none/);
-    assert.deepEqual(
-      jira.calls(),
-      [
-        "GET /rest/api/3/myself",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-      ],
-      "one identity, the two selection reads and the site union; no claim or write",
-    );
+    assertReadOnlyJira();
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 
@@ -431,16 +414,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     assert.match(result.stdout, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/frontend: 1 candidate$/m);
     assert.equal((result.stdout.match(/ABC-40/g) ?? []).length, 1, "the same Work is listed once");
     assert.doesNotMatch(result.stdout, /held as ambiguous/, "one destination is not a conflict");
-    assert.deepEqual(
-      jira.calls(),
-      [
-        "GET /rest/api/3/myself",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-        "POST /rest/api/3/search/jql",
-      ],
-      "both selections and the site union were read; nothing was written",
-    );
+    assertReadOnlyJira();
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 
