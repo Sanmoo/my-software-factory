@@ -219,4 +219,62 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
     assert.deepEqual(jira.calls(), [], "no Jira read, write or launch is attempted");
     assert.equal(existsSync(workspace), false, "no execution workspace is created");
   });
+
+  test("one Jira project feeds two destinations through two explicit selections and one identity", () => {
+    // Two rules on the SAME site: one account, one credential, one /myself.
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${workspace}`,
+        "jira:",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC AND labels = frontend",
+        "    destination: Sanmoo/frontend",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC AND labels = backend",
+        "    destination: Sanmoo/backend",
+      ].join("\n"),
+      "utf8",
+    );
+    jira = installJiraFetchShim(dir, {
+      [`GET /rest/api/3/myself`]: {
+        body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
+      },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: {
+        body: {
+          isLast: true,
+          issues: [{ id: "10010", key: "ABC-10", fields: { summary: "Frontend fix", labels: ["frontend"], created: "2026-02-01T00:00:00.000+0000", assignee: null } }],
+        },
+      },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = backend ORDER BY Rank ASC`]: {
+        body: {
+          isLast: true,
+          issues: [{ id: "10020", key: "ABC-20", fields: { summary: "Backend fix", labels: ["backend"], created: "2026-01-01T00:00:00.000+0000", assignee: null } }],
+        },
+      },
+    });
+
+    const result = runCli(dir, ["status"], cliEnv());
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/frontend: 1/);
+    assert.match(result.stdout, /1\. ABC-10 \(jira:acme\.atlassian\.net\) → Sanmoo\/frontend — Frontend fix/);
+    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/backend: 1/);
+    assert.match(result.stdout, /1\. ABC-20 \(jira:acme\.atlassian\.net\) → Sanmoo\/backend — Backend fix/);
+    assert.match(result.stdout, /pool \(eligible\): none/, "still read-only: no candidate is executable work");
+    assert.deepEqual(
+      jira.calls(),
+      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
+      "one identity for the site and one native read per selection rule",
+    );
+    assert.deepEqual(gh.restCalls(), [], "no GitHub Issues read");
+    assert.equal(existsSync(workspace), false, "no execution workspace");
+  });
 });

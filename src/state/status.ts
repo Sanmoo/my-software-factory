@@ -7,7 +7,13 @@ import {
   type RegistryView,
 } from "../pool/registry.js";
 import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
-import { githubSelections, workIdentity, type WorkIdentity } from "../tracker/identity.js";
+import {
+  githubSelections,
+  ticketIdentityKey,
+  workIdentity,
+  type TicketIdentity,
+  type WorkIdentity,
+} from "../tracker/identity.js";
 import { describeError } from "../format.js";
 import {
   deriveTrackerState,
@@ -81,6 +87,16 @@ export interface JiraCandidate {
   assignees: string[];
 }
 
+/** A ticket the configured selections promise to more than one destination: its
+ *  destination is ambiguous, so it is held with a diagnosis and is never
+ *  presented as a candidate (issue 128; spec #92 story 8). */
+export interface JiraAmbiguousTicket {
+  ticket: TicketIdentity;
+  title: string;
+  /** The readable destination repositories the conflicting selections name. */
+  destinations: string[];
+}
+
 /** One configured Jira selection and the read-only adapter that answers it. */
 export interface JiraCandidateSource {
   selection: TicketSelection;
@@ -107,6 +123,8 @@ export interface StatusView {
   pool: PoolEntry[];
   /** Jira selections, read-only: candidates in native Rank order, nothing claimed. */
   jira: JiraSourceView[];
+  /** Tickets more than one selection claims for a different destination: held. */
+  jiraAmbiguous: JiraAmbiguousTicket[];
   /** A tracker mark with no reservation in this workspace. */
   unbackedClaims: UnbackedClaim[];
   /** A reservation on disk whose work carries no factory mark. */
@@ -144,9 +162,11 @@ export async function deriveStatus(
     selections.length === 0
       ? EMPTY_TRACKER_STATE
       : await deriveTrackerState(githubTracker(sources), selections, config.labels, reservations);
+  const jira = await readJiraCandidates(sources.jira ?? []);
   return {
     pool: state.pool,
-    jira: await readJiraCandidates(sources.jira ?? []),
+    jira: jira.sources,
+    jiraAmbiguous: jira.ambiguous,
     unbackedClaims: state.unbackedClaims,
     unmarkedReservations: state.unmarkedReservations,
     registry,
@@ -172,8 +192,10 @@ function githubTracker(sources: StatusSources): TicketTracker {
  * UNKNOWN, never an empty list and never a conclusion about the healthy ones.
  * The listing is just that — candidates, not reservations and not a launch.
  */
-async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Promise<JiraSourceView[]> {
-  return Promise.all(
+async function readJiraCandidates(
+  sources: readonly JiraCandidateSource[],
+): Promise<{ sources: JiraSourceView[]; ambiguous: JiraAmbiguousTicket[] }> {
+  const views = await Promise.all(
     sources.map(async (source): Promise<JiraSourceView> => {
       try {
         const listed = await source.tickets.listOpenTickets(source.selection);
@@ -191,6 +213,56 @@ async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Prom
       }
     }),
   );
+  return holdAmbiguousTickets(views);
+}
+
+/**
+ * A ticket two selections promise to different destinations has no explicit
+ * destination (spec #92 story 8): it is held with a diagnosis instead of being
+ * listed once per selection — the operator resolves the overlap in the rules.
+ * A ticket selected twice for the SAME destination is not ambiguous: it is one
+ * Work, and each selection may legitimately list it.
+ */
+function holdAmbiguousTickets(
+  views: readonly JiraSourceView[],
+): { sources: JiraSourceView[]; ambiguous: JiraAmbiguousTicket[] } {
+  const selected = new Map<string, { ticket: TicketIdentity; title: string; destinations: Set<string> }>();
+  for (const view of views) {
+    if (view.state !== "known") continue;
+    for (const candidate of view.candidates) {
+      const key = ticketIdentityKey(candidate.work.ticket);
+      const entry = selected.get(key);
+      if (entry === undefined) {
+        selected.set(key, {
+          ticket: candidate.work.ticket,
+          title: candidate.title,
+          destinations: new Set([candidate.work.destination.repo]),
+        });
+      } else {
+        entry.destinations.add(candidate.work.destination.repo);
+      }
+    }
+  }
+
+  const ambiguousKeys = new Set<string>();
+  const ambiguous: JiraAmbiguousTicket[] = [];
+  for (const [key, entry] of selected) {
+    if (entry.destinations.size < 2) continue;
+    ambiguousKeys.add(key);
+    ambiguous.push({ ticket: entry.ticket, title: entry.title, destinations: [...entry.destinations] });
+  }
+  if (ambiguousKeys.size === 0) return { sources: [...views], ambiguous };
+
+  const sources = views.map((view): JiraSourceView => {
+    if (view.state !== "known") return view;
+    return {
+      ...view,
+      candidates: view.candidates.filter(
+        (candidate) => !ambiguousKeys.has(ticketIdentityKey(candidate.work.ticket)),
+      ),
+    };
+  });
+  return { sources, ambiguous };
 }
 
 /**
