@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import { provisionAgentResources, type ProvisionOptions } from "../../docker/provision-agent.mjs";
-import { sha256 } from "../../scripts/agent-resources.mjs";
+import { declarationDigest, normalizeAgentResources } from "../../scripts/agent-resources.mjs";
 
 /**
- * The build-time provisioning contract (issue #159): resources are fetched at
- * immutable revisions, copied unchanged, installed at exact versions, recorded
+ * The build-time provisioning contract: resources are fetched at immutable
+ * revisions, copied unchanged, installed at exact versions, recorded
  * in an inventory, and a failure leaves any previous destination untouched.
  *
  * The external boundaries are simulated here (a local git repository for the
@@ -202,7 +202,13 @@ describe("agent-resource provisioning at image build time", () => {
 
       assert.equal(inventory.schema, "msf-agent-inventory/v1");
       assert.equal(inventory.pi.version, "1.3.0");
-      assert.equal(inventory.declaration.sha256, sha256(readFileSync(fixture.declarationPath, "utf8")));
+      // The inventory names the committed declaration and the digest of its
+      // canonical form — the value the launching checkout recomputes.
+      assert.equal(inventory.declaration.file, "agent-resources.yaml");
+      assert.equal(
+        inventory.declaration.sha256,
+        declarationDigest(normalizeAgentResources(JSON.parse(readFileSync(fixture.declarationPath, "utf8")))),
+      );
       assert.deepEqual(
         inventory.skills.map((skill) => [skill.name, skill.origin, skill.revision]),
         [

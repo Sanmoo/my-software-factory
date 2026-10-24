@@ -9,9 +9,9 @@ import { loadConfig } from "./config.js";
 import { ensureWorkspace } from "./layout.js";
 
 /**
- * The production launch composition (issue #159): msf.yaml → the options the
- * real SandcastleRuntime receives. Credentials ride only the two explicit
- * sources; the image, the model and the workspace are the configured ones.
+ * The production launch composition: msf.yaml → the options the real
+ * SandcastleRuntime receives. Credentials ride only the two explicit sources;
+ * the image, the model and the workspace are the configured ones.
  */
 
 function configFrom(yaml: string): { config: ReturnType<typeof loadConfig>; dir: string } {

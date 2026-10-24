@@ -44,7 +44,7 @@ The agent carrying out a work item on behalf of the operator.
 The configured AI model the worker uses to do its work.
 
 **Factory agent resources**:
-The Pi version, selected upstream skills at an immutable revision, delegation extension with its operating guidance, and reviewer agents declared in `agent-resources.json` and provisioned into the worker image.
+The Pi version, selected upstream skills at an immutable revision, delegation extension with its operating guidance, and reviewer agents declared in `agent-resources.yaml` and provisioned into the worker image.
 
 **Agent inventory**:
 The image's own record of the agent resources it provisioned; a launch compares it with the installed factory declaration before starting the worker.

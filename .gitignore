@@ -12,3 +12,4 @@
 /dist/
 /docker/guardrail/
 msf.yaml
+/docker/agent-resources.json

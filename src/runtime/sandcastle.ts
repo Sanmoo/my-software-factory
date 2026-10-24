@@ -53,9 +53,9 @@ const execFile = promisify(execFileCallback);
  * of the v1 (research 01-sandcastle-sessao-headless):
  *
  *   - the image carries every skill, extension and reviewer agent the
- *     factory declares (provisioned at build time, issue #159): the launch
- *     loads exactly those paths with discovery and project trust disabled —
- *     no host profile, no target-project resource, no startup install;
+ *     factory declares: the launch loads exactly those paths with discovery
+ *     and project trust disabled — no host profile, no target-project
+ *     resource, no startup install;
  *   - the work's session dir (<workDir>/sessao/) is bind-mounted read-write
  *     at the agent's session path: the session is persisted on the HOST;
  *   - GH_TOKEN rides the container env: `gh` inside authenticates as the
@@ -338,7 +338,7 @@ export interface SandcastleRuntimeOptions {
   /** The docker provider factory. */
   dockerProvider?: (options: DockerOptions) => SandboxProvider;
   /** The committed declaration, already loaded; defaults to the checkout's
-   * agent-resources.json. Tests inject a fixture; production leaves it unset. */
+   * agent-resources.yaml. Tests inject a fixture; production leaves it unset. */
   agentResources?: LoadedAgentResources;
   /** Launch preconditions; default defaultPreflight. */
   preflight?: () => Promise<void>;
@@ -1004,8 +1004,8 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
       );
     }
 
-    // Model credentials (issue #159): an explicit file and/or Pi-supported
-    // provider variables — never a personal profile. Both the absence and an
+    // Model credentials: an explicit file and/or Pi-supported provider
+    // variables — never a personal profile. Both the absence and an
     // unresolved/expired credential fail with the reason only (no value). An
     // agent that makes no model call declares it and has no credential to
     // resolve — every other precondition above still ran.

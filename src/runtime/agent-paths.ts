@@ -6,10 +6,10 @@ import type {
 
 /**
  * Where the image-provisioned agent resources live inside the worker
- * container, derived from the single declaration in `agent-resources.json`
- * (issue #159, ADR 0001). The launch flags and the worker prompt both read
- * the layout from here, so neither keeps a second list of skills, agents or
- * extension paths to drift from the declaration.
+ * container, derived from the single declaration in `agent-resources.yaml`.
+ * The launch flags and the worker prompt both read the layout from here, so
+ * neither keeps a second list of skills, agents or extension paths to drift
+ * from the declaration.
  */
 
 /** The image's agent dir; only `sessions/` is a host bind inside it. */
@@ -47,7 +47,7 @@ function byRole<T extends { role: string }>(
 ): T {
   const found = entries.find((entry) => entry.role === role);
   if (found === undefined) {
-    throw new Error(`agent-resources.json declares no ${what} for role "${role}"`);
+    throw new Error(`agent-resources.yaml declares no ${what} for role "${role}"`);
   }
   return found;
 }

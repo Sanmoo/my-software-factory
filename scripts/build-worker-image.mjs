@@ -1,44 +1,40 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseAgentResources } from "./agent-resources.mjs";
+import { loadAgentDeclaration } from "./agent-declaration.mjs";
+import { canonicalDeclaration } from "./agent-resources.mjs";
 import { WORKER_IMAGE } from "./worker-image.mjs";
 
 /**
- * Build the worker image without ever replacing a previously valid one with an
- * incomplete build (issue #159). Docker only moves the final tag after a
- * successful build anyway; the explicit staging tag also covers a tag/rename
- * failure, so `msf-v2-worker:local` keeps pointing at the last VALID image.
- *
- * The build context is the repository root (the Dockerfile copies the
- * declaration, the provisioning script and the factory-owned reviewer agents);
- * `.dockerignore` keeps it small.
+ * Build the worker image so that a failed build never replaces a valid one:
+ * docker builds under a scratch tag, and the final tag moves only after that
+ * build succeeded. The build context is the repository root; the declaration
+ * is validated here and staged into it in canonical form, because the image
+ * provisions from that form and carries no YAML parser.
  */
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const TEMP_TAG = (image) => `${image}-build-${process.pid}`;
+const DECLARATION = join(ROOT, "agent-resources.yaml");
+/** Generated build-context copy of the declaration (gitignored). */
+const STAGED_DECLARATION = join(ROOT, "docker", "agent-resources.json");
 
-/** The declaration is the single source of Pi's package and version: the
- *  Dockerfile receives them as build args and installs exactly that spec. */
-function piSpec() {
-  const declarationPath = resolve(ROOT, "agent-resources.json");
-  let raw;
-  try {
-    raw = readFileSync(declarationPath, "utf8");
-  } catch {
-    throw new Error(`agent-resource declaration is unreadable: ${declarationPath}`);
-  }
-  const declaration = parseAgentResources(raw, declarationPath);
-  return { package: declaration.pi.package, version: declaration.pi.version };
+const scratchTag = (image) => `${image}-build-${process.pid}`;
+
+/** Validate the declaration and stage its canonical form for the build. */
+function stageDeclaration() {
+  const { declaration } = loadAgentDeclaration(DECLARATION);
+  mkdirSync(dirname(STAGED_DECLARATION), { recursive: true });
+  writeFileSync(STAGED_DECLARATION, canonicalDeclaration(declaration), "utf8");
+  return declaration;
 }
 
 function main() {
   const image = WORKER_IMAGE;
-  const staging = TEMP_TAG(image);
-  const pi = piSpec();
+  const scratch = scratchTag(image);
+  const declaration = stageDeclaration();
   const args = [
     "build",
     "--build-arg",
@@ -46,26 +42,26 @@ function main() {
     "--build-arg",
     `AGENT_GID=${typeof process.getgid === "function" ? process.getgid() : 1000}`,
     "--build-arg",
-    `PI_PACKAGE=${pi.package}`,
+    `PI_PACKAGE=${declaration.pi.package}`,
     "--build-arg",
-    `PI_VERSION=${pi.version}`,
+    `PI_VERSION=${declaration.pi.version}`,
     "-t",
-    staging,
+    scratch,
     "-f",
     "docker/Dockerfile",
     ".",
   ];
   try {
     execFileSync("docker", args, { cwd: ROOT, stdio: "inherit" });
-    execFileSync("docker", ["tag", staging, image], { cwd: ROOT, stdio: "inherit" });
+    execFileSync("docker", ["tag", scratch, image], { cwd: ROOT, stdio: "inherit" });
     process.stdout.write(`build:image: ${image} now points at the build just validated\n`);
   } finally {
-    // The staged tag is never the deployable identity; a failure leaves the
-    // final tag untouched and this cleanup is best-effort.
+    // The scratch tag is never the deployable identity: on failure the final
+    // tag still names the previous valid image.
     try {
-      execFileSync("docker", ["rmi", "--force", staging], { cwd: ROOT, stdio: "ignore" });
+      execFileSync("docker", ["rmi", "--force", scratch], { cwd: ROOT, stdio: "ignore" });
     } catch {
-      // No staged image (the build failed) — nothing to remove.
+      // No scratch image (the build failed early) — nothing to remove.
     }
   }
 }

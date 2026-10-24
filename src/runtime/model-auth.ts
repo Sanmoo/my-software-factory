@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 
 /**
  * Model credentials are operational secrets, separate from the agent
- * resources (issue #159, ADR 0001). They arrive in one of two explicit ways:
+ * resources. They arrive in one of two explicit ways:
  *
  *   - Pi-supported provider environment variables (API keys and the provider
  *     configuration they are read with), forwarded into the worker container;
@@ -14,7 +14,7 @@ import { readFileSync, statSync } from "node:fs";
  */
 
 /**
- * Pi's documented provider variables (docs/providers.md, Pi 1.3.0): the API
+ * Pi's documented provider variables (docs/providers.md, Pi 1.4.0): the API
  * keys and the provider configuration read alongside them. Only these are
  * forwarded: an unrelated ambient secret never rides the worker container.
  */

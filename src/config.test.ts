@@ -148,7 +148,7 @@ describe("config", () => {
     assert.throws(() => loadConfig(path), /repos/);
   });
 
-  // ---- model authentication (issue #159) ----
+  // ---- model authentication ----
 
   test("worker-auth-file is optional: absent means provider environment variables", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
