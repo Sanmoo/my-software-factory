@@ -1226,6 +1226,10 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     assert.deepEqual(view.jiraAmbiguous, [], "one destination is not a conflict");
     const text = renderStatus(view);
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 1 candidate$/m);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: none$/m);
+    assert.match(
+      text,
+      /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 already listed by another rule$/m,
+      "the losing rule says why it lists nothing",
+    );
   });
 });

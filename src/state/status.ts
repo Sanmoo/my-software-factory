@@ -82,6 +82,13 @@ export type Liveness =
       orphaned: OrphanedAttempt[];
     };
 
+/** What the status says about a selected ticket, before its Work is composed. */
+export interface JiraTicketFacts {
+  ticket: TicketIdentity;
+  title: string;
+  assignees: string[];
+}
+
 /** One Jira candidate: the Work the ticket names, its title and its assignee(s).
  *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
 export interface JiraCandidate {
@@ -93,10 +100,7 @@ export interface JiraCandidate {
 /** A ticket the configured selections promise to more than one destination: its
  *  destination is ambiguous, so it is held with the reason and is never
  *  presented as a candidate (issue 128; spec #92 story 8). */
-export interface JiraAmbiguousTicket {
-  ticket: TicketIdentity;
-  title: string;
-  assignees: string[];
+export interface JiraAmbiguousTicket extends JiraTicketFacts {
   /** The destinations the conflicting readable selections name. */
   destinations: RepositoryIdentity[];
   /** An unreadable selection on this site names a further destination, so the
@@ -128,6 +132,8 @@ export type JiraSourceView =
       candidates: JiraCandidate[];
       /** Candidates removed because more than one destination promises them. */
       held: number;
+      /** Candidates already listed by another rule for this same destination. */
+      repeated: number;
       /** An unreadable selection on this site names a different destination, so
        *  an overlap with these candidates cannot be ruled out. */
       unverified: boolean;
@@ -225,6 +231,7 @@ async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Prom
             assignees: entry.assignees,
           })),
           held: 0,
+          repeated: 0,
           unverified: false,
         };
       } catch (error) {
@@ -249,10 +256,7 @@ interface JiraHold {
  * readable source still lists, and says the overlap is unverified.
  */
 function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
-  interface SelectedTicket {
-    ticket: TicketIdentity;
-    title: string;
-    assignees: string[];
+  interface SelectedTicket extends JiraTicketFacts {
     destinations: Map<string, RepositoryIdentity>;
   }
   const selected = new Map<string, SelectedTicket>();
@@ -293,10 +297,13 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
     if (view.state !== "known") return view;
     const candidates: JiraCandidate[] = [];
     let held = 0;
+    let repeated = 0;
     for (const candidate of view.candidates) {
       if (heldKeys.has(ticketIdentityKey(candidate.work.ticket))) {
         held += 1;
-      } else if (!listed.has(workIdentityKey(candidate.work))) {
+      } else if (listed.has(workIdentityKey(candidate.work))) {
+        repeated += 1;
+      } else {
         listed.add(workIdentityKey(candidate.work));
         candidates.push(candidate);
       }
@@ -305,6 +312,7 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
       ...view,
       candidates,
       held,
+      repeated,
       unverified: unknownSelectionConflicts(views, view.selection.source.site, [view.selection.destination]),
     };
   });
