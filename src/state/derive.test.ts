@@ -945,7 +945,7 @@ describe("derive — the reserved states, the tick's full derivation", () => {
   });
 });
 
-describe("issue 174 — a human answer stays bound to the pause it answered", () => {
+describe("a human answer stays bound to the pause it answered", () => {
   let adapter: FakeTrackerAdapter;
   let root: string;
   let layout: WorkspaceLayout;

@@ -408,7 +408,7 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
 
 /**
  * The pause as it is PERSISTED and announced, now that the factory knows which
- * work and attempt it is pausing, and with its occurrence identity (issue 174).
+ * work and attempt it is pausing, and with its occurrence identity.
  * An unreadable record carries no work and no attempt (0); writing those into
  * the file and the operator's comment would fabricate facts the record never
  * held. Every other reason keeps its own.
@@ -451,7 +451,7 @@ function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number)
  * generated for it now has no comment carrying it, and a record with no
  * identity is the one case where the factory still binds the answers by the
  * generic last-comment rule, so stamping it would orphan the answer already
- * given (issue 174). The occurrence gains its identity with the first factory
+ * given. The occurrence gains its identity with the first factory
  * comment that can carry one: a diagnostic for a changed cause.
  */
 function reassertedPause(pause: PauseRecord & { id: string }, previous: PauseRecord): PauseRecord {
@@ -885,13 +885,13 @@ export class SweepEngine {
           // 119). The pause is persisted and asks for help once; every sweep
           // re-reads the doubt this pause names — a terminal result in the
           // attempt's own session, or the real state — and clears it on its own
-          // once that evidence settles it (issue 173). Other works keep going.
+          // once that evidence settles it. Other works keep going.
           const pause = decision.pause;
           const attempt = knownAttempt(pause.attempt) ?? decision.attempt;
           this.announce(decision.work, "reserved");
           // A worker of this work may still be alive — one this process
           // launched, or one a reliable probe carried. Its journal is never
-          // written and no substitute is launched over it (issue 173).
+          // written and no substitute is launched over it.
           if (this.slots.workKeys.includes(key) || this.carriedKeys.has(key)) {
             this.log(
               `continuity of ${renderWorkIdentity(decision.work)} is not re-evaluated: a worker of this work ` +
@@ -902,7 +902,7 @@ export class SweepEngine {
           // A pause the factory can settle by itself returns to the normal
           // cycle: the evidence it doubts is read again from the attempt's own
           // session, the journal and the real state, WITHOUT another human
-          // answer (issue 173). The one cause never re-read is a record it
+          // answer. The one cause never re-read is a record it
           // cannot read — that doubt IS the record.
           const verdict = recheckablePause(pause.reason)
             ? await recheckPausedEffects(this.continuityDeps(decision.work, decision.dir, attempt), pause)
@@ -913,7 +913,7 @@ export class SweepEngine {
           }
           const current = verdict?.pause ?? pause;
           // A real change of cause is a new fact the operator must see, told
-          // once by the same occurrence (issue 174); a pause whose request
+          // once by the same occurrence; a pause whose request
           // never landed is announced now. A steady cause is said once — `msf
           // status` keeps it visible — so a persistent doubt never becomes a
           // line per cycle.
@@ -2054,7 +2054,7 @@ export class SweepEngine {
         if (!recheck.resolved && recheck.pause !== null) {
           // No new information and no changed cause: the answer does not
           // authorize a replay and the same question is not asked again. The
-          // pause keeps its identity and its binding to the answer (issue 174);
+          // pause keeps its identity and its binding to the answer;
           // a real cause change posts exactly one diagnostic.
           await this.pauseForContinuity(work, dir, recheck.pause, facts.attempt);
           return null;
@@ -2243,7 +2243,7 @@ export class SweepEngine {
 
   /**
    * A pause whose doubt the attempt's session and the real state now settle
-   * (issue 173): the record is closed and the CORRECT continuation is parked —
+   * the record is closed and the CORRECT continuation is parked —
    * never launched from here, so every existing gate (liveness, continuity, the
    * recovery ruler, the operator's stop) applies again. A human answer bound to
    * the pause orients a NEW round; without one the SAME attempt continues.
@@ -2296,7 +2296,7 @@ export class SweepEngine {
    * session is a continuation. The record is written FIRST and survives a
    * restart; the issue comment, the blocked label and the notice happen only
    * once per occurrence — a recheck that learned nothing new, a later sweep and
-   * a restart never re-ask (issue 174), and neither does the first sweep after
+   * a restart never re-ask, and neither does the first sweep after
    * an upgrade for a pause that was announced before occurrences had identities.
    * Only a changed REASON is a new fact worth a diagnostic, and it keeps the
    * occurrence's identity, so the answers already on the issue stay bound to it.

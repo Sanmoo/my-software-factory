@@ -452,7 +452,7 @@ describe("the outcome record belongs to an attempt; the comment points at the ev
   });
 });
 
-describe("issue 174 — the continuity pause asks for evidence the factory verifies", () => {
+describe("the continuity pause asks for evidence the factory verifies", () => {
   const PAUSE_ID = "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1111";
   const input = (overrides: Partial<Parameters<typeof continuityPausedCommentBody>[0]> = {}) => ({
     attempt: 2,

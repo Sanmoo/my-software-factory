@@ -186,7 +186,7 @@ export interface PauseRecord {
   detail: string;
   at: string;
   sessionId?: string;
-  /** The occurrence this record belongs to (issue 174): generated once when
+  /** The occurrence this record belongs to: generated once when
    *  the pause is first persisted and kept through rechecks, re-announcements
    *  and a changed reason. The factory's comments about the occurrence carry
    *  it, so an answer is bound to its request. Absent on records written

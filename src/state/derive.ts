@@ -507,7 +507,7 @@ async function deriveReservedWork(
   // short-circuit also keeps a handled rejection from being re-derived forever.
   if (issue.value.labels.includes(labels.blocked)) {
     const comments = await tickets.readTicketComments(work.ticket);
-    // The operator's answer is bound to the question it answered (issue 174):
+    // The operator's answer is bound to the question it answered:
     // with a CURRENT continuity pause the boundary is the pause's own request,
     // never the last thing the factory said. Every other blocked cause (a
     // fall, a repair, a rejection) keeps the generic last-marker rule.
@@ -530,7 +530,7 @@ async function deriveReservedWork(
       }
       return resumableState(pullRequests, work, dir, issue.value.createdAt, issueReplies);
     }
-    // A pause nobody answered is not a reason to wait idle (issue 173): the
+    // A pause nobody answered is not a reason to wait idle: the
     // work is in a state the factory keeps evaluating, and the loop re-reads
     // the evidence the pause doubts before any human is asked again.
     if (pause !== null) {

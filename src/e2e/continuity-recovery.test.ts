@@ -531,7 +531,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     // The human answers — the effect is still ambiguous: the work stays paused,
     // no new attempt, no new session, and NOTHING is repeated. The question was
     // already asked; an answer that resolves nothing adds no information
-    // (issue 174 removed the "your answer was read" reply).
+    // (the factory sends no "your answer was read" reply).
     tracker.addComment(ref, "operator", "I did not push anything, check again.");
     git.remoteHead = "def456";
     const answered = await runOnce(deps(cfg));
@@ -565,7 +565,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(readPause(workDir(layout, REPO, 7)), null, "the resolved pause is cleared");
   });
 
-  test("issue 174 — the answer survives an inconclusive recheck, a later factory comment and a restart; a changed cause posts one diagnostic", async () => {
+  test("the answer survives an inconclusive recheck, a later factory comment and a restart; a changed cause posts one diagnostic", async () => {
     const { ref } = interruptedAttempt2({ pending: "push", remote: "def456" });
     seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     const cfg = config(2);
@@ -651,7 +651,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the retomada took the block back off");
   });
 
-  test("issue 174 — a pause announced before occurrences had identities is not asked again after the upgrade", async () => {
+  test("a pause announced before occurrences had identities is not asked again after the upgrade", async () => {
     const LEGACY_AT = "2025-12-31T23:00:00.000Z";
     const { ref } = interruptedAttempt2({
       pending: "push",
@@ -767,11 +767,11 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.match(comments.at(-1) ?? "", /session history is unreadable/);
   });
 
-  // ---- issue 173: a persisted pause is re-evaluated by the normal cycle ----
+  // ---- a persisted pause is re-evaluated by the normal cycle ----
 
   /** The pause the factory announced for work 7, written as the real artifact.
    *  `attempt` is the number the launch PLANNED, which may differ from the last
-   *  attempt the disk evidences (issue 175). */
+   *  attempt the disk evidences. */
   function persistAnnouncedPause(
     ref: IssueRef,
     attempt: number,
@@ -797,7 +797,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     return target;
   }
 
-  test("issue 173 — an announced pause the session now settles clears on its own and continues the SAME attempt", async () => {
+  test("an announced pause the session now settles clears on its own and continues the SAME attempt", async () => {
     const { session } = interruptedAttempt2({ pending: "push", remote: "def456" });
     const target = workDir(layout, REPO, 7);
     const cfg = config();
@@ -842,7 +842,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(readPause(target), null, "a resolved pause never comes back");
   });
 
-  test("issue 173 — a pause settled under a human answer is a NEW round that keeps it, spending no recovery", async () => {
+  test("a pause settled under a human answer is a NEW round that keeps it, spending no recovery", async () => {
     const PAUSE_ID = "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1111";
     const { session, ref } = interruptedAttempt2({ pending: "push", remote: "def456" });
     const target = persistAnnouncedPause(ref, 2, PAUSE_ID, { sessionId: session.sessionId });
@@ -868,7 +868,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the retomada swapped the block off");
   });
 
-  test("issue 173 — a pause that named the PLANNED attempt still resolves and continues from the evidenced one", async () => {
+  test("a pause that named the PLANNED attempt still resolves and continues from the evidenced one", async () => {
     const ref: IssueRef = { repo: REPO, number: 7 };
     seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
     const target = workDir(layout, REPO, 7);
@@ -930,7 +930,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(ledger.lastFallAttempt, null, "no fall is invented to justify the relaunch");
   });
 
-  test("issue 173 — a paused call the transcript proves never ran is settled by the normal cycle", async () => {
+  test("a paused call the transcript proves never ran is settled by the normal cycle", async () => {
     // The pause was written from a read that did not yet hold the call's
     // refusal: a non-safe call with no guardrail intent is, on its own, a doubt
     // the factory cannot answer. The transcript's terminal refusal — an error
@@ -962,7 +962,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the recovery ruler applies");
   });
 
-  test("issue 173 — a partial session tail needs the guardrail's record before the pause may clear", async () => {
+  test("a partial session tail needs the guardrail's record before the pause may clear", async () => {
     // The session ends with an incomplete entry: its discarded tail is safe
     // only when the journal proves the session ran under the guardrail. Without
     // that record the recheck must not read the intact prefix as if the tail
@@ -1033,7 +1033,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(paused().length, 3, "a restart reports the current pause once");
   });
 
-  test("issue 173 — without a terminal result the pause stands sweep after sweep, spending nothing", async () => {
+  test("without a terminal result the pause stands sweep after sweep, spending nothing", async () => {
     interruptedAttempt2({ pending: "unknown" });
     seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     const target = workDir(layout, REPO, 7);
@@ -1061,7 +1061,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     }
   });
 
-  test("issue 173 — a session that became unreadable keeps the pause and preserves the evidence", async () => {
+  test("a session that became unreadable keeps the pause and preserves the evidence", async () => {
     const { session } = interruptedAttempt2({ pending: "push", remote: "def456" });
     const target = workDir(layout, REPO, 7);
     const cfg = config();
@@ -1082,7 +1082,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
   });
 
-  test("issue 173 — a settled pause still obeys the recovery ruler: an exhausted budget asks for help", async () => {
+  test("a settled pause still obeys the recovery ruler: an exhausted budget asks for help", async () => {
     const PAUSE_ID = "22222222-2222-4222-8222-222222222222";
     const { session, ref } = interruptedAttempt2({ pending: "push", remote: "def456", labels: [DEFAULT_LABELS.blocked] });
     const target = persistAnnouncedPause(ref, 2, PAUSE_ID, { sessionId: session.sessionId });
@@ -1103,7 +1103,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "an exhausted budget spends nothing");
   });
 
-  test("issue 173 — a worker that may still be alive blocks the re-evaluation: no journal write, no launch", async () => {
+  test("a worker that may still be alive blocks the re-evaluation: no journal write, no launch", async () => {
     interruptedAttempt2({ pending: "push", remote: "def456" });
     const target = workDir(layout, REPO, 7);
     const cfg = config();
@@ -1132,7 +1132,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(readPause(target)?.reason, "effect-ambiguous", "the pause survives the survivor");
   });
 
-  test("issue 173 — a session-missing pause whose session is on disk again resolves in the normal cycle", async () => {
+  test("a session-missing pause whose session is on disk again resolves in the normal cycle", async () => {
     const PAUSE_ID = "33333333-3333-4333-8333-333333333333";
     const { session, ref } = interruptedAttempt2({ pending: "push", remote: "abc123", labels: [DEFAULT_LABELS.blocked] });
     const target = persistAnnouncedPause(ref, 2, PAUSE_ID, {
@@ -1155,7 +1155,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the existing recovery ruler applies");
   });
 
-  test("issue 173 — a journal-unreadable pause whose journal is readable again resolves", async () => {
+  test("a journal-unreadable pause whose journal is readable again resolves", async () => {
     const PAUSE_ID = "44444444-4444-4444-8444-444444444444";
     const { ref } = interruptedAttempt2({ pending: "push", remote: "abc123", labels: [DEFAULT_LABELS.blocked] });
     const target = workDir(layout, REPO, 7);
@@ -1188,7 +1188,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(notifier.notifications.length, 0);
   });
 
-  test("issue 173 — a session that is still unreadable keeps its pause, naming the cause the disk now gives", async () => {
+  test("a session that is still unreadable keeps its pause, naming the cause the disk now gives", async () => {
     const PAUSE_ID = "55555555-5555-4555-8555-555555555555";
     const { session, ref } = interruptedAttempt2({ pending: "push", remote: "abc123", labels: [DEFAULT_LABELS.blocked] });
     const target = persistAnnouncedPause(ref, 2, PAUSE_ID, {
@@ -1215,7 +1215,7 @@ describe("e2e: continuity of the interrupted attempt", () => {
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "no recovery is spent");
   });
 
-  test("issue 173 — a record the factory cannot read is never re-checked into a resolution", async () => {
+  test("a record the factory cannot read is never re-checked into a resolution", async () => {
     seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
     const target = workDir(layout, REPO, 7);
     mkdirSync(target, { recursive: true });

@@ -91,7 +91,7 @@ describe("the continuity artifacts", () => {
     assert.equal(pauseWaits(readable, 3), false, "an older attempt's pause is history");
   });
 
-  test("issue 174 — the pause identity is read back; an old record without one stays readable", () => {
+  test("the pause identity is read back; an old record without one stays readable", () => {
     writePauseFile({ ...validPause(), id: "pause-1", announced: true });
     assert.equal(readPause(dir)?.id, "pause-1", "the occurrence identity survives a restart");
 

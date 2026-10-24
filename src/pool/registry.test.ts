@@ -253,7 +253,7 @@ describe("workspace registry — the reservations on disk and the done archive",
     assert.deepEqual(view.archived, [dest]);
   });
 
-  test("scanRegistry carries a pause's own attempt beside the attempt the ledger evidences — read-only (issue 175)", async () => {
+  test("scanRegistry carries a pause's own attempt beside the attempt the ledger evidences — read-only", async () => {
     const paused = join(layout.works, "Sanmoo/a#5");
     mkdirSync(paused, { recursive: true });
     writeFileSync(join(paused, "log-4.jsonl"), "{}\n", "utf8");

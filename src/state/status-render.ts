@@ -217,7 +217,7 @@ function renderRunning(worker: RunningWorker): string {
 /** One persisted continuity pause: the work, the attempt it waits for, its
  *  session and why it waits. The attempt is the one the pause's launch PLANNED;
  *  when the ledger evidences a different one, both are named — the divergence
- *  is the operator's fact, never repaired here (issue 175). A record too
+ *  is the operator's fact, never repaired here. A record too
  *  unreadable to name its attempt or its work says so instead of printing a
  *  fabricated `attempt 0` or an identity it does not carry.
  */

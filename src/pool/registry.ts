@@ -231,7 +231,7 @@ export interface ContinuityPauseEntry {
   key: string;
   pause: PauseRecord;
   /** The attempt the ledger evidences on disk — the pause's own number is the
-   *  attempt its launch planned (issue 175), so the view can say both instead
+   *  attempt its launch planned, so the view can say both instead
    *  of rewriting either. */
   lastAttempt: number;
 }
@@ -337,7 +337,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
       }
     }
     // A pause the ledger has not advanced beyond — the attempt it planned may
-    // be exactly the current one, or one no log evidences yet (issue 175):
+    // be exactly the current one, or one no log evidences yet:
     // only a pause left BEHIND by a later attempt is history.
     const pause = readPause(dir);
     if (pause !== null && pauseWaits(pause, lastAttempt)) continuityPauses.push({ key, pause, lastAttempt });

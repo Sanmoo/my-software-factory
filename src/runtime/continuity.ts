@@ -142,7 +142,7 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
 
 /**
  * Re-read the doubt a persisted pause names — the operator's answer when it
- * answered one, and the normal cycle afterwards (issue 173). An answer is
+ * answered one, and the normal cycle afterwards. An answer is
  * orientation, never confirmation that an effect did not happen: what settles
  * the pause is a fresh read of the real state, and nothing else.
  */
