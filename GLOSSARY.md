@@ -167,7 +167,7 @@ Docker did not answer — a failure, a timeout, an invalid answer, or a containe
 _Avoid_: No workers, when the answer is missing; decided zero, when Docker listed the daemon's running containers.
 
 **Decided zero**:
-Docker listed the daemon's running containers and none carries a work of this workspace. Every worker is a container, so a complete listing hides none: the factory acts on the zero instead of suspending.
+Docker listed the daemon's running containers and none carries a work of this workspace: the factory acts on the zero instead of suspending.
 _Avoid_: Liveness unknown, when Docker answered.
 
 **Duplicate workers**:
