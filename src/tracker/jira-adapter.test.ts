@@ -196,7 +196,10 @@ describe("Jira adapter: native Rank selection over the simulated REST (issue 128
     };
     const adapter = adapterFor(sim, { transport });
 
-    await assert.rejects(adapter.listOpenTickets(selectionFor(sim, "project = ABC")), /cannot be verified/);
+    await assert.rejects(
+      adapter.listOpenTickets(selectionFor(sim, "project = ABC")),
+      /accepted the credential but did not report which account/,
+    );
     assert.deepEqual(
       sim.requests.map((request) => request.path),
       ["/rest/api/3/myself"],
