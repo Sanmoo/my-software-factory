@@ -78,6 +78,15 @@ export interface JournalResult {
   sessionId: string;
   callId: string;
   ok: boolean;
+  /** What justified the result when it was not the usual callback: the
+   *  attempt's own session transcript recorded the call's terminal outcome
+   *  because Pi refused or errored it AFTER the intent and the guardrail's
+   *  `tool_result` hook never ran. Absent when the guardrail or the host's own
+   *  reconciliation reported it. */
+  source?: "session";
+  /** The transcript entry's own timestamp for a `session` result: the evidence
+   *  the result is correlatable to. */
+  evidenceAt?: string;
 }
 
 export type JournalLine = JournalSessionStart | JournalIntent | JournalResult;

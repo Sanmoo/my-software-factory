@@ -12,6 +12,13 @@
  *   1 → retry the same push (the guardrail must block it after the resume);
  *   2 → write the outcome record through bash;
  *   3 → print the completion signal and stop.
+ *
+ * The "refused-call" script proves the journal gap of the reported incident:
+ *   0 → issue ONE guarded call a probe extension refuses after the guardrail
+ *       journaled its intent (so the journal keeps an intent with no result);
+ *   — → the first session ends with NO outcome record: its attempt is
+ *       interrupted, and repairing the journal is the factory's job;
+ *   resumed    → write the outcome record once, then the completion.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -27,6 +34,12 @@ export interface DeterministicModel {
 export interface DeterministicModelOptions {
   branch: string;
   attempt: number;
+  /** Which proof this model drives; "interruption" (the default) is the kill
+   *  test, "refused-call" the journal-gap test. */
+  script?: "interruption" | "refused-call";
+  /** The guarded command the "refused-call" script issues: refused by the probe
+   *  extension BEFORE it runs, journaled by the guardrail before that. */
+  refusedCommand?: string;
   /** Address the sibling container dials (the host's bridge address). */
   address: string;
   /** Where the completion signal / outcome path point inside the container. */
@@ -98,9 +111,10 @@ async function handle(
     .map((message) => message["content"])
     .map((content) => (typeof content === "string" ? content : JSON.stringify(content ?? "")))
     .join("\n");
-  requests.push({ assistantMessages, commands, resumed: promptText.includes(RESUME_MARKER) });
+  const resumed = promptText.includes(RESUME_MARKER);
+  requests.push({ assistantMessages, commands, resumed });
 
-  const reply = script(assistantMessages, options);
+  const reply = script({ assistantMessages, commands, resumed }, options);
   if (payload.stream === false) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(completion(payload.model ?? "deterministic", reply)));
@@ -159,7 +173,17 @@ async function handle(
 
 type Reply = { kind: "tool"; command: string } | { kind: "text"; text: string };
 
-function script(assistantMessages: number, options: DeterministicModelOptions): Reply {
+/** What the request carries: how far the transcript got, which commands it
+ *  already issued, and whether the factory reopened this session. */
+interface ScriptState {
+  assistantMessages: number;
+  commands: string[];
+  resumed: boolean;
+}
+
+function script(state: ScriptState, options: DeterministicModelOptions): Reply {
+  if (options.script === "refused-call") return refusedCallScript(state, options);
+  const { assistantMessages } = state;
   if (assistantMessages === 0) {
     // The push lands; the sleep keeps the tool running so the test can kill
     // the container inside the window, before Pi records the result.
@@ -169,6 +193,22 @@ function script(assistantMessages: number, options: DeterministicModelOptions): 
     return { kind: "tool", command: `git push -u ${options.remoteUrl} ${options.branch}` };
   }
   if (assistantMessages === 2) {
+    const record = JSON.stringify({ class: "clean-without-pr", attempt: options.attempt });
+    return { kind: "tool", command: `printf '%s\\n' '${record}' > ${options.workMount}/desfecho.json` };
+  }
+  return { kind: "text", text: COMPLETION };
+}
+
+function refusedCallScript(state: ScriptState, options: DeterministicModelOptions): Reply {
+  if (state.assistantMessages === 0) {
+    return { kind: "tool", command: options.refusedCommand ?? "curl -sS https://example.invalid/msf-probe" };
+  }
+  // The first session ends with no outcome record on purpose: the attempt is
+  // interrupted and the factory's recovery must repair the journal from the
+  // terminal result Pi persisted for the refused call.
+  if (!state.resumed) return { kind: "text", text: COMPLETION };
+  // The reopened session writes the record once, then ends its turn.
+  if (!state.commands.some((command) => command.includes(`${options.workMount}/desfecho.json`))) {
     const record = JSON.stringify({ class: "clean-without-pr", attempt: options.attempt });
     return { kind: "tool", command: `printf '%s\\n' '${record}' > ${options.workMount}/desfecho.json` };
   }

@@ -123,7 +123,7 @@ A mutation of state outside the worktree that a worker's tool call produces: a p
 _Avoid_: Side effect, when the point is that the world was changed.
 
 **Effect intent**:
-The recorded intention to perform a tool call that may produce an external effect, before that call is allowed to run. An intent without a recorded result leaves completion unestablished; it proves neither execution nor absence of effects.
+The recorded intention to perform a tool call that may produce an external effect, before that call is allowed to run. An intent without a recorded result leaves completion unestablished; it proves neither execution nor absence of effects. The result may be recovered from the attempt's own session transcript — which records how the call ended even when the guardrail's result callback never ran — and is then marked as session-derived.
 
 **Reconciliation**:
 Reading the real state (the remote branch, the PR, the conversation, the labels) to decide whether an interrupted effect happened: realized (do not repeat), absent (may run once), or unknown (pause and ask).

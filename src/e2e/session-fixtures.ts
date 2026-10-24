@@ -71,10 +71,25 @@ export function seedSession(
   return { sessionId, file };
 }
 
-/** Append a bash tool call and its result to a seeded session file. */
+/** How one persisted `toolResult` reads. Pi's defaults are a plain success with
+ *  no output; the fields here are what a refusal or a real failure add. */
+export interface SeededCallResult {
+  isError?: boolean;
+  text?: string;
+  /** A duration Pi records only for a call that EXECUTED; `undefined` is the
+   *  shape of a call refused before execution. */
+  durationMs?: number;
+  tool?: string;
+  /** Write the entry WITHOUT Pi's own `isError`, the shape of an "answered" or
+   *  compatibility marker that never states an outcome. */
+  omitOutcome?: boolean;
+}
+
+/** Append a bash tool call to a seeded session file, and — when `answered` —
+ *  the terminal result Pi persisted for it, as `result` describes it. */
 export function seedSessionToolCall(
   session: SeededSession,
-  call: { callId: string; command: string; answered: boolean },
+  call: { callId: string; command: string; answered: boolean; tool?: string; result?: SeededCallResult },
 ): void {
   const entries: Array<Record<string, unknown>> = [
     {
@@ -84,19 +99,44 @@ export function seedSessionToolCall(
       timestamp: "2026-01-01T00:00:01.000Z",
       message: {
         role: "assistant",
-        content: [{ type: "toolCall", id: call.callId, name: "bash", arguments: { command: call.command } }],
+        content: [
+          { type: "toolCall", id: call.callId, name: call.tool ?? "bash", arguments: { command: call.command } },
+        ],
       },
     },
   ];
-  if (call.answered) {
-    entries.push({
-      type: "message",
-      id: `${call.callId}-result`,
-      parentId: `${call.callId}-call`,
-      timestamp: "2026-01-01T00:00:02.000Z",
-      message: { role: "toolResult", toolCallId: call.callId, toolName: "bash", content: [], isError: false },
-    });
-  }
+  if (call.answered) entries.push(toolResultEntry(call.callId, call.result ?? {}));
+  appendEntries(session, entries);
+}
+
+/** Append ONE more terminal result for a call id: the duplicate a broken writer
+ *  can leave, which must never be read as unambiguous evidence. */
+export function seedExtraToolResult(
+  session: SeededSession,
+  callId: string,
+  result: SeededCallResult = {},
+): void {
+  appendEntries(session, [toolResultEntry(callId, result)]);
+}
+
+function toolResultEntry(callId: string, result: SeededCallResult): Record<string, unknown> {
+  return {
+    type: "message",
+    id: `${callId}-result`,
+    parentId: `${callId}-call`,
+    timestamp: "2026-01-01T00:00:02.000Z",
+    message: {
+      role: "toolResult",
+      toolCallId: callId,
+      toolName: result.tool ?? "bash",
+      content: result.text === undefined ? [] : [{ type: "text", text: result.text }],
+      ...(result.omitOutcome === true ? {} : { isError: result.isError ?? false }),
+      ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
+    },
+  };
+}
+
+function appendEntries(session: SeededSession, entries: Array<Record<string, unknown>>): void {
   const text = entries.map((entry) => JSON.stringify(entry)).join("\n");
   writeFileSync(session.file, `${text}\n`, { encoding: "utf8", flag: "a" });
 }

@@ -241,4 +241,26 @@ describe("the continuity artifacts (issue 119)", () => {
     writeFileSync(join(dir, "efeitos.jsonl"), '{"type":"intent"', { encoding: "utf8", flag: "a" });
     assert.equal(readEffectJournal(dir).intact, false);
   });
+
+  test("a result keeps the provenance of what closed it, and an older one without it still reads", () => {
+    appendJournalResult(dir, {
+      attempt: 2,
+      sessionId: "s-1",
+      callId: "call-1",
+      ok: false,
+      source: "session",
+      evidenceAt: "2026-01-01T00:00:02.000Z",
+    });
+    appendJournalResult(dir, { attempt: 2, sessionId: "s-1", callId: "call-2", ok: true });
+
+    const journal = readEffectJournal(dir);
+    assert.equal(journal.intact, true, "the extra fields are part of the line, not a corruption");
+    assert.deepEqual(
+      journal.results.map((result) => [result.callId, result.ok, result.source, result.evidenceAt]),
+      [
+        ["call-1", false, "session", "2026-01-01T00:00:02.000Z"],
+        ["call-2", true, undefined, undefined],
+      ],
+    );
+  });
 });

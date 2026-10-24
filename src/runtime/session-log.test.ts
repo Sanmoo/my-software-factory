@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
-import { findSessionFile, inspectSessionFile, sessionToolCalls } from "./session-log.js";
+import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./session-log.js";
 
 /**
  * Reading a persisted Pi session (issue 119): identity, the intact prefix and
@@ -17,6 +17,26 @@ const HEADER = (id: string, cwd = "/home/agent/repo"): string =>
 
 const USER = (text: string): string =>
   JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: text } });
+
+const CALL = (id: string, command: string): string =>
+  JSON.stringify({
+    type: "message",
+    id: `m-${id}`,
+    parentId: null,
+    timestamp: "2026-01-01T00:00:01.000Z",
+    message: { role: "assistant", content: [{ type: "toolCall", id, name: "bash", arguments: { command } }] },
+  });
+
+/** A `toolResult` entry as Pi writes it: `durationMs` is present only for a
+ *  tool that really executed, and `content` is a block list. */
+const RESULT = (id: string, message: Record<string, unknown>): string =>
+  JSON.stringify({
+    type: "message",
+    id: `r-${id}`,
+    parentId: `m-${id}`,
+    timestamp: "2026-01-01T00:00:02.000Z",
+    message: { role: "toolResult", toolCallId: id, toolName: "bash", content: [], isError: false, ...message },
+  });
 
 describe("the session reader (issue 119)", () => {
   let dir: string;
@@ -120,5 +140,82 @@ describe("the session reader (issue 119)", () => {
       { callId: "c1", tool: "bash", command: "git status", answered: true },
       { callId: "c2", tool: "bash", command: "git push origin agent-issue-7", answered: false },
     ]);
+  });
+
+  test("the recorded results carry their outcome, its text and whether the tool really ran", () => {
+    const path = writeSession("2026-01-01_session-1.jsonl", [
+      HEADER("session-1"),
+      CALL("c1", "git push origin agent-issue-7"),
+      // Refused before execution: Pi records no duration.
+      RESULT("c1", { isError: true, content: [{ type: "text", text: "msf continuity guardrail: blocked" }] }),
+      CALL("c2", "git status"),
+      // Executed and failed: the duration is there, so the outcome is real.
+      RESULT("c2", { isError: true, content: [{ type: "text", text: "no repository" }], durationMs: 1200 }),
+      "",
+    ]);
+
+    assert.deepEqual(sessionToolResults(path, 4), [
+      {
+        callId: "c1",
+        tool: "bash",
+        isError: true,
+        text: "msf continuity guardrail: blocked",
+        durationMs: null,
+        timestamp: "2026-01-01T00:00:02.000Z",
+      },
+      {
+        callId: "c2",
+        tool: "bash",
+        isError: true,
+        text: "no repository",
+        durationMs: 1200,
+        timestamp: "2026-01-01T00:00:02.000Z",
+      },
+    ]);
+  });
+
+  test("a result beyond the intact prefix is not read: a discarded tail proves nothing", () => {
+    const path = writeSession("2026-01-01_session-1.jsonl", [
+      HEADER("session-1"),
+      CALL("c1", "git push origin agent-issue-7"),
+      RESULT("c1", { isError: false }),
+      "",
+    ]);
+
+    assert.deepEqual(sessionToolResults(path, 1), [], "the prefix ends at the call, not at its result");
+    assert.equal(sessionToolResults(path, 2).length, 1);
+  });
+
+  test("an entry without Pi's own outcome field is not a terminal result", () => {
+    const path = writeSession("2026-01-01_session-1.jsonl", [
+      HEADER("session-1"),
+      CALL("c1", "git push origin agent-issue-7"),
+      // An "answered"/compatibility marker: a result entry that never states
+      // whether the call failed. It must not be read as a success.
+      RESULT("c1", { isError: undefined, answered: true }),
+      "",
+    ]);
+
+    assert.deepEqual(sessionToolResults(path, 2), [], "no fabricated success");
+  });
+
+  test("a result the entry does not name is still reported as it was written", () => {
+    const path = writeSession("2026-01-01_session-1.jsonl", [
+      HEADER("session-1"),
+      CALL("c1", "git status"),
+      RESULT("c1", {
+        toolName: undefined,
+        content: [
+          { type: "text", text: "first" },
+          { type: "text", text: "second" },
+        ],
+      }),
+      "",
+    ]);
+
+    const [result] = sessionToolResults(path, 2);
+    assert.equal(result?.tool, "", "no invented tool name");
+    assert.equal(result?.text, "first\nsecond", "every text block, in order");
+    assert.equal(result?.durationMs, null);
   });
 });

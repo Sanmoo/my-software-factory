@@ -18,11 +18,11 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { launchedNumber } from "./work-fixtures.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
-import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
+import { readEffectJournal, readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
 import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
 import { humanCommentsForPause } from "../state/derive.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
-import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
+import { seedExtraToolResult, seedSession, seedSessionToolCall, type SeededCallResult } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
@@ -120,12 +120,17 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     };
   }
 
-  /** The durable footprint of an interrupted attempt 2 whose session exists. */
-  function interruptedAttempt2(options: {
-    pending?: "push" | "unknown";
-    remote?: string | null;
-    labels?: string[];
-  } = {}): {
+  /** The durable footprint of an interrupted attempt 2 whose session exists.
+   *  `result` is what Pi persisted for the pending call: absent leaves the
+   *  journal gap — a pending intent with no result — the incident reported. */
+  function interruptedAttempt2(
+    options: {
+      pending?: "push" | "unknown";
+      remote?: string | null;
+      labels?: string[];
+    result?: SeededCallResult;
+    } = {},
+  ): {
     session: ReturnType<typeof seedSession>;
     ref: IssueRef;
     dir: string;
@@ -146,7 +151,12 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     const session = seedSession(target, ref, 2);
     const callId = options.pending === "push" ? "call-push" : "call-unknown";
     const command = options.pending === "push" ? "git push origin agent-issue-7" : "curl -X POST https://example.com";
-    seedSessionToolCall(session, { callId, command, answered: false });
+    seedSessionToolCall(session, {
+      callId,
+      command,
+      answered: options.result !== undefined,
+      ...(options.result === undefined ? {} : { result: options.result }),
+    });
     appendJournalStart(target, { attempt: 2, sessionId: session.sessionId });
 
     if (options.pending === "push") {
@@ -349,6 +359,163 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     );
     const issue7 = await tracker.readIssue({ repo: REPO, number: 7 });
     assert.ok(issue7.known && issue7.value.labels.includes(DEFAULT_LABELS.blocked));
+  });
+
+  test("a refusal Pi persisted for the interrupted call closes the journal gap and the work recovers without asking", async () => {
+    // The incident's shape: the intent was journaled, the call was refused AFTER
+    // it, and the journal never got the result the session holds. The operator
+    // is not asked anything — the evidence is read and the same attempt continues.
+    const { session } = interruptedAttempt2({
+      pending: "unknown",
+      result: { isError: true, text: "msf continuity guardrail: realized before the interruption" },
+    });
+    const target = workDir(layout, REPO, 7);
+    const evidence = readFileSync(session.file, "utf8");
+    const cfg = config();
+
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 1, "the work continues instead of pausing");
+    const request = sweep.launched[0]!.request;
+    assert.equal(request.attempt, 2, "the SAME attempt");
+    assert.deepEqual(request.session, { mode: "resume", sessionId: session.sessionId }, "ITS own session");
+    assert.equal(runtime.resumed[0]?.session?.sessionId, session.sessionId, "the runtime reopened that file");
+
+    assert.equal(readPause(target), null, "no pause was written");
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), false, "the operator was not asked");
+    assert.deepEqual(await agentComments(7), []);
+
+    const journal = readEffectJournal(target);
+    assert.deepEqual(journal.pending, [], "the gap is closed durably");
+    assert.deepEqual(
+      journal.results.map(({ callId, ok, source, evidenceAt }) => ({ callId, ok, source, evidenceAt })),
+      [{ callId: "call-unknown", ok: false, source: "session", evidenceAt: "2026-01-01T00:00:02.000Z" }],
+      "the observed error is preserved with the evidence it came from",
+    );
+    assert.equal(journal.intents.length, 1, "the original intent stays as written");
+    assert.equal(readFileSync(session.file, "utf8").startsWith(evidence), true, "the session is evidence, never rewritten");
+    assert.equal((await readRecoveryLedger(target)).consumed, 1, "closing the gap spends no extra grant");
+
+    // A restart (another sweep) duplicates neither the result, the launch nor a comment.
+    const restart = await runOnce(deps(cfg));
+    assert.equal(restart.launched.length, 0);
+    assert.equal(readEffectJournal(target).results.length, 1, "one result, no duplicate");
+    assert.deepEqual(await agentComments(7), []);
+  });
+
+  test("an observed error is not absence: the conclusion is kept, the effect stays ambiguous and no answer releases it", async () => {
+    // The push's conclusion is known (it errored) but that proves nothing about
+    // the remote: the reconciliation reads the real state, finds another head,
+    // and the work waits. The conclusion is persisted; the effect is not
+    // released — not even by a human answer.
+    const { ref } = interruptedAttempt2({ pending: "push", remote: "def456", result: { isError: true, text: "exited 1" } });
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 0, "no blind relaunch");
+    assert.equal(readPause(target)?.reason, "effect-ambiguous");
+    assert.deepEqual(
+      readEffectJournal(target).results.map(({ callId, ok, source }) => ({ callId, ok, source })),
+      [{ callId: "call-push", ok: false, source: "session" }],
+      "the observed error is persisted once, with its provenance",
+    );
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true, "the operator is asked");
+
+    const asked = (await agentComments(7)).length;
+    const restart = await runOnce(deps(cfg));
+    assert.equal(restart.launched.length, 0);
+    assert.equal((await agentComments(7)).length, asked, "no repeated request");
+
+    // A human answer is orientation, never authorization: the effect is still
+    // ambiguous, so the work stays paused and nothing is relaunched.
+    tracker.addComment(ref, "operator", "I did not push anything.");
+    const answered = await runOnce(deps(cfg));
+    assert.equal(answered.launched.length, 0, "the answer does not release an unreconciled effect");
+    assert.equal(readPause(target)?.reason, "effect-ambiguous");
+    assert.equal(readEffectJournal(target).results.length, 1, "still exactly one conclusion");
+
+    // A NEW answer plus facts that prove the push: the pause resolves and the
+    // verdict reaches the next session's guardrail.
+    tracker.addComment(ref, "operator", "It is pushed; the head is abc123.");
+    git.remoteHead = "abc123";
+    const resolved = await runOnce(deps(cfg));
+    assert.equal(resolved.launched.length, 1, "a fresh read that proves the effect releases the work");
+    assert.equal(readPause(target), null);
+    assert.equal(readGuardrailState(target)?.verdicts["push:agent-issue-7@abc123"], "realized");
+  });
+
+  test("an observed success closes the call while the host's verdict stays about the world", async () => {
+    const { session } = interruptedAttempt2({
+      pending: "push",
+      remote: "abc123",
+      result: { isError: false, text: "To ../remote", durationMs: 320 },
+    });
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 1, JSON.stringify(sweep.launched.map((entry) => entry.request.session)));
+    assert.equal(sweep.launched[0]?.request.session?.sessionId, session.sessionId);
+    assert.equal(readGuardrailState(workDir(layout, REPO, 7))?.verdicts["push:agent-issue-7@abc123"], "realized");
+    const [result] = readEffectJournal(workDir(layout, REPO, 7)).results;
+    assert.equal(result?.ok, true);
+    assert.equal(result?.source, "session");
+  });
+
+  test("a call the session never concluded keeps the pause, saying the session was consulted", async () => {
+    interruptedAttempt2({ pending: "unknown" });
+    const target = workDir(layout, REPO, 7);
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 0);
+    assert.equal(readPause(target)?.reason, "effect-unsupported");
+    assert.match(readPause(target)?.detail ?? "", /session records no terminal result/);
+    assert.deepEqual(
+      readEffectJournal(target).pending.map((intent) => intent.callId),
+      ["call-unknown"],
+      "no result is fabricated from an absence",
+    );
+  });
+
+  test("another pending intent keeps the pause even when one call is closed", async () => {
+    const { session, dir } = interruptedAttempt2({
+      pending: "unknown",
+      result: { isError: true, text: "refused by the harness" },
+    });
+    seedSessionToolCall(session, { callId: "call-second", command: "curl -X PUT https://example.com/b", answered: false });
+    appendJournalIntent(dir, {
+      attempt: 2,
+      sessionId: session.sessionId,
+      callId: "call-second",
+      tool: "bash",
+      command: "curl -X PUT https://example.com/b",
+      safety: "unknown",
+      actions: [],
+      reason: "curl is not a proven-local command",
+    });
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 0, "one closed call does not authorize the rest");
+    const journal = readEffectJournal(dir);
+    assert.deepEqual(journal.results.map((result) => result.callId), ["call-unknown"], "the resolvable one is closed");
+    assert.deepEqual(journal.pending.map((intent) => intent.callId), ["call-second"]);
+  });
+
+  test("conflicting duplicate results are not evidence: the work keeps waiting", async () => {
+    const { session } = interruptedAttempt2({
+      pending: "unknown",
+      result: { isError: true, text: "refused by the harness" },
+    });
+    seedExtraToolResult(session, "call-unknown", { isError: false, text: "answered" });
+
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 0);
+    assert.equal(readPause(workDir(layout, REPO, 7))?.reason, "effect-unsupported");
+    assert.deepEqual(readEffectJournal(workDir(layout, REPO, 7)).pending.map((intent) => intent.callId), ["call-unknown"]);
   });
 
   test("the operator's answer does not authorize a replay: the facts are read again, and only a settled effect starts a new round", async () => {
