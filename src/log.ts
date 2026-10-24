@@ -4,6 +4,20 @@
  * machines. Presentation only — `status` and the workers' JSONL files never
  * pass through here.
  */
+import { join } from "node:path";
+
+/**
+ * The durable operational log (issue 141): the CLI mirrors the stamped lines
+ * into the workspace, so a retrospective round can read the factory's own
+ * history (mounted read-only) instead of trusting the summary alone.
+ */
+export const OPERATIONAL_LOG_FILENAME = "operacional.log";
+
+/** The workspace file the operational record lives in. */
+export function operationalLogPath(workspaceRoot: string): string {
+  return join(workspaceRoot, OPERATIONAL_LOG_FILENAME);
+}
+
 export function utcStamp(message: string): string {
   return `[${isoUtc(new Date())}] ${message}`;
 }

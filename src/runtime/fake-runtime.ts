@@ -9,7 +9,7 @@ import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "../work-record/logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { RetroRequest, RetroResult, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -35,6 +35,22 @@ import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 export type ScriptedOutcome = SessionResult["outcome"];
 
+/**
+ * What one retrospective round's agent is scripted to do (issue 141): write
+ * the report (or die without it) and file a declared set of items. The fake
+ * writes the same two artifacts the real agent writes, so the factory's
+ * artifact contract — the report as the marker, the result record as the
+ * filing ledger — is what the tests exercise.
+ */
+export interface RetroScript {
+  /** False models a round that ended without its report (an abrupt death). */
+  report?: boolean;
+  /** The items the round filed, by destination. */
+  filed?: Array<{ repo: string; number: number; title?: string }>;
+  /** The candidates the round discarded, with the reason recorded in the report. */
+  discarded?: Array<{ title: string; reason: string }>;
+}
+
 export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
   /** Needed so the fake can actually open the PR the script promises. */
@@ -52,6 +68,10 @@ export interface FakeWorkerRuntimeOptions {
   ignoreStop?: boolean;
   /** The forced stop cannot confirm the end: the worker survives it. */
   forceUnconfirmed?: boolean;
+  /** One scripted retrospective round per launch; the last repeats. */
+  retro?: RetroScript[];
+  /** Deterministic control over a round's duration, like `hold` for workers. */
+  holdRetro?: (request: RetroRequest, index: number) => Promise<void> | void;
 }
 
 /** The session of one launch while it can still be stopped. */
@@ -79,6 +99,8 @@ export function launchOf(
 
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
+  /** Every retrospective launch, in order — the retro launch shape as recorded. */
+  readonly retroLaunched: RetroRequest[] = [];
   /** The works a cooperative stop was requested for, in order. */
   readonly stopRequests: string[] = [];
   /** The works a forced stop was requested for, in order. */
@@ -88,12 +110,67 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   readonly resumed: WorkRequest[] = [];
   /** Instance-level hold hook — settable by tests after construction. */
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
+  /** Instance-level round hold hook — settable by tests after construction. */
+  holdRetro?: (request: RetroRequest, index: number) => Promise<void> | void;
   private readonly script: ScriptedOutcome[];
+  private readonly retroScript: RetroScript[];
   private readonly sessions = new Map<string, FakeSession>();
   private cursor = 0;
+  private retroCursor = 0;
 
   constructor(private readonly options: FakeWorkerRuntimeOptions = {}) {
     this.script = options.outcomes ?? [];
+    this.retroScript = options.retro ?? [];
+  }
+
+  /**
+   * The scripted round (issue 141): the fake writes the same two artifacts the
+   * agent writes — the report (the marker) and the result record (the filing
+   * ledger) — so the factory's artifact contract, not the fake's prose, is
+   * what a test observes. A round with `report: false` leaves neither.
+   */
+  async launchRetro(request: RetroRequest): Promise<RetroResult> {
+    const index = this.retroLaunched.push(request) - 1;
+    const hold = this.holdRetro ?? this.options.holdRetro;
+    if (hold !== undefined) await hold(request, index);
+    const script = this.retroScript[Math.min(index, Math.max(0, this.retroScript.length - 1))];
+    if (script === undefined || script.report === false) {
+      return { request, outcome: "no-report" };
+    }
+    const filed = script.filed ?? [];
+    const discarded = script.discarded ?? [];
+    writeFileSync(
+      request.reportPath,
+      [
+        `# Retrospective ${request.round} (${request.language})`,
+        "",
+        request.summary,
+        "",
+        "## Candidates",
+        "",
+        "| Candidate | Outcome |",
+        "| --- | --- |",
+        ...filed.map((item) => `| ${item.title ?? item.repo + "#" + item.number} | filed ${item.repo}#${item.number} |`),
+        ...discarded.map((item) => `| ${item.title} | discarded: ${item.reason} |`),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      request.resultPath,
+      `${JSON.stringify(
+        {
+          round: request.round,
+          language: request.language,
+          filed: filed.map((item) => ({ repo: item.repo, number: item.number, title: item.title ?? "" })),
+          discarded,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return { request, outcome: "report-written" };
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {

@@ -22,6 +22,7 @@ const FAKE_WORKSPACE: WorkspaceLayout = {
   repos: "/nowhere/repos",
   works: "/nowhere/trabalhos",
   archive: "/nowhere/archive",
+  retros: "/nowhere/retros",
 };
 
 describe("outcome — the record contract, no prose ever", () => {

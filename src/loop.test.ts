@@ -6,7 +6,8 @@ import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "./tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf } from "./runtime/fake-runtime.js";
-import { DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET } from "./config.js";
+import { DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO, DEFAULT_MODEL_PROVIDER_BUDGET } from "./config.js";
 import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
 import { workKeyOf } from "./pool/work-key.js";
@@ -97,6 +98,7 @@ describe("loop wiring — the git host feeds every launch", () => {
         recovery: { maxRecoveries: 3, waitsMs: [1, 1, 1] },
         modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
         liveness: { ...DEFAULT_LIVENESS_POLICY },
+        retro: { ...DEFAULT_RETRO },
         notifications: true,
         workerAuthFile: null,
         configPath: join(root, "msf.yaml"),

@@ -21,6 +21,7 @@ import {
   type WorkIdentity,
 } from "../tracker/identity.js";
 import { describeError } from "../format.js";
+import { readRetroInFlight, readRetroState } from "../retro/marker.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -159,6 +160,17 @@ export type JiraSelectionView =
 
 export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known" }>;
 
+/** The retrospective job as `msf status` names it (issue 141, ADR 0006): the
+ *  last report that moved the marker, and the round in flight — if any. */
+export interface RetroStatus {
+  /** The last report's file name (the marker of the next window); null before any. */
+  lastReport: string | null;
+  /** Items the last report filed as needs-triage. */
+  filed: number;
+  /** The round in flight: its id, start, window and whether it was forced. */
+  inFlight: { round: string; startedAt: number; window: string[]; manual: boolean } | null;
+}
+
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
   pool: PoolEntry[];
@@ -186,6 +198,8 @@ export interface StatusView {
   recoveryBudget: RecoveryBudget;
   /** The configured model provider budget (issue 144). */
   modelProviderBudget: ModelProviderBudget;
+  /** The retrospective job's visible state; null when the job is disabled. */
+  retro: RetroStatus | null;
 }
 
 /**
@@ -238,6 +252,25 @@ export async function deriveStatus(
     unaddressedReservations: reserved.unaddressedReservations,
     recoveryBudget: config.recovery,
     modelProviderBudget: config.modelProvider,
+    retro: config.retro.enabled ? await readRetroStatus(layout) : null,
+  };
+}
+
+/** The retro marker and the round in flight, read-only (issue 141). */
+async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
+  const [state, inFlight] = await Promise.all([readRetroState(layout), readRetroInFlight(layout)]);
+  return {
+    lastReport: state.lastReport,
+    filed: state.lastFiled,
+    inFlight:
+      inFlight === null
+        ? null
+        : {
+            round: inFlight.round,
+            startedAt: inFlight.startedAt,
+            window: inFlight.window,
+            manual: inFlight.manual,
+          },
   };
 }
 

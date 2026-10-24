@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
+import { collectFinishedWorks } from "./retro/window.js";
+import { anchorOfKey } from "./pool/work-key.js";
+import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
+import { liveRoundInFlight } from "./retro/marker.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -11,10 +15,15 @@ import { JiraTicketAdapter } from "./tracker/jira-adapter.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { stopConfirmed, type StopReport } from "./pool/stop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
-import { utcStamp } from "./log.js";
+import { appendOperationalLog, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus, type JiraSelectionReader } from "./state/status.js";
-import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+import {
+  carriedWorkKeys,
+  probeLiveness,
+  workspaceLivenessProbe,
+  type LivenessProbe,
+} from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -110,7 +119,7 @@ export async function wireRunDeps(
     workspace,
     notifier,
     probe,
-    log: (message) => console.log(message),
+    log: (message) => writeOperationalLog(workspace, message),
   };
 }
 
@@ -184,6 +193,12 @@ function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   }));
 }
 
+/** The CLI's log: the console plus the workspace record a round reads. */
+function writeOperationalLog(workspace: WorkspaceLayout, message: string): void {
+  console.log(message);
+  appendOperationalLog(workspace.root, message);
+}
+
 /** `--runtime fake`: the placeholder that never launches — tests only; the
  * scripted fake lives in the test files, never on the cli. */
 function fakeRuntimePlaceholder(): WorkerRuntime {
@@ -194,6 +209,7 @@ function fakeRuntimePlaceholder(): WorkerRuntime {
       ),
     requestStop: () => {},
     forceStop: async () => {},
+    launchRetro: () => Promise.reject(new Error("no worker runtime yet — cannot launch a retrospective round")),
   };
 }
 
@@ -208,6 +224,10 @@ async function main(): Promise<void> {
     console.log(await recoverCall(config, args.workKey!, args.retry === undefined ? undefined : {
       retry: args.retry, reason: args.reason!, acceptDuplicateRisk: args.acceptDuplicateRisk === true,
     }));
+    return;
+  }
+  if (args.command === "retro") {
+    await retroCommand(args);
     return;
   }
   await statusCommand(args);
@@ -327,6 +347,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
     repos: join(config.workspace, WORKSPACE_SUBPATHS.repos),
     works: join(config.workspace, WORKSPACE_SUBPATHS.works),
     archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
+    retros: join(config.workspace, WORKSPACE_SUBPATHS.retros),
   };
 
   // Ticket 18: status reads the REAL tracker — the trail it shows is the
@@ -347,6 +368,88 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
     workspaceLivenessProbe(layout),
   );
   console.log(renderStatus(view, { all: args.all }));
+}
+
+/**
+ * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
+ * manual trigger of a retrospective round. A full window since the last report
+ * ignores the threshold; `<work>` (the work's on-disk key) analyzes exactly
+ * that finished work.
+ */
+async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
+  const config = loadConfigFrom(process.cwd(), args.configPath);
+  if (!config.retro.enabled) {
+    throw new Error(
+      "retro is disabled in msf.yaml — enable it with a `retro:` block " +
+        '(retro: {enabled: true, factory-items-destination: "owner/name"}) to run a round',
+    );
+  }
+
+  const work = args.work;
+  if (work !== undefined && anchorOfKey(work) === null) {
+    throw new Error(
+      `"${work}" is not a work key — a work key is the work's on-disk name, e.g. Sanmoo/my-tasks#12 ` +
+        "(an archived work's directory carries its finish date; drop it)",
+    );
+  }
+
+  const workspace = ensureWorkspace(config.workspace);
+
+  // One round at a time, enforced by the lane's marker: it names the process
+  // that owns the round in flight, so the exclusivity holds across processes —
+  // including a `msf run` that is sweeping right now, which is exactly when the
+  // operator forces a round. A record left by a dead owner is cleared here, so a
+  // crash never blocks the lane.
+  const running = await liveRoundInFlight(workspace);
+  if (running !== null) throw new RetroBusyError(running.round);
+
+  // The window is planned before any credential or runtime is demanded: an
+  // empty window is a notice, so the operator's command answers without the
+  // keyring. The liveness answer is read once here — it feeds the window and
+  // gates a window that has work to analyze — and an empty window still wins
+  // over it: nothing is launched, so nothing needs the premise.
+  const observation = await probeLiveness(workspaceLivenessProbe(workspace));
+  const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
+  const plan = await planManualRound(config, workspace, finished, {
+    ...(work === undefined ? {} : { work }),
+    ...(args.language === undefined ? {} : { language: args.language }),
+  });
+  if ("empty" in plan) {
+    writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
+    return;
+  }
+
+  // The window's premise is that no live worker carries its works. An unknown
+  // liveness cannot confirm it, so no round is launched on a guess: the sweep
+  // defers for the same reason.
+  if (observation.state !== "known") {
+    throw new Error(
+      `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
+        "worker carries its works, so no round was launched; retry when Docker answers",
+    );
+  }
+
+  const deps = await wireRunDeps(config, workspace);
+  const log = operationalLog(deps.log);
+  const result = await runRetroRound(
+    {
+      config,
+      runtime: deps.runtime,
+      workspace,
+      log,
+      ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
+    },
+    plan,
+  );
+  if (result.reportPath === null) {
+    log(`retro round ${result.round}: no report was written — nothing was marked`);
+    process.exitCode = 1;
+    return;
+  }
+  log(
+    `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
+      `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
+  );
 }
 
 // The binary runs main(); the module imported (by the tests of the wiring)
