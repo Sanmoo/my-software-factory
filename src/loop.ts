@@ -1438,6 +1438,9 @@ export class SweepEngine {
     return beginOperatorStop([...this.inFlight.values()], {
       workspace: this.deps.workspace,
       runtime: this.deps.runtime,
+      // The stop's reads go through the sweep's own observation: the probe's
+      // answer must also update this.liveness and the unavailability episode,
+      // or the sweep would reconcile an unconfirmed stop on stale facts.
       observe: () => this.observeLiveness().then(() => this.liveness),
       survivors: () => this.survivors.keys(),
       isCarried: (key) => this.inFlight.has(key),

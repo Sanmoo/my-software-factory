@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
-import { join } from "node:path";
+
+import { eventLogPath } from "../work-record/files.js";
 
 /**
  * The factory's own records of an attempt (issues 102/112/118/144), named once:
@@ -9,15 +10,12 @@ import { join } from "node:path";
  * excludes them (they would turn any line the factory writes into proof of
  * work).
  */
-export const eventLogName = (attempt: number): string => `log-${attempt}.jsonl`;
-
-export const sandcastleLogName = (attempt: number): string => `sandcastle-${attempt}.log`;
-
-/** The event log's name pattern — its number is the attempt it belongs to. */
-export const EVENT_LOG_PATTERN = /^log-(\d+)\.jsonl$/;
-
-/** Sandcastle's stdout log, matched by shape (it carries the attempt too). */
-export const SANDCASTLE_LOG_PATTERN = /^sandcastle-.*\.log$/;
+export {
+  EVENT_LOG_PATTERN,
+  SANDCASTLE_LOG_PATTERN,
+  eventLogName,
+  sandcastleLogName,
+} from "../work-record/files.js";
 
 /**
  * Append one event to an attempt's log (the runtime and the loop share the one
@@ -30,5 +28,5 @@ export function appendAttemptEvent(
   attempt: number,
   event: Record<string, unknown>,
 ): void {
-  appendFileSync(join(workDir, eventLogName(attempt)), `${JSON.stringify({ attempt, ...event })}\n`, "utf8");
+  appendFileSync(eventLogPath(workDir, attempt), `${JSON.stringify({ attempt, ...event })}\n`, "utf8");
 }

@@ -185,19 +185,19 @@ export async function beginOperatorStop(
   // Whatever still carries a work is forced now. The evidence of the stop lands
   // on a survivor's attempt BEFORE it is ended, exactly as for the launches
   // above: the next invocation resumes it instead of charging it.
-  const doomed = await stopCandidates(admissions, deps);
+  const toForce = await stopCandidates(admissions, deps);
   const own = new Set(admissions.map((admission) => workKeyOf(admission.work)));
-  for (const key of doomed) if (!own.has(key)) await recordStopOf(key, deps);
+  for (const key of toForce) if (!own.has(key)) await recordStopOf(key, deps);
 
   const forced: string[] = [];
-  if (doomed.length > 0) {
+  if (toForce.length > 0) {
     log(
-      `the cooperative phase is over: forcing the stop of ${doomed.length} worker(s) now — ` +
+      `the cooperative phase is over: forcing the stop of ${toForce.length} worker(s) now — ` +
         "the end of each one is still confirmed before the factory calls the stop safe",
     );
   }
   await Promise.all(
-    doomed.map(async (key) => {
+    toForce.map(async (key) => {
       const work = workOfKey(key);
       if (work === null) return undefined;
       try {

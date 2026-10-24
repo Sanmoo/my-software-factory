@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ModelProviderBudget } from "../config.js";
 import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { renderWaits } from "./recovery.js";
+import { WORK_RECORD_FILES } from "../work-record/files.js";
 
 /**
  * The model provider failure budget of a work (issue 144; terms in GLOSSARY):
@@ -18,7 +19,7 @@ import { renderWaits } from "./recovery.js";
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
-export const MODEL_PROVIDER_FILENAME = "provedor.json";
+export const MODEL_PROVIDER_FILENAME = WORK_RECORD_FILES.modelProvider;
 
 /** One granted model provider retry: its index, wait and the failure it answered. */
 export interface ModelProviderRetryEvent {

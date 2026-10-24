@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { WORK_OPERATIONS, type LocalWorkFacts, type WorkOperation } from "../git/port.js";
 import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import { WORK_RECORD_FILES } from "../work-record/files.js";
 
 /**
  * The durable repair cycle of a work (issue 107, extended by 112): how many
@@ -27,7 +28,7 @@ import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
-export const REPAIR_FILENAME = "reparo.json";
+export const REPAIR_FILENAME = WORK_RECORD_FILES.repair;
 
 /** The joint cap: conflicts and CI failures share the same two rounds. */
 export const MAX_REPAIR_ROUNDS = 2;

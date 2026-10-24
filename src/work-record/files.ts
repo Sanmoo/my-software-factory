@@ -1,5 +1,7 @@
 import { join } from "node:path";
 
+import { SESSIONS_SUBDIR } from "../layout.js";
+
 /**
  * The Work record's files, named once (issue #186). A Work's record lives
  * entirely under its registry dir (`trabalhos/<key>/`): the attempt's outcome,
@@ -39,8 +41,9 @@ export const WORK_RECORD_FILES = {
 /** A key of {@link WORK_RECORD_FILES}: one artifact kind of the record. */
 export type WorkRecordFile = keyof typeof WORK_RECORD_FILES;
 
-/** The Work's session subdir, on disk as decided: `<work dir>/sessao`. */
-export const SESSIONS_SUBDIR = "sessao";
+/** The Work's session subdir is a workspace-layout decision (layout.ts); the
+ *  record re-exports it so a record reader needs one import. */
+export { SESSIONS_SUBDIR } from "../layout.js";
 
 /** The absolute path of one record file inside a Work's dir. */
 export function recordPath(dir: string, file: WorkRecordFile): string {

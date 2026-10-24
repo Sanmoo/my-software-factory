@@ -31,6 +31,7 @@ const modules = [
   "runtime/session-log.js",
   "pool/work-key.js",
   "runtime/json-line.js",
+  "layout.js",
   "work-record/files.js",
   "work-record/outcome.js",
   "work-record/continuity.js",

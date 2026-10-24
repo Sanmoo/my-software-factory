@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { RecoveryBudget } from "../config.js";
 import type { OutcomeClass } from "../work-record/outcome.js";
+import { WORK_RECORD_FILES } from "../work-record/files.js";
 
 /**
  * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
@@ -15,7 +16,7 @@ import type { OutcomeClass } from "../work-record/outcome.js";
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
-export const RECOVERY_FILENAME = "recuperacao.json";
+export const RECOVERY_FILENAME = WORK_RECORD_FILES.recovery;
 
 /** One consumed recovery: which attempt it continued, its wait and when. */
 export interface RecoveryEvent {

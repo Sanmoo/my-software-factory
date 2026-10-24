@@ -18,6 +18,7 @@ import {
   type PersistedFacts,
   type PersistedFile,
 } from "./persisted.js";
+import { WORK_RECORD_FILES } from "../work-record/files.js";
 
 /**
  * The persisted PR association (issue 125): which PRs a Work has had, kept in
@@ -29,7 +30,7 @@ import {
  */
 
 /** The association's own file, carried beside the reservation it belongs to. */
-export const PR_ASSOCIATIONS_FILENAME = "associacoes-pr.json";
+export const PR_ASSOCIATIONS_FILENAME = WORK_RECORD_FILES.prAssociations;
 
 /** The PR the Work currently has; replaced ones stay as history. */
 export type PrAssociationState = "active" | "historical";

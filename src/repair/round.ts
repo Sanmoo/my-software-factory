@@ -165,23 +165,18 @@ export function openRepairRound(input: {
 
   if (trigger !== null) {
     const signature = repairSignature(work, trigger);
+    // The exhausted cap blocks whatever the evidence says: the same failure is
+    // never a new session, and a new one cannot be paid for.
+    if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
+      return { kind: "block", trigger, usedRounds: cycle.usedRounds };
+    }
     // A resumption takes over the attempt whose evidence is still the one this
     // head presents (issue 112): a fall on OLDER evidence is history, and the
     // current head gets a round of its own, pinned to its own head.
     if (attempt !== null && attempt.publication === "not-published" && attempt.evidence === signature) {
       return { kind: "open", round: repairOpening(trigger, attempt) };
     }
-    // Story 19: re-finding the same failure without new evidence is never a new
-    // session; the exhausted cap still blocks.
-    if (cycle.lastEvidence === signature) {
-      if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
-        return { kind: "block", trigger, usedRounds: cycle.usedRounds };
-      }
-      return { kind: "wait", because: "evidence-consumed" };
-    }
-    if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
-      return { kind: "block", trigger, usedRounds: cycle.usedRounds };
-    }
+    if (cycle.lastEvidence === signature) return { kind: "wait", because: "evidence-consumed" };
     return { kind: "open", round: repairOpening(trigger, null) };
   }
 

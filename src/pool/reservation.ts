@@ -14,6 +14,7 @@ import {
 } from "../tracker/identity.js";
 import { readPersistedRecord, writePersistedRecord, type PersistedFacts, type PersistedFile } from "./persisted.js";
 import { anchorOfKey, workKeyOf, workOfKey, type WorkAnchor } from "./work-key.js";
+import { WORK_RECORD_FILES } from "../work-record/files.js";
 
 /**
  * The reservation record (issue 125): the Work's own facts, persisted inside
@@ -27,7 +28,7 @@ import { anchorOfKey, workKeyOf, workOfKey, type WorkAnchor } from "./work-key.j
  */
 
 /** Disk name stays PT-BR with the rest of the registry. */
-export const RESERVATION_FILENAME = "reserva.json";
+export const RESERVATION_FILENAME = WORK_RECORD_FILES.reservation;
 
 /** Legible data for the operator — never identity. */
 export interface ReservationPresentation {
