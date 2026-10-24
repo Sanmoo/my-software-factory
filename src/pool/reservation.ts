@@ -4,7 +4,6 @@ import { join, relative, sep } from "node:path";
 
 import { WORKSPACE_SUBPATHS, type WorkspaceLayout } from "../layout.js";
 import {
-  GITHUB_SITE,
   isRepositoryIdentity,
   isTicketIdentity,
   workIdentity,
@@ -14,12 +13,7 @@ import {
   type WorkIdentity,
 } from "../tracker/identity.js";
 import { readPersistedRecord, writePersistedRecord, type PersistedFacts, type PersistedFile } from "./persisted.js";
-import {
-  anchorOfKey,
-  workOfAnchor,
-  workKeyOf,
-  type WorkAnchor,
-} from "./work-key.js";
+import { anchorOfKey, workKeyOf, workOfKey, type WorkAnchor } from "./work-key.js";
 
 /**
  * The reservation record (issue 125): the Work's own facts, persisted inside
@@ -174,13 +168,13 @@ export async function scanReservations(workspace: WorkspaceLayout | string): Pro
           key,
           dir,
           anchor,
-          work: workOfUnrecordedAnchor(anchor),
+          work: workOfKey(key),
           reservation: { state: "unreadable", reason: mismatch },
         });
       }
       continue;
     }
-    entries.push({ key, dir, anchor, work: workOfUnrecordedAnchor(anchor), reservation });
+    entries.push({ key, dir, anchor, work: workOfKey(key), reservation });
   }
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
@@ -225,16 +219,6 @@ export async function workDirCandidates(
     }
   }
   return dirs;
-}
-
-/** A github.com dir is the issue of its destination repo itself, so its key is
- *  an authoritative identity. Any other key — another provider, or another
- *  GitHub site whose destination site the key cannot carry — names no Work on
- *  its own: the persisted record is required, never a guess. */
-export function workOfUnrecordedAnchor(anchor: WorkAnchor): WorkIdentity | null {
-  return anchor.provider === "github" && anchor.site === GITHUB_SITE
-    ? workOfAnchor(anchor, `#${anchor.stableId}`)
-    : null;
 }
 
 /** A reservation whose Work the disk names: the scan above, narrowed. */
