@@ -44,8 +44,6 @@ import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
-export { AGENT_DIR, AGENT_SKILLS_DIR, agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
-
 const execFile = promisify(execFileCallback);
 
 /**
@@ -789,11 +787,10 @@ export interface PreflightDeps {
   run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
   /** The model-auth probe; injectable for tests. */
   authProbe?: (() => Promise<{ status: number | null; stdout: string; stderr: string }>) | undefined;
-  /** `"unused"` = the caller composes the launch for an agent that performs no
-   *  model call at all (the deterministic agent of the real stop proof), so
-   *  there is no credential to resolve. Only such a caller sets it; the
-   *  production launch never does, and every other precondition still runs. */
-  modelCredentials?: "resolve" | "unused" | undefined;
+  /** Whether the agent performs a model call at all. Only the real stop proof
+   *  declares `false` (its deterministic agent is a shell `sleep`): there is no
+   *  credential to resolve, and every other precondition still runs. */
+  agentMakesModelCalls?: boolean | undefined;
 }
 
 /** Run `docker` and keep its output even on a non-zero exit (no throw). */
@@ -1011,7 +1008,7 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     // unresolved/expired credential fail with the reason only (no value). An
     // agent that makes no model call declares it and has no credential to
     // resolve — every other precondition above still ran.
-    if (deps.modelCredentials !== "unused") {
+    if (deps.agentMakesModelCalls !== false) {
       await requireModelCredentials(deps);
     }
   };

@@ -66,11 +66,10 @@ factory's classification lives in code and reads only structured facts
 check results) — never LLM prose.
 
 The worker's agent environment is factory-owned and needs nothing of Pi on the
-host: `agent-resources.json` pins Pi, the upstream skill revision, the
-delegation extension and the reviewer agents; the image records what it
-provisioned in an inventory and stages the continuity guardrail from this
-checkout. Only those resources load — target-project and host skills/packages
-are ignored (ADR 0001).
+host: only the resources declared in `agent-resources.json` load; target-project
+and host skills/packages are ignored, model credentials are supplied separately,
+and a launch refuses an image that does not match the declaration (ADR 0001;
+build and verification in the [RUNBOOK](docs/RUNBOOK.md)).
 
 ## Tests
 

@@ -4,7 +4,8 @@ import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources, verifyAgentInventory } from "../runtime/inventory.js";
-import { agentGuidancePath, workerFlagArgs } from "../runtime/sandcastle.js";
+import { agentGuidancePath } from "../runtime/agent-paths.js";
+import { workerFlagArgs } from "../runtime/sandcastle.js";
 
 /**
  * The provisioned environment's actual behaviour (issue #159). Arguments
@@ -68,6 +69,11 @@ function piCommand(): string {
   ].join(" ");
 }
 
+/** Every provisioned resource file with its content digest — Pi's own state
+ *  files (auth.json, models-store.json, sessions/) are its runtime, not a
+ *  resource, so they stay out of the comparison. */
+const AGENT_TREE = `(cd /home/agent/.pi/agent && find skills extensions agents licenses ATTRIBUTION.md -type f -exec sha256sum {} + | sort -k2)`;
+
 function behaviourScript(): string {
   const guidance = `${agentGuidancePath(RESOURCES.declaration.extensions[0]!)}/SKILL.md`;
   return [
@@ -77,17 +83,23 @@ function behaviourScript(): string {
     'printf -- "---\\nname: undeclared-skill\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.pi/skills/undeclared-skill/SKILL.md',
     'printf -- "---\\nname: undeclared-legacy\\ndescription: must not load\\n---\\n" > /tmp/msf-project/.agents/skills/undeclared-legacy/SKILL.md',
     `cat > /tmp/msf-probe/extension.ts <<'PROBE_EOF'\n${PROBE_EXTENSION}\nPROBE_EOF`,
+    `${AGENT_TREE} > /tmp/msf-probe/before`,
     "cd /tmp/msf-project",
     "set +e",
     `HOME=/tmp/msf-home PI_CODING_AGENT_DIR=/home/agent/.pi/agent ${piCommand()} >/tmp/msf-probe/stdout 2>/tmp/msf-probe/stderr`,
     "set -e",
+    `${AGENT_TREE} > /tmp/msf-probe/after`,
     'if [ ! -f /tmp/msf-probe/loaded.json ]; then',
     '  echo "LOADED=missing"',
     '  echo "IMAGE_DOES_NOT_CARRY_THE_DECLARED_RESOURCES — rebuild with npm run build:image" >&2',
     "else",
     '  echo "LOADED=$(cat /tmp/msf-probe/loaded.json)"',
     "fi",
-    'if [ -e /home/agent/.pi/agent/npm ]; then echo "CACHE=present"; else echo "CACHE=absent"; fi',
+    // The session starts with nothing but the image's resources: no package
+    // cache in the agent dir, none in the runtime HOME, and no entry the run
+    // added to the provisioned tree.
+    'if [ -e /home/agent/.pi/agent/npm ] || [ -e /tmp/msf-home/.pi ]; then echo "CACHE=present"; else echo "CACHE=absent"; fi',
+    'if cmp -s /tmp/msf-probe/before /tmp/msf-probe/after; then echo "AGENT_TREE=unchanged"; else echo "AGENT_TREE=changed"; fi',
     'echo "SKILLS=$(ls /home/agent/.pi/agent/skills | sort | tr \'\\n\' \',\')"',
     `test -f ${guidance} && echo "GUIDANCE=present"`,
     'if grep -qi "npm install\\|installing" /tmp/msf-probe/stderr; then echo "INSTALL=yes"; else echo "INSTALL=no"; fi',
@@ -115,7 +127,12 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
     assert.ok(!loaded.commands.some((command) => command.includes("undeclared")), "project skills are ignored");
     assert.deepEqual(loaded.tools, ["bash", "edit", "read", "subagent", "subagents_enable", "write"]);
 
-    assert.equal(line(output, "CACHE="), "absent", "an empty runtime cache is the starting state");
+    assert.equal(line(output, "CACHE="), "absent", "the session starts with no package cache and creates none");
+    assert.equal(
+      line(output, "AGENT_TREE="),
+      "unchanged",
+      "the run leaves every provisioned file byte-identical — no skill, extension or package instalment",
+    );
     const expectedDirs = RESOURCES.declaration.skills.selected
       .map((skill) => skill.name)
       .sort()
@@ -138,7 +155,7 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
     ]);
     const inventory = verifyAgentInventory(RESOURCES, inventoryText);
 
-    assert.equal(inventory.pi.version, "1.3.0");
+    assert.equal(inventory.pi.version, RESOURCES.declaration.pi.version);
     assert.deepEqual(
       inventory.skills.map((skill) => skill.name).sort(),
       [
@@ -146,9 +163,12 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
         ...RESOURCES.declaration.extensions.map((extension) => extension.guidance.name),
       ].sort(),
     );
-    assert.equal(inventory.extensions[0]?.package, "pi-subagents");
-    assert.equal(inventory.extensions[0]?.version, "0.79.1");
-    assert.deepEqual(inventory.agents.map((agent) => agent.name).sort(), ["code-reviewer", "spec-reviewer"]);
+    assert.equal(inventory.extensions[0]?.package, RESOURCES.declaration.extensions[0]?.package);
+    assert.equal(inventory.extensions[0]?.version, RESOURCES.declaration.extensions[0]?.version);
+    assert.deepEqual(
+      inventory.agents.map((agent) => agent.name).sort(),
+      RESOURCES.declaration.agents.map((agent) => agent.name).sort(),
+    );
   });
 });
 

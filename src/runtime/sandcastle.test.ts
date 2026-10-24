@@ -20,18 +20,15 @@ import {
   SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
   GUARDRAIL_CONTAINER_FILE,
-  agentExtensionEntry,
-  agentGuidancePath,
-  agentSkillPath,
   defaultPreflight,
   dockerSocketFromHost,
-  stageAgentFiles,
   unixSocketPath,
   workerFlagArgs,
   workerShapedDockerRun,
 } from "./sandcastle.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
+import { agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
@@ -864,7 +861,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       model: "deterministic/stop-proof",
       agentResources: RESOURCES,
       authEnv: {},
-      modelCredentials: "unused",
+      agentMakesModelCalls: false,
       dockerSocket: SOCKET,
       // Any credential would be a lie for a deterministic agent: the probe is
       // never called.

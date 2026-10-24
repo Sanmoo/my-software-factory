@@ -141,12 +141,12 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
 
   before(() => {
     // The whole tree — the disposable remote, the factory workspace, the work
-    // dir, the profile snapshot — lives under a directory the host daemon sees
-    // at the same absolute path, so the runtime's own provider needs no
+    // dir, the supplied agent file — lives under a directory the host daemon
+    // sees at the same absolute path, so the runtime's own provider needs no
     // translation and the binds really carry the session file.
     root = mkdtempSync(join(hostVisibleBase(), "msf-continuity-real-"));
-    // The runtime snapshots the profile under tmpdir(); it must land in the
-    // host-visible tree as well.
+    // The runtime stages the supplied agent files under tmpdir(); they must
+    // land in the host-visible tree as well.
     const tmp = join(root, "tmp");
     mkdirSync(tmp, { recursive: true });
     process.env["TMPDIR"] = tmp;
