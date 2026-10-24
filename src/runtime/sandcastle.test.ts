@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -86,6 +86,17 @@ describe("the clone a retrospective anchors in (issue 141)", () => {
 
     assert.equal(retroAnchorDir(reposDir, ["Sanmoo/my-tasks"]), null);
     assert.equal(retroAnchorDir(join(reposDir, "absent"), ["Sanmoo/my-tasks"]), null);
+  });
+
+  test("a repos dir the host cannot read is the host's error, never a silent 'no clone'", () => {
+    const unreadable = join(reposDir, "unreadable");
+    mkdirSync(unreadable);
+    chmodSync(unreadable, 0o000);
+    try {
+      assert.throws(() => retroAnchorDir(unreadable, ["Sanmoo/my-tasks"]), /EACCES|EPERM/);
+    } finally {
+      chmodSync(unreadable, 0o755);
+    }
   });
 });
 
