@@ -18,10 +18,10 @@ import { DEFAULT_LABELS } from "../config.js";
  * consistent. So the cycle proves eligibility via DIRECT reads right after
  * seeding (ops 1+2 and 1+3) with NO settle wait, and the LISTING's live proof
  * becomes ONE non-blocking open-issues() re-check after the cycle's LAST
- * operation — by then the listing has had minutes to converge. A stale listing is explicitly reported, never a
- * failure: the FACTORY tolerates listing lag by design (the pool is
- * re-derived every tick and self-heals); the smoke must not demand instant
- * listing visibility.
+ * operation — by then the listing has had minutes to converge. A stale listing
+ * is explicitly reported, never a failure: the FACTORY tolerates listing lag by
+ * design (the pool is re-derived every tick and self-heals); the smoke must not
+ * demand instant listing visibility.
  */
 
 /** The cycle's adapter-side REST calls on the happy path — sim-verified
