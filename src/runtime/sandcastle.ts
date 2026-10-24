@@ -787,9 +787,10 @@ export interface PreflightDeps {
   run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
   /** The model-auth probe; injectable for tests. */
   authProbe?: (() => Promise<{ status: number | null; stdout: string; stderr: string }>) | undefined;
-  /** Whether the agent performs a model call at all. Only the real stop proof
-   *  declares `false` (its deterministic agent is a shell `sleep`): there is no
-   *  credential to resolve, and every other precondition still runs. */
+  /** Whether the agent performs a model call at all; defaults to `true`. Only
+   *  the real stop proof declares `false` (its deterministic agent is a shell
+   *  `sleep`): there is no credential to resolve, and every other precondition
+   *  still runs. */
   agentMakesModelCalls?: boolean | undefined;
 }
 

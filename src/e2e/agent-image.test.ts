@@ -95,11 +95,14 @@ function behaviourScript(): string {
     "else",
     '  echo "LOADED=$(cat /tmp/msf-probe/loaded.json)"',
     "fi",
-    // The session starts with nothing but the image's resources: no package
-    // cache in the agent dir, none in the runtime HOME, and no entry the run
-    // added to the provisioned tree.
-    'if [ -e /home/agent/.pi/agent/npm ] || [ -e /tmp/msf-home/.pi ]; then echo "CACHE=present"; else echo "CACHE=absent"; fi',
+    // The session starts with nothing but the image's resources: no module tree
+    // in the agent dir, no package cache in the runtime HOME, and no file of the
+    // provisioned subtrees changed by the run. (`npm root --global`, the
+    // read-only query Pi makes to resolve an extension, leaves only a debug log
+    // under $HOME/.npm/logs; npm's package cache is `_cacache`.)
+    'if [ -e /home/agent/.pi/agent/npm ] || [ -e /home/agent/.pi/agent/node_modules ] || [ -e /tmp/msf-home/.pi ] || [ -e /tmp/msf-home/.cache ] || [ -e /tmp/msf-home/.npm/_cacache ] || [ -e /tmp/msf-home/node_modules ]; then echo "CACHE=present"; else echo "CACHE=absent"; fi',
     'if cmp -s /tmp/msf-probe/before /tmp/msf-probe/after; then echo "AGENT_TREE=unchanged"; else echo "AGENT_TREE=changed"; fi',
+    'echo "AGENT_FILES=$(grep -c . /tmp/msf-probe/before)"',
     'echo "SKILLS=$(ls /home/agent/.pi/agent/skills | sort | tr \'\\n\' \',\')"',
     `test -f ${guidance} && echo "GUIDANCE=present"`,
     'if grep -qi "npm install\\|installing" /tmp/msf-probe/stderr; then echo "INSTALL=yes"; else echo "INSTALL=no"; fi',
@@ -137,6 +140,10 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
       .map((skill) => skill.name)
       .sort()
       .join(",");
+    assert.ok(
+      Number(line(output, "AGENT_FILES=")) > 0,
+      "the comparison really saw the provisioned files — an empty list would prove nothing",
+    );
     assert.equal(line(output, "SKILLS="), `${expectedDirs},`);
     assert.equal(line(output, "GUIDANCE="), "present", "the extension's operating guidance ships inside its package");
     assert.equal(line(output, "INSTALL="), "no", "the session installs no skill or extension");
