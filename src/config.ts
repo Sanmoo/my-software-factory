@@ -339,8 +339,11 @@ function parseJiraSelection(value: unknown, index: number): JiraSelectionConfig 
   const jql = requireJiraString(given, label, "jql");
   const ordering = withNativeRankOrdering(jql);
   if (!ordering.ok) {
+    const detail = ordering.because.includes("only an ordering")
+      ? `carries only an ordering and no selection filter`
+      : `has a conflicting ordering or is otherwise unusable: ${ordering.because}`;
     throw new ConfigError(
-      `config field "${label}.jql" has a conflicting ordering: ${ordering.because}. ` +
+      `config field "${label}.jql" ${detail}. ` +
         `The factory orders Jira candidates by native Rank ascending and never silently overrides the query`,
     );
   }
