@@ -18,7 +18,7 @@ import type { EffectAction } from "./effects.js";
 import { seedSession, seedSessionToolCall } from "../e2e/session-fixtures.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
-import type { IssueRef } from "../tracker/port.js";
+import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
  * The host-side continuity contract (issue 119): where a launch comes from,
@@ -27,25 +27,27 @@ import type { IssueRef } from "../tracker/port.js";
  * REAL artifacts on temp disk and the tracker/git boundaries the loop uses.
  */
 
-const REF: IssueRef = { repo: "Sanmoo/my-tasks", number: 7 };
+const REPO = "Sanmoo/my-tasks";
+const NUMBER = 7;
+const REF = githubWork(REPO, NUMBER);
 const BRANCH = "agent-issue-7";
 
 class FakeGit implements GitWork {
   remoteHead: string | null = null;
   readonly asks: number[] = [];
 
-  async prepareWork(): Promise<PreparedWork> {
+  async prepareWorkFor(): Promise<PreparedWork> {
     throw new Error("not used");
   }
-  async cleanupDoneWork(): Promise<void> {}
-  async diffWork(): Promise<string> {
+  async cleanupDoneWorkFor(): Promise<void> {}
+  async diffWorkFor(): Promise<string> {
     return "";
   }
-  async observeRemoteHead(): Promise<string | null> {
+  async observeRemoteHeadFor(): Promise<string | null> {
     this.asks.push(1);
     return this.remoteHead;
   }
-  async inspectLocalWork(): Promise<LocalWorkFacts> {
+  async inspectLocalWorkFor(): Promise<LocalWorkFacts> {
     return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };
   }
 }
@@ -62,15 +64,16 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     workDir = join(dir, "trabalhos", "Sanmoo#my-tasks#7");
     mkdirSync(workDir, { recursive: true });
     tracker = new FakeTrackerAdapter({ workerAccount: "bot" });
-    seedIssue(tracker, { repo: REF.repo, number: REF.number, labels: ["agent-claimed"] });
+    seedIssue(tracker, { repo: REPO, number: NUMBER, labels: ["agent-claimed"] });
     git = new FakeGit();
     deps = {
       workDir,
       sessionsDir: join(workDir, SESSIONS_SUBDIR),
-      ref: REF,
+      work: REF,
       attempt: 2,
       git,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       now: () => new Date("2026-01-01T00:00:00.000Z"),
     };
   });
@@ -116,7 +119,7 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(links.length, 1);
     assert.deepEqual(links[0], {
       version: 1,
-      work: { repo: REF.repo, number: REF.number },
+      work: REF,
       attempt: 2,
       round: 1,
       sessionId: plan.sessionId,
@@ -399,8 +402,8 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
       safety: "effect",
       actions: [{ kind: "comment", key: `comment:pr:7:${digestOf(body)}`, detail: "comment on PR #7", target: "pr", number: 7, body }],
     });
-    tracker.seedPullRequest({ repo: REF.repo, number: 7, headBranch: BRANCH });
-    tracker.addPrComment({ repo: REF.repo, prNumber: 7 }, "bot", body);
+    tracker.seedPullRequest({ repo: REPO, number: 7, headBranch: BRANCH });
+    tracker.addPrComment({ repo: REPO, prNumber: 7 }, "bot", body);
 
     const plan = await planContinuity(deps, "resume");
     assert.equal(plan.decision, "launch");
@@ -438,13 +441,13 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(absent.decision, "launch");
     assert.equal(readGuardrailState(workDir)?.verdicts[`pr:${BRANCH}`], "absent", "no PR exists: it may be opened once");
 
-    tracker.seedPullRequest({ repo: REF.repo, number: 7, headBranch: BRANCH });
+    tracker.seedPullRequest({ repo: REPO, number: 7, headBranch: BRANCH });
     interruptedPr("call-pr-2");
     const realized = await planContinuity(deps, "resume");
     assert.equal(realized.decision, "launch");
     assert.equal(readGuardrailState(workDir)?.verdicts[`pr:${BRANCH}`], "realized", "the PR on the branch is the effect");
 
-    tracker.seedPullRequest({ repo: REF.repo, number: 7, headBranch: "someone-elses-branch" });
+    tracker.seedPullRequest({ repo: REPO, number: 7, headBranch: "someone-elses-branch" });
     interruptedPr("call-pr-3");
     const ambiguous = await planContinuity(deps, "resume");
     assert.equal(ambiguous.decision, "pause");
@@ -467,14 +470,16 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(absent.decision, "launch");
     assert.equal(readGuardrailState(workDir)?.verdicts[`label:7:${label}`], "absent", "the label is not there: it may be added once");
 
-    await tracker.blockClaim(REF, DEFAULT_LABELS);
+    await tracker.blockTicketClaim(REF.ticket, DEFAULT_LABELS);
     interruptedLabel("call-label-2");
     const realized = await planContinuity(deps, "resume");
     assert.equal(realized.decision, "launch");
     assert.equal(readGuardrailState(workDir)?.verdicts[`label:7:${label}`], "realized");
 
     // An issue that cannot be read is never read as "the label is missing".
-    deps.tracker = new FakeTrackerAdapter({ workerAccount: "bot" });
+    const unreadableTracker = new FakeTrackerAdapter({ workerAccount: "bot" });
+    deps.tickets = unreadableTracker;
+    deps.pullRequests = unreadableTracker;
     interruptedLabel("call-label-3");
     const unreadable = await planContinuity(deps, "resume");
     assert.equal(unreadable.decision, "pause");

@@ -8,7 +8,7 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
-import { issueRefKey } from "../pool/work-key.js";
+import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
 import {
@@ -29,7 +29,7 @@ import {
 import { snapshotProfile, DEFAULT_SNAPSHOT_SKIP } from "./profile-snapshot.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
-import type { IssueRef } from "../tracker/port.js";
+import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -66,7 +66,7 @@ const execFile = promisify(execFileCallback);
 /** One running session of this runtime: its cooperative request and the
  *  forced stop that ends it even when Sandcastle's unwind lags behind. */
 interface RunningSession {
-  ref: IssueRef;
+  work: WorkIdentity;
   stop: AbortController;
   forced: Deferred;
 }
@@ -338,11 +338,11 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
-    const key = issueRefKey(request.ref);
+    const key = workKeyOf(request.work);
     // The session is registered BEFORE the preconditions (issue #146): a stop
     // arriving during them reaches this launch instead of being lost in the
     // window between the factory's check and the worker's start.
-    const session: RunningSession = { ref: request.ref, stop: new AbortController(), forced: deferred() };
+    const session: RunningSession = { work: request.work, stop: new AbortController(), forced: deferred() };
     this.sessions.set(key, session);
     try {
       return await this.launchRegistered(request, session);
@@ -360,7 +360,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     // Stopped while the preconditions ran: no footprint, no worker. The
     // requested stop is not a session this runtime has to report, and the
     // request is consumed here — it was remembered for exactly this launch.
-    const key = issueRefKey(request.ref);
+    const key = workKeyOf(request.work);
     if (stopSignal.aborted || this.stopRequested.delete(key)) {
       return { request, outcome: "abrupt-death" };
     }
@@ -441,8 +441,8 @@ export class SandcastleRuntime implements WorkerRuntime {
    * request never abandons that promise. `forceStop` is the backstop for a
    * worker that survives it.
    */
-  requestStop(ref: IssueRef): void {
-    const key = issueRefKey(ref);
+  requestStop(work: WorkIdentity): void {
+    const key = workKeyOf(work);
     this.stopRequested.add(key);
     this.sessions.get(key)?.stop.abort();
   }
@@ -452,8 +452,8 @@ export class SandcastleRuntime implements WorkerRuntime {
    * container is confirmed gone does the launch settle: an unconfirmed end
    * rejects and the launch stays owned, never declared safe.
    */
-  async forceStop(ref: IssueRef): Promise<void> {
-    const key = issueRefKey(ref);
+  async forceStop(work: WorkIdentity): Promise<void> {
+    const key = workKeyOf(work);
     this.stopRequested.add(key);
     const session = this.sessions.get(key);
     session?.stop.abort();
@@ -594,7 +594,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       // where the session file already lives.
       ...(resumeSession === undefined ? {} : { resumeSession }),
       signal,
-      name: `work-${request.ref.number}-attempt-${request.attempt}`,
+      name: containerNameOf(request.work, request.attempt),
       hooks: {
         sandbox: {
           onSandboxReady: [
@@ -665,6 +665,16 @@ export class SandcastleRuntime implements WorkerRuntime {
           : { event: "agent-raw", line: event.line };
     appendAttemptEvent(request.workDir, request.attempt, { iteration: event.iteration, ...payload });
   }
+}
+
+/** The container's name: the GitHub ticket number keeps its historical shape;
+ *  another source names the Work's stable key instead of inventing a number. */
+function containerNameOf(work: WorkIdentity, attempt: number): string {
+  const name =
+    work.ticket.provider === "github" && work.ticket.site === GITHUB_SITE
+      ? String(work.ticket.number)
+      : workKeyOf(work).replace(/[^A-Za-z0-9_.-]/g, "-");
+  return `work-${name}-attempt-${attempt}`;
 }
 
 export async function workerToken(account: string): Promise<string> {

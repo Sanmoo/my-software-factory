@@ -23,7 +23,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, re
 import { dirname, join } from "node:path";
 
 import type { EffectAction } from "./effects.js";
-import type { IssueRef } from "../tracker/port.js";
+import { workIdentityKey, workOfPersisted, type WorkIdentity } from "../tracker/identity.js";
 import { parseJsonLine, parseJsonObject } from "./json-line.js";
 
 export const SESSION_LINKS_FILENAME = "sessao-vinculos.jsonl";
@@ -34,7 +34,7 @@ export const PAUSE_FILENAME = "pausa.json";
 export interface SessionLink {
   version: 1;
   /** The work the session belongs to — its identity, never the directory name. */
-  work: IssueRef;
+  work: WorkIdentity;
   /** The attempt this session carries (the SAME number a recovery continues). */
   attempt: number;
   /** 1 for the attempt's first session; a later launch of the same attempt
@@ -137,7 +137,9 @@ function isPauseReason(value: unknown): value is PauseReason {
 
 export interface PauseRecord {
   version: 1;
-  work: IssueRef;
+  /** The Work that waits. Absent only on a record unreadable as a whole: the
+   *  caller fills it with the work and attempt it knows. */
+  work?: WorkIdentity;
   attempt: number;
   reason: PauseReason;
   /** The operator's diagnosis — paths and effect keys, never credentials. */
@@ -170,31 +172,34 @@ export function readSessionLinks(workDir: string): SessionLinks {
   for (const line of raw.split("\n")) {
     if (line.trim() === "") continue;
     const parsed = parseJsonLine(line);
-    if (!isSessionLink(parsed)) {
+    const link = sessionLinkOf(parsed);
+    if (link === null) {
       intact = false;
       continue;
     }
-    links.push(parsed);
+    links.push(link);
   }
   return { intact, links };
 }
 
 /** The launch a recovery continues: the LAST association recorded for the
  *  exact (work, attempt). Never the newest file, never a guess. */
-export function linkForAttempt(links: readonly SessionLink[], work: IssueRef, attempt: number): SessionLink | null {
+export function linkForAttempt(links: readonly SessionLink[], work: WorkIdentity, attempt: number): SessionLink | null {
+  const wanted = workIdentityKey(work);
   let found: SessionLink | null = null;
   for (const link of links) {
-    if (link.work.repo !== work.repo || link.work.number !== work.number) continue;
+    if (workIdentityKey(link.work) !== wanted) continue;
     if (link.attempt !== attempt) continue;
     if (found === null || link.round >= found.round) found = link;
   }
   return found;
 }
 
-export function nextRound(links: readonly SessionLink[], work: IssueRef, attempt: number): number {
+export function nextRound(links: readonly SessionLink[], work: WorkIdentity, attempt: number): number {
+  const wanted = workIdentityKey(work);
   let round = 0;
   for (const link of links) {
-    if (link.work.repo === work.repo && link.work.number === work.number && link.attempt === attempt) {
+    if (workIdentityKey(link.work) === wanted && link.attempt === attempt) {
       round = Math.max(round, link.round);
     }
   }
@@ -338,7 +343,6 @@ export function readPause(workDir: string): PauseRecord | null {
   if (!existsSync(join(workDir, PAUSE_FILENAME))) return null;
   return {
     version: 1,
-    work: { repo: "", number: 0 },
     attempt: 0,
     reason: "record-unreadable",
     detail:
@@ -378,13 +382,13 @@ function readValidPause(workDir: string): PauseRecord | null {
   // `record-unreadable` is the one reason whose attempt is honestly unknown
   // (0). Every other pause must name the attempt it waits for.
   if (reason !== "record-unreadable" && record["attempt"] < 1) return null;
-  const work = record["work"];
-  if (work === null || typeof work !== "object" || Array.isArray(work)) return null;
-  const workRecord = work as Record<string, unknown>;
-  if (typeof workRecord["repo"] !== "string" || typeof workRecord["number"] !== "number") return null;
+  const work = workOfPersisted(record["work"]);
+  // `record-unreadable` is the one reason whose work may be honestly unknown
+  // (the caller fills what it knows). Every other pause must name its Work.
+  if (work === null && reason !== "record-unreadable") return null;
   return {
     version: 1,
-    work: { repo: workRecord["repo"], number: workRecord["number"] },
+    ...(work === null ? {} : { work }),
     attempt: record["attempt"],
     reason,
     detail: typeof record["detail"] === "string" ? record["detail"] : "",
@@ -436,21 +440,22 @@ function readIfExists(path: string): string | null {
   }
 }
 
-function isSessionLink(value: unknown): value is SessionLink {
-  if (value === null || typeof value !== "object") return false;
+function sessionLinkOf(value: unknown): SessionLink | null {
+  if (value === null || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  const work = record["work"];
-  if (work === null || typeof work !== "object") return false;
-  const workRecord = work as Record<string, unknown>;
-  return (
-    record["version"] === 1 &&
-    typeof workRecord["repo"] === "string" &&
-    typeof workRecord["number"] === "number" &&
-    typeof record["attempt"] === "number" &&
-    typeof record["round"] === "number" &&
-    typeof record["sessionId"] === "string" &&
-    typeof record["at"] === "string"
-  );
+  if (record["version"] !== 1) return null;
+  if (typeof record["attempt"] !== "number" || typeof record["round"] !== "number") return null;
+  if (typeof record["sessionId"] !== "string" || typeof record["at"] !== "string") return null;
+  const work = workOfPersisted(record["work"]);
+  if (work === null) return null;
+  return {
+    version: 1,
+    work,
+    attempt: record["attempt"],
+    round: record["round"],
+    sessionId: record["sessionId"],
+    at: record["at"],
+  };
 }
 
 function isJournalLine(value: unknown): value is JournalLine {

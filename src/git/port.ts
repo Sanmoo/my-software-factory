@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import type { IssueRef } from "../tracker/port.js";
 import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../tracker/identity.js";
 
 /**
@@ -132,14 +131,14 @@ export interface GitWork {
    * (every launch, never a re-clone), and guarantee the work branch exists,
    * born from origin/<default> the first time and untouched afterwards.
    */
-  prepareWork(ref: IssueRef): Promise<PreparedWork>;
+  prepareWorkFor(work: WorkIdentity): Promise<PreparedWork>;
 
   /**
    * Done-only cleanup: delete the remote branch (unless already gone — the
    * human's merge may have auto-deleted it), delete the local branch, prune
    * stale worktree registrations and remote-tracking refs. Idempotent.
    */
-  cleanupDoneWork(ref: IssueRef): Promise<void>;
+  cleanupDoneWorkFor(work: WorkIdentity): Promise<void>;
 
   /**
    * The SHA of the work branch on the remote, or null when the branch is not
@@ -147,14 +146,14 @@ export interface GitWork {
    * worker's force-with-lease so a concurrent push can never be overwritten.
    * A later fetch does not silently renew it.
    */
-  observeRemoteHead(ref: IssueRef): Promise<string | null>;
+  observeRemoteHeadFor(work: WorkIdentity): Promise<string | null>;
 
   /**
    * The diff of the work branch's own changes against its base (merge-base,
    * three-dot) — the prompt's diff material (ticket 17). Empty string when
    * the branch has no changes yet; a later base advance never leaks in.
    */
-  diffWork(ref: IssueRef): Promise<string>;
+  diffWorkFor(work: WorkIdentity): Promise<string>;
 
   /**
    * The fact sheet of the work branch as it exists on disk (issue 112): its
@@ -162,19 +161,10 @@ export interface GitWork {
    * dirty and whether an operation was left in progress. Throws when git
    * cannot answer — an unverifiable local state is never "nothing there".
    */
-  inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts>;
-}
-
-/**
- * The same git host side addressed by the explicit Work identity (issue 125):
- * the legacy `GitWork` methods above are the transitional bridge over these.
- * The orchestration speaks the expanded methods (issue 126); the runtime's
- * continuity read is the one legacy caller left, until #127 migrates it.
- */
-export interface ExpandedGitWork extends GitWork {
-  prepareWorkFor(work: WorkIdentity): Promise<PreparedWork>;
-  cleanupDoneWorkFor(work: WorkIdentity): Promise<void>;
-  observeRemoteHeadFor(work: WorkIdentity): Promise<string | null>;
-  diffWorkFor(work: WorkIdentity): Promise<string>;
   inspectLocalWorkFor(work: WorkIdentity): Promise<LocalWorkFacts>;
 }
+
+/** The git host side addressed by the explicit Work identity. The alias keeps
+ *  the name the orchestration adopted during the expansion (issue 126); there
+ *  is no longer a legacy ref-addressed shape beside it. */
+export type ExpandedGitWork = GitWork;

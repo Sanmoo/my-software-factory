@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import { localGitWork } from "../git/local.js";
 import { seedFixtureRemote, cleanupFixture } from "../git/local-fixtures.js";
 import type { IssueRef } from "../tracker/port.js";
@@ -22,7 +22,7 @@ import {
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
 import { installGhShim, runCli } from "./cli-harness.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 13: the ruler of outcomes applied at collection, the
@@ -43,16 +43,8 @@ import { expandedGitWorkOf } from "./legacy-git.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
 /** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -156,7 +148,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
-    const { deps, runtime, tracker: t } = makeFactory(config, tracker, ["pr-open"]);
+    const { deps, tracker: t } = makeFactory(config, tracker, ["pr-open"]);
 
     const result = await runOnce(deps);
 
@@ -210,7 +202,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
         tickets: tracker,
         pullRequests: tracker,
         runtime: new FakeWorkerRuntime({ tracker, outcomes: ["clean-without-pr"] }),
-        git: expandedGitWorkOf(git),
+        git,
         workspace: layout,
         log: () => {},
       };

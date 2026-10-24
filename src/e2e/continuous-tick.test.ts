@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runForever, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -18,7 +18,7 @@ import {
   type Config,
 } from "../config.js";
 import { installGhShim, spawnCli } from "./cli-harness.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
  * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
@@ -41,7 +41,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {

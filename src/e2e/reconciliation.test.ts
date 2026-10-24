@@ -1,4 +1,4 @@
-import { issueRefOf } from "../tracker/identity.js";
+
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { SweepEngine, runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -18,7 +18,8 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
  * End-to-end of issue 100 at the sweep seam, with real disk: the tracker's
@@ -31,7 +32,7 @@ import { expandedGitWorkOf } from "./legacy-git.js";
 const REPO = "Sanmoo/a";
 const NOW = "2026-01-01T00:00:00Z";
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
     return {
       repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,
@@ -151,7 +152,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     assert.ok(existsSync(workDir(layout, REPO, 4)), "the parked work's dir was not moved");
     const claimed = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(claimed.known && claimed.value.labels.includes(DEFAULT_LABELS.claimed), "the mark survives");
-    assert.ok(engine.lastPool.some((entry) => issueRefOf(entry.work.ticket).number === 3), "the sweep continued normally");
+    assert.ok(engine.lastPool.some((entry) => githubTicketNumber(entry.work.ticket) === 3), "the sweep continued normally");
 
     // The next tick with the same leftovers is silent.
     await engine.deriveAndAct();
@@ -179,7 +180,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     const result = await runOnce(deps);
 
     assert.equal(result.reconciliation.unbackedClaims.length, 1);
-    assert.equal(issueRefOf(result.reconciliation.unbackedClaims[0]!.work.ticket).number, 5);
+    assert.equal(githubTicketNumber(result.reconciliation.unbackedClaims[0]!.work.ticket), 5);
     assert.equal(result.reconciliation.unmarkedReservations.length, 0);
   });
 });

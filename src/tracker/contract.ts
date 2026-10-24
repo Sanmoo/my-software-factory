@@ -11,10 +11,15 @@ import type { TicketTracker } from "./expanded-port.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
- * The contract suite of the tracker port: the single behavior suite that
- * every adapter must satisfy (ticket 16). The fake (in-memory) runs it in
- * `npm test`, fully offline; the real GitHub adapter runs the same checks in
- * the credential-gated smoke (`npm run smoke:github`).
+ * The contract suite of the GitHub adapter's legacy surface (ticket 16; split by
+ * #127). The checks here are the GitHub adapter's own behavior: the fake
+ * (in-memory GitHub adapter) runs them in `npm test`, fully offline, and the
+ * real GitHub adapter runs the same checks in the credential-gated smoke.
+ *
+ * GitHub-ONLY rules live in `githubOnlyChecks` below and never enter the common
+ * list: a future Jira ticket adapter is not asked to emulate the absence of a
+ * native Rank or completion by closing an issue. The provider-neutral expanded
+ * contracts are exercised in `expanded-contract.test.ts`.
  *
  * A harness abstracts what adapters cannot share: how issues, PRs, blockers
  * and comments are seeded, and how everything is reverted afterwards. The
@@ -418,17 +423,6 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       },
     },
     {
-      name: "6. markDone: closes the issue as completed",
-      run: async () => {
-        const a = await harness.createIssue({ title: `to done ${harness.name}` });
-        await adapter().markDone(a.ref);
-        const issue = await adapter().readIssue(a.ref);
-        assert.ok(issue.known);
-        assert.equal(issue.value.state, "closed");
-        assert.equal(issue.value.stateReason, "completed");
-      },
-    },
-    {
       name: "7. comment: posts on the issue carrying the invisible agent marker",
       run: async () => {
         const a = await harness.createIssue({ title: `commented one ${harness.name}` });
@@ -533,15 +527,6 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
       },
     },
     {
-      name: "rank: GitHub has no native priority — the honest answer is known(null)",
-      run: async () => {
-        const a = await harness.createIssue({ title: `ranked? ${harness.name}` });
-        const rank = await adapter().rank(a.ref);
-        assert.ok(rank.known);
-        assert.equal(rank.value, null);
-      },
-    },
-    {
       name: "writes report intents performed; confirmation stays with the re-read",
       run: async () => {
         const a = await harness.createIssue({ title: `intent report ${harness.name}` });
@@ -553,10 +538,38 @@ export function contractChecks(harness: ContractHarness): { name: string; run: (
   ];
 }
 
+/** The GitHub-ONLY rules: completion by closing the issue, and no native Rank.
+ *  They are never part of the provider-neutral contract a Jira adapter runs. */
+function githubOnlyChecks(harness: ContractHarness): { name: string; run: () => Promise<void> }[] {
+  const adapter = () => harness.getAdapter();
+  return [
+    {
+      name: "GitHub: markDone closes the issue as completed",
+      run: async () => {
+        const a = await harness.createIssue({ title: `to done ${harness.name}` });
+        await adapter().markDone(a.ref);
+        const issue = await adapter().readIssue(a.ref);
+        assert.ok(issue.known);
+        assert.equal(issue.value.state, "closed");
+        assert.equal(issue.value.stateReason, "completed");
+      },
+    },
+    {
+      name: "GitHub: no native priority — the honest answer is known(null)",
+      run: async () => {
+        const a = await harness.createIssue({ title: `ranked? ${harness.name}` });
+        const rank = await adapter().rank(a.ref);
+        assert.ok(rank.known);
+        assert.equal(rank.value, null);
+      },
+    },
+  ];
+}
+
 /** Run all checks sequentially against one harness — the smoke's path. */
 export async function runContractChecks(harness: ContractHarness): Promise<void> {
   await harness.reset();
-  for (const check of contractChecks(harness)) {
+  for (const check of [...contractChecks(harness), ...githubOnlyChecks(harness)]) {
     await check.run();
     console.log(`  ✔ ${check.name}`);
   }
@@ -572,6 +585,23 @@ export function runTrackerContractSuite(harness: ContractHarness): void {
       await harness.cleanup();
     });
     for (const check of contractChecks(harness)) {
+      test(check.name, async () => {
+        await check.run();
+      });
+    }
+  });
+}
+
+/** The GitHub-only rules as their own suite, beside the provider-neutral one. */
+export function runGithubOnlySuite(harness: ContractHarness): void {
+  describe(`GitHub-only rules — ${harness.name}`, () => {
+    beforeEach(async () => {
+      await harness.reset();
+    });
+    after(async () => {
+      await harness.cleanup();
+    });
+    for (const check of githubOnlyChecks(harness)) {
       test(check.name, async () => {
         await check.run();
       });

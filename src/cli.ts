@@ -19,6 +19,7 @@ import { SandcastleRuntime, workerToken } from "./runtime/sandcastle.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { ExpandedGitWork } from "./git/port.js";
+import { renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
@@ -138,7 +139,7 @@ function fakeRuntimePlaceholder(): WorkerRuntime {
   return {
     launch: (request) =>
       Promise.reject(
-        new Error(`no worker runtime yet — cannot launch ${request.ref.repo}#${request.ref.number}`),
+        new Error(`no worker runtime yet — cannot launch ${renderWorkIdentity(request.work)}`),
       ),
     requestStop: () => {},
     forceStop: async () => {},

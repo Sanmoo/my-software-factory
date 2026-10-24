@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { runForever, runOnce, SweepEngine, type LoopDeps } from "../loop.js";
-import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
+import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
@@ -23,7 +23,8 @@ import type { IssueRef } from "../tracker/port.js";
 import { seedSession } from "./session-fixtures.js";
 import { githubRepository, jiraTicket } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { githubTicketNumber, launchedNumber } from "./work-fixtures.js";
 
 /**
  * e2e of issue 118 at the PUBLIC cycle boundary (`runOnce` / `runForever`):
@@ -38,7 +39,7 @@ import { expandedGitWorkOf } from "./legacy-git.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
   readonly cleaned: IssueRef[] = [];
 
@@ -343,7 +344,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       );
       const review = notifier.notifications.find((notice) => notice.kind === "review");
       assert.ok(review && review.kind === "review");
-      assert.equal(review.ref.number, 9, "the notice names the work the survivor carried");
+      assert.equal(githubTicketNumber(review.work.ticket), 9, "the notice names the work the survivor carried");
       assert.deepEqual(await labelSet(tracker, 9), [DEFAULT_LABELS.claimed], "the claim stays held for the human");
       const feedback = await tracker.readPrFeedback({ repo: REPO, number: 9 });
       assert.ok(feedback.known);
@@ -422,7 +423,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       await waitFor("the one extra launch", () => runtime.launched.length >= 1);
       await waitFor("several more ticks", () => calls >= 8);
       assert.deepEqual(
-        runtime.launched.map((request) => request.ref.number),
+        runtime.launched.map((request) => launchedNumber(request)),
         [1],
         "three slots minus two survivors leaves room for exactly one",
       );
@@ -475,7 +476,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
 
       // Two survivors end: the next sweep re-reads Docker and resumes by itself.
       await waitFor("capacity to return by itself", () => runtime.launched.length === 1);
-      assert.deepEqual(runtime.launched.map((request) => request.ref.number), [1]);
+      assert.deepEqual(runtime.launched.map((request) => launchedNumber(request)), [1]);
       assert.ok(log.some((line) => line.includes("capacity available again")), "the return is diagnosed");
       assert.ok(
         log.some((line) => line.includes("survivor") && line.includes("attempt 1 confirmed finished")),
@@ -509,7 +510,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     );
     assert.ok(
       notifier.notifications.some(
-        (notice) => notice.kind === "intervention" && notice.ref.number === 40,
+        (notice) => notice.kind === "intervention" && githubTicketNumber(notice.work.ticket) === 40,
       ),
       "the operator is asked about the duplicated work",
     );
@@ -539,7 +540,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     // The cycle, from the SAME facts: the duplicated work is never launched,
     // its two slots are respected and the other work advances.
     await runOnce(deps);
-    assert.deepEqual(runtime.launched.map((request) => request.ref.number), [1]);
+    assert.deepEqual(runtime.launched.map((request) => launchedNumber(request)), [1]);
     assert.ok(!tracker.claimedOrder.includes(`${REPO}#90`), "the duplicated work is never claimed");
     assert.ok(
       log.some((line) => line.includes("duplicate workers for") && line.includes("2 containers")),
@@ -756,7 +757,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       assert.equal(runtime.launched.length, 0, "no substitute was launched");
       assert.ok(
         notifier.notifications.some(
-          (notice) => notice.kind === "intervention" && notice.ref.number === 60,
+          (notice) => notice.kind === "intervention" && githubTicketNumber(notice.work.ticket) === 60,
         ),
         "the operator is asked to decide, with the work's address",
       );

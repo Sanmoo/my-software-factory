@@ -4,12 +4,10 @@ import {
   githubTicket,
   githubTicketAt,
   jiraTicket,
-  workOfIssueRef,
   type RepositoryIdentity,
   type TicketProvider,
   type WorkIdentity,
 } from "../tracker/identity.js";
-import type { IssueRef } from "../tracker/port.js";
 
 /**
  * The on-disk key of a Work — the registry's identity anchor, i.e. the name of
@@ -125,14 +123,13 @@ export function anchorOfKey(key: string): WorkAnchor | null {
   }
 }
 
-/**
- * The registry key a legacy {@link IssueRef} names: the same "<repo>#<n>" the
- * Work of that GitHub ticket and destination repo has (issue 126). The
- * worker-facing runtime seams still speak `IssueRef` until #127, so their
- * session keys come from here — one authority, never a second spelling.
- */
-export function issueRefKey(ref: IssueRef): string {
-  return workKeyOf(workOfIssueRef(ref));
+/** The Work a registry key anchors, with the readable key the key cannot
+ *  carry. The GitHub key keeps its historical spelling; another provider's
+ *  stable id stands in until a reservation supplies the presentation data. */
+export function workOfKey(key: string): WorkIdentity | null {
+  const anchor = anchorOfKey(key);
+  if (anchor === null) return null;
+  return workOfAnchor(anchor, anchor.provider === "github" ? `#${anchor.stableId}` : anchor.stableId);
 }
 
 /** URI-encoding: injective, and no component ever yields "@", "/" or "#". */

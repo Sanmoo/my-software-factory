@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { FakeTrackerAdapter } from "./fake-adapter.js";
-import { runTrackerContractSuite, type ContractHarness } from "./contract.js";
+import { runGithubOnlySuite, runTrackerContractSuite, type ContractHarness } from "./contract.js";
 import { AGENT_MARKER } from "./port.js";
 
 /**
@@ -104,6 +104,7 @@ function makeHarness(): ContractHarness {
 }
 
 runTrackerContractSuite(makeHarness());
+runGithubOnlySuite(makeHarness());
 
 // ---- fake-specific behaviors (not part of the shared contract) ----
 

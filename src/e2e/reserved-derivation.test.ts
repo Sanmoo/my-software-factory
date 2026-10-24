@@ -1,4 +1,4 @@
-import { issueRefOf, githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
+import { githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import { reservationRecordOf, reserveWork, readReservation } from "../pool/reservation.js";
 import { activePullRequest, readPrAssociations } from "../pool/pr-association.js";
@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -24,7 +24,8 @@ import {
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { scanRegistry } from "../pool/registry.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { githubTicketNumber, githubWork, launchedNumber } from "./work-fixtures.js";
 
 /**
  * End-to-end of ticket 14: the derivation of the tick now covers the states
@@ -41,7 +42,7 @@ const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
 /** A git-host fake that records every cleanup — the real one is exercised in the branch test below. */
-class RecordingGitWork implements GitWork {
+class RecordingGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
   readonly cleaned: IssueRef[] = [];
   private count = 0;
@@ -400,7 +401,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
 
     seedIssue(tracker, { repo: REPO, number: 10, createdAt: "2026-01-05T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     const first = await runOnce(deps);
-    assert.equal(first.launched[0]?.request.ref.number, 10, "the work was claimed and its PR opened");
+    assert.equal(launchedNumber(first.launched[0]!.request), 10, "the work was claimed and its PR opened");
 
     // Now: a feedback round due on #10, plus two fresh eligibles — the older
     // issue #1 first by age.
@@ -415,7 +416,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       "the parked feedback round is reserved first, then new claims by age",
     );
     assert.equal(second.launched.length, 3, "y=2: the feedback round and the oldest claim first, #3 renews a freed slot");
-    assert.equal(launchOf(second.launched, 10)?.request.attempt, 2, "the registry numbered the round");
+    assert.equal(launchOf(second.launched, githubWork(REPO, 10))?.request.attempt, 2, "the registry numbered the round");
   });
 
   // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an interruption (issue 123) ----
@@ -434,7 +435,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     // Sweep #2 (--once): absence of a session is an interruption, not a
     // failure — the SAME attempt 1 is recovered and launched, the claim held.
     const sweep = await runOnce(deps);
-    const interrupted = sweep.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 7);
+    const interrupted = sweep.reserved.find((decision) => githubTicketNumber(decision.work.ticket) === 7);
     assert.ok(interrupted, "the orphan was derived as a reserved work");
     assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption (issue 123)");
     assert.ok(

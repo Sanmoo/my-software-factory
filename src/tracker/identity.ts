@@ -1,4 +1,3 @@
-import type { IssueRef } from "./port.js";
 import type { TicketSelection } from "./expanded-port.js";
 
 /**
@@ -154,8 +153,29 @@ export function pullRequestIdentityKey(pullRequest: PullRequestIdentity): string
   return `${repositoryIdentityKey(pullRequest.repository)}#${pullRequest.number}`;
 }
 
-/** The transitional bridge's conversion: a GitHub ticket back to the old ref. */
-export function issueRefOf(ticket: TicketIdentity): IssueRef {
+/** The operator-facing name of a ticket: its readable key, scoped by a source
+ *  that is not the plain github.com case. Presentation, never identity. */
+export function renderTicketIdentity(ticket: TicketIdentity): string {
+  if (ticket.provider === "github") {
+    const readable = `${ticket.repo}${ticket.key}`;
+    return ticket.site === GITHUB_SITE ? readable : `${readable} (github:${ticket.site})`;
+  }
+  return `${ticket.key} (${ticket.provider}:${ticket.site})`;
+}
+
+/** The operator-facing name of a Work: its ticket origin and the destination
+ *  that receives the code. The legacy GitHub spelling stays byte-identical. */
+export function renderWorkIdentity(work: WorkIdentity): string {
+  const { ticket, destination } = work;
+  if (ticket.provider === "github" && ticket.site === GITHUB_SITE && destination.site === GITHUB_SITE) {
+    return `${ticket.repo}${ticket.key}`;
+  }
+  return `${renderTicketIdentity(ticket)} → ${destination.repo}${destination.site === GITHUB_SITE ? "" : ` (github:${destination.site})`}`;
+}
+
+/** The GitHub issue a ticket names, for the adapter's legacy surface (the
+ *  smoke and the port contract). A non-GitHub ticket has no such ref. */
+export function issueRefOf(ticket: TicketIdentity): LegacyWorkRef {
   if (ticket.provider !== "github") {
     throw new Error(`ticket ${ticket.key} is a ${ticket.provider} ticket, not a GitHub issue`);
   }
@@ -163,7 +183,7 @@ export function issueRefOf(ticket: TicketIdentity): IssueRef {
 }
 
 /** The same conversion when the caller can legitimately have a non-GitHub ticket. */
-export function issueRefOfTicket(ticket: TicketIdentity): IssueRef | null {
+export function issueRefOfTicket(ticket: TicketIdentity): LegacyWorkRef | null {
   return ticket.provider === "github" ? issueRefOf(ticket) : null;
 }
 
@@ -187,12 +207,40 @@ export function isGitHubSource(source: TicketSource): boolean {
   return source.provider === "github" && source.site === GITHUB_SITE;
 }
 
-/** The transitional bridge's conversion: an old ref to the explicit Work identity. */
-export function workOfIssueRef(ref: IssueRef): WorkIdentity {
+/** A workspace record from before the expanded identity: one GitHub issue on
+ *  github.com names both the ticket and the destination. Reading it is a
+ *  compatibility contract, not a shape new code may produce. */
+export interface LegacyWorkRef {
+  repo: string;
+  number: number;
+}
+
+/** The Work a legacy workspace record names: the ticket IS in its destination
+ *  repository, the only composition that shape expressed. */
+export function workOfLegacyRef(ref: LegacyWorkRef): WorkIdentity {
   return {
     ticket: githubTicket(ref.repo, ref.number),
     destination: githubRepository(ref.repo),
   };
+}
+
+/** The legacy spelling of the Work a legacy ref names; the adapters' legacy
+ *  surface uses it, and the workspace reader uses {@link workOfLegacyRef}. */
+export function workOfIssueRef(ref: LegacyWorkRef): WorkIdentity {
+  return workOfLegacyRef(ref);
+}
+
+/** Does a value read from a legacy workspace file name a Work that way? */
+export function isLegacyWorkRef(value: unknown): value is LegacyWorkRef {
+  if (value === null || typeof value !== "object") return false;
+  const ref = value as Record<string, unknown>;
+  return (
+    typeof ref["repo"] === "string" &&
+    ref["repo"] !== "" &&
+    typeof ref["number"] === "number" &&
+    Number.isInteger(ref["number"]) &&
+    ref["number"] >= 1
+  );
 }
 
 /**
@@ -241,4 +289,20 @@ export function isPullRequestIdentity(value: unknown): value is PullRequestIdent
     Number.isInteger(pullRequest["number"]) &&
     pullRequest["number"] >= 1
   );
+}
+
+/** A Work as the workspace persists it: the ticket origin and the destination
+ *  as separate facts. */
+export function isWorkIdentity(value: unknown): value is WorkIdentity {
+  if (value === null || typeof value !== "object") return false;
+  const work = value as Record<string, unknown>;
+  return isTicketIdentity(work["ticket"]) && isRepositoryIdentity(work["destination"]);
+}
+
+/** A persisted Work record: the expanded shape, or the legacy ref a workspace
+ *  written before the expansion holds. Unknown is never reinterpreted. */
+export function workOfPersisted(value: unknown): WorkIdentity | null {
+  if (isWorkIdentity(value)) return value;
+  if (isLegacyWorkRef(value)) return workOfLegacyRef(value);
+  return null;
 }

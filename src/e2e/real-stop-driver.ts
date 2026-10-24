@@ -9,6 +9,8 @@ import { dockerWorkerProbe } from "../state/liveness.js";
 import { WORKSPACE_SUBPATHS } from "../layout.js";
 import { COOPERATIVE_STOP_MS } from "../stop-signals.js";
 import type { WorkRequest } from "../runtime/port.js";
+import { workKeyOf } from "../pool/work-key.js";
+import { githubWork } from "./work-fixtures.js";
 
 /**
  * The driver of the real-runtime stop proof (issue #146). It runs INSIDE a
@@ -101,13 +103,13 @@ async function main(): Promise<void> {
   });
 
   const request: WorkRequest = {
-    ref: { repo: "Sanmoo/stop", number: 1 },
+    work: githubWork("Sanmoo/stop", 1),
     workDir,
     branch: "agent-stop-1",
     repoDir,
     baseBranch: "main",
     attempt: 1,
-    material: { issue: { title: "the real stop proof", body: "" }, diff: "" },
+    material: { ticket: { title: "the real stop proof", body: "" }, diff: "" },
   };
 
   const runtime = new SandcastleRuntime({
@@ -143,11 +145,11 @@ async function main(): Promise<void> {
   const appearanceDeadline = Date.now() + APPEARANCE_LIMIT_MS;
   while (!seenWorker && Date.now() < appearanceDeadline) {
     const live = await probe();
-    seenWorker = live.some((worker) => worker.key === `${request.ref.repo}#${request.ref.number}`);
+    seenWorker = live.some((worker) => worker.key === workKeyOf(request.work));
     if (!seenWorker) await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!seenWorker) throw new Error("the worker container never appeared — the proof cannot proceed");
-  log(`worker of ${request.ref.repo}#${request.ref.number} is alive`);
+  log(`worker of  is alive`);
 
   // The factory's contract, exactly as the loop applies it: the requested stop
   // first, the forced stop at the end of the cooperative window (mode
@@ -157,7 +159,7 @@ async function main(): Promise<void> {
   let settledInWindow = false;
   let forced = false;
   log(`requesting the cooperative stop (mode ${MODE})`);
-  runtime.requestStop(request.ref);
+  runtime.requestStop(request.work);
   if (MODE === "abort") {
     const settledByAbort = await waitForSettle(ABORT_GRACE_MS, () => launchSettled);
     log(`the abort ${settledByAbort ? "settled the launch" : "did not settle the launch"} on its own`);
@@ -167,13 +169,13 @@ async function main(): Promise<void> {
       log("the session ended inside the cooperative window");
     } else {
       log("the cooperative window ended without the session ending; forcing the stop");
-      await runtime.forceStop(request.ref);
+      await runtime.forceStop(request.work);
       forced = true;
       log(`forced; the probe now sees: ${JSON.stringify((await probe()).map((w) => w.key))}`);
     }
   } else {
     log("escalating: forcing the stop now");
-    await runtime.forceStop(request.ref);
+    await runtime.forceStop(request.work);
     forced = true;
     log(`forced; the probe now sees: ${JSON.stringify((await probe()).map((w) => w.key))}`);
   }

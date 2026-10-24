@@ -8,7 +8,7 @@ import { runForever, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { deferred } from "../runtime/deferred.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import {
@@ -19,7 +19,7 @@ import {
   type Config,
 } from "../config.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import {
   installGhShim,
   installUnreachableDocker,
@@ -47,7 +47,7 @@ import {
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   /** Runs inside prepareWork, before it answers — the seam a test uses to park
    * a launch after its reservation and before its worker starts. */
   constructor(private readonly beforePrepare?: () => Promise<void>) {}
@@ -154,7 +154,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
     // Worker #1 parks mid-flight; #2 would be the replenishment the moment the
     // slot frees — exactly the launch the stop must suppress.
     runtime.hold = async (request) => {
-      if (request.ref.number === 1) await runtime.whenStopRequested(request.ref);
+      if (request.work.ticket.provider === 'github' && request.work.ticket.number === 1) await runtime.whenStopRequested(request.work);
     };
 
     const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
@@ -170,7 +170,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
     assert.deepEqual(report?.unconfirmed, [], "the end of the worker was confirmed");
     assert.deepEqual(runtime.stopRequests, ["Sanmoo/my-tasks#1"], "the in-flight worker was asked to stop");
     assert.deepEqual(
-      runtime.launched.map((r) => r.ref.number),
+      runtime.launched.map((r) => r.work.ticket.provider === 'github' ? r.work.ticket.number : -1),
       [1],
       "the freed slot admits nothing after the requested stop",
     );
@@ -262,14 +262,14 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
         ...childWiring("tracker, outcomes: ['pr-open'], ignoreStop: true", "configPath"),
         "runtime.hold = async (request) => {",
-        "  appendFileSync(launchedFile, `${request.ref.number}\\n`);",
-        "  if (request.ref.number === 1) while (existsSync(holdFile)) await sleep(10);",
+        "  appendFileSync(launchedFile, `${request.work.ticket.provider === 'github' ? request.work.ticket.number : -1}\\n`);",
+        "  if (request.work.ticket.provider === 'github' && request.work.ticket.number === 1) while (existsSync(holdFile)) await sleep(10);",
         "};",
         "const stop = installStopSignals();",
         "const lock = await acquireRunLock(configPath);",
         "const report = await runForever({ config, tickets: tracker, pullRequests: tracker, runtime, git, workspace, log: () => {} }, { tickMs: 10, signal: stop.requested, escalate: stop.escalated, cooperativeMs: 30_000 });",
         "const feedback = await tracker.readPrFeedback({ repo: 'Sanmoo/my-tasks', number: 1 });",
-        "writeFileSync(resultFile, JSON.stringify({ launched: runtime.launched.map((r) => r.ref.number), prOpen: feedback.known && feedback.value.pr !== null, forced: report?.forced ?? [], unconfirmed: report?.unconfirmed ?? [] }));",
+        "writeFileSync(resultFile, JSON.stringify({ launched: runtime.launched.map((r) => r.work.ticket.provider === 'github' ? r.work.ticket.number : -1), prOpen: feedback.known && feedback.value.pr !== null, forced: report?.forced ?? [], unconfirmed: report?.unconfirmed ?? [] }));",
         "await lock.close();",
         "stop.dispose();",
         "process.exit(0);",
@@ -448,7 +448,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
         "// parked worker so the test can deliver the real signal.",
         "const keepAlive = setInterval(() => {}, 1_000);",
         ...childWiring("tracker, outcomes: ['pr-open']", "join(workspaceRoot, 'msf.yaml')"),
-        "if (mode === 'stop') runtime.hold = async (request) => { writeFileSync(launchedFile, String(request.ref.number)); await runtime.whenStopRequested(request.ref); };",
+        "if (mode === 'stop') runtime.hold = async (request) => { writeFileSync(launchedFile, String(request.work.ticket.provider === 'github' ? request.work.ticket.number : -1)); await runtime.whenStopRequested(request.work); };",
         "const stop = installStopSignals();",
         "const result = await runOnce({ config, tickets: tracker, pullRequests: tracker, runtime, git, workspace, log: () => {} }, { signal: stop.requested, escalate: stop.escalated, cooperativeMs: 10_000 });",
         "const pr = await tracker.readPrFeedback({ repo: 'Sanmoo/my-tasks', number: 1 });",

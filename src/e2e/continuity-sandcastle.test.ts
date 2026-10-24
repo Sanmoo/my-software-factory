@@ -24,7 +24,6 @@ import { EFFECT_JOURNAL_FILENAME, GUARDRAIL_STATE_FILENAME } from "../runtime/co
 import { inspectSessionFile, sessionToolCalls } from "../runtime/session-log.js";
 import { COMPLETION, startDeterministicModel, type DeterministicModel } from "./deterministic-model.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
  * The mandatory REAL integration proof of continuity (issue 119, Testing
@@ -249,7 +248,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         tickets: tracker,
         pullRequests: tracker,
         runtime,
-        git: expandedGitWorkOf(localGitWork({ reposDir: workspace.repos, remoteUrl: () => remotePath })),
+        git: localGitWork({ reposDir: workspace.repos, remoteUrl: () => remotePath }),
         workspace,
         log: () => {},
         notifier: new FakeNotifier(),

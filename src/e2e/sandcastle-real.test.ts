@@ -10,6 +10,7 @@ import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { reviewReportPath } from "../runtime/prompt.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import type { WorkRequest } from "../runtime/port.js";
+import { githubWork } from "./work-fixtures.js";
 
 /**
  * The REAL proof (ticket 85): an explicitly enabled, credit-consuming run of
@@ -145,13 +146,13 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
     mkdirSync(workDir, { recursive: true });
 
     const request: WorkRequest = {
-      ref: { repo: "Sanmoo/descartavel", number: 85 },
+      work: githubWork("Sanmoo/descartavel", 85),
       workDir,
       branch,
       repoDir,
       baseBranch,
       attempt: 1,
-      material: { issue: { title: "Prova real do fluxo implement–review", body: SPEC_BODY }, diff: "" },
+      material: { ticket: { title: "Prova real do fluxo implement–review", body: SPEC_BODY }, diff: "" },
     };
 
     const runtime = new SandcastleRuntime({

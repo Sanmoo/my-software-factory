@@ -17,9 +17,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { GitWork } from "../git/port.js";
-import { workBranchName } from "../git/port.js";
-import type { IssueRef, TrackerPort } from "../tracker/port.js";
+import type { ExpandedGitWork } from "../git/port.js";
+import { branchOfWork } from "../git/port.js";
+import { type WorkIdentity } from "../tracker/identity.js";
+import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { classifyCommand, type EffectAction } from "./effects.js";
 import { eventLogName } from "./attempt-logs.js";
@@ -43,10 +44,12 @@ import { findSessionFile, inspectSessionFile, sessionToolCalls } from "./session
 export interface ContinuityDeps {
   workDir: string;
   sessionsDir: string;
-  ref: IssueRef;
+  /** The Work whose attempt is being continued: its ticket origin and destination. */
+  work: WorkIdentity;
   attempt: number;
-  git: GitWork;
-  tracker: TrackerPort;
+  git: ExpandedGitWork;
+  tickets: TicketTracker;
+  pullRequests: PullRequestTracker;
   now?: () => Date;
 }
 
@@ -81,7 +84,7 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
       pause: pauseOf(deps, "session-identity", "the session-association journal is unreadable"),
     };
   }
-  const link = linkForAttempt(links.links, deps.ref, deps.attempt);
+  const link = linkForAttempt(links.links, deps.work, deps.attempt);
   if (link === null) {
     // A claim whose worker never started (a death between the claim and the
     // spawn) leaves ZERO attempt evidence: there is no session to lose, so the
@@ -224,9 +227,9 @@ function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, Effect
   const sessionId = randomUUID();
   appendSessionLink(deps.workDir, {
     version: 1,
-    work: deps.ref,
+    work: deps.work,
     attempt: deps.attempt,
-    round: nextRound(links.links, deps.ref, deps.attempt),
+    round: nextRound(links.links, deps.work, deps.attempt),
     sessionId,
     at: nowIso(deps),
   });
@@ -298,11 +301,11 @@ async function reconcileAction(deps: ContinuityDeps, action: EffectAction): Prom
 }
 
 async function reconcilePush(deps: ContinuityDeps, action: EffectAction): Promise<Reconciled> {
-  const branch = action.branch ?? workBranchName(deps.ref.number);
-  if (branch !== workBranchName(deps.ref.number)) {
-    return { verdict: "unknown", detail: `only ${workBranchName(deps.ref.number)} is observable from the factory` };
+  const branch = action.branch ?? branchOfWork(deps.work);
+  if (branch !== branchOfWork(deps.work)) {
+    return { verdict: "unknown", detail: `only ${branchOfWork(deps.work)} is observable from the factory` };
   }
-  const remote = await deps.git.observeRemoteHead(deps.ref);
+  const remote = await deps.git.observeRemoteHeadFor(deps.work);
   if (remote === null) return { verdict: "absent" };
   if (action.sha !== undefined && remote === action.sha) return { verdict: "realized" };
   return {
@@ -314,7 +317,7 @@ async function reconcilePush(deps: ContinuityDeps, action: EffectAction): Promis
 }
 
 async function reconcilePr(deps: ContinuityDeps, action: EffectAction): Promise<Reconciled> {
-  const feedback = await deps.tracker.readPrFeedback(deps.ref);
+  const feedback = await deps.pullRequests.readPullRequestFeedback({ work: deps.work, pullRequest: null });
   if (!feedback.known) return { verdict: "unknown", detail: "the PR state could not be read" };
   const pr = feedback.value.pr;
   if (pr === null) return { verdict: "absent" };
@@ -331,15 +334,15 @@ async function reconcileComment(deps: ContinuityDeps, action: EffectAction): Pro
   }
   const bodies: string[] = [];
   if (action.target === "pr") {
-    const feedback = await deps.tracker.readPrFeedback(deps.ref);
+    const feedback = await deps.pullRequests.readPullRequestFeedback({ work: deps.work, pullRequest: null });
     if (!feedback.known) return { verdict: "unknown", detail: "the PR conversation could not be read" };
     if (feedback.value.pr !== null && feedback.value.pr.number !== action.number) {
       return { verdict: "unknown", detail: `the work's PR is #${feedback.value.pr.number}, not #${action.number}` };
     }
     bodies.push(...feedback.value.comments.map((comment) => comment.body), ...feedback.value.reviews.map((comment) => comment.body));
   } else {
-    const comments = await deps.tracker.readComments(deps.ref);
-    if (!comments.known) return { verdict: "unknown", detail: "the issue conversation could not be read" };
+    const comments = await deps.tickets.readTicketComments(deps.work.ticket);
+    if (!comments.known) return { verdict: "unknown", detail: "the ticket conversation could not be read" };
     bodies.push(...comments.value.map((comment) => comment.body));
   }
   const wanted = normalizeComment(action.body);
@@ -351,10 +354,19 @@ async function reconcileLabel(deps: ContinuityDeps, action: EffectAction): Promi
   if (action.label === undefined || action.number === undefined) {
     return { verdict: "unknown", detail: "the label change was not recorded completely" };
   }
-  if (action.number !== deps.ref.number) {
-    return { verdict: "unknown", detail: `the work's issue is #${deps.ref.number}, not #${action.number}` };
+  const { ticket } = deps.work;
+  // Labels are a GitHub issue command: a non-GitHub origin has no GitHub issue
+  // to read, so the effect cannot be reconciled from the factory's side.
+  if (ticket.provider !== "github") {
+    return {
+      verdict: "unknown",
+      detail: `the work's origin is ${ticket.provider}:${ticket.site}, so a GitHub label read cannot establish this effect`,
+    };
   }
-  const issue = await deps.tracker.readIssue(deps.ref);
+  if (action.number !== ticket.number) {
+    return { verdict: "unknown", detail: `the work's issue is #${ticket.number}, not #${action.number}` };
+  }
+  const issue = await deps.tickets.readTicket(ticket);
   if (!issue.known) return { verdict: "unknown", detail: "the issue labels could not be read" };
   return issue.value.labels.includes(action.label) ? { verdict: "realized" } : { verdict: "absent" };
 }
@@ -387,7 +399,7 @@ function guardrailState(
 function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sessionId?: string): PauseRecord {
   return {
     version: 1,
-    work: deps.ref,
+    work: deps.work,
     attempt: deps.attempt,
     reason,
     detail,

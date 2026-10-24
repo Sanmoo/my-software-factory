@@ -13,7 +13,12 @@ import { join } from "node:path";
 
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { appendSessionLink, type SessionLink } from "../runtime/continuity-artifacts.js";
-import type { IssueRef } from "../tracker/port.js";
+import {
+  isLegacyWorkRef,
+  workOfLegacyRef,
+  type LegacyWorkRef,
+  type WorkIdentity,
+} from "../tracker/identity.js";
 
 export interface SeededSession {
   sessionId: string;
@@ -29,15 +34,16 @@ export interface SeededSession {
  */
 export function seedSession(
   workDir: string,
-  ref: IssueRef,
+  work: WorkIdentity | LegacyWorkRef,
   attempt: number,
   options: { round?: number; sessionId?: string; entries?: number; shortId?: string } = {},
 ): SeededSession {
   const sessionId = options.sessionId ?? `11111111-2222-3333-4444-${String(attempt).padStart(12, "0")}`;
   const round = options.round ?? 1;
+  const linkedWork = isLegacyWorkRef(work) ? workOfLegacyRef(work) : work;
   const link: SessionLink = {
     version: 1,
-    work: { repo: ref.repo, number: ref.number },
+    work: linkedWork,
     attempt,
     round,
     sessionId,

@@ -307,13 +307,15 @@ describe("e2e: distinct ticket sources, one destination repository (issue 125)",
     assert.deepEqual(entries[0]!.work, legacy);
     assert.equal((await readOutcomeRecord(legacyDir))?.pr?.number, 41);
 
-    // The legacy git seam still prepares the same branch.
+    // The one git seam prepares the branch from the same legacy Work identity;
+    // a relaunch reuses it instead of recreating it.
     const git = gitWork();
-    const prepared = await git.prepareWork({ repo: REPO, number: 7 });
-    assert.equal(prepared.branch, "agent-issue-7");
-    const expanded = await git.prepareWorkFor(legacy);
-    assert.equal(expanded.branch, "agent-issue-7", "the expanded seam addresses the same work");
-    assert.equal(expanded.branchCreated, false, "the branch existed already, never recreated");
+    const first = await git.prepareWorkFor(legacy);
+    assert.equal(first.branch, "agent-issue-7", "the Work identity addresses the legacy work");
+    assert.equal(first.branchCreated, true);
+    const prepared = await git.prepareWorkFor(legacy);
+    assert.equal(prepared.branch, first.branch);
+    assert.equal(prepared.branchCreated, false, "the branch existed already, never recreated");
 
     // Persisting the facts for the next launch writes into the SAME dir.
     const written = reserveWork(layout, reservationRecordOf(legacy, { url: "https://github.com/Sanmoo/my-tasks/issues/7" }));

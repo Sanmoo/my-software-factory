@@ -1,4 +1,5 @@
 import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
+import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
@@ -61,7 +62,7 @@ const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
  * paths of this attempt — the trail the human (and the factory) reads after.
  */
 function outcomeSchemaExample(request: WorkRequest): string {
-  const pr = `,\n     "pr": {"repo": "${request.ref.repo}", "number": <the PR number>, "branch": "${request.branch}"}`;
+  const pr = `,\n     "pr": {"repo": "${request.work.destination.repo}", "number": <the PR number>, "branch": "${request.branch}"}`;
   const paths = `,\n     "paths": {"<artifact name>": "<path, relative to the work dir>"}`;
   return (
     `{\n` +
@@ -224,17 +225,25 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
 
 export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions): string {
   const { material } = request;
-  const repo = request.ref.repo;
-  const number = request.ref.number;
+  const { ticket, destination } = request.work;
+  const repo = destination.repo;
+  const githubTicket = ticket.provider === "github";
+  const ticketName = renderTicketIdentity(ticket);
+  const ticketLink = ticketUrl(ticket);
   const pr = material.pr;
-  const issueReplies = material.issueReplies ?? [];
+  const ticketReplies = material.ticketReplies ?? [];
+  const ticketLinkSuffix = ticketLink === undefined ? "" : ` (${ticketLink})`;
+  const prBodyInstruction = githubTicket
+    ? `body containing \`Closes #${ticket.number}\` so the human's merge closes the issue`
+    : `body naming the ticket \`${ticket.key}\`${ticketLinkSuffix} so the PR carries the request it delivers — never the GitHub issue-closing keyword for a ${ticket.provider} ticket`;
 
   return [
-    `You are the worker of my-software-factory. The factory reserved issue ${repo}#${number} for you and launched this session to do it.`,
+    `You are the worker of my-software-factory. The factory reserved ${ticketName} for you and launched this session to do it.`,
     ``,
     `## Your work`,
     ``,
-    `- Repository: ${repo} — your cwd is a git worktree of it.`,
+    `- Ticket: ${ticketName} — the request's source is ${ticket.provider}:${ticket.site}.`,
+    `- Repository: ${repo} — the destination that receives the code and the PR; your cwd is a git worktree of it.`,
     `- Branch: ${request.branch} (born from ${request.baseBranch}; this is attempt ${request.attempt} on it).`,
     `  The branch already exists and is the memory of the work: commit on it, never recreate it.`,
     `- The GitHub CLI \`gh\` is authenticated via GH_TOKEN; its account is the factory's worker account — every push, PR and comment must come from it.`,
@@ -247,25 +256,26 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           ``,
           `The factory ended this attempt before it finished (the operator's stop or an interruption) and reopened the SAME native session (attempt ${request.attempt}, same branch) — this is a continuation, not a new attempt. Treat the work you already did in this conversation as done and keep going from where the stop caught you; the conversation is the memory, so do not redo what it already records.`,
           ``,
-          `Before repeating any EXTERNAL effect — a push, a PR, a comment, a label (a mutation outside the worktree; a commit stays inside it) — read the real state first (\`git status\`, \`git log\`, \`gh pr view\`, \`gh issue view\`). If the effect already landed, do not repeat it. If the evidence is ambiguous (the effect may or may not have landed), do NOT repeat it blindly: self-report blocked with what you checked and what is uncertain, so a human reconciles the two sides.`,
+          `Before repeating any EXTERNAL effect — a push, a PR, a comment, a label (a mutation outside the worktree; a commit stays inside it) — read the real state first (\`git status\`, \`git log\`, \`gh pr view\`${githubTicket ? ", \`gh issue view\`" : ""}). If the effect already landed, do not repeat it. If the evidence is ambiguous (the effect may or may not have landed), do NOT repeat it blindly: self-report blocked with what you checked and what is uncertain, so a human reconciles the two sides.`,
           ``,
           `The factory's guardrail journals every external effect before it runs and BLOCKS one the host proved already happened — or any effect at all when it cannot read what it reconciles against. A block is a fact, not something to work around by another route: continue with the remaining work, or write the outcome record and stop.`,
         ]
       : []),
     ``,
-    `## The issue: ${material.issue.title}`,
+    `## The ticket: ${material.ticket.title}`,
     ``,
-    material.issue.body,
+    ...(ticketLink === undefined ? [] : [`Ticket link: ${ticketLink}`, ``]),
+    material.ticket.body,
     ``,
-    ...(issueReplies.length === 0
+    ...(ticketReplies.length === 0
       ? []
       : [
-          `## Human replies on the issue since your last blocked report`,
+          `## Human replies on the ticket since your last blocked report`,
           ``,
-          `These replies were posted after your blocked report and are the human context that resumed this work. Read each one and reconcile it with the issue body and current tracker facts. A reply may clarify or correct stale issue text; do not repeat a textual prerequisite as a live blocker without checking whether it still applies. If the blocker remains, explain the current evidence; if the reply is ambiguous, ask a focused question rather than assuming approval.`,
+          `These replies were posted after your blocked report and are the human context that resumed this work. Read each one and reconcile it with the ticket body and current tracker facts. A reply may clarify or correct stale ticket text; do not repeat a textual prerequisite as a live blocker without checking whether it still applies. If the blocker remains, explain the current evidence; if the reply is ambiguous, ask a focused question rather than assuming approval.`,
           ``,
-          ...issueReplies.flatMap((comment, index) => [
-            `--- issue reply ${index + 1} by ${comment.author} ---`,
+          ...ticketReplies.flatMap((comment, index) => [
+            `--- ticket reply ${index + 1} by ${comment.author} ---`,
             comment.body,
             ``,
           ]),
@@ -278,7 +288,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           `1. commit your changes on ${request.branch},`,
           `2. \`git push -u origin ${request.branch}\`,`,
           `3. open the PR: \`gh pr create --base ${request.baseBranch} --head ${request.branch}\` —`,
-          `   title summarizing the change, body containing \`Closes #${number}\` so the human's merge closes the issue.`,
+          `   title summarizing the change, ${prBodyInstruction}.`,
           ``,
           `The PR is the end state of your work: the factory waits for it.`,
         ].join("\n")
@@ -355,10 +365,17 @@ End the round with one consolidated reply on the PR (marked, obligation 2): what
     `   and the factory will launch another round.`,
     ``,
     `3. If you get stuck and cannot proceed, self-report blocked and stop:`,
-    `   - add the label to the issue: \`gh issue edit ${number} --repo ${repo} --add-label ${options.blockedLabel}\`,`,
-    `   - comment on the ISSUE (not the PR), the comment starting with this exact line:`,
-    `     ${AGENT_MARKER}`,
-    `     followed by a short explanation of what blocks the work,`,
+    ...(githubTicket
+      ? [
+          `   - add the label to the issue: \`gh issue edit ${ticket.number} --repo ${ticket.repo} --add-label ${options.blockedLabel}\`,`,
+          `   - comment on the ISSUE (not the PR), the comment starting with this exact line:`,
+          `     ${AGENT_MARKER}`,
+          `     followed by a short explanation of what blocks the work,`,
+        ]
+      : [
+          `   - do NOT edit or comment on any GitHub issue for this ticket: its origin is ${ticket.provider}:${ticket.site}, and the factory owns publication on that tracker — inventing a GitHub issue would address the wrong surface,`,
+          `   - name the blockage in your final message so the factory relays it to the ticket's origin,`,
+        ]),
     `   - write the outcome record with "class": "blocked-self-report",`,
     `   - then end the session. A human resumes from there.`,
     ``,
