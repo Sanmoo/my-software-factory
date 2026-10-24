@@ -12,6 +12,7 @@ import {
   RETRO_MOUNT_PATHS,
   type WorkspaceLayout,
 } from "../layout.js";
+import type { LivenessObservation } from "../state/liveness.js";
 import { OPERATIONAL_LOG_FILENAME } from "../log.js";
 
 /**
@@ -59,6 +60,17 @@ export function reportFileName(round: string): string {
 
 export function resultFileName(round: string): string {
   return `${round}${RETRO_RESULT_SUFFIX}`;
+}
+
+/**
+ * The works a liveness observation says a container still carries: a live work
+ * is not finished, whatever its records say. An unknown answer names none —
+ * nothing is excluded on a guess.
+ */
+export function liveWorkKeys(observation: LivenessObservation): ReadonlySet<string> {
+  return observation.state === "known"
+    ? new Set(observation.workers.map((worker) => worker.key))
+    : new Set<string>();
 }
 
 /**

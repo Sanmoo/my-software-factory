@@ -116,7 +116,6 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   private readonly retroScript: RetroScript[];
   private readonly sessions = new Map<string, FakeSession>();
   private cursor = 0;
-  private retroCursor = 0;
 
   constructor(private readonly options: FakeWorkerRuntimeOptions = {}) {
     this.script = options.outcomes ?? [];

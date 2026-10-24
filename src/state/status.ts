@@ -163,8 +163,11 @@ export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known"
 /** The retrospective job as `msf status` names it (issue 141, ADR 0006): the
  *  last report that moved the marker, and the round in flight — if any. */
 export interface RetroStatus {
-  /** The last report's file name (the marker of the next window); null before any. */
+  /** The file name of the last report written; null before any. */
   lastReport: string | null;
+  /** The finish time (epoch ms) of the newest work a window report covered; null
+   *  until a round covers a window — a single-work post-mortem never moves it. */
+  boundaryAt: number | null;
   /** Items the last report filed as needs-triage. */
   filed: number;
   /** The round in flight, or null when the lane is idle. */
@@ -260,6 +263,7 @@ async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
   const [state, inFlight] = await Promise.all([readRetroState(layout), readRetroInFlight(layout)]);
   return {
     lastReport: state.lastReport,
+    boundaryAt: state.boundaryAt,
     filed: state.lastFiled,
     inFlight,
   };

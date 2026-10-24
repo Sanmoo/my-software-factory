@@ -34,6 +34,9 @@ import { withNativeRankOrdering } from "./tracker/jira-jql.js";
 export const DEFAULT_CONCURRENCY = 2;
 export const DEFAULT_WORKSPACE = "~/.local/share/msf";
 export const DEFAULT_NOTIFICATIONS = true;
+
+/** The "a/b" shape a model id ("provider/model-id") and a GitHub repo ("owner/name") share. */
+const SLASH_PAIR = /^[^/\s]+\/[^/\s]+$/;
 export const DEFAULT_LABELS: Labels = {
   ready: "ready-for-agent",
   claimed: "agent-claimed",
@@ -107,7 +110,7 @@ export const DEFAULT_LIVENESS_POLICY: LivenessPolicy = {
  * to the repo concerned, never to a configured destination.
  */
 export interface RetroConfig {
-  /** Automatic rounds; when false the factory never starts one. */
+  /** The job's switch: when false no round ever starts — automatic or `msf retro`. */
   enabled: boolean;
   /** Archived works since the last report that trigger a round. */
   threshold: number;
@@ -220,7 +223,7 @@ export function loadConfig(filePath: string): Config {
 
   const workerGhAccount = requireString(doc, "worker-gh-account");
   const workerModel = requireString(doc, "worker-model");
-  if (!/^[^/\s]+\/[^/\s]+$/.test(workerModel)) {
+  if (!SLASH_PAIR.test(workerModel)) {
     throw new ConfigError('config field "worker-model" must be "provider/model-id"');
   }
   const jira = optionalJiraSelections(doc);
@@ -530,7 +533,7 @@ function optionalRetro(doc: Record<string, unknown>): RetroConfig {
   }
 
   const model = given["model"];
-  if (model !== undefined && (typeof model !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(model.trim()))) {
+  if (model !== undefined && (typeof model !== "string" || !SLASH_PAIR.test(model.trim()))) {
     throw new ConfigError('config field "retro.model" must be "provider/model-id" when given');
   }
 
@@ -542,7 +545,7 @@ function optionalRetro(doc: Record<string, unknown>): RetroConfig {
   const destination = given["factory-items-destination"];
   if (
     destination !== undefined &&
-    (typeof destination !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(destination.trim()))
+    (typeof destination !== "string" || !SLASH_PAIR.test(destination.trim()))
   ) {
     throw new ConfigError('config field "retro.factory-items-destination" must be "owner/name" when given');
   }

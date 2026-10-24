@@ -203,7 +203,6 @@ export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<R
     startedAt: deps.now === undefined ? Date.now() : deps.now(),
     window: windowKeys,
     manual: plan.manual,
-    pid: process.pid,
   });
 
   try {

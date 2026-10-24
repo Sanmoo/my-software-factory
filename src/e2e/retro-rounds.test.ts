@@ -27,7 +27,13 @@ import {
   runRetroRound,
   type RetroPlan,
 } from "../retro/round.js";
-import { readRetroState, retroReportPath } from "../retro/marker.js";
+import {
+  readRetroState,
+  retroReportPath,
+  RETRO_IN_FLIGHT_FILENAME,
+  RETRO_STATE_FILENAME,
+} from "../retro/marker.js";
+import { OPERATIONAL_LOG_FILENAME } from "../log.js";
 import { collectFinishedWorks } from "../retro/window.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
@@ -270,7 +276,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     await runOnce(first.deps);
     assert.equal(first.runtime.retroLaunched.length, 1);
     assert.equal(existsSync(retroReportPath(layout, first.runtime.retroLaunched[0]!.round)), false);
-    assert.equal(existsSync(join(layout.retros, "estado.json")), false, "no report, no marker move");
+    assert.equal(existsSync(join(layout.retros, RETRO_STATE_FILENAME)), false, "no report, no marker move");
     assert.ok(
       first.logs.some((line) => line.includes("no report was written")),
       "the operator learns the round produced nothing",
@@ -315,7 +321,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     const { runtime, deps } = makeFactory(config);
     seedArchived(1, at(1));
     writeFileSync(
-      join(layout.root, "operacional.log"),
+      join(layout.root, OPERATIONAL_LOG_FILENAME),
       [
         "[2026-02-01T10:00:00Z] derived Sanmoo/my-tasks#1: issue closed — done; archiving artifacts",
         "[2026-02-01T10:05:00Z] derived Sanmoo/my-tasks#1: repair round skipped: remote head unreadable",
@@ -359,7 +365,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     seedArchived(1, at(1));
     seedArchived(2, at(2));
     await runOnce(deps);
-    rmSync(join(layout.retros, "estado.json"), { force: true });
+    rmSync(join(layout.retros, RETRO_STATE_FILENAME), { force: true });
     seedArchived(3, at(3));
     seedArchived(4, at(4));
 
@@ -489,8 +495,8 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
       () => planManualRound(config, layout, [], { work: `${REPO}#99` }),
       /not a finished work/,
     );
-    assert.equal(existsSync(join(layout.retros, "estado.json")), false, "nothing was launched or marked");
-    assert.equal(existsSync(join(layout.retros, "rodada-em-andamento.json")), false);
+    assert.equal(existsSync(join(layout.retros, RETRO_STATE_FILENAME)), false, "nothing was launched or marked");
+    assert.equal(existsSync(join(layout.retros, RETRO_IN_FLIGHT_FILENAME)), false);
   });
 
   test("msf status shows the round in flight and the last report once it lands", async () => {
@@ -526,8 +532,9 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.match(settled.retro?.lastReport ?? "", /-retro\.md$/);
     assert.equal(settled.retro?.filed, 1);
     const rendered = renderStatus(settled);
-    assert.match(rendered, /retro \(the last report marks the window's boundary/);
+    assert.match(rendered, /retro \(a report that covers a window marks the next window's boundary/);
     assert.match(rendered, /1 item\(s\) filed by the last round/);
+    assert.match(rendered, /window boundary: 2026-02-01T12:00:00\.000Z/);
   });
 
   test("an empty workspace launches no round and writes no marker", async () => {
@@ -535,7 +542,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     const { runtime, deps } = makeFactory(config);
     await runOnce(deps);
     assert.equal(runtime.retroLaunched.length, 0, "no finished work, no round");
-    assert.equal(existsSync(join(layout.retros, "estado.json")), false);
-    assert.equal(existsSync(join(layout.retros, "rodada-em-andamento.json")), false);
+    assert.equal(existsSync(join(layout.retros, RETRO_STATE_FILENAME)), false);
+    assert.equal(existsSync(join(layout.retros, RETRO_IN_FLIGHT_FILENAME)), false);
   });
 });

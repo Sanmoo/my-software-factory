@@ -103,8 +103,14 @@ File each worthy candidate as a GitHub issue through the acting account:
 - the ONLY label you add is \`needs-triage\`. Never add \`ready-for-agent\` or any
   other pool label: the operator's triage is the only gate between an item and
   the pool, and you never bypass it.
-- every issue references the report path and cites the evidence (work keys and
-  the artifacts that support it), so each filed item traces back to this round.
+- every issue names the report by its FILE NAME in the factory workspace's
+  retros directory (the container path is meaningless to the operator) and
+  cites the evidence: the work keys and the artifacts that support it, so each
+  filed item traces back to this round.
+- a round that died before its report is RETRIED over the same window, so put
+  the round id in every issue body and, before filing, search the destination
+  for an issue of this round or an equal title: cite the existing one instead
+  of filing a duplicate.
 - do not implement, do not open pull requests, do not assign anyone.
 
 ## The two artifacts

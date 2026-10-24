@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { installGhShim, runCli, type GhShim } from "./cli-harness.js";
+import { RETRO_IN_FLIGHT_FILENAME, RETRO_STATE_FILENAME } from "../retro/marker.js";
 
 /**
  * The command surface of the retrospective (issue 141), end-to-end through the
@@ -88,7 +89,7 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /no finished work to analyze/);
     assert.match(result.stdout, /nothing was launched and no report was written/);
-    assert.equal(existsSync(join(workspace, "retros", "estado.json")), false, "no marker moved");
+    assert.equal(existsSync(join(workspace, "retros", RETRO_STATE_FILENAME)), false, "no marker moved");
     assert.deepEqual(
       readdirSync(join(workspace, "retros")).filter((name) => name.endsWith(".md")),
       [],
@@ -122,6 +123,6 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     const result = run(["retro", "--language", "pt-BR"]);
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.equal(existsSync(join(workspace, "retros", "rodada-em-andamento.json")), false);
+    assert.equal(existsSync(join(workspace, "retros", RETRO_IN_FLIGHT_FILENAME)), false);
   });
 });

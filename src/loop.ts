@@ -67,7 +67,7 @@ import {
 } from "./state/liveness.js";
 import { processRecoveryRequests } from "./recover.js";
 import { operationalLog } from "./log.js";
-import { collectFinishedWorks } from "./retro/window.js";
+import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
 import { clearRetroInFlight } from "./retro/marker.js";
 import { planAutomaticRound, runRetroRound } from "./retro/round.js";
 import { describeError, formatDuration } from "./format.js";
