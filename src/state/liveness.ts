@@ -45,7 +45,7 @@ export type LivenessObservation =
  * The works a known answer says a live container carries. An unknown answer
  * carries none: nothing is excluded on a guess.
  */
-export function carriedKeys(observation: LivenessObservation): ReadonlySet<string> {
+export function carriedWorkKeys(observation: LivenessObservation): ReadonlySet<string> {
   return observation.state === "known"
     ? new Set(observation.workers.map((worker) => worker.key))
     : new Set<string>();

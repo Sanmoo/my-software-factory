@@ -644,18 +644,10 @@ export class SandcastleRuntime implements WorkerRuntime {
     // before the worker starts, so a recovery can never pick the wrong file.
     const flags = workerFlagArgs(this.agentResources);
     const newSessionId = request.session?.mode === "new" ? request.session.sessionId : null;
-    const agentWithFlags = {
-      ...agent,
-      buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
-        const command = agent.buildPrintCommand(options);
-        // The flag fragment, named for what it is: the id itself is above.
-        const sessionFlag = newSessionId === null ? "" : ` --session-id ${newSessionId}`;
-        return {
-          ...command,
-          command: `${command.command} ${flags.join(" ")}${sessionFlag}`,
-        };
-      },
-    };
+    const agentWithFlags = this.withPrintFlags(agent, {
+      // The flag fragment, named for what it is: the id itself is above.
+      sessionSuffix: newSessionId === null ? "" : ` --session-id ${newSessionId}`,
+    });
 
     return {
       agent: agentWithFlags,
@@ -706,36 +698,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       name: containerNameOf(request.work, request.attempt),
       hooks: {
         sandbox: {
-          onSandboxReady: [
-            ...(agentFilesDir === undefined
-              ? []
-              : [
-                  {
-                    // The supplied files are copied into the writable agent
-                    // dir (OAuth renewal may rewrite auth.json); the read-only
-                    // mount never leaves the launch.
-                    command:
-                      `mkdir -p "$HOME/.pi/agent" && ` +
-                      this.agentFiles
-                        .map(
-                          (file) =>
-                            `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} "$HOME/.pi/agent/${file.name}"`,
-                        )
-                        .join(" && "),
-                    timeoutMs: AUTH_SETUP_TIMEOUT_MS,
-                  },
-                ]),
-            {
-              // The toolchain convergence BEFORE the prompt (the declared
-              // tools are ready, never hunted mid-session): `mise install`
-              // reads the active configs (the toolchain volume's global
-              // config and the repo's mise.toml, when it declares one) and lands
-              // every declared tool + shim in the PERSISTENT volume. First
-              // launch of a toolchain pays; every later launch is a no-op.
-              command: "mise install -y",
-              timeoutMs: TOOLCHAIN_SETUP_TIMEOUT_MS,
-            },
-          ],
+          onSandboxReady: this.sandboxReadyHooks(agentFilesDir),
         },
       },
       logging: {
@@ -780,14 +743,9 @@ export class SandcastleRuntime implements WorkerRuntime {
       });
       // The same declared resources a worker gets, except the continuity
       // guardrail: this launch owns no attempt and no journal to protect.
-      const flags = workerFlagArgs(this.agentResources, { guardrail: false });
-      const agentWithFlags = {
-        ...agent,
-        buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
-          const command = agent.buildPrintCommand(options);
-          return { ...command, command: `${command.command} ${flags.join(" ")}` };
-        },
-      };
+      const agentWithFlags = this.withPrintFlags(agent, {
+        flags: workerFlagArgs(this.agentResources, { guardrail: false }),
+      });
 
       const retrosDir = join(this.workspace, WORKSPACE_SUBPATHS.retros);
       const logPath = operationalLogPath(this.workspace);
@@ -831,30 +789,11 @@ export class SandcastleRuntime implements WorkerRuntime {
         name: `retro-${request.round}`,
         hooks: {
           sandbox: {
-            onSandboxReady: [
-              ...(agentFilesDir === undefined
-                ? []
-                : [
-                    {
-                      command:
-                        `mkdir -p "$HOME/.pi/agent" && ` +
-                        this.agentFiles
-                          .map(
-                            (file) =>
-                              `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} "$HOME/.pi/agent/${file.name}"`,
-                          )
-                          .join(" && "),
-                      timeoutMs: AUTH_SETUP_TIMEOUT_MS,
-                    },
-                  ]),
-              { command: "mise install -y", timeoutMs: TOOLCHAIN_SETUP_TIMEOUT_MS },
-            ],
+            onSandboxReady: this.sandboxReadyHooks(agentFilesDir),
           },
         },
         logging: { type: "file", path: join(sessionsDir, "sandcastle.log") },
       });
-
-
     } finally {
       if (agentFilesDir !== undefined) rmSync(agentFilesDir, { recursive: true, force: true });
     }
@@ -874,6 +813,56 @@ export class SandcastleRuntime implements WorkerRuntime {
       "the retrospective needs a target clone to run in and none of the window's repos is cloned in the " +
         "workspace — run the factory once so the git host clones the repo, then retry",
     );
+  }
+
+  /**
+   * The closed flags around one provider's print command: every declared
+   * resource named explicitly and discovery off. Pi's print command is a
+   * string, not structured args, so the list rides one concatenation; a launch
+   * that owns no attempt (the retrospective round) passes its own list without
+   * the continuity guardrail.
+   */
+  private withPrintFlags(
+    agent: AgentProvider,
+    options: { sessionSuffix?: string; flags?: string[] } = {},
+  ): AgentProvider {
+    const flags = options.flags ?? workerFlagArgs(this.agentResources);
+    const sessionFlag = options.sessionSuffix ?? "";
+    return {
+      ...agent,
+      buildPrintCommand(printOptions: Parameters<typeof agent.buildPrintCommand>[0]) {
+        const command = agent.buildPrintCommand(printOptions);
+        return { ...command, command: `${command.command} ${flags.join(" ")}${sessionFlag}` };
+      },
+    };
+  }
+
+  /**
+   * The sandbox-ready hooks every launch runs: the supplied agent files are
+   * copied into the writable agent dir (OAuth renewal may rewrite auth.json;
+   * the read-only mount never leaves the launch), then the toolchain converges
+   * BEFORE the prompt (`mise install` — the declared tools exist, never hunted
+   * mid-session — and later launches reuse the persisted volume).
+   */
+  private sandboxReadyHooks(agentFilesDir: string | undefined) {
+    return [
+      ...(agentFilesDir === undefined
+        ? []
+        : [
+            {
+              command:
+                `mkdir -p "$HOME/.pi/agent" && ` +
+                this.agentFiles
+                  .map(
+                    (file) =>
+                      `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} "$HOME/.pi/agent/${file.name}"`,
+                  )
+                  .join(" && "),
+              timeoutMs: AUTH_SETUP_TIMEOUT_MS,
+            },
+          ]),
+      { command: "mise install -y", timeoutMs: TOOLCHAIN_SETUP_TIMEOUT_MS },
+    ];
   }
 
   /**

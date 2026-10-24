@@ -326,7 +326,6 @@ export class SweepEngine {
   ) {
     this.slots = new Slots(deps.config.concurrency);
     this.log = operationalLog(deps.log);
-<<<<<<< HEAD
     this.survivors = openSurvivors({
       probe: deps.probe ?? (() => Promise.resolve([])),
       ...(deps.probeTimeoutMs === undefined ? {} : { probeTimeoutMs: deps.probeTimeoutMs }),
@@ -414,9 +413,6 @@ export class SweepEngine {
     // A round file left by a dead run is stale: this run holds the workspace
     // lock, so nothing else is analysing it.
     clearRetroInFlight(deps.workspace);
-=======
-    this.cooperativeMs = stop.cooperativeMs ?? COOPERATIVE_STOP_MS;
->>>>>>> da4fc8f1 (fix(141): one round at a time, enforced by the lane's marker)
     // The signals are listened to from the START of the run (issue #146): a
     // stop requested during the derivation, before the first admission, is
     // honoured exactly like one during a worker.
