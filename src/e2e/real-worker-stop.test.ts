@@ -109,13 +109,16 @@ interface StopResult {
 
 /**
  * Run the driver in a container shaped like a worker: the repository bound at
- * its HOST path (so the daemon resolves the same paths the driver uses) and the
- * daemon socket joined by its group (ADR 0003).
+ * its HOST path (so the daemon resolves the same paths the driver uses), the
+ * daemon socket joined by its group (ADR 0003), and — when the operator runs an
+ * isolated tag — the image name, so the nested launch uses the same image this
+ * test validated.
  */
 function runDriver(mode: "cooperative" | "forced" | "abort", testRoot: string): StopResult {
   const hostRepo = hostPathOf(repoRoot());
   const hostRoot = hostPathOf(testRoot);
   const socket = dockerSocketFromHost();
+  const imageOverride = process.env.MSF_WORKER_IMAGE?.trim() ?? "";
   const args = [
     "run",
     "--rm",
@@ -125,6 +128,7 @@ function runDriver(mode: "cooperative" | "forced" | "abort", testRoot: string): 
     String(socket.gid),
     "-e",
     `DOCKER_HOST=unix://${socket.hostPath}`,
+    ...(imageOverride === "" ? [] : ["-e", `MSF_WORKER_IMAGE=${imageOverride}`]),
     "-v",
     `${socket.hostPath}:${socket.hostPath}`,
     "-v",
