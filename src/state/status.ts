@@ -6,8 +6,9 @@ import {
   type AttemptWithoutOwnOutcome,
   type RegistryView,
 } from "../pool/registry.js";
-import type { TicketTracker } from "../tracker/expanded-port.js";
-import { githubSelections } from "../tracker/identity.js";
+import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
+import { githubSelections, workIdentity, type WorkIdentity } from "../tracker/identity.js";
+import { describeError } from "../format.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -71,9 +72,33 @@ export type Liveness =
       orphaned: OrphanedAttempt[];
     };
 
+/** One Jira candidate: the Work the ticket names, its title and its assignee(s).
+ *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
+export interface JiraCandidate {
+  work: WorkIdentity;
+  title: string;
+  assignees: string[];
+}
+
+/** One configured Jira selection and the read-only adapter that answers it. */
+export interface JiraCandidateSource {
+  selection: TicketSelection;
+  tickets: TicketTracker;
+}
+
+/**
+ * A Jira source's candidates, or that the source could not be read (unknown —
+ * never an empty selection). The candidates keep Jira's native Rank order.
+ */
+export type JiraSourceView =
+  | { selection: TicketSelection; state: "known"; candidates: JiraCandidate[] }
+  | { selection: TicketSelection; state: "unknown"; reason: string };
+
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
   pool: PoolEntry[];
+  /** Jira selections, read-only: candidates in native Rank order, nothing claimed. */
+  jira: JiraSourceView[];
   /** A tracker mark with no reservation in this workspace. */
   unbackedClaims: UnbackedClaim[];
   /** A reservation on disk whose work carries no factory mark. */
@@ -98,6 +123,7 @@ export async function deriveStatus(
   config: Config,
   layout: WorkspaceLayout,
   probe: LivenessProbe = workspaceLivenessProbe(layout),
+  jiraSources: readonly JiraCandidateSource[] = [],
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
@@ -114,6 +140,7 @@ export async function deriveStatus(
   );
   return {
     pool: state.pool,
+    jira: await readJiraCandidates(jiraSources),
     unbackedClaims: state.unbackedClaims,
     unmarkedReservations: state.unmarkedReservations,
     registry,
@@ -121,6 +148,32 @@ export async function deriveStatus(
     recoveryBudget: config.recovery,
     modelProviderBudget: config.modelProvider,
   };
+}
+
+/**
+ * Every Jira selection read independently (issue 128): one unavailable source is
+ * UNKNOWN, never an empty list and never a conclusion about the healthy ones.
+ * The listing is just that — candidates, not reservations and not a launch.
+ */
+async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Promise<JiraSourceView[]> {
+  return Promise.all(
+    sources.map(async (source): Promise<JiraSourceView> => {
+      try {
+        const listed = await source.tickets.listOpenTickets(source.selection);
+        return {
+          selection: source.selection,
+          state: "known",
+          candidates: listed.map((entry) => ({
+            work: workIdentity(entry.ticket, source.selection.destination),
+            title: entry.title,
+            assignees: entry.assignees,
+          })),
+        };
+      } catch (error) {
+        return { selection: source.selection, state: "unknown", reason: describeError(error) };
+      }
+    }),
+  );
 }
 
 /**

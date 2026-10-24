@@ -1,5 +1,5 @@
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
-import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
+import { githubRepository, jiraTicket, renderWorkIdentity, workIdentity } from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
+import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
+import { JiraSim } from "../tracker/jira-sim.js";
+import type { TicketSelection } from "../tracker/expanded-port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
@@ -72,6 +75,7 @@ describe("status — derivation on demand + local registry scan", () => {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 2,
       workspace: layout.root,
@@ -888,6 +892,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const config = makeConfig();
     const view: StatusView = {
       pool: [{ work: jiraWork, title: "a Jira request", createdAt: "2026-01-01T00:00:00Z" }],
+      jira: [],
       unbackedClaims: [],
       unmarkedReservations: [],
       registry: {
@@ -952,5 +957,124 @@ describe("status — derivation on demand + local registry scan", () => {
       /jira:acme\.atlassian\.net:99999 → Sanmoo\/my-tasks \(attempt unknown: record-unreadable/,
       "without a recorded Work the directory key names it — the key is not invented, its readable ticket is simply absent",
     );
+  });
+});
+
+// ---- Jira candidates: read-only, native Rank order, per-source unknown (issue 128) ----
+
+describe("status: Jira candidates are read-only and each source stands alone", () => {
+  let dir: string;
+  let layout: WorkspaceLayout;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-status-jira-"));
+    layout = ensureWorkspace(join(dir, "ws"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const TOKEN_ENV = "MSF_JIRA_ALPHA_TOKEN";
+
+  function jiraAdapter(sim: JiraSim, env: NodeJS.ProcessEnv = { [TOKEN_ENV]: sim.token }) {
+    return new JiraTicketAdapter({
+      site: sim.site,
+      account: sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env,
+      transport: sim.transport,
+    });
+  }
+
+  function statusConfig(): Config {
+    return {
+      workerGhAccount: "bot-do-samuca",
+      workerModel: "opencode-go/glm-5.3-flash",
+      repos: [],
+      jira: [],
+      concurrency: 2,
+      workspace: layout.root,
+      labels: { ...DEFAULT_LABELS },
+      profileAllowedRoots: [],
+      profileSkipDanglingLinks: false,
+      recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY },
+      notifications: true,
+      configPath: join(dir, "msf.yaml"),
+    };
+  }
+
+  function selection(site: string, jql = "project = ABC"): TicketSelection {
+    return {
+      source: { provider: "jira", site },
+      destination: githubRepository(REPO),
+      jql,
+    };
+  }
+
+  test("candidates keep native Rank order; a failing source is unknown while a healthy one lists", async () => {
+    const healthy = new JiraSim();
+    healthy.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: null });
+    healthy.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout" });
+    const broken = new JiraSim({ site: "beta.atlassian.net" });
+
+    const view = await deriveStatus(
+      new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+      [
+        { selection: selection("acme.atlassian.net"), tickets: jiraAdapter(healthy) },
+        { selection: selection("beta.atlassian.net"), tickets: jiraAdapter(broken, {}) },
+      ],
+    );
+
+    const [first, second] = view.jira;
+    if (first?.state !== "known") assert.fail("the healthy source is readable");
+    assert.deepEqual(
+      first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
+      [
+        "ABC-1 (jira:acme.atlassian.net) → Sanmoo/my-tasks",
+        "ABC-2 (jira:acme.atlassian.net) → Sanmoo/my-tasks",
+      ],
+      "the adapter's Rank order is presented as-is",
+    );
+    assert.deepEqual(first.candidates[0]?.assignees, [], "an unassigned candidate is presented, not dropped");
+    assert.equal(second?.state, "unknown", "a source that cannot be read is unknown, never an empty list");
+    if (second?.state !== "unknown") assert.fail("unreachable");
+    assert.match(second.reason, new RegExp(TOKEN_ENV), "the diagnostic names the missing local credential");
+    assert.match(second.reason, /not set/);
+
+    assert.deepEqual(
+      healthy.requests.map((request) => `${request.method} ${request.path}`),
+      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql"],
+      "status only reads: one identity read and the native search, no claim, comment or transition",
+    );
+    assert.deepEqual(broken.requests, [], "the source without a credential never reaches the network");
+    assert.deepEqual(readdirSync(join(layout.works)), [], "no reservation, workspace or attempt is created");
+  });
+
+  test("the report presents the candidates apart from the executable pool and says they are read-only", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: { accountId: "h", emailAddress: "ana@acme.example", displayName: "Ana Silva" } });
+
+    const view = await deriveStatus(
+      new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+      [{ selection: selection("acme.atlassian.net"), tickets: jiraAdapter(sim) }],
+    );
+    const text = renderStatus(view);
+
+    assert.match(text, /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1/);
+    assert.match(
+      text,
+      /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix login \[assignee: Ana Silva\]/,
+    );
+    assert.match(text, /pool \(eligible\): none/, "a Jira candidate is not presented as an eligible Work");
   });
 });

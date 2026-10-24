@@ -90,6 +90,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

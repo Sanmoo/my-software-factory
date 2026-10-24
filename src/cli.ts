@@ -7,11 +7,12 @@ import { parseCliArgs } from "./cli-args.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
+import { JiraTicketAdapter } from "./tracker/jira-adapter.js";
 import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
-import { deriveStatus } from "./state/status.js";
+import { deriveStatus, type JiraCandidateSource } from "./state/status.js";
 import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
@@ -22,7 +23,7 @@ import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { GitWork } from "./git/port.js";
-import { renderWorkIdentity } from "./tracker/identity.js";
+import { jiraSelections, renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
@@ -150,6 +151,55 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
+/**
+ * Jira execution is not part of this release (issue 128): the configuration is
+ * read-only. The refusal names the configured sources and happens before Claim.
+ */
+function assertNoJiraExecution(config: Config): void {
+  if (config.jira.length === 0) return;
+  const sources = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
+  throw new Error(
+    `Jira execution is not implemented yet: msf.yaml configures ${sources}. ` +
+      `This release reads Jira candidates in \`msf status\` only; refusing before any claim, comment or launch`,
+  );
+}
+
+/** The read-only Jira selections of `msf status`: one adapter per site (so the
+ *  Acting account is identified once) and one selection per configured source. */
+function jiraStatusSources(config: Config): JiraCandidateSource[] {
+  const adapters = new Map<string, JiraTicketAdapter>();
+  const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {
+    const known = adapters.get(entry.site);
+    if (known !== undefined) return known;
+    const created = new JiraTicketAdapter({
+      site: entry.site,
+      account: entry.account,
+      tokenEnv: entry.tokenEnv,
+    });
+    adapters.set(entry.site, created);
+    return created;
+  };
+  const selections = jiraSelections(config.jira);
+  return config.jira.map((entry, index) => ({
+    selection: selections[index]!,
+    tickets: adapterFor(entry),
+  }));
+}
+
+function workerCredentials(config: Config, env: NodeJS.ProcessEnv = process.env) {
+  return {
+    model: config.workerModel,
+    authEnv: modelAuthEnv(env),
+    agentFiles:
+      config.workerAuthFile === null ? [] : [{ name: "auth.json", hostPath: config.workerAuthFile }],
+  };
+}
+
+async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Promise<WorkerRuntime> {
+  const token = await workerToken(config.workerGhAccount);
+  return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
+}
+
 /** `--runtime fake`: the placeholder that never launches — tests only; the
  * scripted fake lives in the test files, never on the cli. */
 function fakeRuntimePlaceholder(): WorkerRuntime {
@@ -233,6 +283,11 @@ async function executeRun(
   runtimeName: string,
   stop: StopSignals,
 ): Promise<StopReport | null> {
+  // Jira-backed execution is a later slice: a configured Jira source is
+  // READ-ONLY in this release. Refuse before the workspace, the keyring read,
+  // any claim or any launch — a sweep that silently ignored its Jira source
+  // would pretend the configured work was handled.
+  assertNoJiraExecution(config);
   if (runtimeName === "sandcastle") {
     try {
       await requireModelCredentials({ image: WORKER_IMAGE, ...workerCredentials(config) });
@@ -298,7 +353,10 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // writes NOTHING to the tracker. Without the bot credential in the
   // keyring, status fails with the same clear boot message as run.
   const tickets = await createGitHubAdapter({ account: config.workerGhAccount });
-  const view = await deriveStatus(tickets, config, layout);
+  // The Jira sources are read through their own adapters — the same read-only
+  // selection and native Rank order the adapter contract suite proves. A source
+  // whose credential is missing is reported as unknown, never skipped.
+  const view = await deriveStatus(tickets, config, layout, workspaceLivenessProbe(layout), jiraStatusSources(config));
   console.log(renderStatus(view, { all: args.all }));
 }
 

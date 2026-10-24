@@ -141,6 +141,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
       const config: Config = {
         workerGhAccount: "bot-do-samuca",
         workerModel: "deterministico/roteiro",
+        jira: [],
         repos: [repo],
         concurrency: 1,
         workspace: workspace.root,

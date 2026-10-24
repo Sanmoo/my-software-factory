@@ -119,6 +119,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 1,
       workspace: layout.root,

@@ -267,7 +267,8 @@ function isEligible(issue: OpenTicket, labels: Labels): boolean {
   // Blocked works listen to the issue channel, never to the pool (ticket 14).
   if (issue.labels.includes(labels.blocked)) return false;
   if (issue.assignees.length > 0) return false;
-  if (issue.hasOpenPr) return false;
+  // Unknown linkage (null) is never "without an open PR".
+  if (issue.hasOpenPr !== false) return false;
   return true;
 }
 

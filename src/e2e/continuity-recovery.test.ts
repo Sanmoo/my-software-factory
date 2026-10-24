@@ -91,6 +91,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

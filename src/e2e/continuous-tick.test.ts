@@ -87,6 +87,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

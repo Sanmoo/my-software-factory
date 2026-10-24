@@ -101,6 +101,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

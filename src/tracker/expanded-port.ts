@@ -26,6 +26,9 @@ import { pullRequestIdentity } from "./identity.js";
 export interface TicketSelection {
   source: TicketSource;
   destination: RepositoryIdentity;
+  /** Jira only: the configured JQL that selects candidates. Absent for GitHub,
+   *  whose selection is the repository's own open issues. */
+  jql?: string;
 }
 
 /** One open ticket, no label semantics: the derivation decides eligibility. */
@@ -35,8 +38,8 @@ export interface OpenTicket {
   createdAt: string;
   labels: string[];
   assignees: string[];
-  /** Linked by an OPEN PR. */
-  hasOpenPr: boolean;
+  /** Linked by an OPEN PR. null = the source does not carry that linkage. */
+  hasOpenPr: boolean | null;
 }
 
 export interface TicketSnapshot {

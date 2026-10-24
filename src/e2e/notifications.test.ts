@@ -102,6 +102,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,
