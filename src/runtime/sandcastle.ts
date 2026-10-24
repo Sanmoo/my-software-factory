@@ -1,5 +1,16 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  type Stats,
+} from "node:fs";
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -8,7 +19,12 @@ import { promisify } from "node:util";
 import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
-import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
+import {
+  RETRO_MOUNT_PATHS,
+  SESSIONS_SUBDIR,
+  WORKSPACE_SUBPATHS,
+  workspaceLayout,
+} from "../layout.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
@@ -21,7 +37,7 @@ import {
 } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
-import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
+import { buildRetroPrompt, buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
 import {
   AGENT_DIR,
   agentExtensionEntry,
@@ -42,8 +58,10 @@ import {
 } from "./inventory.js";
 import { agentFileProblem, modelAuthSources } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { RetroRequest, RetroResult, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { operationalLogPath } from "../log.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
+import { repoCloneDir } from "../git/port.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -257,7 +275,10 @@ export const TOOLCHAIN_SETUP_TIMEOUT_MS = 30 * 60 * 1000;
  * the target repository's agent definitions, which would otherwise shadow
  * `code-reviewer`.
  */
-export function workerFlagArgs(resources: LoadedAgentResources): string[] {
+export function workerFlagArgs(
+  resources: LoadedAgentResources,
+  options: { guardrail?: boolean } = {},
+): string[] {
   const { declaration } = resources;
   return [
     "--no-approve",
@@ -271,7 +292,11 @@ export function workerFlagArgs(resources: LoadedAgentResources): string[] {
       `--skill '${agentGuidancePath(extension)}'`,
       `-e '${agentExtensionEntry(extension)}'`,
     ]),
-    `-e '${GUARDRAIL_CONTAINER_FILE}'`,
+    // A launch that is not a Work has no attempt, no session association and
+    // no effect journal: the guardrail can authorize nothing there and would
+    // refuse every external effect the round needs (`gh issue create`). The
+    // retrospective round is the only such launch, and it opts out.
+    ...(options.guardrail === false ? [] : [`-e '${GUARDRAIL_CONTAINER_FILE}'`]),
     "--tools read,bash,edit,write,subagent,subagents_enable",
     "--exclude-tools 'mcp__*,mcp'",
   ];
@@ -716,6 +741,133 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /**
+   * The retrospective round (ADR 0006): the same Sandcastle runtime
+   * and image, with a retro-specific shape. The window's evidence is mounted
+   * READ-ONLY (the archive and the works), the retros directory READ-WRITE (the
+   * report is the round's only output), and the factory's operational log when
+   * it exists. The model is the round's own (config `retro.model`, defaulting
+   * to the worker model) — never the worker's by accident. There is no branch
+   * strategy to advance: the round analyzes and files, it never commits code.
+   */
+  async launchRetro(request: RetroRequest): Promise<RetroResult> {
+    await this.preflight();
+    // The round's own model may be a different provider than the worker's:
+    // its credential source is resolved for the model the round really uses.
+    await requireModelCredentials({
+      image: this.image,
+      model: request.model,
+      agentFiles: this.agentFiles,
+      authEnv: this.authEnv,
+    });
+
+    const agentFilesDir = this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles);
+    try {
+      const sessionsDir = join(this.workspace, WORKSPACE_SUBPATHS.retros, "sessoes", request.round);
+      mkdirSync(sessionsDir, { recursive: true });
+      const agent = this.piProvider(request.model, {
+        captureSessions: false,
+        env: { [AGENT_DIR_ENV]: AGENT_DIR, ...this.authEnv },
+        sessionStorage: { hostSessionsDir: sessionsDir },
+      });
+      // The same declared resources a worker gets, except the continuity
+      // guardrail: this launch owns no attempt and no journal to protect.
+      const flags = workerFlagArgs(this.agentResources, { guardrail: false });
+      const agentWithFlags = {
+        ...agent,
+        buildPrintCommand(options: Parameters<typeof agent.buildPrintCommand>[0]) {
+          const command = agent.buildPrintCommand(options);
+          return { ...command, command: `${command.command} ${flags.join(" ")}` };
+        },
+      };
+
+      const retrosDir = join(this.workspace, WORKSPACE_SUBPATHS.retros);
+      const logPath = operationalLogPath(this.workspace);
+      const cwd = this.gitAnchorFor(request);
+      await this.runSandcastle({
+        agent: agentWithFlags,
+        sandbox: this.dockerProvider({
+          imageName: this.image,
+          // The acting account files the items; no Docker socket is bound —
+          // analysis needs no daemon and the round must not build anything.
+          env: { GH_TOKEN: this.token, MSF_WORK_MOUNT: WORK_MOUNT },
+          mounts: [
+            ...(agentFilesDir === undefined
+              ? []
+              : [{ hostPath: agentFilesDir, sandboxPath: AGENT_FILES_MOUNT_DIR, readonly: true }]),
+            { hostPath: retrosDir, sandboxPath: RETRO_MOUNT_PATHS.retros, readonly: false },
+            {
+              hostPath: join(this.workspace, WORKSPACE_SUBPATHS.archive),
+              sandboxPath: RETRO_MOUNT_PATHS.archive,
+              readonly: true,
+            },
+            {
+              hostPath: join(this.workspace, WORKSPACE_SUBPATHS.works),
+              sandboxPath: RETRO_MOUNT_PATHS.works,
+              readonly: true,
+            },
+            ...(existsSync(logPath)
+              ? [{ hostPath: logPath, sandboxPath: RETRO_MOUNT_PATHS.operationalLog, readonly: true }]
+              : []),
+            ...this.toolchainBinds(),
+          ],
+        }),
+        // Sandcastle anchors a git repository; the round runs in a target
+        // clone the factory already made. It writes nothing there.
+        cwd,
+        branchStrategy: { type: "head" },
+        prompt: buildRetroPrompt(request),
+        maxIterations: 1,
+        completionSignal: COMPLETION_SIGNAL,
+        idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
+        name: `retro-${request.round}`,
+        hooks: {
+          sandbox: {
+            onSandboxReady: [
+              ...(agentFilesDir === undefined
+                ? []
+                : [
+                    {
+                      command:
+                        `mkdir -p "$HOME/.pi/agent" && ` +
+                        this.agentFiles
+                          .map(
+                            (file) =>
+                              `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} "$HOME/.pi/agent/${file.name}"`,
+                          )
+                          .join(" && "),
+                      timeoutMs: AUTH_SETUP_TIMEOUT_MS,
+                    },
+                  ]),
+              { command: "mise install -y", timeoutMs: TOOLCHAIN_SETUP_TIMEOUT_MS },
+            ],
+          },
+        },
+        logging: { type: "file", path: join(sessionsDir, "sandcastle.log") },
+      });
+
+      return { request, outcome: existsSync(request.reportPath) ? "report-written" : "no-report" };
+    } finally {
+      if (agentFilesDir !== undefined) rmSync(agentFilesDir, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * The host repo a round runs from: a clone of the window's first repo the
+   * factory already made (Sandcastle needs a git anchor, not a worktree).
+   */
+  private gitAnchorFor(request: RetroRequest): string {
+    const dir = retroAnchorDir(
+      join(this.workspace, WORKSPACE_SUBPATHS.repos),
+      request.works.map((work) => work.repo),
+    );
+    if (dir !== null) return dir;
+    throw new Error(
+      "the retrospective needs a target clone to run in and none of the window's repos is cloned in the " +
+        "workspace — run the factory once so the git host clones the repo, then retry",
+    );
+  }
+
+  /**
    * The outcome the runtime observed: the class of THIS attempt's record, or
    * the absence (issue 143). A record left by another attempt is absence here
    * — never that attempt's outcome read as this session's — and the attempt's
@@ -751,6 +903,33 @@ export class SandcastleRuntime implements WorkerRuntime {
 
 /** The container's name: the GitHub ticket number keeps its historical shape;
  *  another source names the Work's stable key instead of inventing a number. */
+/**
+ * The clone a round anchors its sandbox in: Sandcastle needs a git repository,
+ * and the round writes nothing there — so any clone of the window the factory
+ * already made serves. The clone-dir name is `repoCloneDir`'s; a destination on
+ * another code-host site carries its site as a suffix (`repoCloneDirFor`), so a
+ * matching suffix is accepted as the same repo while the round never has to
+ * guess the site it was not given. Null when the window's repos have no clone
+ * yet.
+ */
+export function retroAnchorDir(reposDir: string, repos: Iterable<string>): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(reposDir);
+  } catch (error) {
+    // An absent repos dir is "no clone yet"; any other failure is the host's to
+    // report, not a silent "nothing to anchor in".
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  for (const repo of repos) {
+    const base = basename(repoCloneDir(reposDir, repo));
+    const match = entries.find((name) => name === base || name.startsWith(`${base}@`));
+    if (match !== undefined) return join(reposDir, match);
+  }
+  return null;
+}
+
 function containerNameOf(work: WorkIdentity, attempt: number): string {
   const name =
     work.ticket.provider === "github" && work.ticket.site === GITHUB_SITE

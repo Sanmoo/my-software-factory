@@ -11,6 +11,7 @@ import {
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
 } from "./config.js";
 
 function makeTempDir(): string {
@@ -373,5 +374,74 @@ describe("config", () => {
       ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]", "notifications: always"].join("\n"),
     );
     assert.throws(() => loadConfig(path), /notifications.*boolean/);
+  });
+});
+
+describe("config: the retrospective block (issue 141)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const base = ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash", "repos: [Sanmoo/a]"];
+
+  test("retro is OFF when the block is absent — the trigger, model and language get their defaults", () => {
+    const config = loadConfig(writeYaml(dir, base.join("\n")));
+
+    assert.deepEqual(config.retro, DEFAULT_RETRO);
+    assert.equal(config.retro.enabled, false);
+    assert.equal(config.retro.threshold, 5);
+    assert.equal(config.retro.model, null, "the model inherits the worker model until configured");
+    assert.equal(config.retro.language, "en", "English by default");
+  });
+
+  test("an enabled retro needs its factory-items destination — fail-closed, never a silent default", () => {
+    const path = writeYaml(dir, [...base, "retro:", "  enabled: true"].join("\n"));
+
+    assert.throws(() => loadConfig(path), /retro\.factory-items-destination.*required/);
+  });
+
+  test("every retro field is configurable when given", () => {
+    const path = writeYaml(
+      dir,
+      [
+        ...base,
+        "retro:",
+        "  enabled: true",
+        "  threshold: 10",
+        "  model: anthropic/claude-opus-4.5",
+        "  language: pt-BR",
+        "  factory-items-destination: Sanmoo/my-software-factory",
+      ].join("\n"),
+    );
+
+    assert.deepEqual(loadConfig(path).retro, {
+      enabled: true,
+      threshold: 10,
+      model: "anthropic/claude-opus-4.5",
+      language: "pt-BR",
+      factoryItemsDestination: "Sanmoo/my-software-factory",
+    });
+  });
+
+  test("the retro block is validated field by field — never a silently ignored value", () => {
+    const cases: Array<[string, RegExp]> = [
+      ["retro:\n  threshold: 0", /retro\.threshold/],
+      ['retro:\n  threshold: "5"', /retro\.threshold/],
+      ["retro:\n  model: opus", /retro\.model/],
+      ["retro:\n  language: ''", /retro\.language/],
+      ["retro:\n  factory-items-destination: nowhere", /retro\.factory-items-destination/],
+      ["retro:\n  enabled: yes", /retro\.enabled/],
+      ["retro: 5", /retro/],
+    ];
+    for (const [block, error] of cases) {
+      const path = writeYaml(dir, [...base, block].join("\n"));
+      assert.throws(() => loadConfig(path), error, `accepted: ${block}`);
+    }
   });
 });

@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs";
+import { appendFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
+
+import { collectFinishedWorks } from "./retro/window.js";
+import { planManualRound, runRetroRound } from "./retro/round.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } from "./loop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
-import { utcStamp } from "./log.js";
+import { OPERATIONAL_LOG_FILENAME, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
 import { deriveStatus } from "./state/status.js";
-import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+import { probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -108,7 +111,7 @@ export async function wireRunDeps(
     workspace,
     notifier,
     probe,
-    log: (message) => console.log(message),
+    log: (message) => writeOperationalLog(workspace, message),
   };
 }
 
@@ -150,6 +153,21 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
+/**
+ * The CLI's operational log: stamped lines also land in the workspace, so a
+ * retrospective round reads the factory's own history — mounted read-only —
+ * instead of trusting the round's summary alone. A workspace it cannot write
+ * never takes the factory down: the console is the primary log.
+ */
+function writeOperationalLog(workspace: WorkspaceLayout, message: string): void {
+  console.log(message);
+  try {
+    appendFileSync(join(workspace.root, OPERATIONAL_LOG_FILENAME), `${message}\n`, "utf8");
+  } catch (error) {
+    console.error(utcStamp(`operational log not written: ${describeError(error)}`));
+  }
+}
+
 /** `--runtime fake`: the placeholder that never launches — tests only; the
  * scripted fake lives in the test files, never on the cli. */
 function fakeRuntimePlaceholder(): WorkerRuntime {
@@ -160,6 +178,7 @@ function fakeRuntimePlaceholder(): WorkerRuntime {
       ),
     requestStop: () => {},
     forceStop: async () => {},
+    launchRetro: () => Promise.reject(new Error("no worker runtime yet — cannot launch a retrospective round")),
   };
 }
 
@@ -174,6 +193,10 @@ async function main(): Promise<void> {
     console.log(await recoverCall(config, args.workKey!, args.retry === undefined ? undefined : {
       retry: args.retry, reason: args.reason!, acceptDuplicateRisk: args.acceptDuplicateRisk === true,
     }));
+    return;
+  }
+  if (args.command === "retro") {
+    await retroCommand(args);
     return;
   }
   await statusCommand(args);
@@ -289,6 +312,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
     repos: join(config.workspace, WORKSPACE_SUBPATHS.repos),
     works: join(config.workspace, WORKSPACE_SUBPATHS.works),
     archive: join(config.workspace, WORKSPACE_SUBPATHS.archive),
+    retros: join(config.workspace, WORKSPACE_SUBPATHS.retros),
   };
 
   // Ticket 18: status reads the REAL tracker — the trail it shows is the
@@ -300,6 +324,80 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   const tickets = await createGitHubAdapter({ account: config.workerGhAccount });
   const view = await deriveStatus(tickets, config, layout);
   console.log(renderStatus(view, { all: args.all }));
+}
+
+/**
+ * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
+ * manual trigger of a retrospective round (issue 141). A full window since the
+ * last report ignores the threshold; `<work>` (an "<owner>/<name>#<n>" key)
+ * analyzes exactly that finished work. The round shares the run exclusivity:
+ * it never overlaps a run of the same config.
+ */
+async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
+  const config = loadConfigFrom(process.cwd(), args.configPath);
+  if (!config.retro.enabled) {
+    throw new Error(
+      "retro is disabled in msf.yaml — enable it with a `retro:` block " +
+        '(retro: {enabled: true, factory-items-destination: "owner/name"}) to run a round',
+    );
+  }
+
+  const work = args.work;
+  if (work !== undefined && !/^[^\s]+#[^\s]+$/.test(work) && !/^[a-z]+@/.test(work)) {
+    throw new Error(
+      `"${work}" is not a work key — use the key msf status shows, e.g. Sanmoo/my-tasks#12`,
+    );
+  }
+
+  const workspace = ensureWorkspace(config.workspace);
+  const lock = await acquireRunLock(config.configPath);
+  try {
+    // The window is planned BEFORE any credential or runtime is demanded: an
+    // empty window is a notice, and the operator's command must not need the
+    // keyring to say there is nothing to analyze.
+    const observation = await probeLiveness(workspaceLivenessProbe(workspace));
+    const liveKeys =
+      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : new Set<string>();
+    const finished = await collectFinishedWorks(workspace, liveKeys);
+    const plan = await planManualRound(config, workspace, finished, {
+      ...(work === undefined ? {} : { work }),
+      ...(args.language === undefined ? {} : { language: args.language }),
+    });
+    if ("empty" in plan) {
+      console.log(
+        utcStamp(
+          plan.empty === "no-finished-works"
+            ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"
+            : "retro: nothing new since the last report — nothing was launched and no report was written",
+        ),
+      );
+      return;
+    }
+
+    const deps = await wireRunDeps(config, workspace);
+    const log = operationalLog(deps.log);
+    const result = await runRetroRound(
+      {
+        config,
+        runtime: deps.runtime,
+        workspace,
+        log,
+        ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
+      },
+      plan,
+    );
+    if (result.reportPath === null) {
+      log(`retro round ${result.round}: no report was written — nothing was marked`);
+      process.exitCode = 1;
+      return;
+    }
+    log(
+      `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
+        `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
+    );
+  } finally {
+    await lock.close();
+  }
 }
 
 // The binary runs main(); the module imported (by the tests of the wiring)

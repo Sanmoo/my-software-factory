@@ -1,5 +1,5 @@
 export interface CliArgs {
-  command: "run" | "status" | "recover";
+  command: "run" | "status" | "recover" | "retro";
   workKey?: string;
   retry?: string;
   reason?: string;
@@ -9,18 +9,30 @@ export interface CliArgs {
   all: boolean;
   configPath?: string;
   runtime?: string;
+  /** `msf retro <work>`: the "<owner>/<name>#<n>" work to analyze alone. */
+  work?: string;
+  /** `msf retro --language <tag>`: overrides `retro.language` for this round. */
+  language?: string;
 }
 
-const usage = 'usage: msf run [--once] [--config <path>] [--runtime <name>]\n       msf status [--all] [--config <path>]\n       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]';
+const usage =
+  "usage: msf run [--once] [--config <path>] [--runtime <name>]\n" +
+  "       msf status [--all] [--config <path>]\n" +
+  "       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]\n" +
+  "       msf retro [<owner>/<name>#<number>] [--language <tag>] [--config <path>]";
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const [command, ...args] = argv;
-  if (command !== "run" && command !== "status" && command !== "recover") throw new Error(usage);
+  if (command !== "run" && command !== "status" && command !== "recover" && command !== "retro") {
+    throw new Error(usage);
+  }
   if (command === "recover") return parseRecoveryArgs(args);
   let once = false;
   let all = false;
   let configPath: string | undefined;
   let runtime: string | undefined;
+  let work: string | undefined;
+  let language: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) continue;
@@ -32,18 +44,32 @@ export function parseCliArgs(argv: string[]): CliArgs {
       all = true;
       continue;
     }
-    if (arg === "--config" || arg === "--runtime") {
+    if (arg === "--config" || arg === "--runtime" || arg === "--language") {
       if (arg === "--runtime" && command !== "run") throw new Error(`unknown flag "${arg}"\n${usage}`);
+      if (arg === "--language" && command !== "retro") throw new Error(`unknown flag "${arg}"\n${usage}`);
       const value = args[++i];
       if (!value || value.startsWith("--")) throw new Error(`unknown flag "${arg}"\n${usage}`);
       if (arg === "--config") configPath = value;
-      else runtime = value;
+      else if (arg === "--runtime") runtime = value;
+      else language = value;
       continue;
     }
     if (arg.startsWith("--")) throw new Error(`unknown flag "${arg}"\n${usage}`);
+    if (command === "retro" && work === undefined) {
+      work = arg;
+      continue;
+    }
     throw new Error(`unexpected argument "${arg}"\n${usage}`);
   }
-  return { command, once, all, ...(configPath ? { configPath } : {}), ...(runtime ? { runtime } : {}) };
+  return {
+    command,
+    once,
+    all,
+    ...(configPath ? { configPath } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(work ? { work } : {}),
+    ...(language ? { language } : {}),
+  };
 }
 
 function parseRecoveryArgs(args: string[]): CliArgs {

@@ -5,7 +5,8 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { runForever, runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
@@ -120,6 +121,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),

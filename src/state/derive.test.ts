@@ -375,6 +375,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     repos: "/ws/repos",
     works: "/ws/trabalhos",
     archive: "/ws/arquivo",
+    retros: "/ws/retros",
   };
 
   beforeEach(() => {

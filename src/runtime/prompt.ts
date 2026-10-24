@@ -2,9 +2,10 @@ import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
+import { RETRO_MOUNT_PATHS } from "../layout.js";
 import { agentLayout, type AgentLayout } from "./agent-paths.js";
 import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
-import type { RepairMaterial, WorkRequest } from "./port.js";
+import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
 
 /**
  * The worker prompt — the only "interface" between the factory and the agent
@@ -424,3 +425,54 @@ export const WORKER_OUTCOME_CLASSES: readonly OutcomeClass[] = [
   "blocked-self-report",
   "clean-without-pr",
 ];
+
+/**
+ * The retrospective prompt (issue 141): the factory-owned instructions, the
+ * window's evidence paths, the factual summary and the two artifact paths the
+ * round must write. It carries no worker obligation — the round is not a Work:
+ * it files nothing into the tracker beyond `needs-triage` issues, writes no
+ * outcome record, and never touches a branch.
+ */
+export function buildRetroPrompt(request: RetroRequest): string {
+  return [
+    `# Retrospective round ${request.round}`,
+    ``,
+    `You are analyzing a window of finished works of the software factory.`,
+    `The report and every filed issue are written in: ${request.language}.`,
+    `You file improvement items as a GitHub issue through the acting account \`${request.account}\`.`,
+    ``,
+    request.instructions,
+    ``,
+    `## The window (${request.works.length} finished work(s))`,
+    ``,
+    ...request.works.map(
+      (work) =>
+        `- ${work.key} — ${work.outcome}, attempt ${work.attempt}, finished ${work.completedAt}; ` +
+        `evidence: ${work.evidencePath} (${work.archived ? "archived" : "under trabalhos/"})`,
+    ),
+    ``,
+    `## The factual summary of the window (from the operational records)`,
+    ``,
+    `\`\`\``,
+    request.summary,
+    `\`\`\``,
+    ``,
+    `## Where this round writes`,
+    ``,
+    `- report (dated Markdown, the marker of the next window): \`${request.reportContainerPath}\``,
+    `- result record (JSON, the machine contract): \`${request.resultContainerPath}\``,
+    `- factory-axis items destination: \`${request.factoryItemsDestination}\``,
+    `- target-repo items: the repository of the work they came from`,
+    `- the factory's operational log, when mounted: \`${RETRO_MOUNT_PATHS.operationalLog}\``,
+    ``,
+    `The archive and the works directories are mounted read-only; only the retros directory is writable.`,
+    `Label every filed issue \`needs-triage\` and nothing else — never \`ready-for-agent\`: the operator's triage is the gate.`,
+    ``,
+    `## Completion signal`,
+    ``,
+    `After both artifacts exist, print exactly this line as your final text:`,
+    ``,
+    COMPLETION_SIGNAL,
+    ``,
+  ].join("\n");
+}

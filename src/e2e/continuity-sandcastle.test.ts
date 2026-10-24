@@ -11,6 +11,7 @@ import {
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
   type Config,
 } from "../config.js";
 import { ensureWorkspace, workDir } from "../layout.js";
@@ -148,7 +149,8 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         workerAuthFile: null,
         recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
         liveness: { ...DEFAULT_LIVENESS_POLICY },
-      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+        retro: { ...DEFAULT_RETRO },
+        modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
         notifications: false,
         configPath: join(root, "msf.yaml"),
       };
@@ -341,6 +343,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
           workerAuthFile: null,
           recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
           liveness: { ...DEFAULT_LIVENESS_POLICY },
+          retro: { ...DEFAULT_RETRO },
           modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
           notifications: false,
           configPath: join(root, "msf-recuperacao.yaml"),

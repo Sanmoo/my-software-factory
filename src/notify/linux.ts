@@ -36,6 +36,16 @@ export function renderNotification(notification: Notification): { title: string;
         "Live workers and reservations are preserved, and the factory resumes on its own when Docker answers again.",
     };
   }
+  if (notification.kind === "retro-items") {
+    // The retrospective's occurrence (issue 141): no work is invented and no
+    // issue receives a comment — the operator's triage is the next gate.
+    return {
+      title: `msf: retro — ${notification.items} improvement item(s) filed`,
+      body:
+        `A retrospective round filed ${notification.items} item(s) as needs-triage in ` +
+        `${notification.destination}. Your triage is the only gate into the pool.\n${notification.url}`,
+    };
+  }
   const work = renderTicketIdentity(notification.work.ticket);
   const link = notification.url === null ? "" : `\n${notification.url}`;
   if (notification.kind === "review") {

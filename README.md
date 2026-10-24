@@ -20,7 +20,7 @@ repos:
 
 # opcionais (defaults na fábrica):
 # concurrency: 2                  # the `y` — worker slots in process
-# workspace: ~/.local/share/msf   # repos/, trabalhos/, arquivo/ live under it
+# workspace: ~/.local/share/msf   # repos/, trabalhos/, arquivo/, retros/ live under it
 # labels:
 #   ready: ready-for-agent
 #   claimed: agent-claimed
@@ -37,6 +37,12 @@ repos:
 # liveness:                       # Docker silence suspends launches (issue 118)
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
+# retro:                          # the retrospective job (issue 141, ADR 0006)
+#   enabled: false                # automatic rounds at sweep time
+#   threshold: 5                  # archived works since the last report
+#   model: anthropic/claude-opus-4.5  # dedicated model; defaults to worker-model
+#   language: en                  # the report and every filed item, one per round
+#   factory-items-destination: Sanmoo/my-software-factory  # required when enabled
 ```
 
 ## Usage
@@ -49,6 +55,8 @@ npm run build
 node dist/cli.js run --once  # one sweep
 node dist/cli.js run         # sweeps forever
 node dist/cli.js status      # the trail, read-only
+node dist/cli.js retro       # force a retrospective round (full window)
+node dist/cli.js retro <owner>/<name>#<n>  # a post-mortem of one finished work
 ```
 
 The worker model is required in `msf.yaml`; invocations do not select it.
@@ -57,6 +65,11 @@ Move any model previously selected on the command line into `worker-model`.
 agent into the image. The operator's exact script — build, model credentials,
 clean-host verification and the real proof — lives in the
 [RUNBOOK](docs/RUNBOOK.md).
+
+The retrospective files `needs-triage` issues and never labels anything
+`ready-for-agent`: the operator's triage is the only gate between an
+improvement item and the pool. Its report lands in `<workspace>/retros/` and is
+the marker of the next window.
 
 ## Design
 

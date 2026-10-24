@@ -17,6 +17,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -103,6 +104,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...modelProvider },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
