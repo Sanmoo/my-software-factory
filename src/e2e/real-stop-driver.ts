@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AgentProvider, RunResult } from "@ai-hero/sandcastle";
-import { SandcastleRuntime } from "../runtime/sandcastle.js";
+import { SandcastleRuntime, defaultPreflight, dockerSocketFromHost } from "../runtime/sandcastle.js";
+import { loadAgentResources } from "../runtime/inventory.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { dockerWorkerProbe } from "../state/liveness.js";
 import { WORKSPACE_SUBPATHS } from "../layout.js";
@@ -114,9 +115,20 @@ async function main(): Promise<void> {
     token: "no-github-token",
     image: WORKER_IMAGE,
     authEnv: {},
-    // The agent below is a shell `sleep`: this launch makes no model call and
-    // must carry no credential (a proof never spends one).
-    modelCredentials: "unused",
+    // The launch's preconditions, composed HERE rather than silenced: Docker,
+    // the image inventory, the guardrail and Docker inside the worker are all
+    // checked for real, and only the credential question stands down — the
+    // agent below is a shell `sleep` that makes no model call, and a proof
+    // never spends a credential it does not have.
+    preflight: defaultPreflight({
+      token: "no-github-token",
+      image: WORKER_IMAGE,
+      model: "deterministic/stop-proof",
+      agentResources: loadAgentResources(),
+      authEnv: {},
+      modelCredentials: "unused",
+      dockerSocket: dockerSocketFromHost(),
+    }),
     workspace,
     // A short poll so the activity watch never interferes with the stop; the
     // agent is silent on purpose, and the stop arrives long before the limit.

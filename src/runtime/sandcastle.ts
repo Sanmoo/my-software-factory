@@ -1,8 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
@@ -34,7 +34,6 @@ import {
   type ActivityWatch,
 } from "./activity.js";
 import {
-  AGENT_DECLARATION_PATH,
   IMAGE_INVENTORY_PATH,
   loadAgentResources,
   verifyAgentInventory,
@@ -126,10 +125,20 @@ export const AGENT_FILES_MOUNT_DIR = "/msf-agent-files";
  *  The caller removes the dir with the launch. */
 export function stageAgentFiles(files: readonly AgentFile[]): string {
   const dir = mkdtempSync(join(tmpdir(), "msf-agent-files-"));
-  for (const file of files) {
-    const target = join(dir, file.name);
-    copyFileSync(file.hostPath, target);
-    chmodSync(target, 0o600);
+  try {
+    for (const file of files) {
+      // The name reaches the agent dir and the copy command: a path (or a
+      // shell metacharacter) in it is a factory bug, never a silent surprise.
+      if (file.name === "" || file.name !== basename(file.name)) {
+        throw new Error(`an agent file name must be a bare file name, got "${file.name}"`);
+      }
+      const target = join(dir, file.name);
+      copyFileSync(file.hostPath, target);
+      chmodSync(target, 0o600);
+    }
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
   }
   return dir;
 }
@@ -335,11 +344,6 @@ export interface SandcastleRuntimeOptions {
   agentResources?: LoadedAgentResources;
   /** Launch preconditions; default defaultPreflight. */
   preflight?: () => Promise<void>;
-  /** Whether the launch resolves model credentials. `"unused"` is for an agent
-   * that performs no model call at all (the deterministic agent of the real
-   * stop proof): there is no credential to resolve, and the other
-   * preconditions still run for real. */
-  modelCredentials?: "resolve" | "unused";
 }
 
 export class SandcastleRuntime implements WorkerRuntime {
@@ -393,7 +397,6 @@ export class SandcastleRuntime implements WorkerRuntime {
           agentResources: this.agentResources,
           agentFiles: this.agentFiles,
           authEnv: this.authEnv,
-          modelCredentials: options.modelCredentials,
           dockerSocket: this.resolveDockerSocket(),
         })());
     this.piProvider = options.piProvider ?? ((model, piOptions) => pi(model, piOptions));
@@ -786,8 +789,10 @@ export interface PreflightDeps {
   run?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
   /** The model-auth probe; injectable for tests. */
   authProbe?: (() => Promise<{ status: number | null; stdout: string; stderr: string }>) | undefined;
-  /** `"unused"` = the agent performs no model call (a deterministic proof
-   *  agent), so no credential is resolved; the default resolves one. */
+  /** `"unused"` = the caller composes the launch for an agent that performs no
+   *  model call at all (the deterministic agent of the real stop proof), so
+   *  there is no credential to resolve. Only such a caller sets it; the
+   *  production launch never does, and every other precondition still runs. */
   modelCredentials?: "resolve" | "unused" | undefined;
 }
 
