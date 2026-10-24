@@ -46,8 +46,8 @@ export const DEFAULT_LABELS: Labels = {
 /**
  * The recovery budget: an interruption (an attempt that ended
  * with no outcome record) is not a failure, so it never consumes an attempt —
- * it spends this finite, persisted allowance instead. Values fixed by the
- * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
+ * it spends this finite, persisted allowance instead. The defaults are 3
+ * recoveries and waits of 1/4/16 s, configurable per factory.
  */
 export interface RecoveryBudget {
   /** Automatic recoveries allowed for one attempt; 0 pauses on the 1st interruption. */

@@ -102,8 +102,8 @@ async function updateLastStop(
 }
 
 /**
- * Persist that the attempt ended by the operator's requested stop (issue
- * #146): the evidence the next invocation reads to resume the SAME attempt
+ * Persist that the attempt ended by the operator's requested stop: the
+ * evidence the next invocation reads to resume the SAME attempt
  * instead of charging a recovery. Written BEFORE the worker is asked to stop,
  * so a factory that dies inside the requested stop still leaves the attribution.
  */

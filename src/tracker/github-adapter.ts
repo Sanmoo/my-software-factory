@@ -56,7 +56,7 @@ import {
 /**
  * The real tracker adapter: GitHub over the `gh` CLI. The token
  * lives in the keyring of the gh CLI (`gh auth token --user <account>` — the
- * keyring is the config's secret-free companion, spec user story 33) and is
+ * keyring is the config's secret-free companion) and is
  * injected as `GH_TOKEN` in the env of every gh/git call only — the active gh
  * account of the machine is never touched. Push is git with the
  * credential helper baked into the clone (`!gh auth git-credential` +

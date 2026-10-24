@@ -181,10 +181,10 @@ export interface ScreenedListing {
 }
 
 /**
- * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"` listing
- * . A row whose rendered mounts name a path under the works root is
- * inspected, as is a row whose mounts column rendered nothing usable — a column
- * that never showed the paths cannot show their absence. A row whose rendered
+ * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"`
+ * listing. A row whose rendered mounts name a path under the works root is
+ * inspected, as is a row whose mounts column rendered nothing usable — a
+ * column that never showed the paths cannot show their absence. A row whose rendered
  * mounts place it elsewhere is dropped without an inspect. The column is
  * searched whole, not split on its comma separator, so a source containing a
  * comma stays visible; Docker marks a truncated column with `…`.
@@ -220,7 +220,7 @@ export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
 /**
  * `docker inspect` over the listed ids. A container that left between the
  * listing and its inspect is simply not running, so its absence is dropped
- * instead of failing the whole probe — the confirmation of a stop 
+ * instead of failing the whole probe — the confirmation of a stop
  * reads liveness exactly while the runtime tears the container down. Any other
  * unreadable answer still fails: the factory never guesses that a worker is
  * gone.

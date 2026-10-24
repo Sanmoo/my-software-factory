@@ -11,7 +11,7 @@ import {
 import type { IssueRef, OpenIssue, TrackerPort } from "./port.js";
 
 /**
- * The ticket-16 proof the fake cannot give: the REAL GitHub adapter satisfying
+ * The proof the fake cannot give: the REAL GitHub adapter satisfying
  * the SAME port contract suite, offline — the gh/process boundary is the
  * in-memory REST simulator (`github-sim.ts`). The command-line shapes are
  * asserted separately in `github-adapter.test.ts`; here what is proven is the
@@ -22,7 +22,7 @@ import type { IssueRef, OpenIssue, TrackerPort } from "./port.js";
 runGitHubContractSuite(new SimulatedRepoHarness());
 runGitHubOnlySuite(new SimulatedRepoHarness());
 
-// ---- the smoke's restructured full cycle, offline over the sim ----
+// ---- the smoke's full cycle, offline over the sim ----
 //
 // The REAL adapter runs the smoke's OWN flow (the full cycle) against the
 // simulated repo: eligibility proven by DIRECT reads right after seeding
@@ -32,7 +32,7 @@ runGitHubOnlySuite(new SimulatedRepoHarness());
 // accounting is asserted here too: the adapter-side count is the sim-proof
 // of the planned-call breakdown the budget gate is built on.
 
-describe("the smoke's full cycle (restructured op1) — the real adapter over the sim", () => {
+describe("the smoke's full cycle — the real adapter over the sim", () => {
   let harness: SimulatedRepoHarness;
 
   beforeEach(async () => {
