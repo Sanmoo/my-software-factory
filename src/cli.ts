@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
 import { collectFinishedWorks } from "./retro/window.js";
+import { anchorOfKey } from "./pool/work-key.js";
 import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
 import { liveRoundInFlight } from "./retro/marker.js";
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
@@ -344,10 +345,8 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   }
 
   const work = args.work;
-  if (work !== undefined && !/^[^\s]+#[^\s]+$/.test(work) && !/^[a-z]+@/.test(work)) {
-    throw new Error(
-      `"${work}" is not a work key — use the key msf status shows, e.g. Sanmoo/my-tasks#12`,
-    );
+  if (work !== undefined && anchorOfKey(work) === null) {
+    throw new Error(`"${work}" is not a work key — use the key msf status shows, e.g. Sanmoo/my-tasks#12`);
   }
 
   const workspace = ensureWorkspace(config.workspace);
