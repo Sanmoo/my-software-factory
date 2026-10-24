@@ -96,11 +96,11 @@ could not start).
 `npm test` remains a focused run during development and never substitutes for
 the gateway.
 
-Deterministic and hermetic: the tracker and the worker runtime are fakes; the
+The fakes are hermetic: the tracker and the worker runtime are fake; the
 workspace uses a real temp dir — the disk is never mocked, and the git host
-side is exercised with local bare remotes as fixtures. No GitHub and no
-credentials: the checks that start real containers are the ones named above,
-and the provisioned-image check runs with `--network none`.
+side is exercised with local bare remotes as fixtures. No GitHub and no model
+credentials; the checks that start real containers use the local daemon only,
+with `--network none` where the assertion is about what the image contains.
 
 ## Real smoke (credential-gated)
 

@@ -124,9 +124,8 @@ export function agentFileProblem(what: string, path: string): string | null {
  *  documented examples, not the allow-list's first entries. */
 export const MODEL_AUTH_SOURCES =
   "set a Pi-supported provider API key in the factory's environment " +
-  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml";
+  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml; " +
+  "credentials are never read from a personal Pi profile";
 
 /** The absence diagnostic: no explicit source at all. */
-export const NO_MODEL_AUTH_MESSAGE =
-  `no model credentials for the worker: ${MODEL_AUTH_SOURCES}. ` +
-  "Credentials are never read from a personal Pi profile.";
+export const NO_MODEL_AUTH_MESSAGE = `no model credentials for the worker: ${MODEL_AUTH_SOURCES}.`;

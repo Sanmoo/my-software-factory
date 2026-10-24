@@ -432,6 +432,7 @@ function attribution(declaration, piInstall) {
     ...declaration.extensions.map(
       (extension) =>
         `- Extension: ${extension.package}@${extension.version} — ${extension.license}` +
+        ` (LICENSE under licenses/${licenseFileName(extension.package)})` +
         `\n  - Guidance: ${extension.guidance.name}: ${extension.guidance.path}`,
     ),
     `- Reviewer agents: factory-owned (${declaration.agents.map((agent) => agent.path).join(", ")})`,
@@ -580,6 +581,10 @@ export async function provisionAgentResources(options) {
 
     writeFileSync(join(staging, "ATTRIBUTION.md"), attribution(declaration, piInstall), "utf8");
 
+    // The inventory is the image's own provenance record: the launch compares
+    // versions, revisions and paths against the declaration, and the digests
+    // are here for the operator inspecting the image, not for that comparison
+    // (the declaration carries no expected digests).
     const inventory = {
       schema: AGENT_INVENTORY_SCHEMA,
       declaration: { file: AGENT_DECLARATION_FILE, sha256: declarationDigest(declaration) },

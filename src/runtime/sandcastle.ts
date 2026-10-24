@@ -1045,7 +1045,7 @@ async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
     const answer = status === "" ? "the probe returned no readable status" : status;
     throw new Error(
       `model credentials for ${deps.model} are not ready (${answer}${reason === "" ? "" : `: ${reason}`}): ` +
-        `${MODEL_AUTH_SOURCES} — nothing is read from a personal Pi profile.`,
+        `${MODEL_AUTH_SOURCES}.`,
     );
   }
 }
