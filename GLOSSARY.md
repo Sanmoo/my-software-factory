@@ -51,16 +51,16 @@ _Avoid_: Current user, when it could mean either the operator or the authenticat
 The set of work currently available for the factory to pick up.
 
 **Claim**:
-The factory's mark on the issue tracker that reserves work, together with assignment to its acting account.
+The factory's mark on a Ticket, together with assignment to its acting account, reserving that Ticket for exclusive factory activity. It covers the whole Ticket regardless of Destination; sub-issues are distinct Tickets.
 
 **Padlock**:
-The claim mark identifying work as already reserved and unavailable for another pickup.
+The claim mark identifying a Ticket as already reserved and unavailable for another pickup.
 
 **Reservation**:
 The workspace record of a work: its source and destination facts, attempts, outcomes and PR associations.
 
 **Unbacked claim**:
-A factory claim mark on the tracker with no reservation in this workspace.
+A factory claim mark on the tracker with no reservation in this workspace. It does not establish abandonment or the absence of an owner elsewhere.
 
 **Unmarked reservation**:
 A reservation whose work carries no factory mark at all.
