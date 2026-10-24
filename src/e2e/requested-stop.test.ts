@@ -9,7 +9,7 @@ import { installStopSignals } from "../stop-signals.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { deferred } from "../runtime/deferred.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef, Known, PrFeedback } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -21,8 +21,9 @@ import {
   type RecoveryBudget,
 } from "../config.js";
 import { readRecoveryLedger, recordStopRequest, recordUnconfirmedStop } from "../pool/recovery.js";
-import { issueRefKey } from "../pool/work-key.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { workKeyOf } from "../pool/work-key.js";
+import { githubWork, launchedNumber } from "./work-fixtures.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { waitFor } from "./cli-harness.js";
 import { seedSession } from "./session-fixtures.js";
 
@@ -39,7 +40,7 @@ import { seedSession } from "./session-fixtures.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   constructor(private readonly beforePrepare?: () => Promise<void>) {}
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -171,7 +172,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const tracker = makeTracker(config);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     runtime.hold = async (request) => {
-      await runtime.whenStopRequested(request.ref);
+      await runtime.whenStopRequested(request.work);
     };
     const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
@@ -325,7 +326,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const tracker = makeTracker(config);
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["abrupt-death", "abrupt-death", "pr-open"] });
     runtime.hold = async (request) => {
-      await runtime.whenStopRequested(request.ref);
+      await runtime.whenStopRequested(request.work);
     };
     const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
@@ -362,7 +363,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     runtime.hold = async (request) => {
       // #1 finishes on its own; #2 parks until the operator's stop.
-      if (request.ref.number === 2) await runtime.whenStopRequested(request.ref);
+      if (launchedNumber(request) === 2) await runtime.whenStopRequested(request.work);
     };
     const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
@@ -392,7 +393,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open", "pr-open"], ignoreStop: true });
     runtime.hold = async (request) => {
       // #1 ends as soon as it is asked; #2 never ends on its own.
-      if (request.ref.number === 2) await new Promise<void>(() => {});
+      if (launchedNumber(request) === 2) await new Promise<void>(() => {});
     };
     const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
 
@@ -571,7 +572,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
       // The real forced stop removes the container; the probe proves it.
-      containers.delete(issueRefKey(ref));
+      containers.delete(workKeyOf(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
@@ -697,7 +698,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
     const forcedByTheFake = runtime.forceStop.bind(runtime);
     runtime.forceStop = async (ref) => {
-      containers.delete(issueRefKey(ref));
+      containers.delete(workKeyOf(ref));
       await forcedByTheFake(ref);
     };
     const deps: LoopDeps = {
@@ -858,7 +859,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       const tracker = makeTracker(config);
       const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
       runtime.hold = async (request) => {
-        await runtime.whenStopRequested(request.ref);
+        await runtime.whenStopRequested(request.work);
       };
       const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
       const installed = installStopSignals();
@@ -876,7 +877,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
         assert.deepEqual(runtime.stopRequests, [WORK_KEY], `${signal}: the worker was asked to stop`);
       } finally {
         installed.dispose();
-        runtime.forceStop({ repo: REPO, number: 1 }).catch(() => {});
+        runtime.forceStop(githubWork(REPO, 1)).catch(() => {});
       }
     }
   });

@@ -1,42 +1,42 @@
-import type { ExpandedGitWork, GitWork } from "../git/port.js";
-import { issueRefOf, type WorkIdentity } from "../tracker/identity.js";
-import type { IssueRef } from "../tracker/port.js";
+import type { ExpandedGitWork, GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { workKeyOf } from "../pool/work-key.js";
+import type { IssueRef } from "../tracker/port.js";
+import type { WorkIdentity } from "../tracker/identity.js";
 
 /**
- * TEST SUPPORT (issue 126): the expanded {@link ExpandedGitWork} over the e2e
- * git doubles, which still speak the legacy `IssueRef` shape. GitHub-only, and
- * exact for the composition this slice serves: there the ticket's repository
- * IS the destination. A Work outside that — another source, or a GitHub ticket
- * whose destination is another repository — has no exact ref, so it throws
- * rather than route the double to a guessed repository. Every call forwards
- * dynamically, so a double's overridden legacy method stays the seam the test
- * controls. The production git host implements the expanded port natively and
- * never uses this bridge.
+ * TEST SUPPORT: the expanded {@link GitWork} over the e2e git doubles, which
+ * are GitHub-only by construction. It is not a production bridge: the real git
+ * host implements the Work-addressed interface directly. The double's ref is
+ * exact only for the composition the GitHub e2e suites exercise (the ticket's
+ * repository IS the destination); anything else is refused rather than routed
+ * to a guessed repository.
  */
-export function expandedGitWorkOf(legacy: GitWork): ExpandedGitWork {
+export interface LegacyGitWork {
+  prepareWork(ref: IssueRef): Promise<PreparedWork>;
+  cleanupDoneWork(ref: IssueRef): Promise<void>;
+  diffWork(ref: IssueRef): Promise<string>;
+  observeRemoteHead(ref: IssueRef): Promise<string | null>;
+  inspectLocalWork(ref: IssueRef): Promise<LocalWorkFacts>;
+}
+
+export function expandedGitWorkOf(legacy: LegacyGitWork): ExpandedGitWork {
   /** The ref of the Work's ticket, refused unless it names the same repository
    *  the double must operate on: a silent misroute would test the wrong repo. */
   const refOf = (work: WorkIdentity): IssueRef => {
-    const ref = issueRefOf(work.ticket);
-    if (ref.repo !== work.destination.repo) {
+    const { ticket, destination } = work;
+    if (ticket.provider !== "github" || ticket.repo !== destination.repo) {
       throw new Error(
-        `the test git double cannot carry ${workKeyOf(work)}: its ticket is ${ref.repo}, its destination ${work.destination.repo}`,
+        `the test git double cannot carry ${workKeyOf(work)}: it is GitHub-only and must name its own destination`,
       );
     }
-    return ref;
+    return { repo: ticket.repo, number: ticket.number };
   };
 
   return {
-    prepareWork: (ref) => legacy.prepareWork(ref),
     prepareWorkFor: (work) => legacy.prepareWork(refOf(work)),
-    cleanupDoneWork: (ref) => legacy.cleanupDoneWork(ref),
     cleanupDoneWorkFor: (work) => legacy.cleanupDoneWork(refOf(work)),
-    diffWork: (ref) => legacy.diffWork(ref),
     diffWorkFor: (work) => legacy.diffWork(refOf(work)),
-    observeRemoteHead: (ref) => legacy.observeRemoteHead(ref),
     observeRemoteHeadFor: (work) => legacy.observeRemoteHead(refOf(work)),
-    inspectLocalWork: (ref) => legacy.inspectLocalWork(ref),
     inspectLocalWorkFor: (work) => legacy.inspectLocalWork(refOf(work)),
   };
 }

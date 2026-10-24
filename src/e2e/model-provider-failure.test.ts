@@ -10,7 +10,7 @@ import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime
 import { appendAttemptEvent, eventLogName } from "../runtime/attempt-logs.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import type { WorkRequest } from "../runtime/port.js";
-import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
+import type { LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
@@ -24,7 +24,7 @@ import {
 import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
 import { seedSession } from "./session-fixtures.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
  * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
@@ -53,7 +53,7 @@ class Waits {
 }
 
 /** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
     return {
       repoDir: `/clones/${ref.repo.replaceAll("/", "#")}`,

@@ -3,8 +3,8 @@ import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
-import type { IssueRef } from "../tracker/port.js";
-import { issueRefKey } from "../pool/work-key.js";
+import type { WorkIdentity } from "../tracker/identity.js";
+import { workKeyOf } from "../pool/work-key.js";
 import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
@@ -56,7 +56,7 @@ export interface FakeWorkerRuntimeOptions {
 
 /** The session of one launch while it can still be stopped. */
 interface FakeSession {
-  ref: IssueRef;
+  work: WorkIdentity;
   /** Ends the parked launch either way. */
   wake: Deferred;
   /** The cooperative request: what a test's hold awaits to end voluntarily
@@ -66,14 +66,15 @@ interface FakeSession {
   forced: Deferred;
 }
 
-/** The launch of one work among a run's results, by issue number. Concurrent
+/** The launch of one work among a run's results, by its Work key. Concurrent
  * admissions reach the runtime in no contractual order, so a test asks for the
  * work it means instead of indexing by position. */
 export function launchOf(
   launched: readonly SessionResult[],
-  number: number,
+  work: WorkIdentity,
 ): SessionResult | undefined {
-  return launched.find((result) => result.request.ref.number === number);
+  const key = workKeyOf(work);
+  return launched.find((result) => workKeyOf(result.request.work) === key);
 }
 
 export class FakeWorkerRuntime implements WorkerRuntime {
@@ -97,9 +98,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
-    const key = issueRefKey(request.ref);
+    const key = workKeyOf(request.work);
     const session: FakeSession = {
-      ref: request.ref,
+      work: request.work,
       wake: deferred(),
       cooperative: deferred(),
       forced: deferred(),
@@ -127,8 +128,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** Ask the session to end; the launch promise resolves with its aftermath. */
-  requestStop(ref: IssueRef): void {
-    const key = issueRefKey(ref);
+  requestStop(work: WorkIdentity): void {
+    const key = workKeyOf(work);
     this.stopRequests.push(key);
     const session = this.sessions.get(key);
     if (session === undefined) return;
@@ -137,8 +138,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** Force the session gone; a fake container is instantly removed. */
-  async forceStop(ref: IssueRef): Promise<void> {
-    const key = issueRefKey(ref);
+  async forceStop(work: WorkIdentity): Promise<void> {
+    const key = workKeyOf(work);
     this.forcedStops.push(key);
     if (this.options.forceUnconfirmed === true) {
       throw new Error(`fake: the worker of ${key} survived the forced stop`);
@@ -158,8 +159,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   /** Resolves once a cooperative stop was requested for this work — the seam a
    *  test's hold awaits to end voluntarily inside the cooperative window. */
-  whenStopRequested(ref: IssueRef): Promise<void> {
-    return this.sessions.get(issueRefKey(ref))?.cooperative.promise ?? Promise.resolve();
+  whenStopRequested(work: WorkIdentity): Promise<void> {
+    return this.sessions.get(workKeyOf(work))?.cooperative.promise ?? Promise.resolve();
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's
@@ -193,7 +194,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       id: "prompt-1",
       parentId: null,
       timestamp: new Date().toISOString(),
-      message: { role: "user", content: request.material.issue.title },
+      message: { role: "user", content: request.material.ticket.title },
     };
     writeFileSync(file, `${JSON.stringify(header)}\n${JSON.stringify(first)}\n`, "utf8");
   }
@@ -248,28 +249,27 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       // Same branch, same PR (ticket 04 Q10): when the work's PR is already
       // open on this branch, the worker reuses it — a feedback round never
       // opens a second PR.
-      const feedback = await tracker.readPrFeedback(request.ref);
+      const feedback = await tracker.readPullRequestFeedback({ work: request.work, pullRequest: null });
       const existing = feedback.known ? feedback.value.pr : null;
       const reused = existing !== null && existing.state === "open" && existing.headBranch === request.branch;
       if (reused && existing) {
-        pr = { repo: request.ref.repo, number: existing.number, branch: request.branch };
+        pr = { repo: request.work.destination.repo, number: existing.number, branch: request.branch };
         // The norma (ticket 07 Q3): the worker ends EVERY feedback round by
         // commenting on the PR what it addressed — the ball goes back to the
         // human, derivable from the PR alone.
         tracker.addPrComment(
-          { repo: request.ref.repo, prNumber: existing.number },
+          { repo: request.work.destination.repo, prNumber: existing.number },
           tracker.workerAccount,
           `${AGENT_MARKER} addressed the feedback (attempt ${request.attempt}) — see the new commits on ${request.branch}`,
         );
       } else {
-        const opened = await tracker.openPr({
-          repo: request.ref.repo,
-          issueNumber: request.ref.number,
+        const opened = await tracker.openPullRequest({
+          work: request.work,
           headBranch: request.branch,
           baseBranch: "main",
-          title: `work ${request.ref.repo}#${request.ref.number}`,
+          title: `work ${request.work.ticket.key}`,
         });
-        pr = { repo: request.ref.repo, number: opened.number, branch: request.branch };
+        pr = { repo: request.work.destination.repo, number: opened.number, branch: request.branch };
       }
     }
 

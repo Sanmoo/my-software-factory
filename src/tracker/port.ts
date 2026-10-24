@@ -1,15 +1,15 @@
 /**
- * The legacy tracker port (issue 124): the shape the worker-facing continuity
- * machinery still reads, plus the tracker smoke cycle. The expanded contracts
- * split ticket operations from PR/code-host operations (`expanded-port.ts`);
- * `legacyTrackerPort` bridges this shape onto them where that machinery is
- * served, until #127 migrates it. The contract regression still exercises this
- * shape.
+ * The GitHub adapter's conformance and smoke surface (issue 124; reduced by
+ * #127). Production orchestration, the worker context, continuity, status and
+ * notifications speak the expanded `TicketTracker` / `PullRequestTracker`
+ * contracts; this shape survives only for the adapter's own contract suite and
+ * the real-GitHub smoke, which exercise the issue+PR cycle on a GitHub repo.
+ * A future Jira adapter is never asked to satisfy it: that would force it to
+ * emulate GitHub-only rules (native rank absence, issue-closing syntax,
+ * completion by closing the issue), which the shared suite now keeps apart.
  *
  * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
- * speaks of works (trabalhos). A Jira ticket adapter serves the expanded
- * `TicketTracker`; GitHub serves both expanded ports. Contract from ticket
- * 02 / prior art of v1:
+ * speaks of works (trabalhos). Contract from ticket 02 / prior art of v1:
  *
  *  - Writes are performed by the adapter only; confirmation is always by
  *    re-reading (ADR 0001). Adapters report the intents they performed, never
@@ -186,11 +186,9 @@ export class PartialWriteError extends Error {
 }
 
 /**
- * @deprecated Transitional (issue 124): new code speaks `TicketTracker` /
- * `PullRequestTracker`. The orchestration migrated (issue 126); what still
- * reads this shape is the worker-facing continuity machinery, bridged until
- * #127 migrates it, and the tracker smoke cycle on the adapter itself. The
- * contract regression also exercises it.
+ * @deprecated GitHub-adapter conformance only: new code speaks `TicketTracker` /
+ * `PullRequestTracker`. This shape has no production consumer left after #127;
+ * the GitHub adapter's own contract suite and smoke keep exercising it.
  *
  * The 9 operations + rank (ticket 02, table 1), in port terms:
  *

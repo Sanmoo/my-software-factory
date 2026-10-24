@@ -16,7 +16,7 @@ import type {
   RequiredCheckResult,
 } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
-import { issueRefOfTicket, workIdentity, type WorkIdentity } from "../tracker/identity.js";
+import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
 import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
@@ -196,7 +196,7 @@ export function renderUnbackedClaim(claim: UnbackedClaim): string {
       ? "this ticket is not a GitHub issue, so no gh command is offered"
       : `return it to the pool with: ${claim.command}`;
   return (
-    `unbacked claim: ${workKeyOf(claim.work)} — a factory mark on an open issue with no reservation in this workspace ` +
+    `unbacked claim: ${renderWorkIdentity(claim.work)} — a factory mark on an open issue with no reservation in this workspace ` +
     `(${UNBACKED_CLAIM_CAVEAT}); ${release}`
   );
 }
@@ -204,7 +204,7 @@ export function renderUnbackedClaim(claim: UnbackedClaim): string {
 /** The fact-only line: an unmarked reservation has no safe command. */
 export function renderUnmarkedReservation(reservation: UnmarkedReservation): string {
   return (
-    `unmarked reservation: ${workKeyOf(reservation.work)} — the work dir exists but the tracker carries no factory mark ` +
+    `unmarked reservation: ${renderWorkIdentity(reservation.work)} — the work dir exists but the tracker carries no factory mark ` +
     "(no claim, no block, no pool label); the decision is human, nothing was touched"
   );
 }
@@ -220,12 +220,10 @@ function compareLeftoverWorks(a: { work: WorkIdentity }, b: { work: WorkIdentity
 /** A stable presentation order that keeps GitHub's historical repo-then-number
  *  comparison (#2 before #10) and falls back to the Work key for other sources. */
 function compareWorks(a: WorkIdentity, b: WorkIdentity): number {
-  const left = issueRefOfTicket(a.ticket);
-  const right = issueRefOfTicket(b.ticket);
-  if (left !== null && right !== null) {
+  if (a.ticket.provider === "github" && b.ticket.provider === "github") {
     return (
-      left.repo.localeCompare(right.repo) ||
-      left.number - right.number ||
+      a.ticket.repo.localeCompare(b.ticket.repo) ||
+      a.ticket.number - b.ticket.number ||
       workKeyOf(a).localeCompare(workKeyOf(b))
     );
   }
@@ -250,9 +248,9 @@ function hasAnyFactoryLabel(issue: OpenTicket, labels: Labels): boolean {
  *  assignee(s) — an assigned work is never eligible. A non-GitHub ticket has
  *  no `gh` command; null is offered instead of a fabricated one. */
 function releaseCommand(issue: OpenTicket, labels: Labels): string | null {
-  const ref = issueRefOfTicket(issue.ticket);
-  if (ref === null) return null;
-  const parts = [`gh issue edit ${ref.number}`, `--repo ${ref.repo}`];
+  const ticket = issue.ticket;
+  if (ticket.provider !== "github") return null;
+  const parts = [`gh issue edit ${ticket.number}`, `--repo ${ticket.repo}`];
   if (!issue.labels.includes(labels.ready)) parts.push(`--add-label ${labels.ready}`);
   if (issue.labels.includes(labels.claimed)) parts.push(`--remove-label ${labels.claimed}`);
   if (issue.labels.includes(labels.blocked)) parts.push(`--remove-label ${labels.blocked}`);

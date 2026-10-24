@@ -13,15 +13,16 @@ import {
 } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { runOnce, type LoopDeps } from "../loop.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
+import type { WorkRequest } from "../runtime/port.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.js";
 import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -34,9 +35,16 @@ import type { IssueRef } from "../tracker/port.js";
  */
 
 const REPO = "Sanmoo/my-tasks";
+
+/** The GitHub issue number of a launched Work in this GitHub-only suite. */
+function launchedNumber(request: WorkRequest): number {
+  const ticket = request.work.ticket;
+  assert.equal(ticket.provider, "github");
+  return ticket.provider === "github" ? ticket.number : -1;
+}
 const NOW = "2026-01-01T00:00:00Z";
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   remoteHead: string | null = null;
   diff = "diff --git a/x b/x";
   readonly prepared: IssueRef[] = [];
@@ -332,7 +340,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
 
     assert.equal(readPause(workDir(layout, REPO, 7))?.reason, "effect-unsupported");
     assert.deepEqual(
-      runtime.launched.map((request) => request.ref.number),
+      runtime.launched.map(launchedNumber),
       [8],
       "the paused work does not stop the factory",
     );
@@ -377,7 +385,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(request.session?.mode, "new", "a new orientation round, not a blind replay of the old session");
     assert.notEqual(request.session?.sessionId, session.sessionId);
     assert.equal(request.attempt, 3, "the human answer opens the next attempt");
-    assert.deepEqual(request.material.issueReplies?.map((comment) => comment.body), ["I pushed it; the head is abc123."]);
+    assert.deepEqual(request.material.ticketReplies?.map((comment) => comment.body), ["I pushed it; the head is abc123."]);
     assert.equal(request.material.diff, "diff --git a/current b/current", "the current diff, not the old one");
     assert.equal(readPause(workDir(layout, REPO, 7)), null, "the resolved pause is cleared");
   });

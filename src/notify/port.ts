@@ -1,5 +1,10 @@
-import type { IssueRef } from "../tracker/port.js";
-import { GITHUB_SITE, githubIssueUrl, githubPullUrl } from "../tracker/identity.js";
+import type { WorkIdentity } from "../tracker/identity.js";
+import {
+  githubPullUrl,
+  pullRequestIdentity,
+  renderTicketIdentity,
+  ticketUrl,
+} from "../tracker/identity.js";
 
 /**
  * The factory's boundary with the operator's desktop: the CLI on the host
@@ -7,10 +12,13 @@ import { GITHUB_SITE, githubIssueUrl, githubPullUrl } from "../tracker/identity.
  * capability (issue 93).
  */
 export interface WorkNotification {
-  ref: IssueRef;
+  /** The Work's origin and destination — never a synthesized GitHub issue. */
+  work: WorkIdentity;
   kind: "review" | "help" | "intervention";
-  /** The PR for review; the issue for help or intervention. */
-  url: string;
+  /** The PR for review; the ticket for help or intervention. Null when the
+   *  ticket's source exposes no presentation link (a Jira identity without
+   *  one): the notice still names the ticket instead of inventing an address. */
+  url: string | null;
 }
 
 /**
@@ -31,12 +39,17 @@ export interface Notifier {
   notify(notification: Notification): Promise<void>;
 }
 
-export function reviewNotice(ref: IssueRef, prNumber: number): WorkNotification {
-  return { ref, kind: "review", url: githubPullUrl(GITHUB_SITE, ref.repo, prNumber) };
+export function reviewNotice(work: WorkIdentity, prNumber: number): WorkNotification {
+  const pullRequest = pullRequestIdentity(work.destination, prNumber);
+  return {
+    work,
+    kind: "review",
+    url: githubPullUrl(pullRequest.site, pullRequest.repository.repo, pullRequest.number),
+  };
 }
 
-export function helpNotice(ref: IssueRef): WorkNotification {
-  return { ref, kind: "help", url: githubIssueUrl(GITHUB_SITE, ref.repo, ref.number) };
+export function helpNotice(work: WorkIdentity): WorkNotification {
+  return { work, kind: "help", url: ticketUrl(work.ticket) ?? null };
 }
 
 /**
@@ -44,8 +57,8 @@ export function helpNotice(ref: IssueRef): WorkNotification {
  * (issue 118): duplicate containers of one work, or a survivor silent past the
  * idle limit. Nothing was ended, replaced or chosen — the notice says so.
  */
-export function interventionNotice(ref: IssueRef): WorkNotification {
-  return { ref, kind: "intervention", url: githubIssueUrl(GITHUB_SITE, ref.repo, ref.number) };
+export function interventionNotice(work: WorkIdentity): WorkNotification {
+  return { work, kind: "intervention", url: ticketUrl(work.ticket) ?? null };
 }
 
 /** The one notice of a liveness-unknown episode (issue 118). */
@@ -56,5 +69,5 @@ export function factoryUnavailableNotice(unavailableForMs: number): FactoryNotif
 /** A notice's identity for the operator's log — a work's, or the factory's own. */
 export function describeNotification(notification: Notification): string {
   if (notification.kind === "factory-unavailable") return "factory (Docker unreachable)";
-  return `${notification.kind} ${notification.ref.repo}#${notification.ref.number}`;
+  return `${notification.kind} ${renderTicketIdentity(notification.work.ticket)}`;
 }

@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { IssueComment, IssueRef } from "./tracker/port.js";
+import type { IssueComment } from "./tracker/port.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
 import type { ExpandedGitWork, LocalWorkFacts } from "./git/port.js";
@@ -13,18 +13,15 @@ import {
   type Notifier,
 } from "./notify/port.js";
 import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
-import { legacyTrackerPort } from "./tracker/legacy-bridge.js";
 import {
   composedTicketSources,
   githubSelections,
-  issueRefOf,
-  issueRefOfTicket,
+  renderWorkIdentity,
   sourceKey,
   ticketUrl,
   type WorkIdentity,
 } from "./tracker/identity.js";
 import {
-  legacyWorkOf,
   reservationRecordOf,
   reserveWork,
   scanReservations,
@@ -94,7 +91,7 @@ import {
   refundRecovery,
   type RecoveryDecision,
 } from "./pool/recovery.js";
-import { anchorOfKey, workKeyOf } from "./pool/work-key.js";
+import { workKeyOf, workOfKey } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
@@ -383,11 +380,11 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set();
  * attempt (0); writing those into the file and the operator's comment would
  * fabricate facts the record never held. Every other reason keeps its own.
  */
-function persistedPause(pause: PauseRecord, ref: IssueRef, attempt: number): PauseRecord {
+function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number): PauseRecord {
   if (pause.reason !== "record-unreadable") return pause;
   // `readPause` fabricates no attempt for an unreadable record, so the caller's
   // is the only one there is.
-  return { ...pause, work: ref, attempt };
+  return { ...pause, work, attempt };
 }
 
 /** The stable rendering order of a key set — presentation only, never the schedule. */
@@ -1119,8 +1116,7 @@ export class SweepEngine {
         "the factory keeps its slot and launches no substitute; it does not end a worker it did not launch " +
         "(a human decision is needed)",
     );
-    const ref = this.noticeRefOf(record.work);
-    if (ref !== null) await this.deliverNotice(interventionNotice(ref));
+    await this.deliverNotice(interventionNotice(record.work));
   }
 
   /**
@@ -1142,16 +1138,15 @@ export class SweepEngine {
         `duplicate workers for ${duplicate.key}: ${duplicate.containers} containers carry the same work — ` +
           "no new launch for it, no owner chosen and nothing ended; a human decision is needed",
       );
-      const work = reservations.get(duplicate.key)?.work ?? legacyWorkOfKey(duplicate.key);
+      const work = reservations.get(duplicate.key)?.work ?? workOfKey(duplicate.key);
       if (work === null) {
         this.log(
           `no intervention notice for duplicate ${duplicate.key}: this workspace has no readable reservation ` +
-            "for it (the facts above are preserved for the human)",
+            "or key that names its Work (the facts above are preserved for the human)",
         );
         continue;
       }
-      const ref = this.noticeRefOf(work);
-      if (ref !== null) await this.deliverNotice(interventionNotice(ref));
+      await this.deliverNotice(interventionNotice(work));
     }
   }
 
@@ -1351,12 +1346,10 @@ export class SweepEngine {
       }
     }
 
-    // The runtime's stop request still speaks the worker's IssueRef (issue
-    // 126 leaves the worker context for #127): an admission whose ticket that
-    // shape cannot express never launched a worker, so it has none to ask.
+    // The runtime's stop request speaks the Work identity — a ticket from any
+    // source and the destination are addressable without a GitHub issue number.
     for (const entry of entries) {
-      const ref = issueRefOfTicket(entry.work.ticket);
-      if (ref !== null) this.deps.runtime.requestStop(ref);
+      this.deps.runtime.requestStop(entry.work);
     }
 
     // Whatever still carries a work is forced now. The evidence of the stop
@@ -1376,10 +1369,10 @@ export class SweepEngine {
     }
     await Promise.all(
       doomed.map(async (key) => {
-        const ref = workerRefOfKey(key);
-        if (ref === null) return undefined;
+        const work = workOfKey(key);
+        if (work === null) return undefined;
         try {
-          await this.deps.runtime.forceStop(ref);
+          await this.deps.runtime.forceStop(work);
           forced.push(key);
           this.log(`forced stop of ${key}: its worker is gone`);
         } catch (error) {
@@ -1651,10 +1644,6 @@ export class SweepEngine {
     const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
-    // The worker request still carries the legacy IssueRef shape (issue 126
-    // leaves the worker context for #127); the served sources above are the
-    // GitHub Issues composition, which that shape expresses exactly.
-    const ref = issueRefOf(work.ticket);
 
     // The requested stop closes admissions the instant it arrives (issue
     // #146): a launch that has not written to the tracker yet leaves nothing
@@ -1877,13 +1866,11 @@ export class SweepEngine {
     const continuityDeps = {
       workDir: dir,
       sessionsDir: join(dir, SESSIONS_SUBDIR),
-      // The continuity machinery (issue 119) still speaks the worker's legacy
-      // shape — the session link's `work` and the effect reads of the port.
-      // The conversion happens here, once, at that boundary (#127 migrates it).
-      ref,
+      work,
       attempt: facts.attempt,
       git,
-      tracker: legacyTrackerPort(tickets, pullRequests),
+      tickets,
+      pullRequests,
     };
     if (kind === "resume") {
       const pause = readPause(dir);
@@ -1998,7 +1985,7 @@ export class SweepEngine {
 
     entry.launched = true;
     const result = await runtime.launch({
-      ref,
+      work,
       workDir: dir,
       branch: prepared.branch,
       repoDir: prepared.repoDir,
@@ -2069,14 +2056,11 @@ export class SweepEngine {
     note?: string,
   ): Promise<void> {
     const { tickets, config, workspace } = this.deps;
-    // The persisted pause (issue 119) still names the worker's legacy shape:
-    // the conversion happens here, once, at that boundary (#127 migrates it).
-    const ref = issueRefOf(work.ticket);
     // By now the factory knows which work and attempt it is pausing, whatever
     // the record could say: an unreadable record's unknown work/attempt is
     // replaced here, so the persisted pause and the operator's comment name the
     // real attempt instead of a fabricated zero.
-    const pause = persistedPause(pending, ref, attempt);
+    const pause = persistedPause(pending, work, attempt);
     const previous = readPause(dir);
     const alreadyAnnounced =
       note === undefined &&
@@ -2206,8 +2190,7 @@ export class SweepEngine {
           workspace,
         });
         await tickets.commentOnTicket(work.ticket, comment);
-        const ref = this.noticeRefOf(work);
-        if (ref !== null) await this.deliverNotice(helpNotice(ref));
+        await this.deliverNotice(helpNotice(work));
         await markModelProviderHelpRequested(dir, attempt, failure);
         this.log(
           `awaiting model provider for ${workKeyOf(work)}: attempt ${attempt} ended by a model provider failure ` +
@@ -2673,11 +2656,9 @@ export class SweepEngine {
       const isReviewLaunch =
         origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
       if (blockedLabelOnIssue || selfReportedNow) {
-        const ref = this.noticeRefOf(work);
-        if (ref !== null) await this.deliverNotice(helpNotice(ref));
+        await this.deliverNotice(helpNotice(work));
       } else if (isReviewLaunch && prConfirmed && pr !== null) {
-        const ref = this.noticeRefOf(work);
-        if (ref !== null) await this.deliverNotice(reviewNotice(ref, pr.number));
+        await this.deliverNotice(reviewNotice(work, pr.number));
       }
     }
     return { next, prConfirmed, ruling: { decision: ruling.decision, because: ruling.because } };
@@ -2712,8 +2693,7 @@ export class SweepEngine {
     const { tickets, config } = this.deps;
     await tickets.blockTicketClaim(work.ticket, config.labels);
     await tickets.commentOnTicket(work.ticket, comment);
-    const ref = this.noticeRefOf(work);
-    if (ref !== null) await this.deliverNotice(helpNotice(ref));
+    await this.deliverNotice(helpNotice(work));
   }
 
   /** The done duties on real disk and real git: archive the work's artifacts
@@ -2732,19 +2712,6 @@ export class SweepEngine {
     await tickets.markTicketDone(work.ticket);
     await tickets.commentOnTicket(work.ticket, comment);
     await this.finishWork(work);
-  }
-
-  /** The address a notice still needs: the notification surface speaks GitHub
-   *  issues until #127. A work it cannot address is said, never silently lost. */
-  private noticeRefOf(work: WorkIdentity): IssueRef | null {
-    const ref = issueRefOfTicket(work.ticket);
-    if (ref === null) {
-      this.log(
-        `a notice for ${workKeyOf(work)} was not delivered: the operator notices still address GitHub ` +
-          "issues (issue 127)",
-      );
-    }
-    return ref;
   }
 
   /** Best-effort delivery of one occurrence notice; a failure only logs. A
@@ -2786,22 +2753,6 @@ export class SweepEngine {
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";
-
-/** The GitHub Work a legacy-shaped registry key anchors — enough to NAME a
- *  worker or a duplicate whose reservation is unreadable. A non-GitHub key
- *  needs the reservation for its readable ticket key: none is invented from
- *  the stable id. */
-function legacyWorkOfKey(key: string): WorkIdentity | null {
-  const anchor = anchorOfKey(key);
-  return anchor === null ? null : legacyWorkOf(anchor);
-}
-
-/** The address the worker-facing runtime seams still speak (issue 126 leaves
- *  them for #127). A key that shape cannot express names no worker to end. */
-function workerRefOfKey(key: string): IssueRef | null {
-  const work = legacyWorkOfKey(key);
-  return work === null ? null : issueRefOfTicket(work.ticket);
-}
 
 const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
@@ -2947,11 +2898,11 @@ async function launchMaterial(
       : undefined;
 
   const material: WorkerMaterial = {
-    issue: issue.known ? { title: issue.value.title, body: issue.value.body } : { title: "", body: "" },
+    ticket: issue.known ? { title: issue.value.title, body: issue.value.body } : { title: "", body: "" },
     diff,
   };
   if (pr !== undefined) material.pr = pr;
-  if (issueReplies !== undefined) material.issueReplies = issueReplies;
+  if (issueReplies !== undefined) material.ticketReplies = issueReplies;
   if (repair !== undefined) {
     material.repair = {
       reasons: repair.trigger.reasons,

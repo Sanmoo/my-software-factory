@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
-import { githubRepository, githubSelections, githubTicket, issueRefOf } from "../tracker/identity.js";
+import { githubRepository, githubSelections, githubTicket } from "../tracker/identity.js";
+import { githubTicketNumber, githubTicketRepo } from "../e2e/work-fixtures.js";
 import { notKnown, type Blocker, type IssueRef, type Known } from "../tracker/port.js";
 import {
   BLOCKER_READS_IN_FLIGHT,
@@ -66,8 +67,8 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => issueRefOf(entry.work.ticket)),
-      [{ repo: "Sanmoo/a", number: 1 }],
+      pool.map((entry) => `${githubTicketRepo(entry.work.ticket)}#${githubTicketNumber(entry.work.ticket)}`),
+      ["Sanmoo/a#1"],
     );
   });
 
@@ -78,7 +79,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, ["Sanmoo/a"], DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => issueRefOf(entry.work.ticket).number),
+      pool.map((entry) => githubTicketNumber(entry.work.ticket)),
       [2, 10],
     );
   });
@@ -146,7 +147,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => issueRefOf(entry.work.ticket).number),
+      pool.map((entry) => githubTicketNumber(entry.work.ticket)),
       [2, 3, 1],
     );
   });
@@ -172,7 +173,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const state = await deriveTrackerState(tracker, githubSelections(["Sanmoo/a"]), DEFAULT_LABELS);
 
     assert.deepEqual(
-      state.pool.map((entry) => issueRefOf(entry.work.ticket).number),
+      state.pool.map((entry) => githubTicketNumber(entry.work.ticket)),
       [2, 3, 4, 5, 6, 8, 9, 10, 11, 12],
       "a blocked or unreadable work is still out, and the rest keep their order",
     );
@@ -189,7 +190,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      new Set(pool.map((entry) => issueRefOf(entry.work.ticket).repo)),
+      new Set(pool.map((entry) => githubTicketRepo(entry.work.ticket))),
       new Set(["Sanmoo/a", "Sanmoo/b"]),
     );
   });
@@ -211,7 +212,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
     const pool = await derivePool(adapter, repos, DEFAULT_LABELS);
 
     assert.deepEqual(
-      pool.map((entry) => issueRefOf(entry.work.ticket).number),
+      pool.map((entry) => githubTicketNumber(entry.work.ticket)),
       [1, 5],
       "only the plain ready issue and the closed-PR issue are eligible",
     );
@@ -254,7 +255,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
 
     assert.deepEqual(state.pool, []);
     assert.equal(state.unbackedClaims.length, 1);
-    assert.equal(issueRefOf(state.unbackedClaims[0]!.work.ticket).number, 1);
+    assert.equal(githubTicketNumber(state.unbackedClaims[0]!.work.ticket), 1);
     assert.equal(
       state.unbackedClaims[0]?.command!,
       `gh issue edit 1 --repo ${REPO} --add-label ${DEFAULT_LABELS.ready} --remove-label ${DEFAULT_LABELS.claimed} --remove-assignee bot`,
@@ -307,7 +308,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
     const state = await deriveTrackerState(adapter, githubSelections(repos), DEFAULT_LABELS, keys(5));
 
     assert.equal(state.unmarkedReservations.length, 1);
-    assert.equal(issueRefOf(state.unmarkedReservations[0]!.work.ticket).number, 5);
+    assert.equal(githubTicketNumber(state.unmarkedReservations[0]!.work.ticket), 5);
     const line = renderUnmarkedReservation(state.unmarkedReservations[0]!);
     assert.match(line, /unmarked reservation: Sanmoo\/a#5/);
     assert.match(line, /no factory mark/);
@@ -321,7 +322,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
 
     assert.deepEqual(state.unmarkedReservations, []);
     assert.deepEqual(state.unbackedClaims, []);
-    assert.deepEqual(state.pool.map((entry) => issueRefOf(entry.work.ticket).number), [6]);
+    assert.deepEqual(state.pool.map((entry) => githubTicketNumber(entry.work.ticket)), [6]);
   });
 
   test("an unmarked reservation whose issue is closed is the done derivation's business, not a leftover", async () => {

@@ -179,23 +179,23 @@ describe("git work identity — branches and worktrees per Work", () => {
     }
   });
 
-  test("the legacy IssueRef seam still prepares, observes and inspects the GitHub work exactly as before", async () => {
+  test("the Work seam prepares, observes and inspects the GitHub work exactly as before", async () => {
     const git = gitWork();
-    const ref = { repo: REPO, number: 7 };
+    const work = githubWork(7);
 
-    const prepared = await git.prepareWork(ref);
+    const prepared = await git.prepareWorkFor(work);
     assert.equal(prepared.branch, workBranchName(7));
     assert.equal(prepared.branchCreated, true);
-    assert.deepEqual(await git.inspectLocalWork(ref), {
-      headSha: prepared.branchOnOrigin ? null : (await git.inspectLocalWork(ref)).headSha,
-      commits: 0,
-      uncommitted: false,
-      operationInProgress: null,
-    });
-    assert.equal(await git.observeRemoteHead(ref), null);
-    // The expanded seam addresses the same Work, so nothing was duplicated.
-    const expanded = await git.prepareWorkFor(githubWork(7));
-    assert.equal(expanded.branch, prepared.branch);
-    assert.equal(expanded.branchCreated, false);
+    const facts = await git.inspectLocalWorkFor(work);
+    assert.ok(facts.headSha !== null, "the work branch exists on disk");
+    assert.deepEqual(
+      { commits: facts.commits, uncommitted: facts.uncommitted, operationInProgress: facts.operationInProgress },
+      { commits: 0, uncommitted: false, operationInProgress: null },
+    );
+    assert.equal(await git.observeRemoteHeadFor(work), null);
+    // A relaunch addresses the same Work, so nothing was duplicated.
+    const again = await git.prepareWorkFor(work);
+    assert.equal(again.branch, prepared.branch);
+    assert.equal(again.branchCreated, false);
   });
 });

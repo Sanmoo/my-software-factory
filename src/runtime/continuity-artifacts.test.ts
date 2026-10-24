@@ -19,6 +19,7 @@ import {
   readSessionLinks,
   writePause,
 } from "./continuity-artifacts.js";
+import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
  * The continuity artifacts as files (issue 119): the association a recovery
@@ -27,7 +28,7 @@ import {
  * reported absent, never repaired into an invented fact.
  */
 
-const REF = { repo: "Sanmoo/my-tasks", number: 7 };
+const REF = githubWork("Sanmoo/my-tasks", 7);
 
 describe("the continuity artifacts (issue 119)", () => {
   let dir: string;
@@ -118,7 +119,7 @@ describe("the continuity artifacts (issue 119)", () => {
   test("a link is selected by its exact (work, attempt), never by being the newest", () => {
     appendSessionLink(dir, { version: 1, work: REF, attempt: 1, round: 1, sessionId: "a1", at: "" });
     appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 1, sessionId: "b1", at: "" });
-    appendSessionLink(dir, { version: 1, work: { repo: REF.repo, number: 8 }, attempt: 2, round: 1, sessionId: "other-work", at: "" });
+    appendSessionLink(dir, { version: 1, work: githubWork("Sanmoo/my-tasks", 8), attempt: 2, round: 1, sessionId: "other-work", at: "" });
     // The LAST round of the attempt is the one a recovery continues; the newest
     // line on disk belongs to another work and is never chosen.
     appendSessionLink(dir, { version: 1, work: REF, attempt: 2, round: 2, sessionId: "b2", at: "" });
@@ -128,6 +129,36 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(linkForAttempt(links.links, REF, 1)?.sessionId, "a1");
     assert.equal(linkForAttempt(links.links, REF, 3), null, "no association, no guess");
     assert.equal(nextRound(links.links, REF, 2), 3, "the next launch of attempt 2 is round 3");
+  });
+
+  test("a workspace written before the expansion stays readable as a GitHub Work", () => {
+    // The pre-#127 file named the work as `{repo, number}`. Reading it is a
+    // compatibility contract: the association is not discarded or guessed.
+    writeFileSync(
+      join(dir, "sessao-vinculos.jsonl"),
+      `${JSON.stringify({ version: 1, work: { repo: "Sanmoo/my-tasks", number: 7 }, attempt: 2, round: 1, sessionId: "legacy", at: "" })}\n`,
+      "utf8",
+    );
+    const links = readSessionLinks(dir);
+    assert.equal(links.intact, true);
+    assert.deepEqual(links.links[0]?.work, REF);
+    assert.equal(linkForAttempt(links.links, REF, 2)?.sessionId, "legacy");
+  });
+
+  test("a legacy pause record names its Work instead of being discarded", () => {
+    writeFileSync(
+      join(dir, PAUSE_FILENAME),
+      JSON.stringify({
+        version: 1,
+        work: { repo: "Sanmoo/my-tasks", number: 7 },
+        attempt: 2,
+        reason: "session-missing",
+        detail: "legacy pause",
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    assert.deepEqual(readPause(dir)?.work, REF);
   });
 
   test("an unparseable association line marks the journal not intact", () => {

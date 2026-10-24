@@ -1,4 +1,5 @@
-import { issueRefOf } from "../tracker/identity.js";
+import { githubTicketNumber } from "../e2e/work-fixtures.js";
+import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -97,7 +98,7 @@ describe("status — derivation on demand + local registry scan", () => {
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
 
     const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
-    assert.deepEqual(view.pool.map((e) => issueRefOf(e.work.ticket).number), [1]);
+    assert.deepEqual(view.pool.map((e) => githubTicketNumber(e.work.ticket)), [1]);
     assert.deepEqual(
       known(view),
       { state: "known", running: [], duplicates: [], orphaned: [] },
@@ -731,5 +732,40 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.deepEqual(view.unmarkedReservations, []);
     const text = renderStatus(view);
     assert.match(text, /reconciliation: none/);
+  });
+
+  test("a Jira Work is presented by its origin and destination — status invents no GitHub issue", () => {
+    const jiraWork = workIdentity(
+      jiraTicket({
+        site: "acme.atlassian.net",
+        stableId: "10042",
+        key: "ABC-42",
+        url: "https://acme.atlassian.net/browse/ABC-42",
+      }),
+      githubRepository(REPO),
+    );
+    const config = makeConfig();
+    const view: StatusView = {
+      pool: [{ work: jiraWork, title: "a Jira request", createdAt: "2026-01-01T00:00:00Z" }],
+      unbackedClaims: [],
+      unmarkedReservations: [],
+      registry: {
+        attemptsWithoutOwnOutcome: [],
+        reservedWithoutAttempt: [],
+        lastOutcome: [],
+        repair: [],
+        recovery: [],
+        modelProvider: [],
+        continuityPauses: [],
+        archived: [],
+      },
+      liveness: { state: "known", running: [], duplicates: [], orphaned: [] },
+      recoveryBudget: config.recovery,
+      modelProviderBudget: config.modelProvider,
+    };
+
+    const text = renderStatus(view);
+    assert.match(text, /ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks/, "origin and destination are separate facts");
+    assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira origin");
   });
 });

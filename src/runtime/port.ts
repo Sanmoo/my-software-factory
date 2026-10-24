@@ -4,7 +4,8 @@
  * scripts outcomes without a container.
  */
 
-import type { IssueComment, IssueRef, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import type { IssueComment, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import type { WorkIdentity } from "../tracker/identity.js";
 import type { LocalWorkFacts } from "../git/port.js";
 
 /**
@@ -36,10 +37,11 @@ export interface RepairMaterial {
  * from the relevant context, never from session memory.
  */
 export interface WorkerMaterial {
-  issue: { title: string; body: string };
-  /** Human replies on a blocked issue after the last agent marker; present only on retomada. */
-  issueReplies?: IssueComment[];
-  /** The open PR linked to the issue and its conversation; absent on a first launch. */
+  /** The request's ticket content: the origin's title and body as usable text. */
+  ticket: { title: string; body: string };
+  /** Human replies on a blocked ticket after the last agent marker; present only on retomada. */
+  ticketReplies?: IssueComment[];
+  /** The open PR linked to the work and its conversation; absent on a first launch. */
   pr?: { number: number; comments: IssueComment[] };
   /** Diff of the work branch against its base — the branch's memory so far. */
   diff: string;
@@ -55,12 +57,14 @@ export interface SessionSelection {
 }
 
 export interface WorkRequest {
-  ref: IssueRef;
-  /** Directory of the work's artifacts: <workspace>/trabalhos/<repo>#<n>/ */
+  /** What the worker is doing: the ticket that requests it AND the repository
+   *  that receives the code. The two are never collapsed into one issue number. */
+  work: WorkIdentity;
+  /** Directory of the work's artifacts: <workspace>/trabalhos/<work key>/. */
   workDir: string;
   /** The work's branch — the memory of the work; never recreated. */
   branch: string;
-  /** The single clone of the target repo: <workspace>/repos/<owner>#<name>/. */
+  /** The single clone of the destination: <workspace>/repos/<owner>#<name>/. */
   repoDir: string;
   /** The default branch the work branch was born from — also the PR base. */
   baseBranch: string;
@@ -96,11 +100,11 @@ export interface WorkerRuntime {
    * footprint, so no worker slips through the window between the factory's
    * decision and the session's registration.
    */
-  requestStop(ref: IssueRef): void;
+  requestStop(work: WorkIdentity): void;
   /**
    * Force the session of this work to stop; resolves ONLY when the worker is
    * confirmed gone (Docker is the authority for the real runtime). Rejects
    * with the reason when the end cannot be confirmed.
    */
-  forceStop(ref: IssueRef): Promise<void>;
+  forceStop(work: WorkIdentity): Promise<void>;
 }

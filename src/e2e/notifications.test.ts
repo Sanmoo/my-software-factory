@@ -9,8 +9,9 @@ import { runForever, runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
+import { githubRepository, githubTicket, renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -21,13 +22,18 @@ import {
   type Config,
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 const TICK_MS = 5;
 
-class FakeGitWork implements GitWork {
+/** The GitHub Work a seeded issue number names in this GitHub-only suite. */
+function ticketWork(number: number): WorkIdentity {
+  return workIdentity(githubTicket(REPO, number), githubRepository(REPO));
+}
+
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -65,17 +71,17 @@ class PrAndHelpRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const result = await this.inner.launch(request);
-    await this.tracker.blockClaim(request.ref, { ...DEFAULT_LABELS });
-    await this.tracker.comment(request.ref, "help: the API contract needs a human decision");
+    await this.tracker.blockTicketClaim(request.work.ticket, { ...DEFAULT_LABELS });
+    await this.tracker.commentOnTicket(request.work.ticket, "help: the API contract needs a human decision");
     return result;
   }
 
-  requestStop(ref: IssueRef): void {
-    this.inner.requestStop(ref);
+  requestStop(work: WorkIdentity): void {
+    this.inner.requestStop(work);
   }
 
-  forceStop(ref: IssueRef): Promise<void> {
-    return this.inner.forceStop(ref);
+  forceStop(work: WorkIdentity): Promise<void> {
+    return this.inner.forceStop(work);
   }
 }
 
@@ -184,7 +190,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     const [notice] = notifier.notifications;
     assert.ok(notice);
     assert.deepEqual(notice, {
-      ref: { repo: REPO, number: 1 },
+      work: ticketWork(1),
       kind: "review",
       url: prAddress(1),
     });
@@ -223,7 +229,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(result.collected[0]?.ruling.decision, "record-only");
     assert.equal(notifier.notifications.length, 1);
     assert.deepEqual(notifier.notifications[0], {
-      ref: { repo: REPO, number: 2 },
+      work: ticketWork(2),
       kind: "help",
       url: issueAddress(2),
     });
@@ -348,7 +354,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.ok((await labelsOf(tracker, 6)).includes(DEFAULT_LABELS.blocked));
     assert.equal(notifier.notifications.length, 1);
     assert.deepEqual(notifier.notifications[0], {
-      ref: { repo: REPO, number: 6 },
+      work: ticketWork(6),
       kind: "help",
       url: issueAddress(6),
     });
@@ -452,7 +458,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     const byRef = new Map(
       notifier.notifications
         .filter((notice) => notice.kind !== "factory-unavailable")
-        .map((notice) => [`${notice.ref.repo}#${notice.ref.number}`, notice]),
+        .map((notice) => [renderWorkIdentity(notice.work), notice]),
     );
     assert.equal(byRef.size, 2);
     const first = byRef.get(`${REPO}#11`);

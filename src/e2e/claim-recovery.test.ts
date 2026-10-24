@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runForever, runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -17,7 +17,7 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
  * The interruption matrix of the claim swap (issue 98) at the sweep seam, with
@@ -30,7 +30,7 @@ const REPO = "Sanmoo/my-tasks";
 const CREATED = "2026-01-01T00:00:00Z";
 
 /** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {

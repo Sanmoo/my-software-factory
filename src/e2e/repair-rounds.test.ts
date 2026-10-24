@@ -1,4 +1,4 @@
-import { issueRefOf } from "../tracker/identity.js";
+
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { runOnce, SweepEngine, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
+import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -19,7 +19,8 @@ import {
   type Config,
 } from "../config.js";
 import { readRepairCycle } from "../pool/repair.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
  * End-to-end of issue 107: an open PR with confirmed conflicts or a required
@@ -35,7 +36,7 @@ const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 const PR_HEAD = "head-a";
 
-class RepairGitWork implements GitWork {
+class RepairGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
   /** The remote head the host observes before a repair; null = nothing there. */
   remoteHead: string | null = null;
@@ -429,7 +430,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     await failOn("head-3"); // still failing: the cap is exhausted
     const third = await runOnce(deps);
     assert.equal(third.launched.length, 0, "the third round is not launched");
-    const blocked = third.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 8);
+    const blocked = third.reserved.find((decision) => githubTicketNumber(decision.work.ticket) === 8);
     assert.ok(blocked && blocked.state === "repair-blocked", "the derivation blocks it");
     const issue = await tracker.readIssue({ repo: REPO, number: 8 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked), "the work is blocked");
@@ -587,7 +588,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      recovered.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 10 && decision.state === "repair-recovered"),
+      recovered.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 10 && decision.state === "repair-recovered"),
       "the derivation reports the confirmed recovery",
     );
     assert.equal((await readRepairCycle(workDir(layout, REPO, 10))).usedRounds, 0, "the cap resets");
@@ -633,7 +634,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      recovered.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 20 && decision.state === "repair-recovered"),
+      recovered.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 20 && decision.state === "repair-recovered"),
       "no required checks declared is a confirmed recovery, never unknown",
     );
     assert.equal((await readRepairCycle(workDir(layout, REPO, 20))).usedRounds, 0, "the round is returned");

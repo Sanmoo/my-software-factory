@@ -9,9 +9,10 @@ import { FakeWorkerRuntime, launchOf } from "./runtime/fake-runtime.js";
 import { DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET } from "./config.js";
 import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
-import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "./git/port.js";
+import { workBranchName, type LocalWorkFacts, type PreparedWork } from "./git/port.js";
 import type { IssueRef } from "./tracker/port.js";
-import { expandedGitWorkOf } from "./e2e/legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./e2e/legacy-git.js";
+import { githubWork, launchedNumber } from "./e2e/work-fixtures.js";
 
 /**
  * The loop uses the git host as its launch seam (ticket 15): every launch
@@ -20,7 +21,7 @@ import { expandedGitWorkOf } from "./e2e/legacy-git.js";
  * the real runtime (ticket 17) consumes exactly this.
  */
 
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
   readonly cleaned: IssueRef[] = [];
   readonly diffs = new Map<number, string>();
@@ -108,10 +109,10 @@ describe("loop wiring — the git host feeds every launch", () => {
     assert.equal(launched.length, 2);
     for (const result of launched) {
       const request = result.request;
-      assert.equal(request.branch, workBranchName(request.ref.number));
+      assert.equal(request.branch, workBranchName(launchedNumber(request)));
       assert.equal(request.baseBranch, "main", "base revealed by the clone");
-      assert.equal(request.repoDir, `/clones/${request.ref.repo.replaceAll("/", "#")}`);
-      assert.equal(request.workDir, workDir(deps.workspace, request.ref.repo, request.ref.number));
+      assert.equal(request.repoDir, `/clones/${request.work.destination.repo.replaceAll("/", "#")}`);
+      assert.equal(request.workDir, workDir(deps.workspace, request.work.destination.repo, launchedNumber(request)));
     }
   });
 
@@ -122,10 +123,10 @@ describe("loop wiring — the git host feeds every launch", () => {
 
     // Two launches run concurrently: the ORDER they reach the runtime is not
     // part of the contract, only which work each request carries.
-    const request = launchOf(launched, 7)?.request;
+    const request = launchOf(launched, githubWork("Sanmoo/a", 7))?.request;
     assert.ok(request, "the launch of issue #7 is among the launched");
-    assert.equal(request.material.issue.title, "issue #7");
-    assert.equal(request.material.issue.body, "");
+    assert.equal(request.material.ticket.title, "issue #7");
+    assert.equal(request.material.ticket.body, "");
     assert.equal(request.material.diff, "diff --git a/x b/x\n+work");
     assert.equal(request.material.pr, undefined, "no PR exists at the first launch");
   });

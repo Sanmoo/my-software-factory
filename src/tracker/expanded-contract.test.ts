@@ -17,7 +17,6 @@ import {
   type WorkIdentity,
 } from "./identity.js";
 import { SimulatedRepoHarness } from "./github-sim-harness.js";
-import { legacyTrackerPort } from "./legacy-bridge.js";
 import { PartialWriteError } from "./port.js";
 
 const REPO = "Sanmoo/sim-repo";
@@ -244,15 +243,6 @@ describe("expanded contracts — the real GitHub adapter over simulated REST", (
     assert.ok(after.value.labels.includes("agent-claimed"), "the padlock landed before the interrupted step");
     assert.ok(after.value.labels.includes(READY), "the pool label remained — the work is never orphaned");
     assert.deepEqual(after.value.assignees, [WORKER]);
-  });
-
-  test("the legacy bridge serves the old TrackerPort shape over the same expanded adapter", async () => {
-    const issue = await harness.createIssue({ title: "bridge read" });
-    const legacy = legacyTrackerPort(port(), port());
-    const snapshot = await legacy.readIssue({ repo: REPO, number: issue.ref.number });
-    assert.ok(snapshot.known);
-    assert.equal(snapshot.value.ref.number, issue.ref.number);
-    assert.equal(snapshot.value.title, "bridge read");
   });
 });
 

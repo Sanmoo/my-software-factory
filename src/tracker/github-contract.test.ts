@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test, beforeEach } from "node:test";
 
-import { runTrackerContractSuite } from "./contract.js";
+import { runGithubOnlySuite, runTrackerContractSuite } from "./contract.js";
 import { SimulatedRepoHarness } from "./github-sim-harness.js";
 import {
   CYCLE_ADAPTER_REST_CALLS,
@@ -20,6 +20,7 @@ import type { IssueRef, OpenIssue, TrackerPort } from "./port.js";
  */
 
 runTrackerContractSuite(new SimulatedRepoHarness());
+runGithubOnlySuite(new SimulatedRepoHarness());
 
 // ---- the smoke's restructured full cycle, offline over the sim ----
 //

@@ -1,4 +1,4 @@
-import { issueRefOf } from "../tracker/identity.js";
+
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
-import { type GitWork, type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
+import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import type { IssueRef } from "../tracker/port.js";
 import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import {
@@ -17,7 +17,8 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { launchedNumber } from "./work-fixtures.js";
 
 /**
  * End-to-end of ticket 12: pool, claim and launch up to the outcome with PR.
@@ -55,7 +56,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 /** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
-class FakeGitWork implements GitWork {
+class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
@@ -165,13 +166,13 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     const launched3 = deferred();
 
     runtime.hold = async (request) => {
-      if (request.ref.number === 1) {
+      if (launchedNumber(request) === 1) {
         launchedSlow.resolve();
         await releaseSlow.promise;
-      } else if (request.ref.number === 2) {
+      } else if (launchedNumber(request) === 2) {
         launched2.resolve();
         await openGate2.promise;
-      } else if (request.ref.number === 3) {
+      } else if (launchedNumber(request) === 3) {
         launched3.resolve();
       }
     };
@@ -197,7 +198,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       // order is the contract; the order the concurrent workers reach the
       // runtime is not.
       assert.deepEqual(
-        runtime.launched.map((r) => r.ref.number).sort((a, b) => a - b),
+        runtime.launched.map((r) => launchedNumber(r)).sort((a, b) => a - b),
         [1, 2, 3],
         "#3 is launched without waiting for the slowest",
       );
@@ -238,10 +239,10 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     const launched3 = deferred();
 
     runtime.hold = async (request) => {
-      if (request.ref.number === 1) {
+      if (launchedNumber(request) === 1) {
         launchedLong.resolve();
         await releaseLong.promise;
-      } else if (request.ref.number === 3) {
+      } else if (launchedNumber(request) === 3) {
         launched3.resolve();
       }
     };
@@ -250,7 +251,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     const originalLaunch = runtime.launch.bind(runtime);
     runtime.launch = async (request) => {
       const result = await originalLaunch(request);
-      if (request.ref.number === 1) longCollected = true;
+      if (launchedNumber(request) === 1) longCollected = true;
       return result;
     };
 
@@ -297,7 +298,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     const free = await runOnce(deps);
     assert.equal(free.pool.length, 1);
     assert.deepEqual(
-      free.launched.map((r) => r.request.ref.number),
+      free.launched.map((r) => launchedNumber(r.request)),
       [5],
     );
     assert.ok(free.collected[0]?.prConfirmed);
@@ -348,7 +349,9 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
         log: () => {},
         wait: async () => {},
       });
-      const interrupted = secondSweep.reserved.find((decision) => issueRefOf(decision.work.ticket).number === 1);
+      const interrupted = secondSweep.reserved.find(
+        (decision) => decision.work.ticket.provider === "github" && decision.work.ticket.number === 1,
+      );
       assert.ok(
         interrupted && interrupted.state === "interrupted",
         "the stateless second sweep reads the claim with no attempt evidence as an interruption",

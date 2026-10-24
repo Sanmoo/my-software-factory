@@ -1,4 +1,4 @@
-import { issueRefOf } from "../tracker/identity.js";
+
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { execFile as execFileCallback } from "node:child_process";
@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
+import { workBranchName, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
 import type { IssueRef, RequiredCheckResult } from "../tracker/port.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
@@ -25,7 +25,8 @@ import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { localGitWork } from "../git/local.js";
 import { repoCloneDir } from "../git/port.js";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
-import { expandedGitWorkOf } from "./legacy-git.js";
+import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
+import { githubTicketNumber } from "./work-fixtures.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -45,7 +46,7 @@ const NOW = "2026-01-01T00:00:00Z";
 /** The head the #100 incident observed: the PR's head and the remote's. */
 const OBSERVED = "2b45c0421fd9528df1d12032a942b60e1fff6518";
 
-class ScenarioGitWork implements GitWork {
+class ScenarioGitWork implements LegacyGitWork {
   /** The remote head the host observes; null = the branch is not there. */
   remoteHead: string | null = OBSERVED;
   /** The work branch on disk; null = git cannot answer. */
@@ -224,7 +225,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal(resumed.launched.length, 1, "the fallen attempt is resumed without human intervention");
     const request = resumed.launched[0]!.request;
     assert.equal(request.branch, workBranchName(100), "the SAME branch");
-    assert.equal(request.ref.number, 100, "the SAME work, therefore the same PR");
+    assert.equal(request.work.ticket.provider === "github" ? request.work.ticket.number : null, 100, "the SAME work, therefore the same PR");
     assert.equal(request.material.repair?.resuming, 2, "the round takes over the attempt that fell");
     assert.deepEqual(request.material.repair?.localWork, git.localWork, "the local work travels to the session");
     assert.equal(request.material.pr?.number, pr, "the SAME PR, never a new one");
@@ -419,7 +420,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const recovered = await runOnce(deps);
     assert.equal(recovered.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      recovered.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 105 && decision.state === "repair-recovered"),
+      recovered.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 105 && decision.state === "repair-recovered"),
     );
     const cycle = await readRepairCycle(workDir(layout, REPO, 105));
     assert.equal(cycle.usedRounds, 0, "the budget resets");
@@ -500,7 +501,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      sweep.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 118 && decision.state === "repair-recovered"),
+      sweep.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 118 && decision.state === "repair-recovered"),
       "a refunded cycle still resets on confirmed recovery",
     );
     const after = await readRepairCycle(workDir(layout, REPO, 118));
@@ -904,7 +905,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 0, "the obsolete premise opens no worker");
     assert.ok(
-      sweep.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 120 && decision.state === "repair-recovered"),
+      sweep.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 120 && decision.state === "repair-recovered"),
       "the mergeable PR is a confirmed recovery",
     );
     assert.ok(
@@ -984,7 +985,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const next = await runOnce(deps);
     assert.equal(next.launched.length, 0);
     assert.ok(
-      next.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 121 && decision.state === "repair-recovered"),
+      next.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 121 && decision.state === "repair-recovered"),
       "the mergeable PR is a confirmed recovery",
     );
     const after = await readRepairCycle(workDir(layout, REPO, 121));
@@ -1006,7 +1007,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 0, "a merged PR opens no worker");
     assert.ok(
-      sweep.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 122 && decision.state === "done-fallback"),
+      sweep.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 122 && decision.state === "done-fallback"),
       "the merged PR is delivery: done, not a repair state",
     );
     const issue = await tracker.readIssue({ repo: REPO, number: 122 });
@@ -1071,7 +1072,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const resolvedSweep = await runOnce(deps);
     assert.equal(resolvedSweep.launched.length, 0, "recovery launches nothing");
     assert.ok(
-      resolvedSweep.reserved.some((decision) => issueRefOf(decision.work.ticket).number === 123 && decision.state === "repair-recovered"),
+      resolvedSweep.reserved.some((decision) => githubTicketNumber(decision.work.ticket) === 123 && decision.state === "repair-recovered"),
       "the mergeable PR is a confirmed recovery",
     );
     assert.ok(
@@ -1258,7 +1259,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open", "pr-open"] });
     const git = localGitWork({ reposDir, remoteUrl: () => remote.barePath(REPO) });
-    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(git), workspace: layout, log: () => {} };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git, workspace: layout, log: () => {} };
 
     // Attempt 1: the claim, the branch born from main, the PR — and the push
     // that puts the branch on the remote (publication of attempt 1).

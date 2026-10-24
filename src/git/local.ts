@@ -3,8 +3,7 @@ import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import type { IssueRef } from "../tracker/port.js";
-import { workOfIssueRef, type WorkIdentity } from "../tracker/identity.js";
+import { type WorkIdentity } from "../tracker/identity.js";
 import {
   branchOfWork,
   repoCloneDirFor,
@@ -228,18 +227,11 @@ export function localGitWork(options: LocalGitWorkOptions): ExpandedGitWork {
     };
   }
 
-  // The legacy IssueRef methods are the transitional bridge over the same
-  // functions: one implementation, never a second git path.
   return {
-    prepareWork: (ref) => prepareWorkFor(workOfIssueRef(ref)),
     prepareWorkFor,
-    cleanupDoneWork: (ref) => cleanupDoneWorkFor(workOfIssueRef(ref)),
     cleanupDoneWorkFor,
-    diffWork: (ref) => diffWorkFor(workOfIssueRef(ref)),
     diffWorkFor,
-    observeRemoteHead: (ref) => observeRemoteHeadFor(workOfIssueRef(ref)),
     observeRemoteHeadFor,
-    inspectLocalWork: (ref) => inspectLocalWorkFor(workOfIssueRef(ref)),
     inspectLocalWorkFor,
   };
 }

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { formatDuration } from "../format.js";
+import { renderTicketIdentity } from "../tracker/identity.js";
 import type { Notification, Notifier } from "./port.js";
 
 /** Runs the desktop command; injectable so tests need no desktop. */
@@ -35,11 +36,12 @@ export function renderNotification(notification: Notification): { title: string;
         "Live workers and reservations are preserved, and the factory resumes on its own when Docker answers again.",
     };
   }
-  const work = `${notification.ref.repo}#${notification.ref.number}`;
+  const work = renderTicketIdentity(notification.work.ticket);
+  const link = notification.url === null ? "" : `\n${notification.url}`;
   if (notification.kind === "review") {
     return {
       title: `msf: ${work} — review requested`,
-      body: `A PR is open and waiting for your review.\n${notification.url}`,
+      body: `A PR is open and waiting for your review.${link}`,
     };
   }
   if (notification.kind === "intervention") {
@@ -47,12 +49,12 @@ export function renderNotification(notification: Notification): { title: string;
       title: `msf: ${work} — intervention needed`,
       body:
         "A worker of this work needs your decision: nothing was ended, replaced or chosen " +
-        `automatically.\n${notification.url}`,
+        `automatically.${link}`,
     };
   }
   return {
     title: `msf: ${work} — help requested`,
-    body: `This work is blocked and needs your attention on the issue.\n${notification.url}`,
+    body: `This work is blocked and needs your attention on its ticket.${link}`,
   };
 }
 

@@ -28,6 +28,7 @@ import {
 } from "./sandcastle.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 import type { WorkRequest } from "./port.js";
+import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
  * The Sandcastle runtime (ticket 17): the real launch behind the WorkerRuntime
@@ -67,14 +68,14 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     writeFileSync(join(profileDir, "settings.json"), "{}", "utf8");
 
     request = {
-      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      work: githubWork("Sanmoo/my-tasks", 42),
       workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
       branch: "agent-issue-42",
       repoDir: join(root, "repos", "Sanmoo#my-tasks"),
       baseBranch: "main",
       attempt: 1,
       material: {
-        issue: { title: "The issue", body: "The body" },
+        ticket: { title: "The issue", body: "The body" },
         diff: "diff --git a/f b/f",
       },
     };
@@ -317,13 +318,13 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     profileDir = join(root, "perfil");
     mkdirSync(profileDir, { recursive: true });
     request = {
-      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      work: githubWork("Sanmoo/my-tasks", 42),
       workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
       branch: "agent-issue-42",
       repoDir: join(root, "repos", "Sanmoo#my-tasks"),
       baseBranch: "main",
       attempt: 1,
-      material: { issue: { title: "t", body: "b" }, diff: "" },
+      material: { ticket: { title: "t", body: "b" }, diff: "" },
     };
   });
 
@@ -355,7 +356,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
             class: fakes.outcome,
             attempt: fakes.recordAttempt ?? request.attempt,
             ...(fakes.outcome === "pr-open"
-              ? { pr: { repo: request.ref.repo, number: 9, branch: request.branch } }
+              ? { pr: { repo: request.work.destination.repo, number: 9, branch: request.branch } }
               : {}),
           };
           writeFileSync(join(request.workDir, DESFECHO_FILENAME), JSON.stringify(record, null, 2), "utf8");
@@ -872,13 +873,13 @@ describe("sandcastle runtime — the idle limit measured on verifiable activity 
     profileDir = join(root, "perfil");
     mkdirSync(profileDir, { recursive: true });
     request = {
-      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      work: githubWork("Sanmoo/my-tasks", 42),
       workDir: join(root, "trabalhos", "Sanmoo#my-tasks#42"),
       branch: "agent-issue-42",
       repoDir: join(root, "repos", "Sanmoo#my-tasks"),
       baseBranch: "main",
       attempt: 1,
-      material: { issue: { title: "t", body: "b" }, diff: "" },
+      material: { ticket: { title: "t", body: "b" }, diff: "" },
     };
   });
 
@@ -1019,13 +1020,13 @@ describe("sandcastle runtime — the requested stop and the native session resum
     workDir = join(root, "trabalhos", "Sanmoo#my-tasks#42");
     mkdirSync(workDir, { recursive: true });
     request = {
-      ref: { repo: "Sanmoo/my-tasks", number: 42 },
+      work: githubWork("Sanmoo/my-tasks", 42),
       workDir,
       branch: "agent-issue-42",
       repoDir: join(root, "repos", "Sanmoo#my-tasks"),
       baseBranch: "main",
       attempt: 1,
-      material: { issue: { title: "The issue", body: "The body" }, diff: "" },
+      material: { ticket: { title: "The issue", body: "The body" }, diff: "" },
     };
     started = new Promise<void>((resolve) => (runStarted = resolve));
     runOptions = undefined;
@@ -1148,7 +1149,7 @@ describe("sandcastle runtime — the requested stop and the native session resum
 
     const launched = runtime.launch(request);
     await started;
-    runtime.requestStop(request.ref);
+    runtime.requestStop(request.work);
     const result = await launched;
 
     assert.equal(aborted, "the run was aborted", "the stop reaches the run's own signal");
@@ -1179,7 +1180,7 @@ describe("sandcastle runtime — the requested stop and the native session resum
       dockerProvider: () => dummySandbox(),
     });
 
-    runtime.requestStop(request.ref);
+    runtime.requestStop(request.work);
     const result = await runtime.launch(request);
     assert.equal(result.outcome, "abrupt-death");
     assert.equal(called, false, "the container was never started");

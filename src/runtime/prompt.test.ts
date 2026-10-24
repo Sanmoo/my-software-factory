@@ -6,6 +6,7 @@ import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
 import type { WorkRequest } from "./port.js";
+import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
  * The worker prompt (ticket 17): the issue, the PR and its comments when a
@@ -15,14 +16,14 @@ import type { WorkRequest } from "./port.js";
  */
 
 const baseRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest => ({
-  ref: { repo: "Sanmoo/my-tasks", number: 42 },
+  work: githubWork("Sanmoo/my-tasks", 42),
   workDir: "/ws/trabalhos/Sanmoo/my-tasks#42",
   branch: "agent-issue-42",
   repoDir: "/ws/repos/Sanmoo#my-tasks",
   baseBranch: "main",
   attempt: 1,
   material: {
-    issue: { title: "Add the greeting endpoint", body: "Add a `greet` endpoint to the API." },
+    ticket: { title: "Add the greeting endpoint", body: "Add a `greet` endpoint to the API." },
     diff: "diff --git a/x b/x\n+hello",
   },
   ...overrides,
@@ -86,15 +87,15 @@ describe("worker prompt — the material the session starts from", () => {
     assert.match(prompt, /host's siblings/);
   });
 
-  test("a blocked-resume prompt includes human issue replies and reconciles them with the issue body", () => {
+  test("a blocked-resume prompt includes human ticket replies and reconciles them with the ticket body", () => {
     const request = baseRequest({
       material: {
         ...baseRequest().material,
-        issue: {
+        ticket: {
           title: "Configure worker model",
           body: "Blocked by #86: do not proceed until it is closed.",
         },
-        issueReplies: [
+        ticketReplies: [
           {
             id: "reply-1",
             author: "Sanmoo",
@@ -107,9 +108,9 @@ describe("worker prompt — the material the session starts from", () => {
     const prompt = buildWorkerPrompt(request, { blockedLabel: DEFAULT_LABELS.blocked });
 
     assert.match(prompt, /Blocked by #86: do not proceed until it is closed\./);
-    assert.match(prompt, /human replies on the issue since your last blocked report/i);
+    assert.match(prompt, /human replies on the ticket since your last blocked report/i);
     assert.match(prompt, /The #86 dependency was removed on GitHub; the issue text is stale\. Please proceed\./);
-    assert.match(prompt, /reconcile.*issue body|issue body.*reconcile/i);
+    assert.match(prompt, /reconcile.*ticket body|ticket body.*reconcile/i);
   });
 
   test("carries the branch facts: branch, base, attempt", () => {
@@ -137,7 +138,7 @@ describe("worker prompt — the material the session starts from", () => {
   test("with an open PR: the round's conversation is in the prompt, opening a new PR is forbidden", () => {
     const request = baseRequest({
       material: {
-        issue: { title: "t", body: "b" },
+        ticket: { title: "t", body: "b" },
         pr: {
           number: 7,
           comments: [
@@ -338,7 +339,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
 
   const feedbackRequest = baseRequest({
     material: {
-      issue: { title: "t", body: "b" },
+      ticket: { title: "t", body: "b" },
       pr: {
         number: 7,
         comments: [
@@ -451,7 +452,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
       baseBranch: "release/next",
       attempt: 2,
       material: {
-        issue: { title: "t", body: "b" },
+        ticket: { title: "t", body: "b" },
         diff: "",
         pr: { number: 7, comments: [] },
         repair: {
@@ -519,7 +520,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
     const prompt = buildWorkerPrompt(
       repairRequest({
         material: {
-          issue: { title: "t", body: "b" },
+          ticket: { title: "t", body: "b" },
           diff: "",
           pr: { number: 7, comments: [] },
           repair: {
@@ -559,5 +560,61 @@ describe("worker prompt — the repair round (issue 107)", () => {
     const prompt = buildWorkerPrompt(repairRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
     assert.doesNotMatch(prompt, /RESUMING/);
     assert.doesNotMatch(prompt, /reuse evidence from attempt/);
+  });
+});
+
+describe("worker prompt — the ticket origin and the code destination are separate facts", () => {
+  const jiraRequest = (url?: string): WorkRequest =>
+    baseRequest({
+      work: {
+        ticket: {
+          provider: "jira",
+          site: "acme.atlassian.net",
+          stableId: "10042",
+          key: "ABC-42",
+          ...(url === undefined ? {} : { url }),
+        },
+        destination: { provider: "github", site: "github.com", repo: "Sanmoo/my-tasks" },
+      },
+      workDir: "/ws/trabalhos/jira@acme.atlassian.net@10042@Sanmoo%2Fmy-tasks",
+    });
+
+  test("a Jira ticket reaches the worker without a GitHub issue number or issue-editing commands", () => {
+    const prompt = buildWorkerPrompt(jiraRequest("https://acme.atlassian.net/browse/ABC-42"), {
+      blockedLabel: DEFAULT_LABELS.blocked,
+    });
+
+    assert.match(prompt, /ABC-42/);
+    assert.match(prompt, /jira:acme\.atlassian\.net/, "the origin and its site are named");
+    assert.match(prompt, /Repository: Sanmoo\/my-tasks/, "the destination is presented separately");
+    assert.match(prompt, /https:\/\/acme\.atlassian\.net\/browse\/ABC-42/);
+    assert.doesNotMatch(prompt, /Closes #/, "a Jira key never becomes a GitHub closing number");
+    assert.doesNotMatch(prompt, /gh issue edit/, "the worker is not told to edit a fictional GitHub issue");
+    assert.doesNotMatch(prompt, /sanmoo\/my-tasks\/issues\/10042/i, "no GitHub issue URL is synthesized");
+  });
+
+  test("a resumed Jira session is not told to read a fictional GitHub issue", () => {
+    const prompt = buildWorkerPrompt(jiraRequest(), {
+      blockedLabel: DEFAULT_LABELS.blocked,
+      continuesSession: true,
+    });
+
+    assert.match(prompt, /CONTINUES attempt/);
+    assert.match(prompt, /`gh pr view`/);
+    assert.doesNotMatch(prompt, /`gh issue view`/, "the GitHub issue command belongs to a GitHub ticket only");
+  });
+
+  test("a Jira ticket without a presentation URL is still named, and no address is invented", () => {
+    const prompt = buildWorkerPrompt(jiraRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+
+    assert.match(prompt, /ABC-42/);
+    assert.doesNotMatch(prompt, /https?:\/\/[^\s]*ABC-42/);
+  });
+
+  test("the GitHub prompt keeps its closing syntax and issue-editing self-report", () => {
+    const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+
+    assert.match(prompt, /`Closes #42`/);
+    assert.match(prompt, /gh issue edit 42 --repo Sanmoo\/my-tasks --add-label agent-blocked/);
   });
 });

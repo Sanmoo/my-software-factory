@@ -9,6 +9,7 @@ import { ensureWorkspace, workDir } from "../layout.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "./fake-runtime.js";
 import { DESFECHO_FILENAME } from "../state/outcome.js";
 import type { WorkRequest } from "./port.js";
+import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 describe("fake runtime — worker launches with scripted outcomes", () => {
   let workspaceRoot: string;
@@ -31,14 +32,14 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
   }
 
   const request = (dir: string): WorkRequest => ({
-    ref: { repo: "Sanmoo/a", number: 3 },
+    work: githubWork("Sanmoo/a", 3),
     workDir: dir,
     branch: "agent-issue-3",
     repoDir: "/clones/Sanmoo#a",
     baseBranch: "main",
     attempt: 1,
     material: {
-      issue: { title: "issue #3", body: "" },
+      ticket: { title: "issue #3", body: "" },
       diff: "",
     },
   });
@@ -47,7 +48,7 @@ describe("fake runtime — worker launches with scripted outcomes", () => {
     const runtime = makeRuntime([]);
     await runtime.launch(request(join(layout.works, "x-1")));
     assert.equal(runtime.launched.length, 1);
-    assert.equal(runtime.launched[0]?.ref.number, 3);
+    assert.equal(launchedNumber(runtime.launched[0]!), 3);
   });
 
   test("scripted pr-open: writes the outcome record and opens the PR via the tracker", async () => {
