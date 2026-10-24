@@ -108,8 +108,8 @@ export interface JiraAmbiguousTicket extends JiraTicketFacts {
   unverified: boolean;
 }
 
-/** One configured Jira selection and the read-only adapter that answers it. */
-export interface JiraCandidateSource {
+/** One configured Jira selection and the read-only adapter that reads it. */
+export interface JiraSelectionReader {
   selection: TicketSelection;
   tickets: TicketTracker;
 }
@@ -118,14 +118,14 @@ export interface JiraCandidateSource {
  *  when no repo is configured — a Jira-only factory) and the Jira selections. */
 export interface StatusSources {
   github: TicketTracker | null;
-  jira?: readonly JiraCandidateSource[];
+  jira?: readonly JiraSelectionReader[];
 }
 
 /**
- * A Jira source's candidates, or that the source could not be read (unknown —
- * never an empty selection). The candidates keep Jira's native Rank order.
+ * One selection's candidates, or that the selection could not be read (unknown
+ * — never an empty selection). The candidates keep Jira's native Rank order.
  */
-export type JiraSourceView =
+export type JiraSelectionView =
   | {
       selection: TicketSelection;
       state: "known";
@@ -141,13 +141,13 @@ export type JiraSourceView =
   | { selection: TicketSelection; state: "unknown"; reason: string };
 
 /** The readable variant, for the presentation and the hold. */
-export type KnownJiraSourceView = Extract<JiraSourceView, { state: "known" }>;
+export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known" }>;
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
   pool: PoolEntry[];
   /** Jira selections, read-only: candidates in native Rank order, nothing claimed. */
-  jira: JiraSourceView[];
+  jira: JiraSelectionView[];
   /** Tickets more than one selection claims for a different destination: held. */
   jiraAmbiguous: JiraAmbiguousTicket[];
   /** A tracker mark with no reservation in this workspace. */
@@ -190,7 +190,7 @@ export async function deriveStatus(
   const jira = holdAmbiguousTickets(await readJiraCandidates(sources.jira ?? []));
   return {
     pool: state.pool,
-    jira: jira.sources,
+    jira: jira.selections,
     jiraAmbiguous: jira.ambiguous,
     unbackedClaims: state.unbackedClaims,
     unmarkedReservations: state.unmarkedReservations,
@@ -213,20 +213,20 @@ function githubTracker(sources: StatusSources): TicketTracker {
 }
 
 /**
- * Every Jira selection read independently (issue 128): one unavailable source is
+ * Every Jira selection read independently (issue 128): one unavailable read is
  * UNKNOWN, never an empty list and never a conclusion about the healthy ones.
  * The listing is just that — candidates, not reservations and not a launch.
  */
-async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Promise<JiraSourceView[]> {
+async function readJiraCandidates(readers: readonly JiraSelectionReader[]): Promise<JiraSelectionView[]> {
   return Promise.all(
-    sources.map(async (source): Promise<JiraSourceView> => {
+    readers.map(async (reader): Promise<JiraSelectionView> => {
       try {
-        const listed = await source.tickets.listOpenTickets(source.selection);
+        const listed = await reader.tickets.listOpenTickets(reader.selection);
         return {
-          selection: source.selection,
+          selection: reader.selection,
           state: "known",
           candidates: listed.map((entry) => ({
-            work: workIdentity(entry.ticket, source.selection.destination),
+            work: workIdentity(entry.ticket, reader.selection.destination),
             title: entry.title,
             assignees: entry.assignees,
           })),
@@ -235,7 +235,7 @@ async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Prom
           unverified: false,
         };
       } catch (error) {
-        return { selection: source.selection, state: "unknown", reason: describeError(error) };
+        return { selection: reader.selection, state: "unknown", reason: describeError(error) };
       }
     }),
   );
@@ -243,7 +243,7 @@ async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Prom
 
 /** The read selections plus the tickets they agree cannot be given a destination. */
 interface JiraHold {
-  sources: JiraSourceView[];
+  selections: JiraSelectionView[];
   ambiguous: JiraAmbiguousTicket[];
 }
 
@@ -255,7 +255,7 @@ interface JiraHold {
  * UNKNOWN sibling naming a different destination may hide a conflict; the
  * readable source still lists, and says the overlap is unverified.
  */
-function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
+function holdAmbiguousTickets(views: JiraSelectionView[]): JiraHold {
   interface SelectedTicket extends JiraTicketFacts {
     destinations: Map<string, RepositoryIdentity>;
   }
@@ -293,7 +293,7 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
   // The same Work (ticket + destination) selected by several rules is one
   // candidate, so it is listed once.
   const listed = new Set<string>();
-  const sources = views.map((view): JiraSourceView => {
+  const selections = views.map((view): JiraSelectionView => {
     if (view.state !== "known") return view;
     const candidates: JiraCandidate[] = [];
     let held = 0;
@@ -316,13 +316,13 @@ function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
       unverified: unknownSelectionConflicts(views, view.selection.source.site, [view.selection.destination]),
     };
   });
-  return { sources, ambiguous };
+  return { selections, ambiguous };
 }
 
 /** Does an unreadable selection on `site` name a destination outside `known`?
  *  If so, a conflict with it may exist and cannot be verified. */
 function unknownSelectionConflicts(
-  views: readonly JiraSourceView[],
+  views: readonly JiraSelectionView[],
   site: string,
   known: readonly RepositoryIdentity[],
 ): boolean {

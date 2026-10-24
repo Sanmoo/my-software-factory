@@ -1062,6 +1062,7 @@ describe("status: Jira candidates are read-only and each source stands alone", (
   test("the report presents the candidates apart from the executable pool and says they are read-only", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: { accountId: "h", emailAddress: "ana@acme.example", displayName: "Ana Silva" } });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout" });
 
     const view = await deriveStatus(
       {
@@ -1074,12 +1075,14 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
     const text = renderStatus(view);
 
+    // One selection holding two tickets: the header counts the selection, so a
+    // regression to summing the candidates would change this line.
     assert.match(
       text,
       /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1 selection$/m,
       "one configured selection: the header never counts the candidates below it",
     );
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 2 candidates/);
     assert.match(
       text,
       /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix login \[assignee: Ana Silva\]/,

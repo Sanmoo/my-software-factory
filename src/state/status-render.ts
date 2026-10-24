@@ -14,8 +14,8 @@ import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
 import type {
   JiraAmbiguousTicket,
-  JiraSourceView,
-  KnownJiraSourceView,
+  JiraSelectionView,
+  KnownJiraSelectionView,
   OrphanedAttempt,
   RunningWorker,
   StatusView,
@@ -185,29 +185,29 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 }
 
 /** One block per configured selection, in native Rank order, nothing claimed;
- *  an unreadable source says unknown, and a held ticket gets its own section.
- *  The header counts the configured selections, never their candidates: a
- *  candidate count would make an unreadable selection read as zero. */
+ *  an unreadable selection says unknown, and a held ticket gets its own
+ *  section. The header counts the selections: a candidate count would make an
+ *  unreadable selection read as zero. */
 function renderJiraSources(
-  sources: readonly JiraSourceView[],
+  selections: readonly JiraSelectionView[],
   ambiguous: readonly JiraAmbiguousTicket[],
   cap: number,
 ): string[] {
-  if (sources.length === 0) return [];
+  if (selections.length === 0) return [];
   const lines = [
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ` +
-      plural(sources.length, "selection"),
+      plural(selections.length, "selection"),
   ];
-  for (const source of sources) {
-    const site = source.selection.source.site;
-    const destination = renderRepositoryIdentity(source.selection.destination);
-    if (source.state === "unknown") {
-      lines.push(`  ${site} → ${destination}: unknown (${source.reason})`);
+  for (const selection of selections) {
+    const site = selection.selection.source.site;
+    const destination = renderRepositoryIdentity(selection.selection.destination);
+    if (selection.state === "unknown") {
+      lines.push(`  ${site} → ${destination}: unknown (${selection.reason})`);
       continue;
     }
-    const unverified = unverifiedNote(source.unverified);
-    lines.push(`  ${site} → ${destination}: ${describeCandidates(source)}${unverified}`);
-    renderCapped(lines, source.candidates, cap, (candidate, index) => {
+    const unverified = unverifiedNote(selection.unverified);
+    lines.push(`  ${site} → ${destination}: ${describeCandidates(selection)}${unverified}`);
+    renderCapped(lines, selection.candidates, cap, (candidate, index) => {
       const assignee =
         candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
       return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`;
@@ -231,12 +231,12 @@ function unverifiedNote(unverified: boolean): string {
 
 /** The per-selection counts: candidates kept, and the tickets it lost because
  *  more than one destination promises them. */
-function describeCandidates(source: KnownJiraSourceView): string {
+function describeCandidates(selection: KnownJiraSelectionView): string {
   const notes: string[] = [];
-  if (source.held > 0) notes.push(`${source.held} held as ambiguous`);
-  if (source.repeated > 0) notes.push(`${source.repeated} already listed by another rule`);
-  if (source.candidates.length === 0 && notes.length === 0) return "none";
-  const candidates = plural(source.candidates.length, "candidate");
+  if (selection.held > 0) notes.push(`${selection.held} held as ambiguous`);
+  if (selection.repeated > 0) notes.push(`${selection.repeated} already listed by another rule`);
+  if (selection.candidates.length === 0 && notes.length === 0) return "none";
+  const candidates = plural(selection.candidates.length, "candidate");
   return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;
 }
 
