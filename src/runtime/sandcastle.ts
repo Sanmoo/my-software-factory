@@ -13,12 +13,8 @@ import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
 import { clearWorkerStop, requestWorkerStop } from "../work-record/stop-request.js";
-import {
-  describeForeignRecord,
-  ownOutcomeRecord,
-  readOutcomeRecord,
-  type OutcomeRecord,
-} from "../work-record/outcome.js";
+import { describeForeignRecord, type OutcomeRecord } from "../work-record/outcome.js";
+import { openWorkRecord } from "../work-record/record.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
@@ -722,8 +718,9 @@ export class SandcastleRuntime implements WorkerRuntime {
    * log names the mismatch so the diagnosis needs no guessing.
    */
   private async observedOutcome(request: WorkRequest): Promise<SessionResult["outcome"]> {
-    const record: OutcomeRecord | null = await readOutcomeRecord(request.workDir);
-    const own = ownOutcomeRecord(record, request.attempt);
+    const work = openWorkRecord(request.workDir);
+    const record: OutcomeRecord | null = await work.outcome();
+    const own = await work.ownOutcome(request.attempt);
     if (own !== null) return own.class;
     if (record !== null) {
       this.event(request, "outcome-record-rejected", {

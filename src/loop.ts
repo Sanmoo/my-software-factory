@@ -1759,7 +1759,7 @@ export class SweepEngine {
         const recheck = await recheckPausedEffects(
           {
             ...continuityDeps,
-            attempt: knownAttempt(pause.attempt) ?? facts.attempt,
+            attempt: openWorkRecord(dir).pausedAttempt() ?? facts.attempt,
           },
           pause,
         );
