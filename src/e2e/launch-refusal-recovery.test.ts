@@ -112,7 +112,7 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     const target = workDir(layout, REPO, 1);
     mkdirSync(target, { recursive: true });
-    writeFileSync(join(target, "log-1.jsonl"), '{"event":"session-start","attempt":1}\n', "utf8");
+    writeFileSync(join(target, "log-1.jsonl"), "{}\n", "utf8");
     seedSession(target, { repo: REPO, number: 1 }, 1);
     return target;
   }
@@ -120,9 +120,8 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
   function refusesBeforeWorker(
     message: string,
     launches = 1,
-  ): (request: WorkRequest, index: number) => { error: Error; footprint: "none" } | null {
-    return (_request, index) =>
-      index < launches ? { error: new LaunchPreconditionError(message), footprint: "none" } : null;
+  ): (request: WorkRequest, index: number) => Error | null {
+    return (_request, index) => (index < launches ? new LaunchPreconditionError(message) : null);
   }
 
   test("the refusal refunds the grant: the budget stays intact, the work reserved, and the next tick retries the same attempt", async () => {
@@ -164,7 +163,7 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     assert.match(
       renderStatus(view),
       /#1 \(attempt 1: last stop was an interruption — no attempt consumed; 0\/3 recoveries/,
-      "the operator sees the return in the budget the ledger really holds",
+      "the operator sees the refund in the budget the ledger really holds",
     );
 
     // The next tick re-derives the work from disk and retries the SAME attempt.
@@ -182,10 +181,8 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     const runtime = new FakeWorkerRuntime({
       tracker,
       outcomes: ["pr-open"],
-      rejectLaunch: () => ({
-        error: new Error("docker run failed after the container was created (daemon did not answer)"),
-        footprint: "started",
-      }),
+      rejectLaunch: () =>
+        new Error("docker run failed after the container was created (daemon did not answer)"),
     });
 
     await assert.rejects(runOnce(deps(runtime)), /docker run failed after the container was created/);
@@ -197,12 +194,12 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     assert.match(
       readFileSync(join(target, "log-1.jsonl"), "utf8"),
       /session-start/,
-      "the launch left the footprint of a worker that may exist",
+      "the launch wrote the footprint of a worker that may exist",
     );
     assert.equal(existsSync(join(target, "desfecho.json")), false, "and no outcome claims the attempt ended");
   });
 
-  test("a grant persisted by a factory that died before its relaunch is never returned by the next process", async () => {
+  test("a grant persisted by a factory that died before its relaunch is never refunded by the next process", async () => {
     const target = interruptedAttempt1();
     // What a process killed between the grant and the relaunch leaves on disk.
     await consumeRecovery(target, config().recovery, 1);
@@ -225,7 +222,7 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     assert.equal((await readRecoveryLedger(target)).consumed, 2, "the next grant continues the schedule instead of renewing it");
   });
 
-  test("returning the same refusal on repeated ticks never inflates the budget", async () => {
+  test("refunding the same refusal on repeated ticks never inflates the budget", async () => {
     const target = interruptedAttempt1();
     const cfg = config();
     // The work already spent two legitimate recoveries: the refund must return

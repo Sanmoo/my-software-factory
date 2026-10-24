@@ -456,7 +456,9 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
 
     const result = await dying.launch(request);
 
-    assert.equal(result.outcome, "abrupt-death");
+    // A failure after the footprint is NOT a pre-worker refusal: it resolves
+    // as the session's own abrupt death, so the factory never refunds it.
+    assert.equal(result.outcome, "abrupt-death", "a post-footprint failure is the session's end, not a refusal");
     assert.equal(seen.sessao, true, "the session dir exists at launch time");
     assert.ok(seen.startLine?.includes("session-start"), "the log started before the outcome");
     assert.ok(!existsSync(join(request.workDir, DESFECHO_FILENAME)), "no record — the ruler reads the absence");

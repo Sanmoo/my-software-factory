@@ -291,7 +291,8 @@ interface InFlightLaunch {
   attempt: number | null;
   /** The attempt a recovery continues, known before the registry is read. */
   attemptHint?: number;
-  /** The worker session really started (the runtime was called). */
+  /** The runtime was called for this admission, so a worker may exist: a stop
+   *  no longer treats its grant as unused (a proven pre-refusal still may). */
   launched: boolean;
   /** The ledger event of a recovery granted to this admission, so a return
    *  removes exactly it: non-null while the grant may still be unused. */
@@ -1679,10 +1680,20 @@ export class SweepEngine {
       await this.restoreConsumedStop(entry, attempt);
       if (!(error instanceof LaunchPreconditionError)) throw error;
       const grant = entry.recoveryIndex;
-      const refunded = await this.refundGrant(entry, attempt);
+      let refunded = false;
+      let refundFailure: string | null = null;
+      try {
+        refunded = await this.refundGrant(entry, attempt);
+      } catch (refundError) {
+        // The environment's reason is the one the operator must read: a failed
+        // write is named, never allowed to replace it.
+        refundFailure = describeError(refundError);
+      }
       let note = "no recovery was granted to this launch";
       if (refunded) note = "the recovery granted to this relaunch is refunded";
-      else if (grant !== null) {
+      else if (refundFailure !== null) {
+        note = `the recovery granted to this relaunch could not be refunded (${refundFailure}) and stays consumed`;
+      } else if (grant !== null) {
         // The ledger answered no: say whether the grant is still consumed
         // instead of claiming a refund that never landed.
         const stillGranted = (await readRecoveryLedger(entry.dir)).events.some(

@@ -636,7 +636,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const dir = seedAttempt(35, 1);
     const now = () => new Date("2026-01-01T00:00:00Z");
     // Two grants were persisted before their relaunches; the second was
-    // refused by the environment before any worker existed and returned.
+    // refused by the environment before any worker existed and refunded.
     await consumeRecovery(dir, DEFAULT_RECOVERY_BUDGET, 1, now);
     await consumeRecovery(dir, DEFAULT_RECOVERY_BUDGET, 1, now);
     assert.equal(await refundRecovery(dir, 1, 1), true);
@@ -646,7 +646,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       text,
       /#35 \(attempt 1: last stop was an interruption — no attempt consumed; 1\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
-      "the section shows the budget the ledger really holds after the return",
+      "the section shows the budget the ledger really holds after the refund",
     );
   });
 

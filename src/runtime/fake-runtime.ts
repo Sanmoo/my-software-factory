@@ -9,7 +9,7 @@ import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import { LaunchPreconditionError, type SessionResult, type WorkRequest, type WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
@@ -35,21 +35,14 @@ import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 export type ScriptedOutcome = SessionResult["outcome"];
 
-/** A launch the fake refuses instead of scripting an outcome. `footprint` is
- *  the fact the factory acts on: "none" is the environment's precondition,
- *  "started" the ambiguity of a launch that may have created a worker. */
-export interface FakeLaunchRejection {
-  error: Error;
-  footprint: "none" | "started";
-}
-
 export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
   /** Needed so the fake can actually open the PR the script promises. */
   tracker?: FakeTrackerAdapter;
-  /** Reject a launch (at its index in `launched`) on either side of the
-   *  worker's footprint. */
-  rejectLaunch?: (request: WorkRequest, index: number) => FakeLaunchRejection | null;
+  /** Reject a launch (at its index in `launched`). The error's type carries
+   *  the fact the factory reads: a LaunchPreconditionError refuses before any
+   *  footprint; any other error leaves the worker's session started. */
+  rejectLaunch?: (request: WorkRequest, index: number) => Error | null;
   /** Deterministic timing control for scenario tests: each launch awaits the
    * returned promise (before applying its outcome) — a worker can be parked
    * mid-flight, or a signal fired at the act of its launch, without sleeps. */
@@ -113,9 +106,9 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
     const rejection = this.options.rejectLaunch?.(request, index) ?? null;
-    // A refusal before the footprint starts no session: the real
-    // preconditions run before it.
-    if (rejection !== null && rejection.footprint === "none") throw rejection.error;
+    // A proven pre-worker refusal (the real preconditions run before the
+    // footprint): no session is started.
+    if (rejection instanceof LaunchPreconditionError) throw rejection;
     const key = workKeyOf(request.work);
     const session: FakeSession = {
       work: request.work,
@@ -127,10 +120,10 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
     try {
       if (rejection !== null) {
-        // The worker was born before the failure: its footprint is written and
-        // the launch still rejects.
+        // Any other failure may have left a worker: the session is born before
+        // the launch rejects.
         this.startSession(request);
-        throw rejection.error;
+        throw rejection;
       }
       const hold = this.hold ?? this.options.hold;
       const work = hold === undefined ? Promise.resolve("work") : Promise.resolve(hold(request, index)).then(() => "work");
