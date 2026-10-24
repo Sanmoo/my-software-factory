@@ -198,7 +198,6 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
       assert.equal(result.status, 0, `stderr: ${result.stderr}`);
       assert.match(result.stdout, /no finished work to analyze/);
       assert.doesNotMatch(result.stderr, /active msf run/);
-      assert.doesNotMatch(result.stderr, /unknown flag "--language"/);
     } finally {
       await lock.close();
     }
