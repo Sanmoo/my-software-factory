@@ -111,8 +111,7 @@ export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroI
  */
 export async function liveRoundInFlight(layout: WorkspaceLayout): Promise<RetroInFlight | null> {
   const inFlight = await readInFlightRecord(layout);
-  if (inFlight === null) return null;
-  if (isOwnerAlive(inFlight)) return inFlight;
+  if (inFlight === null || isOwnerAlive(inFlight)) return inFlight;
   clearRetroInFlight(layout);
   return null;
 }

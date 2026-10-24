@@ -464,7 +464,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
 
   test("filed items notify the triage destination; discarded candidates are logged", async () => {
     const config = makeConfig({ threshold: 1 });
-    const { runtime, deps, logs, notifier } = makeLoggedFactory(config, [
+    const { runtime, deps, logs, notifier, tracker } = makeLoggedFactory(config, [
       {
         filed: [
           { repo: REPO, number: 501, title: "check the repo's test command" },
@@ -485,6 +485,21 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     );
     assert.equal(byDestination.get(REPO)?.items, 1);
     assert.equal(byDestination.get(FACTORY)?.items, 1);
+
+    // The items are real tracker issues: each carries `needs-triage` and
+    // names the report, and none carries the pool label — the operator's gate.
+    const reportPath = runtime.retroLaunched[0]!.reportPath;
+    const reportName = reportPath.slice(reportPath.lastIndexOf("/") + 1);
+    for (const [repo, number, title] of [
+      [REPO, 501, "check the repo's test command"],
+      [FACTORY, 502, "the worker prompt lacks the triage label"],
+    ] as const) {
+      const issue = await tracker.readIssue({ repo, number });
+      assert.ok(issue.known, `${repo}#${number} exists on the tracker`);
+      assert.equal(issue.value.title, title);
+      assert.deepEqual(issue.value.labels, ["needs-triage"], "the only label the factory adds");
+      assert.ok(issue.value.body.includes(reportName), "the filed item traces back to the report");
+    }
     const state = await readRetroState(layout);
     assert.equal(state.lastFiled, 2, "the marker records how many items the round filed");
     assert.ok(
@@ -571,7 +586,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     assert.match(rendered, /window boundary: 2026-02-01T12:00:00\.000Z/);
   });
 
-  test("a threshold met only by work a post-mortem already covered is a notice, not a report", async () => {
+  test("a threshold met only by work a post-mortem already covered starts no round", async () => {
     const config = makeConfig({ threshold: 1 });
     const { runtime, deps, logs } = makeLoggedFactory(config);
     seedArchived(1, at(1));
@@ -584,12 +599,13 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     );
     assert.equal(runtime.retroLaunched.length, 1);
 
+    logs.length = 0;
     await runOnce(deps);
 
     assert.equal(runtime.retroLaunched.length, 1, "no second round: nothing is left to analyze");
     assert.ok(
-      logs.some((line) => line.includes("nothing new since the last report")),
-      "the sweep says the window is empty instead of writing an empty report",
+      !logs.some((line) => line.includes("retro")),
+      "the sweep stays quiet: a covered work never counts toward the threshold again",
     );
     assert.equal(
       readdirSync(layout.retros).filter((name) => name.endsWith("-retro.md")).length,

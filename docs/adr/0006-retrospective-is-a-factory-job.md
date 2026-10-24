@@ -14,6 +14,13 @@ pauses real work. One round runs at a time, enforced by the lane's own marker
 (the round's in-flight record, owned by its pid) rather than by the `msf run`
 lock — the manual trigger must work while the factory is sweeping.
 
+The report is the marker: a round advances the window's boundary only when its
+dated report exists in the workspace, so a round that died advances nothing and
+the next sweep retries the same window. The state file beside the reports only
+indexes the last one (its boundary, the works a single-work post-mortem
+analyzed, how many items it filed); a lost index degrades to the first round's
+rule — the last ten finished works, re-analyzed — never to a skipped window.
+
 ## Considered options
 
 - An operator-invoked skill on the host reading the workspace: rejected — the

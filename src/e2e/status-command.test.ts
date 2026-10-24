@@ -23,11 +23,11 @@ import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from 
  * absence of the service (ADR 0002). The Running/Orphaned split is covered
  * with controlled probes in state/status.test.ts.
  *
- * Issue 175: work #1 carries an ACTIVE continuity pause naming attempt 2 while
- * the ledger evidences only attempt 1 (the launch planned it and continuity
- * refused before the runtime spawned), so the report must name the cause, the
- * work, the session and both attempts. Work #2 carries the `pausa.json.resolved`
- * of a pause that is over: a resolved pause is never an active one.
+ * Work #1 carries an ACTIVE continuity pause naming attempt 2 while the ledger
+ * evidences only attempt 1 (the launch planned it and continuity refused before
+ * the runtime spawned), so the report must name the cause, the work, the session
+ * and both attempts. Work #2 carries the `pausa.json.resolved` of a pause that
+ * is over: a resolved pause is never an active one.
  */
 
 const REPO = "Sanmoo/my-tasks";
