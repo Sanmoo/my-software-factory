@@ -1,165 +1,36 @@
-import { mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { RecoveryBudget } from "../config.js";
-import type { OutcomeClass } from "../state/outcome.js";
+import type { OutcomeClass } from "../work-record/outcome.js";
+import {
+  readRecoveryLedger,
+  updateRecoveryLedger,
+  type RecoveryEvent,
+  type RecoveryLedger,
+  type RecoveryStop,
+} from "../work-record/recovery.js";
 
 /**
  * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
  * an attempt that ended with no outcome record is interrupted, not failed, so
  * the factory absorbs it with a finite allowance scoped to the attempt instead
  * of consuming it. The ledger is an artifact of the work
- * (trabalhos/<repo>#<n>/recuperacao.json), so a restart continues the count
- * instead of renewing it; exhausting it pauses the work and asks for help.
+ * (trabalhos/<repo>#<n>/recuperacao.json) — owned by the Work record (issue
+ * 187), which keeps the file, its schema, its one-writer queue and the rule
+ * that every stop fact names its attempt. This module keeps the DECISION: the
+ * configured allowance, the wait schedule and what each settlement means.
  */
 
-/** Disk name stays PT-BR with the rest of the registry. */
-export const RECOVERY_FILENAME = "recuperacao.json";
-
-/** One consumed recovery: which attempt it continued, its wait and when. */
-export interface RecoveryEvent {
-  /** 0-based index; the wait schedule is indexed by it. */
-  index: number;
-  /** The backoff this recovery is granted; the loop waits it before the relaunch. */
-  waitMs: number;
-  /** The attempt the recovery continues — the same number, never a new one. */
-  attempt: number;
-  at: string;
-}
-
-/**
- * What ended the last attempt, as the factory settled it: an interruption
- * (absorbed by this budget), a failure (a written failure/abandon outcome,
- * which consumes the attempt and enters the fall ruler), or the operator's
- * requested stop (issue #146) — a lifecycle condition that spends nothing and
- * resumes the same attempt. `stop-unconfirmed` means the requested stop could
- * not be confirmed: the next invocation must not relaunch the work until the
- * previous worker is known to be gone.
- */
-export type RecoveryStop =
-  | { kind: "interruption"; attempt: number; at: string }
-  | { kind: "failure"; attempt: number; at: string; outcome: OutcomeClass }
-  | { kind: "stop-requested"; attempt: number; at: string }
-  | { kind: "stop-unconfirmed"; attempt: number; at: string; because: string };
-
-export interface RecoveryLedger {
-  /** The attempt the count belongs to; a different attempt starts from zero. */
-  attempt: number;
-  /** Recoveries consumed by THIS attempt. */
-  consumed: number;
-  events: RecoveryEvent[];
-  /** What ended the last attempt (or the one before, until a new one ends). */
-  lastStop: RecoveryStop | null;
-  /** The highest attempt that ended in a WRITTEN failure — the fall ruler's
-   *  consecutiveness fact at a crash, never overwritten by an interruption. */
-  lastFallAttempt: number | null;
-}
-
-export function emptyLedger(): RecoveryLedger {
-  return { attempt: 1, consumed: 0, events: [], lastStop: null, lastFallAttempt: null };
-}
+export {
+  RECOVERY_FILENAME,
+  emptyLedger,
+  readRecoveryLedger,
+  type RecoveryEvent,
+  type RecoveryLedger,
+  type RecoveryStop,
+} from "../work-record/recovery.js";
 
 export type RecoveryDecision =
   | { decision: "recover"; waitMs: number; consumed: number }
   | { decision: "pause-help"; consumed: number; reason: string };
-
-/**
- * Read the ledger of a work. An absent or corrupt file is the honest initial
- * state: no recovery was ever consumed, nothing is invented and nothing is
- * deleted. A legacy work dir (written before this budget existed) has no file
- * and reads exactly like a work that was never interrupted.
- */
-export async function readRecoveryLedger(workDir: string): Promise<RecoveryLedger> {
-  let raw: string;
-  try {
-    raw = await readFile(join(workDir, RECOVERY_FILENAME), "utf8");
-  } catch {
-    return emptyLedger();
-  }
-  try {
-    return parseLedger(JSON.parse(raw));
-  } catch {
-    return emptyLedger();
-  }
-}
-
-function parseLedger(value: unknown): RecoveryLedger {
-  if (value === null || typeof value !== "object") return emptyLedger();
-  const record = value as Record<string, unknown>;
-  return {
-    attempt: positiveInteger(record["attempt"]) ?? 1,
-    consumed: nonNegativeInteger(record["consumed"]) ?? 0,
-    events: Array.isArray(record["events"]) ? record["events"].filter(isEvent) : [],
-    lastStop: isStop(record["lastStop"]) ? record["lastStop"] : null,
-    lastFallAttempt: positiveInteger(record["lastFallAttempt"]),
-  };
-}
-
-function positiveInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
-}
-
-function nonNegativeInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function isEvent(value: unknown): value is RecoveryEvent {
-  if (value === null || typeof value !== "object") return false;
-  const event = value as Record<string, unknown>;
-  return (
-    nonNegativeInteger(event["index"]) !== null &&
-    typeof event["waitMs"] === "number" &&
-    positiveInteger(event["attempt"]) !== null &&
-    typeof event["at"] === "string"
-  );
-}
-
-function isStop(value: unknown): value is RecoveryStop {
-  if (value === null || typeof value !== "object") return false;
-  const stop = value as Record<string, unknown>;
-  if (positiveInteger(stop["attempt"]) === null || typeof stop["at"] !== "string") return false;
-  if (stop["kind"] === "failure") return typeof stop["outcome"] === "string";
-  if (stop["kind"] === "stop-unconfirmed") return typeof stop["because"] === "string";
-  return stop["kind"] === "interruption" || stop["kind"] === "stop-requested";
-}
-
-async function writeLedger(workDir: string, ledger: RecoveryLedger): Promise<void> {
-  mkdirSync(workDir, { recursive: true });
-  await writeFile(join(workDir, RECOVERY_FILENAME), `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-}
-
-/**
- * One writer per work's ledger: the requested stop and a collection can
- * reach the same artifact concurrently (issue #146 — the stop bookkeeping and
- * the admission it cancels), and two read-modify-write cycles interleaved
- * would lose one of the updates. Each mutation below queues behind the
- * previous one for the same dir; the chain survives a rejected writer.
- */
-const writing = new Map<string, Promise<unknown>>();
-
-function serialized<T>(workDir: string, mutate: () => Promise<T>): Promise<T> {
-  const previous = writing.get(workDir) ?? Promise.resolve();
-  const next = previous.then(mutate, mutate);
-  writing.set(
-    workDir,
-    next.catch(() => undefined),
-  );
-  return next;
-}
-
-/** One serialized read-modify-write of the ledger's `lastStop` (and of the
- *  count it scopes to). The mutation returns the ledger to write, or null to
- *  leave the file untouched — every stop record differs only in that value. */
-async function updateLastStop(
-  workDir: string,
-  mutate: (ledger: RecoveryLedger) => RecoveryLedger | null,
-): Promise<void> {
-  await serialized(workDir, async () => {
-    const next = mutate(await readRecoveryLedger(workDir));
-    if (next !== null) await writeLedger(workDir, next);
-  });
-}
 
 /**
  * The decision the current count supports, without consuming it: the next wait
@@ -204,11 +75,11 @@ export async function consumeRecovery(
   attempt: number,
   now: () => Date = () => new Date(),
 ): Promise<RecoveryDecision> {
-  return serialized(workDir, async () => {
-    const ledger = ledgerForAttempt(await readRecoveryLedger(workDir), attempt);
+  return updateRecoveryLedger<RecoveryDecision>(workDir, (stored) => {
+    const ledger = ledgerForAttempt(stored, attempt);
     const decision = recoveryDecision(ledger, budget);
     const at = now().toISOString();
-    if (decision.decision === "pause-help") return decision;
+    if (decision.decision === "pause-help") return { next: null, result: decision };
 
     const event: RecoveryEvent = {
       index: ledger.consumed,
@@ -216,14 +87,26 @@ export async function consumeRecovery(
       attempt,
       at,
     };
-    await writeLedger(workDir, {
-      ...ledger,
-      consumed: decision.consumed,
-      events: [...ledger.events, event],
-      lastStop: { kind: "interruption", attempt, at },
-    });
-    return decision;
+    return {
+      next: {
+        ...ledger,
+        consumed: decision.consumed,
+        events: [...ledger.events, event],
+        lastStop: { kind: "interruption", attempt, at },
+      },
+      result: decision,
+    };
   });
+}
+
+/** One serialized read-modify-write of the ledger's `lastStop` (and of the
+ *  count it scopes to). A null mutation leaves the file untouched — every stop
+ *  record differs only in that value. */
+async function updateLastStop(
+  workDir: string,
+  mutate: (ledger: RecoveryLedger) => RecoveryLedger | null,
+): Promise<void> {
+  await updateRecoveryLedger(workDir, (ledger) => ({ next: mutate(ledger), result: undefined }));
 }
 
 /**
@@ -299,17 +182,18 @@ export async function consumeStopRequest(workDir: string, attempt: number): Prom
  * a second return of the same grant are impossible.
  */
 export async function refundRecovery(workDir: string, attempt: number, index: number): Promise<boolean> {
-  return serialized(workDir, async () => {
-    const ledger = await readRecoveryLedger(workDir);
-    if (ledger.attempt !== attempt) return false;
+  return updateRecoveryLedger(workDir, (ledger) => {
+    if (ledger.attempt !== attempt) return { next: null, result: false };
     const granted = ledger.events.findIndex((event) => event.index === index && event.attempt === attempt);
-    if (granted < 0) return false;
-    await writeLedger(workDir, {
-      ...ledger,
-      consumed: Math.max(0, ledger.consumed - 1),
-      events: ledger.events.filter((_event, position) => position !== granted),
-    });
-    return true;
+    if (granted < 0) return { next: null, result: false };
+    return {
+      next: {
+        ...ledger,
+        consumed: Math.max(0, ledger.consumed - 1),
+        events: ledger.events.filter((_event, position) => position !== granted),
+      },
+      result: true,
+    };
   });
 }
 
@@ -343,14 +227,16 @@ export async function recordFailure(
   outcome: OutcomeClass,
   now: () => Date = () => new Date(),
 ): Promise<void> {
-  await serialized(workDir, async () => {
-    const ledger = await readRecoveryLedger(workDir);
+  await updateRecoveryLedger(workDir, (ledger) => {
     const current = ledgerForAttempt(ledger, attempt);
-    await writeLedger(workDir, {
-      ...current,
-      lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
-      lastFallAttempt: Math.max(current.lastFallAttempt ?? 0, attempt),
-    });
+    return {
+      next: {
+        ...current,
+        lastStop: { kind: "failure", attempt, at: now().toISOString(), outcome },
+        lastFallAttempt: Math.max(current.lastFallAttempt ?? 0, attempt),
+      },
+      result: undefined,
+    };
   });
 }
 

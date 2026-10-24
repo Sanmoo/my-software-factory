@@ -1,71 +1,32 @@
-import { mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { ModelProviderBudget } from "../config.js";
 import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
+import {
+  readModelProviderLedger,
+  writeModelProviderLedger,
+  type ModelProviderLedger,
+  type ModelProviderRetryEvent,
+  type ModelProviderSettlement,
+} from "../work-record/model-provider.js";
 import { renderWaits } from "./recovery.js";
 
 /**
  * The model provider failure budget of a work (issue 144; terms in GLOSSARY):
  * an attempt whose stream ended in a model provider error is not an
- * interruption of the agent, so it retries on this dedicated allowance
- * instead of spending the interruption budget of issue 123. The ledger is an
- * artifact of the work (trabalhos/<repo>#<n>/provedor.json), so a restart
- * continues the count instead of renewing it; exhausting it parks the work
- * "awaiting model provider" and asks the operator for help — never a block,
- * and never an infinite retry.
+ * interruption of the agent, so it retries on this dedicated allowance instead
+ * of spending the interruption budget of issue 123. The ledger is an artifact
+ * of the work (trabalhos/<repo>#<n>/provedor.json) — owned by the Work record
+ * (issue 187), which keeps the file and its schema. This module keeps the
+ * DECISIONS: idempotent settlement, the retry/await verdict and its reason.
  */
 
-/** Disk name stays PT-BR with the rest of the registry. */
-export const MODEL_PROVIDER_FILENAME = "provedor.json";
-
-/** One granted model provider retry: its index, wait and the failure it answered. */
-export interface ModelProviderRetryEvent {
-  /** 0-based index; the wait schedule is indexed by it. */
-  index: number;
-  /** The backoff this retry is granted; the loop waits it before the relaunch. */
-  waitMs: number;
-  /** The attempt the retry continues — the same number, never a new one. */
-  attempt: number;
-  /** When the factory settled the failure — not the failure's own time. */
-  at: string;
-  /** The model provider's message at settlement. */
-  message: string;
-}
-
-/**
- * The last model provider failure that ended the attempt, with its settlement.
- * `failureIdentity` is the failure's own identity (the stream's timestamp), so
- * re-reading the same settled failure after a restart is recognised instead of
- * counted twice.
- */
-export type ModelProviderSettlement = {
-  attempt: number;
-  /** The failure's identity (the stream's timestamp, or its line) — never the settlement time. */
-  failureIdentity: string;
-  message: string;
-  at: string;
-} & (
-  | { granted: true; waitMs: number }
-  /** Awaiting: `helpRequested` keeps the help request retryable — a death
-   *  after the ledger but before the comment never loses the request. */
-  | { granted: false; waitMs: null; helpRequested: boolean }
-);
-
-export interface ModelProviderLedger {
-  /** The attempt the count belongs to; a different attempt starts from zero. */
-  attempt: number;
-  /** Retries consumed by THIS attempt. */
-  consumed: number;
-  events: ModelProviderRetryEvent[];
-  /** The last model provider failure that ended the attempt. */
-  last: ModelProviderSettlement | null;
-}
-
-export function emptyModelProviderLedger(): ModelProviderLedger {
-  return { attempt: 1, consumed: 0, events: [], last: null };
-}
+export {
+  MODEL_PROVIDER_FILENAME,
+  emptyModelProviderLedger,
+  readModelProviderLedger,
+  type ModelProviderLedger,
+  type ModelProviderRetryEvent,
+  type ModelProviderSettlement,
+} from "../work-record/model-provider.js";
 
 export type ModelProviderDecision =
   | { decision: "retry"; waitMs: number; consumed: number }
@@ -73,80 +34,6 @@ export type ModelProviderDecision =
 
 /** A settlement and whether THIS call recorded it (the comment fires once). */
 export type SettledModelProviderDecision = ModelProviderDecision & { recorded: boolean };
-
-/**
- * Read the model provider ledger of a work. An absent or corrupt file is the honest
- * initial state: no retry was ever granted, nothing is invented and nothing is
- * deleted. A work that never met a model provider failure reads exactly like one
- * that never launched.
- */
-export async function readModelProviderLedger(workDir: string): Promise<ModelProviderLedger> {
-  let raw: string;
-  try {
-    raw = await readFile(join(workDir, MODEL_PROVIDER_FILENAME), "utf8");
-  } catch {
-    return emptyModelProviderLedger();
-  }
-  try {
-    return parseLedger(JSON.parse(raw));
-  } catch {
-    return emptyModelProviderLedger();
-  }
-}
-
-function parseLedger(value: unknown): ModelProviderLedger {
-  if (value === null || typeof value !== "object") return emptyModelProviderLedger();
-  const record = value as Record<string, unknown>;
-  return {
-    attempt: positiveInteger(record["attempt"]) ?? 1,
-    consumed: nonNegativeInteger(record["consumed"]) ?? 0,
-    events: Array.isArray(record["events"]) ? record["events"].filter(isEvent) : [],
-    last: isSettlement(record["last"]) ? record["last"] : null,
-  };
-}
-
-function positiveInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
-}
-
-function nonNegativeInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function isEvent(value: unknown): value is ModelProviderRetryEvent {
-  if (value === null || typeof value !== "object") return false;
-  const event = value as Record<string, unknown>;
-  return (
-    nonNegativeInteger(event["index"]) !== null &&
-    typeof event["waitMs"] === "number" &&
-    positiveInteger(event["attempt"]) !== null &&
-    typeof event["at"] === "string" &&
-    typeof event["message"] === "string"
-  );
-}
-
-function isSettlement(value: unknown): value is ModelProviderSettlement {
-  if (value === null || typeof value !== "object") return false;
-  const settlement = value as Record<string, unknown>;
-  if (
-    positiveInteger(settlement["attempt"]) === null ||
-    typeof settlement["failureIdentity"] !== "string" ||
-    typeof settlement["message"] !== "string" ||
-    typeof settlement["at"] !== "string"
-  ) {
-    return false;
-  }
-  if (settlement["granted"] === true) return typeof settlement["waitMs"] === "number";
-  if (settlement["granted"] === false) {
-    return settlement["waitMs"] === null && typeof settlement["helpRequested"] === "boolean";
-  }
-  return false;
-}
-
-async function writeLedger(workDir: string, ledger: ModelProviderLedger): Promise<void> {
-  mkdirSync(workDir, { recursive: true });
-  await writeFile(join(workDir, MODEL_PROVIDER_FILENAME), `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-}
 
 /**
  * The decision the current count supports for this failure, WITHOUT writing
@@ -200,7 +87,7 @@ export async function settleModelProviderFailure(
 
   const at = now().toISOString();
   if (decision.decision === "awaiting-model-provider") {
-    await writeLedger(workDir, {
+    await writeModelProviderLedger(workDir, {
       ...ledger,
       last: { attempt, failureIdentity: failure.identity, message: failure.message, granted: false, waitMs: null, helpRequested: false, at },
     });
@@ -214,7 +101,7 @@ export async function settleModelProviderFailure(
     at,
     message: failure.message,
   };
-  await writeLedger(workDir, {
+  await writeModelProviderLedger(workDir, {
     ...ledger,
     consumed: ledger.consumed + 1,
     events: [...ledger.events, event],
@@ -243,7 +130,7 @@ export async function markModelProviderHelpRequested(
   const ledger = await readModelProviderLedger(workDir);
   const last = ledger.last;
   if (!settlesFailure(last, attempt, failure) || last.granted || last.helpRequested) return;
-  await writeLedger(workDir, { ...ledger, last: { ...last, helpRequested: true } });
+  await writeModelProviderLedger(workDir, { ...ledger, last: { ...last, helpRequested: true } });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir, rename } from "node:fs/promises";
+import { rename } from "node:fs/promises";
 import { join, relative, sep, basename } from "node:path";
 
 import {
@@ -24,11 +24,13 @@ import {
 } from "./model-provider.js";
 import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
-import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
+import { attemptNumbers } from "../work-record/attempts.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import { workKeyOf } from "./work-key.js";
 import { workDirCandidates } from "./reservation.js";
+
+export { readAttemptLedger, readLastAttempt, type AttemptLedger } from "../work-record/attempts.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -65,7 +67,7 @@ export async function readLaunchFacts(
 ): Promise<LaunchFacts> {
   if (!existsSync(workDir)) return { attempt: continueAttempt ?? 1, previousFall: false };
 
-  const { logs, record } = await attemptsAndRecord(workDir);
+  const [logs, record] = await Promise.all([attemptNumbers(workDir), readOutcomeRecord(workDir)]);
   // The last RECORDED attempt is the only fall fact: an interrupted attempt
   // writes nothing, so it neither resets nor feeds the consecutive count.
   const previousFall = isRecordedFailure(record);
@@ -103,56 +105,11 @@ function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
 }
 
 /** The attempt numbers present in the registry dir, ascending. */
-async function attemptNumbers(workDir: string): Promise<number[]> {
-  if (!existsSync(workDir)) return [];
-  const entries = await readdir(workDir);
-  const numbers: number[] = [];
-  for (const entry of entries) {
-    const match = EVENT_LOG_PATTERN.exec(entry);
-    if (match) numbers.push(Number(match[1]));
-  }
-  return numbers.sort((a, b) => a - b);
-}
 
-/**
- * The attempt ledger of one work (issue 112): the highest attempt the registry
- * numbers, and the attempt the outcome record on disk belongs to (null when no
- * record exists). The gap between the two is an attempt that wrote no record
- * of its own — the fall a repair reconciliation must settle.
- */
-export interface AttemptLedger {
-  lastAttempt: number;
-  recordedAttempt: number | null;
-}
-
-export async function readAttemptLedger(dir: string): Promise<AttemptLedger> {
-  const { logs, record } = await attemptsAndRecord(dir);
-  return { lastAttempt: lastAttemptOf(logs, record), recordedAttempt: record?.attempt ?? null };
-}
-
-/**
- * The attempt a work is on right now (issue 102): the highest per-attempt log,
- * or the record's own number when the record is the latest evidence — read
- * from the registry that numbers attempts, never guessed from elsewhere. Null
- * when nothing on disk numbers an attempt (a work dir that is gone): the
- * registry invents no number.
- */
-export async function readLastAttempt(workDir: string): Promise<number | null> {
-  const { logs, record } = await attemptsAndRecord(workDir);
-  const attempt = lastAttemptOf(logs, record);
-  return attempt === 0 ? null : attempt;
-}
-
+/** The attempt the next launch numbers: the last log or the record's own
+ *  number, whichever the disk evidences as later. */
 function lastAttemptOf(logs: readonly number[], record: OutcomeRecord | null): number {
   return Math.max(logs.at(-1) ?? 0, record?.attempt ?? 0);
-}
-
-async function attemptsAndRecord(workDir: string): Promise<{
-  logs: number[];
-  record: OutcomeRecord | null;
-}> {
-  const [logs, record] = await Promise.all([attemptNumbers(workDir), readOutcomeRecord(workDir)]);
-  return { logs, record };
 }
 
 // ---- the done archive (ticket 14) ----
