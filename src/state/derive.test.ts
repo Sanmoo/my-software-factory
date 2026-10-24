@@ -1032,7 +1032,7 @@ describe("issue 174 — a human answer stays bound to the pause it answered", ()
 
     const derived = await deriveOne(41);
 
-    assert.equal(derived.state, "idle", "the pause asked AFTER the answer: nothing answers it yet");
+    assert.equal(derived.state, "continuity-paused", "the pause asked AFTER the answer: nothing answers it yet");
   });
 
   test("a pause whose request never landed consumes no answer — it is not on the issue to answer", async () => {
@@ -1043,7 +1043,11 @@ describe("issue 174 — a human answer stays bound to the pause it answered", ()
 
     const derived = await deriveOne(42);
 
-    assert.equal(derived.state, "idle", "an answer to an older message is never read as the answer to this pause");
+    assert.equal(
+      derived.state,
+      "continuity-paused",
+      "an answer to an older message is never read as the answer to this pause — the pause stays current",
+    );
   });
 
   test("another blocked cause keeps the generic rule: a later factory comment parks the answer", async () => {

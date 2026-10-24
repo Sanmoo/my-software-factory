@@ -34,6 +34,7 @@ import {
   deriveTrackerState,
   deriveReserved,
   fallbackDoneComment,
+  humanCommentsForPause,
   readRepairPremise,
   repairSignature,
   workPullRequest,
@@ -106,7 +107,7 @@ import {
 } from "./pool/model-provider.js";
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
-import { planContinuity, recheckPausedEffects } from "./runtime/continuity.js";
+import { planContinuity, recheckPausedEffects, settleableBySession, type ContinuityDeps } from "./runtime/continuity.js";
 import { clearPause, knownAttempt, readPause, writePause, type PauseRecord } from "./runtime/continuity-artifacts.js";
 import { Slots } from "./pool/slots.js";
 import {
@@ -842,20 +843,51 @@ export class SweepEngine {
         }
         case "continuity-paused": {
           // Continuity could not safely reopen the attempt's session (issue
-          // 119). The pause is persisted, so no cycle retries the recovery;
-          // a pause whose block and help request never landed (a death in
-          // between) is announced now, exactly once. Other works keep going.
-          this.log(
-            `derived ${renderWorkIdentity(decision.work)}: attempt ${decision.attempt} is paused for help ` +
-              `(${decision.pause.reason}) — no recovery is spent and nothing is relaunched`,
-          );
+          // 119). The pause is persisted and asks for help once; every sweep
+          // re-reads the doubt this pause names — a terminal result in the
+          // attempt's own session, or the real state — and clears it on its own
+          // once that evidence settles it (issue 173). Other works keep going.
+          const pause = decision.pause;
+          const attempt = knownAttempt(pause.attempt) ?? decision.attempt;
           this.announce(decision.work, "reserved");
-          if (decision.pause.announced !== true) {
-            await this.pauseForContinuity(
-              decision.work,
-              decision.dir,
-              decision.pause,
-              decision.attempt,
+          // A worker of this work may still be alive — one this process
+          // launched, or one a reliable probe carried. Its journal is never
+          // written and no substitute is launched over it (issue 173).
+          if (this.slots.workKeys.includes(key) || this.carriedKeys.has(key)) {
+            this.log(
+              `continuity of ${renderWorkIdentity(decision.work)} is not re-evaluated: a worker of this work ` +
+                "may still be alive — nothing is written and nothing is relaunched",
+            );
+            break;
+          }
+          // A pause the factory can settle by itself returns to the normal
+          // cycle: the evidence it doubts is read again from the attempt's own
+          // session and the real state, WITHOUT another human answer (issue
+          // 173). Only a cause a terminal Session result can answer is read;
+          // the rest keep the pause and its request exactly as they are.
+          const verdict = settleableBySession(pause.reason)
+            ? await recheckPausedEffects(this.continuityDeps(decision.work, decision.dir, attempt), pause)
+            : null;
+          if (verdict !== null && verdict.resolved) {
+            await this.resolvedPause(decision.work, decision.dir, pause, attempt, parked);
+            break;
+          }
+          const current = verdict?.pause ?? pause;
+          // A real change of cause is a new fact the operator must see, told
+          // once by the same occurrence (issue 174); a pause whose request
+          // never landed is announced now. A steady pause is said once — `msf
+          // status` keeps it visible — so a persistent doubt never becomes a
+          // line per cycle.
+          if (pause.announced !== true || current.reason !== pause.reason) {
+            this.log(
+              `derived ${renderWorkIdentity(decision.work)}: attempt ${attempt} is paused for help ` +
+                `(${current.reason}) — no recovery is spent and nothing is relaunched`,
+            );
+            await this.pauseForContinuity(decision.work, decision.dir, current, attempt);
+          } else if (verdict !== null) {
+            this.log(
+              `continuity of ${renderWorkIdentity(decision.work)} is still unresolved (${current.reason}): ` +
+                `${current.detail} — no new help request, nothing relaunched`,
             );
           }
           break;
@@ -1918,10 +1950,13 @@ export class SweepEngine {
     if (kind === "resume") {
       const pause = readPause(dir);
       if (pause !== null) {
-        const recheck = await recheckPausedEffects({
-          ...continuityDeps,
-          attempt: knownAttempt(pause.attempt) ?? facts.attempt,
-        });
+        const recheck = await recheckPausedEffects(
+          {
+            ...continuityDeps,
+            attempt: knownAttempt(pause.attempt) ?? facts.attempt,
+          },
+          pause,
+        );
         if (!recheck.resolved && recheck.pause !== null) {
           this.log(
             `the human answered ${key}, but the interrupted effect is still unresolved — ` +
@@ -2078,6 +2113,53 @@ export class SweepEngine {
       return true;
     }
     return lastStop.kind === "stop-requested";
+  }
+
+  /** The facts a continuity decision reads for one paused work: its artifacts,
+   *  its sessions, the Work and the attempt being continued. */
+  private continuityDeps(work: WorkIdentity, dir: string, attempt: number): ContinuityDeps {
+    const { git, tickets, pullRequests } = this.deps;
+    return { workDir: dir, sessionsDir: join(dir, SESSIONS_SUBDIR), work, attempt, git, tickets, pullRequests };
+  }
+
+  /**
+   * A pause whose doubt the attempt's session and the real state now settle
+   * (issue 173): the record is closed and the CORRECT continuation is parked —
+   * never launched from here, so every existing gate (liveness, continuity, the
+   * recovery ruler, the operator's stop) applies again. A human answer bound to
+   * the pause orients a NEW round; without one the SAME attempt continues.
+   * Resolving a pause spends neither an attempt nor a recovery.
+   */
+  private async resolvedPause(
+    work: WorkIdentity,
+    dir: string,
+    pause: PauseRecord,
+    attempt: number,
+    parked: Launchable[],
+  ): Promise<void> {
+    const { tickets, pullRequests, config } = this.deps;
+    clearPause(dir);
+    const comments = await tickets.readTicketComments(work.ticket);
+    const answers = comments.known ? humanCommentsForPause(comments.value, pause) : [];
+    const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work));
+    const pr = feedback.known ? feedback.value.pr : null;
+    if (answers.length > 0) {
+      this.log(
+        `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
+          "the human answer orients a NEW round (no recovery is spent)",
+      );
+      // The resume launch swaps blocked→claimed itself.
+      parked.push({ work, dir, kind: "resume", createdAt: pause.at, pr, issueReplies: answers });
+      return;
+    }
+    // The block leaves with the pause: the recover launch continues the SAME
+    // attempt and the existing recovery ruler decides whether it may relaunch.
+    await tickets.resumeTicketClaim(work.ticket, config.labels);
+    this.log(
+      `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
+        `attempt ${attempt} continues (the recovery ruler applies)`,
+    );
+    parked.push({ work, dir, kind: "recover", createdAt: null, pr, attempt });
   }
 
   /**

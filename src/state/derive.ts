@@ -514,7 +514,7 @@ async function deriveReservedWork(
     const issueReplies = comments.known
       ? pause === null
         ? humanCommentsAfterLastMarker(comments.value)
-        : humanCommentsForPause(comments.value, pause)
+        : humanCommentsForPause(comments.value, pause.pause)
       : [];
     if (issueReplies.length > 0) {
       // A pending reconciliation outranks the human answer (issue 112, story
@@ -528,6 +528,12 @@ async function deriveReservedWork(
         return { work, dir, state: "idle" };
       }
       return resumableState(pullRequests, work, dir, issue.value.createdAt, issueReplies);
+    }
+    // A pause nobody answered is not a reason to wait idle (issue 173): the
+    // work is in a state the factory keeps evaluating, and the loop re-reads
+    // the evidence the pause doubts before any human is asked again.
+    if (pause !== null) {
+      return { work, dir, state: "continuity-paused", attempt: pause.attempt, pause: pause.pause };
     }
     return { work, dir, state: "idle" };
   }
@@ -761,14 +767,16 @@ function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
   return pause !== null && pauseWaits(pause, attempt) ? pause : null;
 }
 
-/** The pause the operator could be answering right now, if any: the same
- *  "current" rule the interrupted branch applies, read only when a record
- *  exists (a blocked work without one never touches the ledger for this). */
-async function currentPause(dir: string): Promise<PauseRecord | null> {
+/** The pause the factory keeps re-evaluating, if any: the same "current" rule
+ *  the interrupted branch applies, plus the attempt the disk evidence numbers
+ *  (a pause of a planned attempt is still current). Read only when a record
+ *  exists — a blocked work without one never touches the ledger for this. */
+async function currentPause(dir: string): Promise<{ pause: PauseRecord; attempt: number } | null> {
   const pause = readPause(dir);
   if (pause === null) return null;
   const ledger = await readAttemptLedger(dir);
-  return pauseWaits(pause, ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt) ? pause : null;
+  const attempt = ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt;
+  return pauseWaits(pause, attempt) ? { pause, attempt } : null;
 }
 
 /**

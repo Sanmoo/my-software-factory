@@ -42,7 +42,14 @@ import {
   type PauseReason,
   type PauseRecord,
 } from "./continuity-artifacts.js";
-import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults, type SessionToolResult } from "./session-log.js";
+import {
+  findSessionFile,
+  inspectSessionFile,
+  sessionToolCalls,
+  sessionToolResults,
+  type SessionInspection,
+  type SessionToolResult,
+} from "./session-log.js";
 
 export interface ContinuityDeps {
   workDir: string;
@@ -143,27 +150,128 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
     };
   }
 
+  // Every non-safe call the session ran must be accounted for before it is
+  // reopened: the same rule the recheck of a paused work applies.
+  const doubt = missingIntentDoubt(deps, link.sessionId, file, inspection, journal);
+  if (doubt !== null) return { decision: "pause", pause: doubt };
+
+  writeGuardrailState(deps.workDir, guardrailState(deps, "resume", link.sessionId, effects.verdicts));
+  return { decision: "launch", mode: "resume", sessionId: link.sessionId, intactEntries: inspection.intactEntries };
+}
+
+/**
+ * Re-read the doubt a persisted pause names — the operator's answer when it
+ * answered one, and the normal cycle afterwards (issue 173). An answer is
+ * orientation, never confirmation that an effect did not happen: what settles
+ * the pause is a fresh read of the real state, and nothing else.
+ */
+export async function recheckPausedEffects(deps: ContinuityDeps, paused: PauseRecord): Promise<RecheckResult> {
+  const effects = await settleOpenEffects(deps);
+  if (!effects.settled) return { resolved: false, pause: effects.pause };
+  // The other doubt a session can settle: a non-safe call the guardrail never
+  // journaled. It stops being a doubt only when the transcript proves the call
+  // never ran, read by the same rule the resume plan applies.
+  if (paused.reason === "tool-evidence-missing") {
+    const doubt = toolEvidenceDoubt(deps);
+    if (doubt !== null) return { resolved: false, pause: doubt };
+  }
+  return { resolved: true, pause: null };
+}
+
+/**
+ * Is this pause cause one a terminal Session result can settle on its own?
+ * Only the effects the state could not confirm and the tool evidence the pause
+ * could not read: a missing, unreadable or foreign session, an unreadable
+ * journal and an unreadable record name a doubt no transcript can answer, so
+ * re-evaluating them would only trade a pause for a guess.
+ */
+export function settleableBySession(reason: PauseReason): boolean {
+  return reason === "effect-unsupported" || reason === "effect-ambiguous" || reason === "tool-evidence-missing";
+}
+
+/**
+ * The `tool-evidence-missing` doubt, re-read from the attempt's own session:
+ * the pause stands unless every non-safe call the transcript records is either
+ * journaled or proven never to have run. A session that cannot be read now is
+ * the doubt itself, not a resolution.
+ */
+function toolEvidenceDoubt(deps: ContinuityDeps): PauseRecord | null {
+  const links = readSessionLinks(deps.workDir);
+  if (!links.intact) {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      "the session-association journal is unreadable — the calls the attempt ran cannot be read",
+    );
+  }
+  const link = linkForAttempt(links.links, deps.work, deps.attempt);
+  if (link === null) {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      `attempt ${deps.attempt} has no recorded Pi session — the calls it ran cannot be read`,
+    );
+  }
+  const file = findSessionFile(deps.sessionsDir, link.sessionId);
+  if (file === null) {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      `the session ${link.sessionId} recorded for attempt ${deps.attempt} is not on disk — the calls it ran cannot be read`,
+      link.sessionId,
+    );
+  }
+  const inspection = inspectSessionFile(file, link.sessionId);
+  if (inspection.status !== "intact" && inspection.status !== "partial") {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      `${inspection.detail ?? `the session history is ${inspection.status}`} — the calls it ran cannot be read`,
+      link.sessionId,
+    );
+  }
+  const journal = readEffectJournal(deps.workDir);
+  if (!journal.intact) {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      "the effect journal is unreadable — it cannot prove which calls were journaled",
+      link.sessionId,
+    );
+  }
+  return missingIntentDoubt(deps, link.sessionId, file, inspection, journal);
+}
+
+/**
+ * The non-safe calls the session's intact prefix records with no journal
+ * intent — its effect cannot be established, so the work pauses. Shared by the
+ * resume plan and the recheck of an existing pause, so the two can never
+ * disagree about what the transcript proves.
+ */
+function missingIntentDoubt(
+  deps: ContinuityDeps,
+  sessionId: string,
+  file: string,
+  inspection: SessionInspection,
+  journal: EffectJournal,
+): PauseRecord | null {
   // A discarded tail is only safe when the journal proves the session ran
   // under the guardrail: every effectful call records its intent before it
   // executes, so the tail cannot hide one that this journal does not know.
-  if (inspection.status === "partial" && !journal.sessions.some((entry) => entry.sessionId === link.sessionId)) {
-    return {
-      decision: "pause",
-      pause: pauseOf(
-        deps,
-        "tool-evidence-missing",
-        `the session ends with an incomplete entry and no guardrail record proves what the discarded tail could have run`,
-        link.sessionId,
-      ),
-    };
+  if (inspection.status === "partial" && !journal.sessions.some((entry) => entry.sessionId === sessionId)) {
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      `the session ends with an incomplete entry and no guardrail record proves what the discarded tail could have run`,
+      sessionId,
+    );
   }
-
   // Paired with the journal's own rule (`callKey`), scoped to the session
   // being resumed: a `call-1` from an earlier round of the same attempt is not
   // evidence for THIS round's call, and would hide a call nobody journaled.
   const intentsByCall = new Map(
     journal.intents
-      .filter((intent) => intent.sessionId === link.sessionId)
+      .filter((intent) => intent.sessionId === sessionId)
       .map((intent) => [callKey(intent.sessionId, intent.callId), intent]),
   );
   const results = sessionToolResults(file, inspection.intactEntries);
@@ -179,31 +287,16 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
     if (call.tool !== "bash") continue;
     const safety = classifyCommand(call.command);
     if (safety.safety === "safe") continue;
-    if (intentsByCall.has(callKey(link.sessionId, call.callId))) continue;
+    if (intentsByCall.has(callKey(sessionId, call.callId))) continue;
     if (refusedBeforeExecution.has(call.callId)) continue;
-    return {
-      decision: "pause",
-      pause: pauseOf(
-        deps,
-        "tool-evidence-missing",
-        `the session records a ${safety.safety} bash call ${call.callId} with no guardrail intent — its effect cannot be established`,
-        link.sessionId,
-      ),
-    };
+    return pauseOf(
+      deps,
+      "tool-evidence-missing",
+      `the session records a ${safety.safety} bash call ${call.callId} with no guardrail intent — its effect cannot be established`,
+      sessionId,
+    );
   }
-
-  writeGuardrailState(deps.workDir, guardrailState(deps, "resume", link.sessionId, effects.verdicts));
-  return { decision: "launch", mode: "resume", sessionId: link.sessionId, intactEntries: inspection.intactEntries };
-}
-
-/**
- * The operator answered a paused work: verify the facts again before any
- * mutation. The answer is orientation, never confirmation that an effect did
- * not happen — what settled the pause is a fresh read of the real state.
- */
-export async function recheckPausedEffects(deps: ContinuityDeps): Promise<RecheckResult> {
-  const effects = await settleOpenEffects(deps);
-  return effects.settled ? { resolved: true, pause: null } : { resolved: false, pause: effects.pause };
+  return null;
 }
 
 /**

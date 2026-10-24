@@ -570,15 +570,25 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
 
         // 4. Repeating the evaluation duplicates nothing: the intent is already
         //    closed, so a fresh read settles on the same evidence.
-        const recheck = await recheckPausedEffects({
-          workDir: workDirPath,
-          sessionsDir: join(workDirPath, SESSIONS_SUBDIR),
-          work,
-          attempt: 1,
-          git,
-          tickets: tracker,
-          pullRequests: tracker,
-        });
+        const recheck = await recheckPausedEffects(
+          {
+            workDir: workDirPath,
+            sessionsDir: join(workDirPath, SESSIONS_SUBDIR),
+            work,
+            attempt: 1,
+            git,
+            tickets: tracker,
+            pullRequests: tracker,
+          },
+          {
+            version: 1,
+            work,
+            attempt: 1,
+            reason: "effect-unsupported",
+            detail: "the interrupted call cannot be classified",
+            at: "",
+          },
+        );
         assert.deepEqual(recheck, { resolved: true, pause: null });
         assert.equal(
           readEffectJournal(workDirPath).results.filter((result) => result.callId === refused.callId).length,

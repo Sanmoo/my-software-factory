@@ -12,6 +12,7 @@ import {
   readEffectJournal,
   readGuardrailState,
   readSessionLinks,
+  type PauseRecord,
 } from "./continuity-artifacts.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { DEFAULT_LABELS } from "../config.js";
@@ -32,6 +33,18 @@ const REPO = "Sanmoo/my-tasks";
 const NUMBER = 7;
 const REF = githubWork(REPO, NUMBER);
 const BRANCH = "agent-issue-7";
+
+/** The pause record a recheck reads its cause from (issue 173). */
+function pauseUnderRecheck(reason: "effect-ambiguous", attempt: number): PauseRecord {
+  return {
+    version: 1,
+    work: REF,
+    attempt,
+    reason,
+    detail: "the interrupted effect is ambiguous",
+    at: "2026-01-01T00:00:00.000Z",
+  };
+}
 
 class FakeGit implements GitWork {
   remoteHead: string | null = null;
@@ -333,6 +346,24 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     assert.equal(plan.decision, "pause");
     if (plan.decision !== "pause") return;
     assert.equal(plan.pause.reason, "tool-evidence-missing");
+
+    // The recheck reads the SAME rule (issue 173): a call that ran and failed is
+    // still missing its intent, so the pause stands.
+    const kept = await recheckPausedEffects(deps, plan.pause);
+    assert.equal(kept.resolved, false);
+    assert.equal(kept.pause?.reason, "tool-evidence-missing");
+
+    // Pi refused the call BEFORE executing it (an error result with no
+    // duration): the transcript proves the tool did not run, and the pause the
+    // factory wrote from an earlier read settles on its own.
+    seedSessionToolCall(session, {
+      callId: "call-ghost",
+      command: "git push origin agent-issue-7",
+      answered: true,
+      result: { isError: true, text: "msf continuity guardrail: realized before the interruption" },
+    });
+    const settled = await recheckPausedEffects(deps, plan.pause);
+    assert.equal(settled.resolved, true, JSON.stringify(settled.pause));
   });
 
   test("an interruption inside a provably local call is continued: there is nothing to reconcile", async () => {
@@ -514,12 +545,12 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
       actions: [{ kind: "push", key: `push:${BRANCH}@abc123`, detail: "push", branch: BRANCH, sha: "abc123" }],
     });
     git.remoteHead = "def456";
-    const unresolved = await recheckPausedEffects(deps);
+    const unresolved = await recheckPausedEffects(deps, pauseUnderRecheck("effect-ambiguous", 2));
     assert.equal(unresolved.resolved, false);
     assert.equal(unresolved.pause?.reason, "effect-ambiguous");
 
     git.remoteHead = "abc123";
-    const resolved = await recheckPausedEffects(deps);
+    const resolved = await recheckPausedEffects(deps, pauseUnderRecheck("effect-ambiguous", 2));
     assert.equal(resolved.resolved, true);
   });
 
@@ -633,7 +664,7 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
 
     // A recheck reads the world again and appends nothing: the effect is still
     // ambiguous, so the pause stays and no result is duplicated.
-    const unresolved = await recheckPausedEffects(deps);
+    const unresolved = await recheckPausedEffects(deps, plan.pause);
     assert.equal(unresolved.resolved, false);
     assert.equal(unresolved.pause?.reason, "effect-ambiguous");
     assert.equal(readEffectJournal(workDir).results.length, 1, "one conclusion, never a duplicate");
@@ -641,7 +672,7 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     // The facts change: the remote now proves the push. The recheck resolves and
     // the next session's guardrail carries the verdict it needs.
     git.remoteHead = "abc123";
-    const resolved = await recheckPausedEffects(deps);
+    const resolved = await recheckPausedEffects(deps, plan.pause);
     assert.equal(resolved.resolved, true);
     assert.equal(readEffectJournal(workDir).results.length, 1, "still one conclusion");
     const launch = await planContinuity(deps, "resume");

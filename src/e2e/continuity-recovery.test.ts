@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -763,5 +763,293 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(readFileSync(session.file, "utf8"), corrupted, "the original state is preserved as evidence");
     const comments = await issueComments(7);
     assert.match(comments.at(-1) ?? "", /session history is unreadable/);
+  });
+
+  // ---- issue 173: a persisted pause is re-evaluated by the normal cycle ----
+
+  /** The pause the factory announced for work 7, written as the real artifact.
+   *  `attempt` is the number the launch PLANNED, which may differ from the last
+   *  attempt the disk evidences (issue 175). */
+  function persistAnnouncedPause(
+    ref: IssueRef,
+    attempt: number,
+    id: string,
+    overrides: Record<string, unknown> = {},
+  ): string {
+    const target = workDir(layout, REPO, 7);
+    writeFileSync(
+      join(target, "pausa.json"),
+      JSON.stringify({
+        version: 1,
+        work: ref,
+        attempt,
+        reason: "effect-ambiguous",
+        detail: "the push of agent-issue-7 is ambiguous",
+        at: NOW,
+        id,
+        announced: true,
+        ...overrides,
+      }),
+      "utf8",
+    );
+    return target;
+  }
+
+  test("issue 173 — an announced pause the session now settles clears on its own and continues the SAME attempt", async () => {
+    const { session } = interruptedAttempt2({ pending: "push", remote: "def456" });
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+
+    // 1. The pause: announced, blocked, one request, nothing launched.
+    const paused = await runOnce(deps(cfg));
+    assert.equal(paused.launched.length, 0);
+    assert.equal(readPause(target)?.reason, "effect-ambiguous");
+    assert.equal(readPause(target)?.announced, true);
+    assert.equal((await agentComments(7)).length, 1, "the operator is asked once");
+    const notified = notifier.notifications.length;
+
+    // 2. The real state now proves the push — no human comment anywhere.
+    git.remoteHead = "abc123";
+    const resolved = await runOnce(deps(cfg));
+
+    assert.equal(resolved.launched.length, 1, "the settled pause releases the work in the same cycle");
+    const request = resolved.launched[0]!.request;
+    assert.equal(request.attempt, 2, "the SAME attempt continues");
+    assert.equal(request.branch, "agent-issue-7", "the branch is preserved");
+    assert.deepEqual(request.session, { mode: "resume", sessionId: session.sessionId }, "ITS own session");
+    assert.equal(runtime.resumed[0]?.session?.sessionId, session.sessionId, "the runtime reopened that file");
+
+    // The pause is resolved on disk, not only in memory.
+    assert.equal(readPause(target), null, "no pause is current any more");
+    assert.equal(existsSync(join(target, "pausa.json.resolved")), true, "the record is kept as resolved evidence");
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), false, "the block left with the pause");
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.claimed), true);
+    assert.equal((await agentComments(7)).length, 1, "no new question, no new diagnostic");
+    assert.equal(notifier.notifications.length, notified, "nothing is notified again");
+    const ledger = await readRecoveryLedger(target);
+    assert.equal(ledger.attempt, 2);
+    assert.equal(ledger.consumed, 1, "the existing recovery ruler charged the relaunch it granted");
+
+    // 3. Nothing duplicates — not after the relaunch, not after a restart.
+    const results = readEffectJournal(target).results.length;
+    const restart = await runOnce(deps(cfg));
+    assert.equal(restart.launched.length, 0);
+    assert.equal((await agentComments(7)).length, 1);
+    assert.equal(notifier.notifications.length, notified);
+    assert.equal(readEffectJournal(target).results.length, results, "the conclusion is never written twice");
+    assert.equal(readPause(target), null, "a resolved pause never comes back");
+  });
+
+  test("issue 173 — a pause settled under a human answer is a NEW round that keeps it, spending no recovery", async () => {
+    const PAUSE_ID = "6f1c9a2e-1c1f-4f6b-9a1b-2f0f0b7c1111";
+    const { session, ref } = interruptedAttempt2({ pending: "push", remote: "def456" });
+    const target = persistAnnouncedPause(ref, 2, PAUSE_ID, { sessionId: session.sessionId });
+    await tracker.comment(ref, `<!-- msf:pause:${PAUSE_ID} -->\nattempt 2 cannot be continued safely (effect-ambiguous)`);
+    tracker.addComment(ref, "operator", "I pushed abc123; check again.");
+
+    git.remoteHead = "abc123";
+    const sweep = await runOnce(deps(config()));
+
+    assert.equal(sweep.launched.length, 1, "the settled pause releases the work");
+    const request = sweep.launched[0]!.request;
+    assert.equal(request.attempt, 3, "the human answer opens the next attempt");
+    assert.equal(request.session?.mode, "new", "a human-oriented round, not a blind replay of the old session");
+    assert.notEqual(request.session?.sessionId, session.sessionId);
+    assert.deepEqual(
+      request.material.ticketReplies?.map((comment) => comment.body),
+      ["I pushed abc123; check again."],
+      "the preserved answer orients the round",
+    );
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "a resume round spends no recovery");
+    assert.equal(readPause(target), null, "the pause is resolved");
+    assert.equal((await agentComments(7)).length, 1, "the request already on the issue is not repeated");
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the retomada swapped the block off");
+  });
+
+  test("issue 173 — a pause that named the PLANNED attempt still resolves and continues from the evidenced one", async () => {
+    const ref: IssueRef = { repo: REPO, number: 7 };
+    seedIssue(tracker, { repo: REPO, number: 7, createdAt: NOW, labels: [DEFAULT_LABELS.blocked] });
+    const target = workDir(layout, REPO, 7);
+    mkdirSync(target, { recursive: true });
+    // Attempt 5 is the last one the disk evidences; the launch that paused had
+    // planned attempt 6 (no log, no session of its own).
+    writeFileSync(join(target, "log-5.jsonl"), '{"event":"session-end","attempt":5}\n', "utf8");
+    const session = seedSession(target, ref, 5);
+    seedSessionToolCall(session, { callId: "call-push", command: "git push origin agent-issue-7", answered: false });
+    appendJournalIntent(target, {
+      attempt: 5,
+      sessionId: session.sessionId,
+      callId: "call-push",
+      tool: "bash",
+      command: "git push origin agent-issue-7",
+      safety: "effect",
+      actions: [{ kind: "push", key: "push:agent-issue-7@abc123", detail: "push branch agent-issue-7", branch: "agent-issue-7", sha: "abc123" }],
+    });
+    persistAnnouncedPause(ref, 6, "11111111-1111-4111-8111-111111111111");
+    const paused = readFileSync(join(target, "pausa.json"), "utf8");
+    const cfg = config();
+
+    // 1. Still unproven: the pause stands and nothing is written or asked.
+    git.remoteHead = "def456";
+    const waiting = await runOnce(deps(cfg));
+    assert.equal(waiting.launched.length, 0);
+    assert.equal(readFileSync(join(target, "pausa.json"), "utf8"), paused, "the pause is not rewritten");
+    assert.equal((await agentComments(7)).length, 0, "nothing is asked again");
+    assert.deepEqual(readEffectJournal(target).pending.map((intent) => intent.callId), ["call-push"]);
+
+    // 2. The remote proves the evidenced attempt's push: the pause resolves and
+    //    the planned attempt 6 — which never had a session — starts its own.
+    git.remoteHead = "abc123";
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 1);
+    const request = sweep.launched[0]!.request;
+    assert.equal(request.attempt, 6, "the attempt the pause named is the one that continues");
+    assert.equal(request.session?.mode, "new", "attempt 6 never created a session: it starts its first");
+    assert.notEqual(request.session?.sessionId, session.sessionId);
+    assert.equal(readFileSync(session.file, "utf8").includes(session.sessionId), true, "the evidenced session is preserved");
+    assert.equal(readPause(target), null, "the pause is resolved");
+    assert.deepEqual(await labelsOf(7), [DEFAULT_LABELS.claimed], "the block left with the pause");
+
+    const concluded = readEffectJournal(target).results;
+    assert.equal(concluded.length, 1, "exactly one conclusion, for the call that was open");
+    assert.equal(concluded[0]?.attempt, 5, "the conclusion names the attempt the intent belonged to");
+    assert.equal(concluded[0]?.ok, true);
+    const ledger = await readRecoveryLedger(target);
+    assert.equal(ledger.attempt, 6);
+    assert.equal(ledger.consumed, 1, "the launch obeyed the existing recovery ruler");
+    assert.equal(ledger.events.length, 1, "one grant, written by the launch — never a fabricated entry");
+    assert.equal(ledger.lastFallAttempt, null, "no fall is invented to justify the relaunch");
+  });
+
+  test("issue 173 — a paused call the transcript proves never ran is settled by the normal cycle", async () => {
+    // The pause was written from a read that did not yet hold the call's
+    // refusal: a non-safe call with no guardrail intent is, on its own, a doubt
+    // the factory cannot answer. The transcript's terminal refusal — an error
+    // with no duration, the shape only a call that never ran has — settles it.
+    const { session } = interruptedAttempt2({});
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+
+    const paused = await runOnce(deps(cfg));
+    assert.equal(paused.launched.length, 0);
+    assert.equal(readPause(target)?.reason, "tool-evidence-missing");
+    const asked = (await agentComments(7)).length;
+    assert.equal(asked, 1, "the missing evidence is reported once");
+
+    seedSessionToolCall(session, {
+      callId: "call-unknown",
+      command: "curl -X POST https://example.com",
+      answered: true,
+      result: { isError: true, text: "msf continuity guardrail: realized before the interruption" },
+    });
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 1, "the same rule the resume plan applies settles the pause");
+    const request = sweep.launched[0]!.request;
+    assert.equal(request.attempt, 2, "the SAME attempt continues");
+    assert.deepEqual(request.session, { mode: "resume", sessionId: session.sessionId }, "ITS own session");
+    assert.equal(readPause(target), null, "the pause is resolved");
+    assert.equal((await agentComments(7)).length, asked, "no new question is asked");
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 1, "the recovery ruler applies");
+  });
+
+  test("issue 173 — without a terminal result the pause stands sweep after sweep, spending nothing", async () => {
+    interruptedAttempt2({ pending: "unknown" });
+    seedIssue(tracker, { repo: REPO, number: 8, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+
+    const first = await runOnce(deps(cfg));
+    assert.equal(first.launched.length, 1, "the other work keeps progressing");
+    assert.equal(launchedNumber(first.launched[0]!.request), 8);
+    const asked = (await agentComments(7)).length;
+    assert.equal(asked, 1, "the operator is asked once");
+    const notified = notifier.notifications.length;
+    const pause = readPause(target);
+    assert.equal(pause?.reason, "effect-unsupported");
+    const journal = readFileSync(join(target, "efeitos.jsonl"), "utf8");
+
+    for (const round of ["sweep", "restart"]) {
+      const again = await runOnce(deps(cfg));
+      assert.equal(again.launched.length, 0, `${round}: no launch without evidence`);
+      assert.equal((await agentComments(7)).length, asked, `${round}: the question is not repeated`);
+      assert.equal(notifier.notifications.length, notified, `${round}: nothing is notified again`);
+      assert.equal(readPause(target)?.reason, "effect-unsupported", `${round}: the pause stands`);
+      assert.equal(readPause(target)?.id, pause?.id, `${round}: the occurrence keeps its identity`);
+      assert.equal(readFileSync(join(target, "efeitos.jsonl"), "utf8"), journal, `${round}: the journal is untouched`);
+      assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, `${round}: no recovery is spent`);
+    }
+  });
+
+  test("issue 173 — a session that became unreadable keeps the pause and preserves the evidence", async () => {
+    const { session } = interruptedAttempt2({ pending: "push", remote: "def456" });
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+    await runOnce(deps(cfg));
+    const asked = (await agentComments(7)).length;
+
+    // The transcript the recheck would read can no longer be read: that is the
+    // doubt itself, never a resolution nor a reason to write over it.
+    writeFileSync(session.file, "{not-json}{\n", "utf8");
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 0, "no relaunch on evidence it cannot read");
+    assert.equal(runtime.launched.length, 0);
+    assert.equal((await agentComments(7)).length, asked, "the question is not repeated");
+    assert.equal(readPause(target)?.reason, "effect-ambiguous", "the pause stands as it was");
+    assert.equal(readFileSync(session.file, "utf8"), "{not-json}{\n", "the unreadable history is preserved as evidence");
+    assert.deepEqual(readEffectJournal(target).pending.map((intent) => intent.callId), ["call-push"]);
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
+  });
+
+  test("issue 173 — a settled pause still obeys the recovery ruler: an exhausted budget asks for help", async () => {
+    const PAUSE_ID = "22222222-2222-4222-8222-222222222222";
+    const { session, ref } = interruptedAttempt2({ pending: "push", remote: "def456", labels: [DEFAULT_LABELS.blocked] });
+    const target = persistAnnouncedPause(ref, 2, PAUSE_ID, { sessionId: session.sessionId });
+    await tracker.comment(ref, `<!-- msf:pause:${PAUSE_ID} -->\nattempt 2 cannot be continued safely (effect-ambiguous)`);
+    const cfg = { ...config(), recovery: { ...DEFAULT_RECOVERY_BUDGET, maxRecoveries: 0, waitsMs: [0, 0, 0] } };
+
+    git.remoteHead = "abc123";
+    const sweep = await runOnce(deps(cfg));
+
+    assert.equal(sweep.launched.length, 0, "a resolved pause never becomes a silent launch");
+    assert.equal(runtime.launched.length, 0);
+    const comments = await agentComments(7);
+    assert.equal(comments.length, 2, "the existing pause-help ruler asks once, naming the budget");
+    assert.match(comments[1] ?? "", /was interrupted and the recovery budget is exhausted/);
+    assert.equal(readPause(target), null, "the continuity pause was resolved, not recreated");
+    assert.equal(existsSync(join(target, "pausa.json.resolved")), true);
+    assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true, "the human is asked on the issue");
+    assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "an exhausted budget spends nothing");
+  });
+
+  test("issue 173 — a worker that may still be alive blocks the re-evaluation: no journal write, no launch", async () => {
+    interruptedAttempt2({ pending: "push", remote: "def456" });
+    const target = workDir(layout, REPO, 7);
+    const cfg = config();
+    await runOnce(deps(cfg));
+    git.remoteHead = "abc123";
+    const journal = readFileSync(join(target, "efeitos.jsonl"), "utf8");
+    const pause = readFileSync(join(target, "pausa.json"), "utf8");
+
+    // Docker cannot rule the worker out: the answer is unknown, so nothing may
+    // presume it stopped.
+    const blind = await runOnce({
+      ...deps(cfg),
+      probe: () => Promise.reject(new Error("docker: daemon is not reachable")),
+    });
+    assert.equal(blind.launched.length, 0);
+    assert.equal(readFileSync(join(target, "efeitos.jsonl"), "utf8"), journal, "a possibly-live worker's journal is not written");
+    assert.equal(readFileSync(join(target, "pausa.json"), "utf8"), pause, "the pause is untouched");
+
+    // A live container for the work: the same answer, even with a reliable probe.
+    const survivor = await runOnce({
+      ...deps(cfg),
+      probe: async () => [{ key: `${REPO}#7`, containerId: "c-7", ageMs: 60_000 }],
+    });
+    assert.equal(survivor.launched.length, 0, "no substitute is launched over a live worker");
+    assert.equal(readFileSync(join(target, "efeitos.jsonl"), "utf8"), journal);
+    assert.equal(readPause(target)?.reason, "effect-ambiguous", "the pause survives the survivor");
   });
 });
