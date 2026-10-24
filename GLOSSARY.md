@@ -123,16 +123,15 @@ A mutation of state outside the worktree that a worker's tool call produces: a p
 _Avoid_: Side effect, when the point is that the world was changed.
 
 **Effect intent**:
-The journal entry the in-container guardrail writes BEFORE an effect can run. An intent without its result is exactly the window an interruption leaves open.
+The recorded intention to perform a tool call that may produce an external effect, before that call is allowed to run. An intent without a recorded result leaves completion unestablished; it proves neither execution nor absence of effects.
 
 **Reconciliation**:
 Reading the real state (the remote branch, the PR, the conversation, the labels) to decide whether an interrupted effect happened: realized (do not repeat), absent (may run once), or unknown (pause and ask).
 _Avoid_: Verification, when no external state is read.
 
 **Continuity pause**:
-The persisted wait for the operator when an interrupted attempt cannot be continued safely — its session is missing, unreadable or of another identity, or an interrupted effect stayed unknown. It spends no attempt and no recovery and survives a restart; it is not the Docker-unavailability suspension.
-The issue is marked blocked while it waits, but the cause is the session or an unknown effect, not a fall — the pause asks once and spends nothing.
-_Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt.
+The persisted hold on a work whose attempt cannot safely continue because its session or an external effect remains unresolved; it survives restarts, marks the ticket blocked and asks for help once. It spends no attempt or recovery and clears when reliable evidence resolves the cause, without requiring another human answer.
+_Avoid_: Fall, when no attempt was consumed; Liveness unknown, when the session or the effect is the doubt; Docker-unavailability suspension, which is not a continuity pause.
 
 **Guardrail**:
 The factory-owned extension loaded inside the worker container that journals effect intents before they run and blocks a repeat at the tool boundary — an effect the host proved already realized, an effect proven absent already run once in the round, one a previous round already attempted, or any effect while it cannot read its own state. It is code at the boundary, never prompt obedience.
