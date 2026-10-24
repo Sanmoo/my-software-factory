@@ -1,3 +1,4 @@
+import type { JiraSourceConfig } from "../config.js";
 import type { TicketSelection } from "./expanded-port.js";
 
 /**
@@ -91,6 +92,22 @@ export function sourceKey(source: Pick<TicketSource, "provider" | "site">): stri
 /** One selection per configured repository: its issues feed its own code host. */
 export function githubSelections(repos: readonly string[]): TicketSelection[] {
   return repos.map((repo) => ({ source: githubSource(), destination: githubRepository(repo) }));
+}
+
+/** The source of one configured Jira site: provider + site, never the query. */
+export function jiraSource(site: string): TicketSource {
+  return { provider: "jira", site };
+}
+
+/** One selection per configured Jira source: the site, the operator's JQL and
+ *  the explicit GitHub destination. Two queries may share a site; each entry
+ *  stays its own selection, so no destination is guessed. */
+export function jiraSelections(sources: readonly JiraSourceConfig[]): TicketSelection[] {
+  return sources.map((source) => ({
+    source: jiraSource(source.site),
+    destination: githubRepository(source.destination),
+    jql: source.jql,
+  }));
 }
 
 export function githubTicket(repo: string, number: number): GitHubTicketIdentity {

@@ -37,7 +37,25 @@ repos:
 # liveness:                       # Docker silence suspends launches (issue 118)
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
+# jira:                           # Jira Cloud sources (read-only in this release)
+#   - site: acme.atlassian.net    # a Cloud site; one authenticated identity per site
+#     account: bot@acme.example   # the Atlassian login the API token belongs to
+#     token-env: MSF_JIRA_ACME_TOKEN  # the NAME of the local variable holding the token
+#     jql: project = ABC AND assignee = currentUser()
+#     destination: Sanmoo/my-tasks   # explicit GitHub destination, never guessed
 ```
+
+A Jira source is selected only by its own JQL and read in Jira's native **Rank
+ascending** order: the factory supplies the ordering when the query has none
+and rejects a conflicting `ORDER BY` as a configuration error — it never falls
+back to age or Priority. The JQL is the whole selection: no unassigned-only,
+open-only, readiness-label or subtask filter is added. `currentUser()` in JQL
+means the authenticated account configured by `account` (the API token's
+owner), not an implicitly different human operator. The token itself is never a
+YAML value: `token-env` names the local environment variable that holds it.
+This release only reads Jira — `msf status` lists the candidates (no claim,
+comment or launch), and `msf run` refuses a Jira configuration before any
+claim. `repos` may be omitted when Jira supplies every destination.
 
 ## Usage
 

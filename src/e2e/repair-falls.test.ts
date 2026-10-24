@@ -105,6 +105,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 2,
       workspace: layout.root,
@@ -1243,6 +1244,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
     const config: Config = {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 1,
       workspace: layout.root,

@@ -76,6 +76,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

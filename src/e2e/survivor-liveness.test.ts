@@ -113,6 +113,7 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

@@ -102,6 +102,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

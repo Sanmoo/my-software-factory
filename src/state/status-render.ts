@@ -12,7 +12,7 @@ import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
 import { knownAttempt } from "../runtime/continuity-artifacts.js";
 import type { WorkEvidence } from "./evidence.js";
-import type { OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
+import type { JiraSourceView, OrphanedAttempt, RunningWorker, StatusView } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
@@ -156,6 +156,11 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("pool (eligible)", view.pool.map((entry) => renderWorkIdentity(entry.work)), cap));
 
+  // Jira candidates are read-only in this release (issue 128): the section
+  // never claims, comments or launches, and a source that could not be read
+  // says unknown instead of "none" — a candidate is not a reservation.
+  lines.push(...renderJiraSources(view.jira, cap));
+
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
   lines.push(
@@ -170,6 +175,38 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   );
 
   return lines.join("\n");
+}
+
+/** The Jira candidates, one block per configured selection (issue 128): native
+ *  Rank order, no claim, and unknown when the source could not be read. */
+function renderJiraSources(sources: readonly JiraSourceView[], cap: number): string[] {
+  if (sources.length === 0) return [];
+  const lines = [
+    `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ${sources.length}`,
+  ];
+  for (const source of sources) {
+    const site = source.selection.source.site;
+    const repo = source.selection.destination.repo;
+    if (source.state === "unknown") {
+      lines.push(`  ${site} → ${repo}: unknown (${source.reason})`);
+      continue;
+    }
+    if (source.candidates.length === 0) {
+      lines.push(`  ${site} → ${repo}: none`);
+      continue;
+    }
+    lines.push(`  ${site} → ${repo}: ${source.candidates.length}`);
+    const shown = source.candidates.slice(0, cap);
+    for (const [index, candidate] of shown.entries()) {
+      const assignee =
+        candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
+      lines.push(`    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`);
+    }
+    if (source.candidates.length > shown.length) {
+      lines.push(`    … and ${source.candidates.length - shown.length} more`);
+    }
+  }
+  return lines;
 }
 
 /** One live worker: the work, how long it has run, which attempt it carries

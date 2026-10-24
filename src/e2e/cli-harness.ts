@@ -284,3 +284,79 @@ export function waitForStdout(child: ChildProcess, text: string, timeoutMs = 10_
     });
   });
 }
+
+/**
+ * Hermetic Jira REST for the tests that spawn the CLI: the binary's Jira
+ * adapter uses `fetch`, so a preload (NODE_OPTIONS=--require) replaces it with
+ * a canned channel. Answers are keyed by "METHOD /rest/api/3/<path>"; a key
+ * may hold a list, consumed in order, for the token-paginated search. The call
+ * log records what the child actually requested, and an undeclared request
+ * fails loudly — a mutation or a dropped query is a test bug, never swallowed.
+ */
+export interface JiraRestAnswer {
+  /** The JSON body the shim answers (200 by default). */
+  body?: unknown;
+  /** A non-2xx status for the canned body. */
+  status?: number;
+  /** A transport failure: `fetch` rejects with this text. */
+  failure?: string;
+}
+
+export interface JiraFetchShim {
+  /** The environment the child needs (answers, log and the fetch preload). */
+  env: NodeJS.ProcessEnv;
+  /** The "METHOD path" requests the child made, in request order. */
+  calls(): string[];
+}
+
+export function installJiraFetchShim(
+  baseDir: string,
+  answers: Record<string, JiraRestAnswer | JiraRestAnswer[]>,
+): JiraFetchShim {
+  const channelDir = join(baseDir, "jira-rest");
+  mkdirSync(channelDir, { recursive: true });
+  const answersPath = join(channelDir, "answers.json");
+  const log = join(channelDir, "calls.log");
+  const preload = join(channelDir, "fetch-shim.cjs");
+  writeFileSync(answersPath, JSON.stringify(answers), "utf8");
+  writeFileSync(log, "", "utf8");
+  writeFileSync(
+    preload,
+    [
+      '"use strict";',
+      "// The canned Jira REST channel (cli-harness.ts): the preload replaces the",
+      "// child's fetch, answers from answers.json and records every request.",
+      'const fs = require("node:fs");',
+      'const answers = JSON.parse(fs.readFileSync(process.env.MSF_JIRA_ANSWERS, "utf8"));',
+      "const used = new Map();",
+      "globalThis.fetch = async (input, init) => {",
+      '  const url = new URL(typeof input === "string" ? input : input.url);',
+      '  const method = String((init && init.method) || "GET").toUpperCase();',
+      '  const key = method + " " + url.pathname;',
+      '  fs.appendFileSync(process.env.MSF_JIRA_CALLS, key + "\\n");',
+      "  const entry = answers[key];",
+      '  if (entry === undefined) throw new TypeError("msf jira-shim: no canned answer for " + key);',
+      "  const list = Array.isArray(entry) ? entry : [entry];",
+      "  const index = used.get(key) ?? 0;",
+      "  used.set(key, index + 1);",
+      "  const answer = list[Math.min(index, list.length - 1)];",
+      "  if (answer.failure) throw new TypeError(answer.failure);",
+      "  return new Response(JSON.stringify(answer.body === undefined ? {} : answer.body), {",
+      "    status: answer.status || 200,",
+      '    headers: { "content-type": "application/json" },',
+      "  });",
+      "};",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const nodeOptions = [process.env["NODE_OPTIONS"], `--require ${preload}`].filter(Boolean).join(" ");
+  return {
+    env: {
+      NODE_OPTIONS: nodeOptions,
+      MSF_JIRA_ANSWERS: answersPath,
+      MSF_JIRA_CALLS: log,
+    },
+    calls: () => readLog(log),
+  };
+}

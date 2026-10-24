@@ -375,3 +375,144 @@ describe("config", () => {
     assert.throws(() => loadConfig(path), /notifications.*boolean/);
   });
 });
+
+// ---- Jira Cloud sources (issue 128) ----
+
+describe("config: Jira Cloud sources", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A minimal GitHub header; the Jira section is appended by each test. */
+  const HEAD = ["worker-gh-account: bot", "worker-model: opencode-go/glm-5.3-flash"];
+
+  function jiraYaml(...entries: string[]): string {
+    return writeYaml(dir, [...HEAD, "jira:", ...entries].join("\n"));
+  }
+
+  function oneEntry(overrides: Partial<Record<string, string>> = {}): string {
+    const fields: Record<string, string> = {
+      site: "acme.atlassian.net",
+      account: "bot@acme.example",
+      "token-env": "MSF_JIRA_ACME_TOKEN",
+      jql: "project = ABC AND assignee = currentUser()",
+      destination: "Sanmoo/my-tasks",
+      ...overrides,
+    };
+    return Object.entries(fields)
+      .map(([key, value], index) => `  ${index === 0 ? "-" : " "} ${key}: ${JSON.stringify(value)}`)
+      .join("\n");
+  }
+
+  test("a Jira source carries site, account, the local credential reference, the query and the destination", () => {
+    const config = loadConfig(jiraYaml(oneEntry()));
+
+    assert.equal(config.jira.length, 1);
+    assert.deepEqual(config.jira[0], {
+      site: "acme.atlassian.net",
+      account: "bot@acme.example",
+      tokenEnv: "MSF_JIRA_ACME_TOKEN",
+      jql: "project = ABC AND assignee = currentUser() ORDER BY Rank ASC",
+      destination: "Sanmoo/my-tasks",
+    });
+  });
+
+  test("a GitHub-only config stays valid and has no Jira source", () => {
+    const path = writeYaml(dir, `${HEAD.join("\n")}\nrepos: [Sanmoo/a]`);
+
+    assert.deepEqual(loadConfig(path).jira, []);
+  });
+
+  test("the destination is explicit — a Jira-only config needs no GitHub Issues repo list", () => {
+    const config = loadConfig(jiraYaml(oneEntry()));
+
+    assert.deepEqual(config.repos, [], "no GitHub Issues source is invented");
+    assert.equal(config.jira[0]?.destination, "Sanmoo/my-tasks");
+  });
+
+  test("an API token is not a permitted YAML value — the error names token-env and never echoes the secret", () => {
+    const secret = "ATATT3xFfGF0-super-secret-value";
+    const path = jiraYaml(oneEntry({ token: secret }));
+
+    let message = "";
+    try {
+      loadConfig(path);
+      assert.fail("a token value must be refused");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert.match(message, /token-env/);
+    assert.match(message, /token/);
+    assert.ok(!message.includes(secret), "the token value never reaches the diagnostic");
+  });
+
+  test("token-env is the NAME of a local variable — a pasted token is refused", () => {
+    const path = jiraYaml(oneEntry({ "token-env": "ATATT3xFfGF0secret" }));
+    assert.throws(() => loadConfig(path), /token-env.*environment variable/i);
+
+    const lower = jiraYaml(oneEntry({ "token-env": "msf_jira_token" }));
+    assert.throws(() => loadConfig(lower), /token-env.*environment variable/i);
+  });
+
+  test("the site must be a Jira Cloud site, never an arbitrary host", () => {
+    for (const site of ["jira.example.com", "acme.atlassian.net.evil", "https://acme.atlassian.net"]) {
+      const path = jiraYaml(oneEntry({ site }));
+      assert.throws(() => loadConfig(path), /atlassian\.net|Cloud/, `rejected: ${site}`);
+    }
+  });
+
+  test("the account is the Atlassian login used for API-token authentication", () => {
+    const path = jiraYaml(oneEntry({ account: "not-an-email" }));
+    assert.throws(() => loadConfig(path), /account/);
+  });
+
+  test("a query with an explicit Rank ascending order is kept as configured", () => {
+    const config = loadConfig(jiraYaml(oneEntry({ jql: "project = ABC ORDER BY Rank ASC" })));
+    assert.equal(config.jira[0]?.jql, "project = ABC ORDER BY Rank ASC");
+  });
+
+  test("a conflicting ordering is rejected as a configuration error, naming the field", () => {
+    for (const jql of ["project = ABC ORDER BY created ASC", "project = ABC ORDER BY Rank DESC"]) {
+      const path = jiraYaml(oneEntry({ jql }));
+      assert.throws(() => loadConfig(path), /jira\[0\]\.jql/, `rejected: ${jql}`);
+    }
+  });
+
+  test("every required field of a source is required", () => {
+    for (const key of ["site", "account", "token-env", "jql", "destination"]) {
+      const fields = {
+        site: "acme.atlassian.net",
+        account: "bot@acme.example",
+        "token-env": "MSF_JIRA_ACME_TOKEN",
+        jql: "project = ABC",
+        destination: "Sanmoo/my-tasks",
+      } as Record<string, string | undefined>;
+      delete fields[key];
+      const entry = Object.entries(fields)
+        .map(([name, value], index) => `  ${index === 0 ? "-" : " "} ${name}: ${JSON.stringify(value)}`)
+        .join("\n");
+      assert.throws(() => loadConfig(jiraYaml(entry)), new RegExp(key), `missing ${key}`);
+    }
+  });
+
+  test("an unknown key is refused instead of ignored", () => {
+    const path = jiraYaml(oneEntry({ nonsense: "x" }));
+    assert.throws(() => loadConfig(path), /nonsense/);
+  });
+
+  test("two queries may feed the same site, but one site has one authenticated identity", () => {
+    const sameIdentity = loadConfig(
+      jiraYaml(oneEntry(), oneEntry({ destination: "Sanmoo/other-tasks", jql: "project = OTHER" })),
+    );
+    assert.equal(sameIdentity.jira.length, 2);
+
+    const path = jiraYaml(oneEntry(), oneEntry({ account: "other@acme.example" }));
+    assert.throws(() => loadConfig(path), /acme\.atlassian\.net.*account|account.*acme\.atlassian\.net/);
+  });
+});

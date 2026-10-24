@@ -97,6 +97,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency,
       workspace: layout.root,

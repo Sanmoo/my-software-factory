@@ -78,6 +78,7 @@ describe("loop wiring — the git host feeds every launch", () => {
       config: {
         workerGhAccount: "bot",
         workerModel: "opencode-go/glm-5.3-flash",
+        jira: [],
         repos: ["Sanmoo/a"],
         concurrency: 2,
         workspace: root,

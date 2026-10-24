@@ -106,6 +106,7 @@ describe("e2e: a failed sweep never kills the continuous factory (issue 158)", (
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 1,
       workspace: layout.root,

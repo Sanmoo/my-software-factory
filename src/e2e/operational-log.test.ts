@@ -102,6 +102,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
     return {
       workerGhAccount: "bot",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos,
       concurrency: 2,
       workspace: layout.root,

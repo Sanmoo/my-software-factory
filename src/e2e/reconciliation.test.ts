@@ -75,6 +75,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
     return {
       workerGhAccount: "bot",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 2,
       workspace: layout.root,
