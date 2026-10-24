@@ -167,7 +167,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
       "retro (window reports mark the next window; items land as needs-triage)",
       [
         retro.lastReport === null
-          ? `no report yet — the first round covers the last ${FIRST_WINDOW_SIZE} finished works`
+          ? "no report yet — the first round covers the most recent finished works"
           : `${retro.lastReport} — ${retro.filed} item(s) filed by the last round`,
         ...(retro.lastReport !== null && retro.boundaryAt === null
           ? ["no window boundary yet — only single-work post-mortems ran, and they never move it"]
