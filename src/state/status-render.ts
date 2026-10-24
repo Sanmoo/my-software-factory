@@ -3,7 +3,7 @@ import {
   renderUnmarkedReservation,
 } from "./derive.js";
 import { renderWorkKey } from "../pool/work-key.js";
-import { renderWorkIdentity, renderTicketIdentity } from "../tracker/identity.js";
+import { renderWorkIdentity, renderTicketIdentity, renderRepositoryIdentity } from "../tracker/identity.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
 import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
@@ -186,6 +186,11 @@ function renderJiraSources(
   cap: number,
 ): string[] {
   if (sources.length === 0) return [];
+  // A site with an unreadable selection cannot rule out an overlap: the
+  // readable selections on it still list, and say the overlap is unverified.
+  const unverifiedSites = new Set(
+    sources.filter((source) => source.state === "unknown").map((source) => source.selection.source.site),
+  );
   const lines = [
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ${sources.length}`,
   ];
@@ -196,33 +201,45 @@ function renderJiraSources(
       lines.push(`  ${site} → ${repo}: unknown (${source.reason})`);
       continue;
     }
+    const unverified = unverifiedSites.has(site)
+      ? "; another selection on this site is unknown, so a conflicting destination is unverified"
+      : "";
+    const held = source.held === 0 ? "" : `${source.held} held as ambiguous`;
     if (source.candidates.length === 0) {
-      lines.push(`  ${site} → ${repo}: none`);
+      lines.push(`  ${site} → ${repo}: ${held === "" ? "none" : `0 (${held})`}${unverified}`);
       continue;
     }
-    lines.push(`  ${site} → ${repo}: ${source.candidates.length}`);
-    const shown = source.candidates.slice(0, cap);
-    for (const [index, candidate] of shown.entries()) {
+    lines.push(
+      `  ${site} → ${repo}: ${source.candidates.length}${held === "" ? "" : ` (${held})`}${unverified}`,
+    );
+    renderCapped(lines, source.candidates, cap, (candidate, index) => {
       const assignee =
         candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
-      lines.push(`    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`);
-    }
-    if (source.candidates.length > shown.length) {
-      lines.push(`    … and ${source.candidates.length - shown.length} more`);
-    }
+      return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`;
+    });
   }
   if (ambiguous.length > 0) {
     lines.push(`  ambiguous (more than one destination — held, no destination chosen): ${ambiguous.length}`);
-    for (const entry of ambiguous.slice(0, cap)) {
-      lines.push(
-        `    ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${entry.destinations.join(", ")}`,
-      );
-    }
-    if (ambiguous.length > cap) {
-      lines.push(`    … and ${ambiguous.length - cap} more`);
-    }
+    renderCapped(lines, ambiguous, cap, (entry) => {
+      const destinations = entry.destinations.map(renderRepositoryIdentity).join(", ");
+      return `    ${renderTicketIdentity(entry.ticket)} — ${entry.title} → ${destinations}`;
+    });
   }
   return lines;
+}
+
+/** One capped list: the entries, then the omission marker past the cap. */
+function renderCapped<T>(
+  lines: string[],
+  entries: readonly T[],
+  cap: number,
+  render: (entry: T, index: number) => string,
+): void {
+  const shown = entries.slice(0, cap);
+  for (const [index, entry] of shown.entries()) lines.push(render(entry, index));
+  if (entries.length > shown.length) {
+    lines.push(`    … and ${entries.length - shown.length} more`);
+  }
 }
 
 /** One live worker: the work, how long it has run, which attempt it carries

@@ -9,8 +9,10 @@ import {
 import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
 import {
   githubSelections,
+  repositoryIdentityKey,
   ticketIdentityKey,
   workIdentity,
+  type RepositoryIdentity,
   type TicketIdentity,
   type WorkIdentity,
 } from "../tracker/identity.js";
@@ -88,13 +90,13 @@ export interface JiraCandidate {
 }
 
 /** A ticket the configured selections promise to more than one destination: its
- *  destination is ambiguous, so it is held with a diagnosis and is never
+ *  destination is ambiguous, so it is held with the reason and is never
  *  presented as a candidate (issue 128; spec #92 story 8). */
 export interface JiraAmbiguousTicket {
   ticket: TicketIdentity;
   title: string;
-  /** The readable destination repositories the conflicting selections name. */
-  destinations: string[];
+  /** The destinations the conflicting readable selections name. */
+  destinations: RepositoryIdentity[];
 }
 
 /** One configured Jira selection and the read-only adapter that answers it. */
@@ -115,7 +117,13 @@ export interface StatusSources {
  * never an empty selection). The candidates keep Jira's native Rank order.
  */
 export type JiraSourceView =
-  | { selection: TicketSelection; state: "known"; candidates: JiraCandidate[] }
+  | {
+      selection: TicketSelection;
+      state: "known";
+      candidates: JiraCandidate[];
+      /** Candidates removed because more than one destination promises them. */
+      held: number;
+    }
   | { selection: TicketSelection; state: "unknown"; reason: string };
 
 export interface StatusView {
@@ -162,7 +170,7 @@ export async function deriveStatus(
     selections.length === 0
       ? EMPTY_TRACKER_STATE
       : await deriveTrackerState(githubTracker(sources), selections, config.labels, reservations);
-  const jira = await readJiraCandidates(sources.jira ?? []);
+  const jira = holdAmbiguousTickets(await readJiraCandidates(sources.jira ?? []));
   return {
     pool: state.pool,
     jira: jira.sources,
@@ -192,10 +200,8 @@ function githubTracker(sources: StatusSources): TicketTracker {
  * UNKNOWN, never an empty list and never a conclusion about the healthy ones.
  * The listing is just that — candidates, not reservations and not a launch.
  */
-async function readJiraCandidates(
-  sources: readonly JiraCandidateSource[],
-): Promise<{ sources: JiraSourceView[]; ambiguous: JiraAmbiguousTicket[] }> {
-  const views = await Promise.all(
+async function readJiraCandidates(sources: readonly JiraCandidateSource[]): Promise<JiraSourceView[]> {
+  return Promise.all(
     sources.map(async (source): Promise<JiraSourceView> => {
       try {
         const listed = await source.tickets.listOpenTickets(source.selection);
@@ -207,60 +213,69 @@ async function readJiraCandidates(
             title: entry.title,
             assignees: entry.assignees,
           })),
+          held: 0,
         };
       } catch (error) {
         return { selection: source.selection, state: "unknown", reason: describeError(error) };
       }
     }),
   );
-  return holdAmbiguousTickets(views);
+}
+
+/** The read selections plus the tickets they agree cannot be given a destination. */
+interface JiraHold {
+  sources: JiraSourceView[];
+  ambiguous: JiraAmbiguousTicket[];
 }
 
 /**
- * A ticket two selections promise to different destinations has no explicit
- * destination (spec #92 story 8): it is held with a diagnosis instead of being
- * listed once per selection — the operator resolves the overlap in the rules.
- * A ticket selected twice for the SAME destination is not ambiguous: it is one
- * Work, and each selection may legitimately list it.
+ * A ticket two readable selections promise to different destinations has no
+ * explicit destination (spec #92 story 8): it is held with the reason instead
+ * of being listed once per selection — the operator resolves the overlap in
+ * the rules. A ticket selected twice for the SAME destination is not
+ * conflicting. An UNKNOWN sibling may hide an overlap; the readable source
+ * still lists, and the report says the overlap is unverified.
  */
-function holdAmbiguousTickets(
-  views: readonly JiraSourceView[],
-): { sources: JiraSourceView[]; ambiguous: JiraAmbiguousTicket[] } {
-  const selected = new Map<string, { ticket: TicketIdentity; title: string; destinations: Set<string> }>();
+function holdAmbiguousTickets(views: JiraSourceView[]): JiraHold {
+  const selected = new Map<
+    string,
+    { ticket: TicketIdentity; title: string; destinations: Map<string, RepositoryIdentity> }
+  >();
   for (const view of views) {
     if (view.state !== "known") continue;
     for (const candidate of view.candidates) {
       const key = ticketIdentityKey(candidate.work.ticket);
-      const entry = selected.get(key);
-      if (entry === undefined) {
-        selected.set(key, {
-          ticket: candidate.work.ticket,
-          title: candidate.title,
-          destinations: new Set([candidate.work.destination.repo]),
-        });
-      } else {
-        entry.destinations.add(candidate.work.destination.repo);
-      }
+      const entry = selected.get(key) ?? {
+        ticket: candidate.work.ticket,
+        title: candidate.title,
+        destinations: new Map<string, RepositoryIdentity>(),
+      };
+      entry.destinations.set(repositoryIdentityKey(candidate.work.destination), candidate.work.destination);
+      selected.set(key, entry);
     }
   }
 
-  const ambiguousKeys = new Set<string>();
+  const heldKeys = new Set<string>();
   const ambiguous: JiraAmbiguousTicket[] = [];
   for (const [key, entry] of selected) {
     if (entry.destinations.size < 2) continue;
-    ambiguousKeys.add(key);
-    ambiguous.push({ ticket: entry.ticket, title: entry.title, destinations: [...entry.destinations] });
+    heldKeys.add(key);
+    ambiguous.push({
+      ticket: entry.ticket,
+      title: entry.title,
+      destinations: [...entry.destinations.values()],
+    });
   }
-  if (ambiguousKeys.size === 0) return { sources: [...views], ambiguous };
 
   const sources = views.map((view): JiraSourceView => {
     if (view.state !== "known") return view;
-    return {
-      ...view,
-      candidates: view.candidates.filter(
-        (candidate) => !ambiguousKeys.has(ticketIdentityKey(candidate.work.ticket)),
-      ),
-    };
+    const candidates: JiraCandidate[] = [];
+    let held = 0;
+    for (const candidate of view.candidates) {
+      if (heldKeys.has(ticketIdentityKey(candidate.work.ticket))) held += 1;
+      else candidates.push(candidate);
+    }
+    return { ...view, candidates, held };
   });
   return { sources, ambiguous };
 }

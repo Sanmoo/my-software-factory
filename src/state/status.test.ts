@@ -1123,19 +1123,73 @@ describe("status: Jira candidates are read-only and each source stands alone", (
       "each rule feeds its own explicit destination",
     );
     assert.deepEqual(
-      view.jiraAmbiguous.map((entry) => ({ key: entry.ticket.key, destinations: entry.destinations })),
+      view.jiraAmbiguous.map((entry) => ({
+        key: entry.ticket.key,
+        destinations: entry.destinations.map((destination) => destination.repo),
+      })),
       [{ key: "ABC-2", destinations: ["Sanmoo/frontend", "Sanmoo/backend"] }],
       "a ticket two rules promise to different destinations is held, not listed twice",
     );
 
     const text = renderStatus(view);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1/);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 \(1 held as ambiguous\)/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 \(1 held as ambiguous\)/);
     assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
     assert.match(
       text,
       /ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/frontend, Sanmoo\/backend/,
     );
     assert.doesNotMatch(text, /^\s+\d+\. .*ABC-2/m, "the ambiguous ticket is never offered as a candidate");
+  });
+
+  test("a selection whose only tickets are held says so instead of 'none'", async () => {
+    const left = new JiraSim();
+    left.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two rules" });
+    const right = new JiraSim();
+    right.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two rules" });
+
+    const view = await deriveStatus(
+      {
+        github: null,
+        jira: [
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/b"), tickets: jiraAdapter(right) },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+    const text = renderStatus(view);
+
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 0 \(1 held as ambiguous\)/);
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: 0 \(1 held as ambiguous\)/);
+    assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held selection never reads as an empty JQL result");
+  });
+
+  test("a readable selection on a site with an unreadable sibling says the overlap is unverified", async () => {
+    const readable = new JiraSim();
+    readable.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    const blind = new JiraSim();
+
+    const view = await deriveStatus(
+      {
+        github: null,
+        jira: [
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(readable) },
+          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/b"), tickets: jiraAdapter(blind, {}) },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+    const text = renderStatus(view);
+
+    assert.match(
+      text,
+      /acme\.atlassian\.net → Sanmoo\/a: 1; another selection on this site is unknown, so a conflicting destination is unverified/,
+    );
+    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: unknown \(/);
   });
 });
