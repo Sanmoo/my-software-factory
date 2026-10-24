@@ -49,6 +49,7 @@ export type Mutation =
   | { readonly kind: "add-label"; readonly label: string }
   | { readonly kind: "remove-label"; readonly label: string }
   | { readonly kind: "add-assignee"; readonly login: string }
+  | { readonly kind: "remove-assignee"; readonly login: string }
   | { readonly kind: "lock" }
   | { readonly kind: "delete-comment"; readonly commentId: number };
 
@@ -165,6 +166,10 @@ export class SimTracker {
       }
       case "add-assignee": {
         if (!state.assignees.includes(mutation.login)) state.assignees.push(mutation.login);
+        return;
+      }
+      case "remove-assignee": {
+        state.assignees = state.assignees.filter((login) => login !== mutation.login);
         return;
       }
       case "lock": {

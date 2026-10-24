@@ -595,7 +595,7 @@ export function manualRelease(): ScenarioResult {
   w.workers.interrupt(worker);
   w.a.markInterrupted(w.ticket);
   const confirmation = confirmStop(w.workers, w.ticket);
-  releaseClaim(w.tracker, w.workers, w.ticket, confirmation);
+  releaseClaim(w.tracker, w.workers, w.ticket, confirmation, "acting-account");
   const releasedComments = w.tracker.snapshot().comments.length;
   const releasedPadlock = w.tracker.snapshot().labels.includes(PADLOCK_LABEL);
 
@@ -665,7 +665,7 @@ export function legacyClaim(): ScenarioResult {
   const bWrote = tracker.appliedCount - before;
 
   const confirmation = confirmStop(workers, ticket);
-  releaseClaim(tracker, workers, ticket, confirmation);
+  releaseClaim(tracker, workers, ticket, confirmation, "acting-account");
   const releasedPadlock = tracker.snapshot().labels.includes(PADLOCK_LABEL);
   const afterRelease = b.observe(tracker, ticket, FRESH);
   equal(b.write(tracker, ticket).status, "applied", "B claims after the operator release");
