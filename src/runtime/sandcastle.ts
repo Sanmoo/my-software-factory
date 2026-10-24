@@ -40,7 +40,7 @@ import {
   verifyAgentInventory,
   type LoadedAgentResources,
 } from "./inventory.js";
-import { authFileProblem, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
+import { agentFileProblem, NO_MODEL_AUTH_MESSAGE } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
@@ -105,18 +105,32 @@ export const TOOLCHAIN_SUBPATHS = {
 } as const;
 export const MISE_CONTAINER_DIR = "/home/agent/.local/share/mise";
 
-/** An explicitly supplied auth.json: its host dir mounts read-only at the
- *  agent dir `/msf-auth`, and the start hook copies `/msf-auth/auth.json`. */
-export const AUTH_MOUNT_DIR = "/msf-auth";
-export const AUTH_MOUNT = `${AUTH_MOUNT_DIR}/auth.json`;
+/**
+ * A file the launch supplies explicitly into the image's agent dir: the
+ * credential store (`auth.json`, from `worker-auth-file`) or a model
+ * configuration (`models.json`). It is mounted read-only and copied by the
+ * start hook — never baked into the image, never discovered from a host
+ * profile.
+ */
+export interface AgentFile {
+  /** The file name inside the agent dir (a bare name, no path). */
+  name: string;
+  /** The operator's file on the host. */
+  hostPath: string;
+}
 
-/** Stage the supplied auth file in a private host dir for the read-only bind.
+/** Where the supplied files ride read-only; the start hook copies each one. */
+export const AGENT_FILES_MOUNT_DIR = "/msf-agent-files";
+
+/** Stage the supplied files in a private host dir for the read-only bind.
  *  The caller removes the dir with the launch. */
-export function stageAuthFile(authFile: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "msf-auth-"));
-  const target = join(dir, "auth.json");
-  copyFileSync(authFile, target);
-  chmodSync(target, 0o600);
+export function stageAgentFiles(files: readonly AgentFile[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "msf-agent-files-"));
+  for (const file of files) {
+    const target = join(dir, file.name);
+    copyFileSync(file.hostPath, target);
+    chmodSync(target, 0o600);
+  }
   return dir;
 }
 
@@ -284,9 +298,10 @@ export interface SandcastleRuntimeOptions {
   token: string;
   /** The worker image; defaults to WORKER_IMAGE (build with `npm run build:image`). */
   image?: string;
-  /** An explicitly supplied Pi auth.json (worker-auth-file); mounted
-   * read-only and copied into the container's agent dir at start. */
-  authFile?: string;
+  /** Files supplied explicitly into the agent dir (the config's
+   *  `worker-auth-file` as `auth.json`; tests may supply `models.json`);
+   *  mounted read-only and copied in at start. */
+  agentFiles?: readonly AgentFile[];
   /** Pi-supported provider API-key variables to forward. Required: the
    *  runtime never reads the ambient environment on its own. */
   authEnv: Readonly<Record<string, string>>;
@@ -333,7 +348,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private readonly image: string;
   private readonly workspace: string;
   private readonly resolveDockerSocket: () => DockerSocket;
-  private readonly authFile: string | undefined;
+  private readonly agentFiles: readonly AgentFile[];
   private readonly authEnv: Readonly<Record<string, string>>;
   private readonly agentResources: LoadedAgentResources;
   private readonly blockedLabel: string;
@@ -358,7 +373,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     this.image = options.image ?? WORKER_IMAGE;
     this.workspace = options.workspace;
     this.resolveDockerSocket = options.dockerSocket ?? (() => dockerSocketFromHost());
-    this.authFile = options.authFile;
+    this.agentFiles = options.agentFiles ?? [];
     this.authEnv = options.authEnv;
     this.agentResources = options.agentResources ?? loadAgentResources();
     this.blockedLabel = options.blockedLabel ?? DEFAULT_LABELS.blocked;
@@ -376,7 +391,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           image: this.image,
           model: this.model,
           agentResources: this.agentResources,
-          authFile: this.authFile,
+          agentFiles: this.agentFiles,
           authEnv: this.authEnv,
           modelCredentials: options.modelCredentials,
           dockerSocket: this.resolveDockerSocket(),
@@ -421,7 +436,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     // the read-only mount — never written to the image, never read from a
     // personal profile. Staged BEFORE the footprint so a vanished file is a
     // factory failure, not a half-written attempt. The dir dies with the launch.
-    const authDir = this.authFile === undefined ? undefined : stageAuthFile(this.authFile);
+    const agentFilesDir = this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles);
     try {
       // The footprint comes first (ticket 13): sessao/ and the attempt's log
       // exist before any outcome can exist. An abrupt death leaves exactly
@@ -460,7 +475,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       // the factory hostage. The in-flight run keeps unwinding in the
       // background with its rejection observed.
       const run = this.runSandcastle(
-        this.runOptionsFor(request, authDir, sessionsDir, dockerSocket, runSignal, resumeSession),
+        this.runOptionsFor(request, agentFilesDir, sessionsDir, dockerSocket, runSignal, resumeSession),
       );
       void run.catch(() => {});
       try {
@@ -479,7 +494,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       this.event(request, "session-end", { outcome });
       return { request, outcome };
     } finally {
-      if (authDir !== undefined) rmSync(authDir, { recursive: true, force: true });
+      if (agentFilesDir !== undefined) rmSync(agentFilesDir, { recursive: true, force: true });
     }
   }
 
@@ -558,7 +573,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   /** The RunOptions handed to Sandcastle — the mechanics, in one place. */
   private runOptionsFor(
     request: WorkRequest,
-    authDir: string | undefined,
+    agentFilesDir: string | undefined,
     sessionsDir: string,
     dockerSocket: DockerSocket,
     signal: AbortSignal,
@@ -613,9 +628,9 @@ export class SandcastleRuntime implements WorkerRuntime {
         groups: [dockerSocket.gid],
         // No `network` — Docker's default bridge, open egress.
         mounts: [
-          ...(authDir === undefined
+          ...(agentFilesDir === undefined
             ? []
-            : [{ hostPath: authDir, sandboxPath: AUTH_MOUNT_DIR, readonly: true }]),
+            : [{ hostPath: agentFilesDir, sandboxPath: AGENT_FILES_MOUNT_DIR, readonly: true }]),
           { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
           ...this.toolchainBinds(),
@@ -645,16 +660,21 @@ export class SandcastleRuntime implements WorkerRuntime {
       hooks: {
         sandbox: {
           onSandboxReady: [
-            ...(authDir === undefined
+            ...(agentFilesDir === undefined
               ? []
               : [
                   {
-                    // The explicitly supplied auth.json is copied into the
-                    // writable agent dir (OAuth renewal may rewrite it); the
-                    // read-only mount never leaves the launch.
+                    // The supplied files are copied into the writable agent
+                    // dir (OAuth renewal may rewrite auth.json); the read-only
+                    // mount never leaves the launch.
                     command:
                       `mkdir -p "$HOME/.pi/agent" && ` +
-                      `install -m 600 ${AUTH_MOUNT} "$HOME/.pi/agent/auth.json"`,
+                      this.agentFiles
+                        .map(
+                          (file) =>
+                            `install -m 600 ${AGENT_FILES_MOUNT_DIR}/${file.name} "$HOME/.pi/agent/${file.name}"`,
+                        )
+                        .join(" && "),
                     timeoutMs: AUTH_SETUP_TIMEOUT_MS,
                   },
                 ]),
@@ -754,8 +774,10 @@ export interface PreflightDeps {
   model: string;
   /** The committed declaration the image must match. */
   agentResources: LoadedAgentResources;
-  /** An explicitly supplied Pi auth.json (worker-auth-file). */
-  authFile?: string | undefined;
+  /** The files supplied explicitly into the agent dir (`auth.json` from
+   *  `worker-auth-file`, or a test's `models.json`) — an explicit credential or
+   *  model-configuration source, never a host profile. */
+  agentFiles?: readonly AgentFile[] | undefined;
   /** Pi-supported provider API-key variables forwarded to the container. */
   authEnv: Readonly<Record<string, string>>;
   /** The daemon socket the worker container inherits (ADR 0003). */
@@ -793,12 +815,13 @@ function execFileResult(
 export async function dockerAuthProbe(deps: {
   image: string;
   model: string;
-  authFile?: string | undefined;
+  agentFiles?: readonly AgentFile[] | undefined;
   authEnv: Readonly<Record<string, string>>;
 }): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const args = ["run", "--rm", "--network", "none"];
+  const agentFiles = deps.agentFiles ?? [];
   let envDir: string | undefined;
-  let authDir: string | undefined;
+  let filesDir: string | undefined;
   try {
     // A temp env-file keeps provider key VALUES off the docker argv (ps).
     if (Object.keys(deps.authEnv).length > 0) {
@@ -811,16 +834,21 @@ export async function dockerAuthProbe(deps: {
       );
       args.push("--env-file", envFile);
     }
-    if (deps.authFile !== undefined) {
-      authDir = stageAuthFile(deps.authFile);
-      args.push("-v", `${authDir}:${AUTH_MOUNT_DIR}:ro`);
+    if (agentFiles.length > 0) {
+      // The probe receives EXACTLY the sources the worker will: the same files
+      // in the same agent dir, so an auth.json AND a models.json both resolve.
+      filesDir = stageAgentFiles(agentFiles);
+      args.push("-v", `${filesDir}:${AGENT_FILES_MOUNT_DIR}:ro`);
+      const copies = agentFiles
+        .map((file) => `cp ${AGENT_FILES_MOUNT_DIR}/${file.name} /tmp/msf-agent/${file.name}`)
+        .join(" && ");
       args.push(
         "--entrypoint",
         "sh",
         deps.image,
         "-c",
-        `mkdir -p /tmp/msf-auth && cp ${AUTH_MOUNT} /tmp/msf-auth/auth.json && ` +
-          `chmod 600 /tmp/msf-auth/auth.json && PI_CODING_AGENT_DIR=/tmp/msf-auth ` +
+        `mkdir -p /tmp/msf-agent && chmod 700 /tmp/msf-agent && ${copies} && ` +
+          `chmod 600 /tmp/msf-agent/* && PI_CODING_AGENT_DIR=/tmp/msf-agent ` +
           'exec pi auth check --model "$1" --json --no-refresh',
         "msf-auth-probe",
         deps.model,
@@ -830,7 +858,7 @@ export async function dockerAuthProbe(deps: {
     }
     return await execFileResult("docker", args);
   } finally {
-    if (authDir !== undefined) rmSync(authDir, { recursive: true, force: true });
+    if (filesDir !== undefined) rmSync(filesDir, { recursive: true, force: true });
     if (envDir !== undefined) rmSync(envDir, { recursive: true, force: true });
   }
 }
@@ -986,11 +1014,14 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
 
 /** The credential precondition's body: the explicit source, then its answer. */
 async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
-  if (deps.authFile !== undefined) {
-    const problem = authFileProblem(deps.authFile);
+  const agentFiles = deps.agentFiles ?? [];
+  for (const file of agentFiles) {
+    // `worker-auth-file` is the key the operator sets; name it that way.
+    const what = file.name === "auth.json" ? "worker-auth-file" : `the supplied ${file.name}`;
+    const problem = agentFileProblem(what, file.hostPath);
     if (problem !== null) throw new Error(problem);
   }
-  if (deps.authFile === undefined && Object.keys(deps.authEnv).length === 0) {
+  if (agentFiles.length === 0 && Object.keys(deps.authEnv).length === 0) {
     throw new Error(NO_MODEL_AUTH_MESSAGE);
   }
   const probeAuth =
@@ -999,7 +1030,7 @@ async function requireModelCredentials(deps: PreflightDeps): Promise<void> {
       dockerAuthProbe({
         image: deps.image,
         model: deps.model,
-        authFile: deps.authFile,
+        agentFiles,
         authEnv: deps.authEnv,
       }));
   const auth = await probeAuth();

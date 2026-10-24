@@ -208,10 +208,14 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         workMount: "/msf-work",
         remoteUrl: "/msf-work/fixtures/remotas/Sanmoo#prova-continuidade.git",
       });
-      const profile = join(root, "perfil");
-      mkdirSync(profile, { recursive: true });
+      // The deterministic provider is supplied EXPLICITLY into the image's
+      // agent dir (issue #159): no personal Pi profile is snapshotted, so the
+      // fixture hands over exactly the one file the model needs.
+      const agentConfig = join(root, "agent-config");
+      mkdirSync(agentConfig, { recursive: true });
+      const modelsFile = join(agentConfig, "models.json");
       writeFileSync(
-        join(profile, "models.json"),
+        modelsFile,
         JSON.stringify(
           {
             providers: {
@@ -249,8 +253,7 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         concurrency: 1,
         workspace: workspace.root,
         labels: { ...DEFAULT_LABELS },
-        profileAllowedRoots: [],
-        profileSkipDanglingLinks: false,
+        workerAuthFile: null,
         recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
         liveness: { ...DEFAULT_LIVENESS_POLICY },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
@@ -264,7 +267,10 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         // precondition. No GitHub credential leaves this test.
         token: "continuity-proof-no-github",
         image: WORKER_IMAGE,
-        profileDir: profile,
+        agentFiles: [{ name: "models.json", hostPath: modelsFile }],
+        // The deterministic provider's key is the literal inside models.json;
+        // no ambient provider variable rides this proof.
+        authEnv: {},
         workspace: workspace.root,
         idleTimeoutSeconds: 120,
         activityPollMs: 100,

@@ -100,20 +100,21 @@ export function modelAuthEnv(env: NodeJS.ProcessEnv = process.env): Record<strin
 }
 
 /**
- * Validate an explicitly supplied auth file without ever echoing its content.
- * Returns a diagnostic for the operator, or null when the file is usable.
+ * Validate a file the operator supplies into the agent dir (auth.json or
+ * models.json) without ever echoing its content. `what` names it to the
+ * operator. Returns a diagnostic, or null when the file is usable.
  */
-export function authFileProblem(path: string): string | null {
+export function agentFileProblem(what: string, path: string): string | null {
   try {
-    if (!statSync(path).isFile()) return `worker-auth-file is not a regular file: ${path}`;
+    if (!statSync(path).isFile()) return `${what} is not a regular file: ${path}`;
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return `worker-auth-file is not a Pi auth.json object: ${path}`;
+      return `${what} is not a Pi JSON object: ${path}`;
     }
     return null;
   } catch (error) {
-    if (error instanceof SyntaxError) return `worker-auth-file is not valid JSON: ${path}`;
-    return `worker-auth-file is unreadable: ${path}`;
+    if (error instanceof SyntaxError) return `${what} is not valid JSON: ${path}`;
+    return `${what} is unreadable: ${path}`;
   }
 }
 

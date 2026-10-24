@@ -44,7 +44,7 @@ describe("the production launch composition — config → runtime options", () 
       assert.equal(options.model, "opencode-go/glm-5.3-flash");
       assert.equal(options.token, "gh-token");
       assert.equal(options.workspace, workspace.root);
-      assert.equal(options.authFile, join(homedir(), ".secrets/msf-auth.json"));
+      assert.deepEqual(options.agentFiles, [{ name: "auth.json", hostPath: join(homedir(), ".secrets/msf-auth.json") }]);
       assert.deepEqual(options.authEnv, { OPENCODE_API_KEY: "opencode-value" });
       assert.equal(options.blockedLabel, "agent-blocked-custom");
     } finally {
@@ -60,7 +60,7 @@ describe("the production launch composition — config → runtime options", () 
       const workspace = ensureWorkspace(join(dir, "ws"));
       const options = sandcastleRuntimeOptions(config, workspace, "t", {});
 
-      assert.ok(!("authFile" in options), "no file source is invented");
+      assert.deepEqual(options.agentFiles, [], "no file source is invented");
       assert.deepEqual(options.authEnv, {});
       assert.equal(options.blockedLabel, "agent-blocked");
     } finally {

@@ -54,7 +54,9 @@ it, records the result in `/opt/msf/agent-inventory.json`, and only then moves
 the image tag — a failed build leaves the previous valid image in place.
 
 - **Update a resource**: change `agent-resources.json` in a reviewed commit,
-  then `npm run build:image`. Never edit files inside a running image.
+  then `npm run build:image`. Never edit files inside a running image. The
+  continuity guardrail (issue 119) is factory code staged from this checkout's
+  `dist/`, not a declared external resource; the same build pins it.
 - **Upgrading from the profile snapshot**: `profile-allowed-roots` and
   `profile-skip-dangling-links` no longer exist — delete them from `msf.yaml`.
 - **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`

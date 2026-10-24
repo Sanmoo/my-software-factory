@@ -130,10 +130,11 @@ export function sandcastleRuntimeOptions(
     // the container (ticket 18): installed once, reused by every launch.
     workspace: workspace.root,
     // Model authentication is separate from agent resources: the supported
-    // provider env vars present here, or the explicit auth file — never the
-    // operator's personal Pi profile.
+    // provider env vars present here, or the explicitly supplied auth file —
+    // never the operator's personal Pi profile.
     authEnv: modelAuthEnv(env),
-    ...(config.workerAuthFile === null ? {} : { authFile: config.workerAuthFile }),
+    agentFiles:
+      config.workerAuthFile === null ? [] : [{ name: "auth.json", hostPath: config.workerAuthFile }],
     // The worker self-reports blocked with the SAME vocabulary the factory
     // derives with — a non-default config label must reach the prompt too.
     blockedLabel: config.labels.blocked,

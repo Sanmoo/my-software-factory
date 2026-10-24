@@ -165,7 +165,7 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
       // gh — no real GitHub credential rides this proof (story 23).
       token: "msf-real-proof-no-github",
       authEnv: AUTH_ENV,
-      ...(AUTH_FILE === undefined ? {} : { authFile: AUTH_FILE }),
+      agentFiles: AUTH_FILE === undefined ? [] : [{ name: "auth.json", hostPath: AUTH_FILE }],
       // An empty workspace: no package cache from a previous proof can help
       // the worker — the resources must come from the image.
       workspace: join(root, "fabrica"),
