@@ -291,8 +291,9 @@ interface InFlightLaunch {
   attempt: number | null;
   /** The attempt a recovery continues, known before the registry is read. */
   attemptHint?: number;
-  /** The runtime was called for this admission, so a worker may exist: a stop
-   *  no longer treats its grant as unused (a proven pre-refusal still may). */
+  /** The runtime was called for this admission, so a worker may exist: the
+   *  requested stop no longer refunds its grant (a proven pre-refusal still
+   *  does, through the launch's own error). */
   launched: boolean;
   /** The ledger event of a recovery granted to this admission, so a return
    *  removes exactly it: non-null while the grant may still be unused. */
@@ -1657,58 +1658,70 @@ export class SweepEngine {
    * actually refunded.
    */
   private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    // A stop refunds only a grant no worker may already be carrying.
-    if (entry.launched) entry.recoveryIndex = null;
-    const refunded = await this.refundGrant(entry, attempt);
+    // A stop refunds only a grant no worker may already be carrying; the grant
+    // stays named, so a runtime that then proves no worker existed still
+    // returns it (the refusal of issue 178).
+    const refunded = entry.launched ? false : await this.refundGrant(entry, attempt);
     await recordStopRequest(entry.dir, attempt);
     return refunded;
   }
 
   /**
-   * A runtime refusal that PROVES no worker existed (issue 178): refund the
-   * admission's grant and keep the environment's failure propagating — it is
-   * not the work's outcome. A failure that may have left a worker behind is
-   * the caller's, with the grant consumed.
+   * The launch boundary: the worker's result, or a failure the factory settles
+   * before rethrowing it. A runtime refusal that PROVES no worker existed
+   * (issue 178) refunds the admission's grant; a requested stop this launch
+   * consumed keeps its record either way; any other failure may have left a
+   * worker behind and keeps the grant consumed.
    */
   private async launchWorker(request: WorkRequest, entry: InFlightLaunch, attempt: number): Promise<SessionResult> {
     try {
       return await this.deps.runtime.launch(request);
     } catch (error) {
-      // The requested stop this launch consumed keeps its record when the
-      // launch did not carry the attempt out (issue #146): the next invocation
-      // resumes the same attempt free of charge instead of losing the evidence.
+      if (error instanceof LaunchPreconditionError) await this.refundRefusedLaunch(request, entry, attempt, error);
+      // The refund lands first: a failed stop-record write must never cost the
+      // attempt the recovery the environment's refusal proved it never used.
       await this.restoreConsumedStop(entry, attempt);
-      if (!(error instanceof LaunchPreconditionError)) throw error;
-      const grant = entry.recoveryIndex;
-      let refunded = false;
-      let refundFailure: string | null = null;
-      try {
-        refunded = await this.refundGrant(entry, attempt);
-      } catch (refundError) {
-        // The environment's reason is the one the operator must read: a failed
-        // write is named, never allowed to replace it.
-        refundFailure = describeError(refundError);
-      }
-      let note = "no recovery was granted to this launch";
-      if (refunded) note = "the recovery granted to this relaunch is refunded";
-      else if (refundFailure !== null) {
-        note = `the recovery granted to this relaunch could not be refunded (${refundFailure}) and stays consumed`;
-      } else if (grant !== null) {
-        // The ledger answered no: say whether the grant is still consumed
-        // instead of claiming a refund that never landed.
-        const stillGranted = (await readRecoveryLedger(entry.dir)).events.some(
-          (event) => event.index === grant && event.attempt === attempt,
-        );
-        note = stillGranted
-          ? "the recovery granted to this relaunch could not be refunded and stays consumed"
-          : "the recovery granted to this relaunch was already refunded";
-      }
-      this.log(
-        `launch of ${workKeyOf(request.work)} refused before any worker existed (${describeError(error)}) — ` +
-          `${note}; no attempt was consumed and the work stays reserved`,
-      );
       throw error;
     }
+  }
+
+  /**
+   * Refund the grant a refused launch held, and say in the log what really
+   * landed. The environment's own reason always reaches the operator: a
+   * ledger write that fails is named, never allowed to replace it.
+   */
+  private async refundRefusedLaunch(
+    request: WorkRequest,
+    entry: InFlightLaunch,
+    attempt: number,
+    error: LaunchPreconditionError,
+  ): Promise<void> {
+    const grant = entry.recoveryIndex;
+    let refunded = false;
+    let refundFailure: string | null = null;
+    try {
+      refunded = await this.refundGrant(entry, attempt);
+    } catch (refundError) {
+      refundFailure = describeError(refundError);
+    }
+    let note = "no recovery was granted to this launch";
+    if (refunded) note = "the recovery granted to this relaunch is refunded";
+    else if (refundFailure !== null) {
+      note = `the recovery granted to this relaunch could not be refunded (${refundFailure}) and stays consumed`;
+    } else if (grant !== null) {
+      // The ledger answered no: say whether the grant is still consumed
+      // instead of claiming a refund that never landed.
+      const stillGranted = (await readRecoveryLedger(entry.dir)).events.some(
+        (event) => event.index === grant && event.attempt === attempt,
+      );
+      note = stillGranted
+        ? "the recovery granted to this relaunch could not be refunded and stays consumed"
+        : "the recovery granted to this relaunch was already refunded";
+    }
+    this.log(
+      `launch of ${workKeyOf(request.work)} refused before any worker existed (${describeError(error)}) — ` +
+        `${note}; no attempt was consumed and the work stays reserved`,
+    );
   }
 
   /** Refund the grant this admission still holds, if any. The ledger event
@@ -1721,9 +1734,9 @@ export class SweepEngine {
 
   /**
    * The requested stop a launch consumed stays on record when the launch never
-   * carried the attempt out (issue #146): nothing wrote an outcome and nothing
-   * else claimed the attempt, so the stop is still the evidence that resumes
-   * the same attempt free of charge.
+   * carried the attempt out (issue #146). The guards read the state as it is
+   * now — a requested stop of this attempt, no outcome written, nothing else
+   * claiming it — so a worker that may still exist keeps its own record.
    */
   private async restoreConsumedStop(entry: InFlightLaunch, attempt: number): Promise<void> {
     const stop = entry.consumedStop ?? null;

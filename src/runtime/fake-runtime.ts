@@ -107,8 +107,12 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     const index = this.launched.push(request) - 1;
     const rejection = this.options.rejectLaunch?.(request, index) ?? null;
     // A proven pre-worker refusal (the real preconditions run before the
-    // footprint): no session is started.
-    if (rejection instanceof LaunchPreconditionError) throw rejection;
+    // footprint): no session is started. The hold still applies — a slow
+    // precondition can keep refusing while the factory asks it to stop.
+    if (rejection instanceof LaunchPreconditionError) {
+      await this.holdFor(request, index);
+      throw rejection;
+    }
     const key = workKeyOf(request.work);
     const session: FakeSession = {
       work: request.work,
@@ -125,8 +129,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
         this.startSession(request);
         throw rejection;
       }
-      const hold = this.hold ?? this.options.hold;
-      const work = hold === undefined ? Promise.resolve("work") : Promise.resolve(hold(request, index)).then(() => "work");
+      const work = Promise.resolve(this.holdFor(request, index)).then(() => "work");
       // A hung worker ignores the cooperative request: only its own hold or
       // the forced stop ends it. The race is honest: a worker that finished
       // before reacting to the stop still has its confirmed outcome.
@@ -178,6 +181,11 @@ export class FakeWorkerRuntime implements WorkerRuntime {
    *  test's hold awaits to end voluntarily inside the cooperative window. */
   whenStopRequested(work: WorkIdentity): Promise<void> {
     return this.sessions.get(workKeyOf(work))?.cooperative.promise ?? Promise.resolve();
+  }
+
+  /** The scripted hold of this launch, wherever the launch ends. */
+  private holdFor(request: WorkRequest, index: number): Promise<void> | void {
+    return (this.hold ?? this.options.hold)?.(request, index);
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's

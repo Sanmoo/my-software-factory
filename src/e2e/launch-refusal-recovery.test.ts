@@ -12,15 +12,17 @@ import {
   type Config,
 } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
-import { runOnce, type LoopDeps } from "../loop.js";
+import { runForever, runOnce, type LoopDeps } from "../loop.js";
 import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { LaunchPreconditionError, type WorkRequest } from "../runtime/port.js";
 import { consumeRecovery, readRecoveryLedger } from "../pool/recovery.js";
+import { deferred } from "../runtime/deferred.js";
 import { deriveStatus } from "../state/status.js";
 import { renderStatus } from "../state/status-render.js";
 import { seedSession } from "./session-fixtures.js";
+import { waitFor } from "./cli-harness.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
@@ -243,5 +245,52 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     const retried = await runOnce(deps(runtime, cfg));
     assert.equal(retried.launched.length, 1, "the work relaunches once the environment allows it");
     assert.equal((await readRecoveryLedger(target)).consumed, 3, "and spends exactly one more recovery");
+  });
+
+  test("a requested stop that cancels the admission first does not cost the grant of a launch that then proves no worker existed", async () => {
+    const target = interruptedAttempt1();
+    const entered = deferred();
+    const refusal = deferred();
+    const runtime = new FakeWorkerRuntime({
+      tracker,
+      outcomes: ["pr-open"],
+      rejectLaunch: (_request, index) =>
+        index === 0 ? new LaunchPreconditionError("Docker is unavailable (docker info failed)") : null,
+    });
+    // The precondition is still refusing when the operator's stop arrives (a
+    // Docker that does not answer), so the stop settles the admission while the
+    // launch is pending: it cannot know yet that no worker existed.
+    runtime.hold = async () => {
+      entered.resolve();
+      await refusal.promise;
+    };
+    const stop = new AbortController();
+    const running = runForever(deps(runtime), { tickMs: 10, signal: stop.signal, cooperativeMs: 10 });
+
+    await entered.promise;
+    stop.abort();
+    await running;
+    assert.equal((await readRecoveryLedger(target)).consumed, 1, "the stop cannot refund what a worker may be carrying");
+    assert.equal((await readRecoveryLedger(target)).lastStop?.kind, "stop-requested");
+
+    // The refusal lands after the stop settled the admission: the proof that no
+    // worker existed still returns the grant — and the stop record stays.
+    refusal.resolve();
+    await waitFor("the refusal to be settled", () =>
+      logs.some((line) => line.includes("the recovery granted to this relaunch is refunded")),
+    );
+    const ledger = await readRecoveryLedger(target);
+    assert.equal(ledger.consumed, 0, "the proven refusal refunded the grant the stop had to keep");
+    assert.deepEqual(ledger.events, [], "and left no consumed grant behind");
+    assert.equal(ledger.lastStop?.kind, "stop-requested", "the requested stop is still what the work keeps");
+    assert.equal(existsSync(join(target, "desfecho.json")), false, "no attempt was consumed");
+
+    // The next invocation resumes the attempt free of charge, with a budget
+    // nothing has silently spent.
+    delete runtime.hold;
+    const resumed = await runOnce(deps(runtime));
+    assert.equal(resumed.launched.length, 1);
+    assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME attempt");
+    assert.equal((await readRecoveryLedger(target)).consumed, 0, "the resume spent nothing, and nothing was inflated");
   });
 });
