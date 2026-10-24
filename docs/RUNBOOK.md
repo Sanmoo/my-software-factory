@@ -23,7 +23,8 @@ npm run build:image
 #    # or worker-auth-file: /path/to/auth.json in msf.yaml
 #    The launcher refuses a missing or malformed credential with the provider's
 #    status; a wrong key surfaces at the model call. It never prints the value
-#    and never reads ~/.pi/agent.
+#    and never reads ~/.pi/agent. Only Pi's documented provider variables are
+#    forwarded — keep the factory's environment to the one your model needs.
 
 # 3. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container;
@@ -49,16 +50,16 @@ EOF
 `agent-resources.yaml` is the single declaration of the environment: Pi, the
 selected upstream skills at an immutable commit, the delegation extension with
 its operating guidance, and the reviewer agents. `npm run build:image` fetches
-and verifies all of it, records what the image holds in
-`/opt/msf/agent-inventory.json`, and moves the tag only on success.
+and verifies all of it, records the result in `/opt/msf/agent-inventory.json`,
+and moves the tag (`workerImage` in `package.json`) only on success.
 
 - **Update a resource**: change `agent-resources.yaml` in a reviewed commit and
   rebuild. Never edit a running image.
 - **Upgrading from the profile snapshot**: delete `profile-allowed-roots` and
   `profile-skip-dangling-links` from `msf.yaml`.
-- **Diagnose**: `docker run --rm --network none --entrypoint cat <image> /opt/msf/agent-inventory.json`
-  shows what the image holds; a launch whose image differs from this checkout's
-  declaration refuses to start the worker and names the rebuild command.
+- **Diagnose**: `docker run --rm --network none --entrypoint cat <image> /opt/msf/agent-inventory.json`;
+  a launch whose image differs from this checkout's declaration refuses to
+  start the worker and names the rebuild command.
 - **Concurrent checkouts**: set `MSF_WORKER_IMAGE=<image>:<name>` for both
   `build:image` and `gateway`, so two checkouts on one Docker host keep their
   tags apart.

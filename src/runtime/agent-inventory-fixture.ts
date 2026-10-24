@@ -1,22 +1,26 @@
-import { extensionImagePath, skillImagePath } from "../../scripts/agent-resources.mjs";
+import {
+  AGENT_DECLARATION_FILE,
+  AGENT_INVENTORY_SCHEMA,
+  extensionImagePath,
+  skillImagePath,
+} from "../../scripts/agent-resources.mjs";
 
 import type { LoadedAgentResources } from "./inventory.js";
 
 /**
- * The inventory a correctly provisioned image records for a declaration —
- * shared by the runtime tests so the accepted shape lives in one place: a
- * second hand-built copy would drift from the first and still pass, because
- * the comparison reads only the fields below.
+ * The accepted inventory shape for a declaration, shared by the runtime tests
+ * so it lives in one place: a second hand-built copy would drift from the
+ * first and still pass, because the comparison reads only the compared fields.
  *
- * The digests are placeholders on purpose: the launch compares versions,
- * revisions and paths, never file contents (the declaration carries no
- * expected digests to compare against).
+ * The digests are placeholders and the dependency map is empty on purpose —
+ * the launch compares versions, revisions and paths, never file contents
+ * (the declaration carries no expected digests to compare against).
  */
 export function provisionedInventory(loaded: LoadedAgentResources): Record<string, unknown> {
   const { declaration } = loaded;
   return {
-    schema: "msf-agent-inventory/v1",
-    declaration: { file: "agent-resources.yaml", sha256: loaded.digest },
+    schema: AGENT_INVENTORY_SCHEMA,
+    declaration: { file: AGENT_DECLARATION_FILE, sha256: loaded.digest },
     pi: { package: declaration.pi.package, version: declaration.pi.version },
     skills: [
       ...declaration.skills.selected.map((skill) => ({
