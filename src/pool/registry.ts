@@ -22,7 +22,7 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
-import { pauseWaits, readEffectJournal, readPause, readSessionLinks, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { pauseWaits, readEffectJournal, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
 import { readWorkEvidence, probeAttemptArtifacts, unverified, type WorkEvidence } from "../state/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { WorkIdentity } from "../tracker/identity.js";
@@ -106,9 +106,11 @@ function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
  * Did an attempt ever reach a worker? A repair round can be charged and then
  * never launched (continuity refused it, the factory stopped), leaving an
  * attempt record with no session behind it — that is NOT a repair fall. The
- * answer comes from the attempt's own artifacts only (issue 181): its event
- * log, its Sandcastle log, an outcome record of its own or the guardrail's
- * session entry. A probe that cannot answer is `unknown`, never absence.
+ * answer comes from artifacts written only once a worker exists (issue 181):
+ * its event log, its Sandcastle log, a terminal outcome of its own or the
+ * guardrail's session entry. The session association is NOT evidence: it is
+ * written when continuity PLANS the launch, before any worker. A probe that
+ * cannot answer is `unknown`, never absence.
  */
 export type AttemptStartEvidence = "started" | "unstarted" | "unknown";
 
@@ -120,11 +122,9 @@ export async function readAttemptStartEvidence(
   if (eventLog === "present" || sandcastleLog === "present") return "started";
   const record = await readOutcomeRecord(workDir);
   if (record?.attempt === attempt) return "started";
-  const links = readSessionLinks(workDir);
-  if (links.links.some((link) => link.attempt === attempt)) return "started";
   const journal = readEffectJournal(workDir);
   if (journal.sessions.some((session) => session.attempt === attempt)) return "started";
-  if (unverified(eventLog) || unverified(sandcastleLog) || !links.intact || !journal.intact) {
+  if (unverified(eventLog) || unverified(sandcastleLog) || !journal.intact) {
     return "unknown";
   }
   return "unstarted";

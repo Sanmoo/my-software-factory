@@ -30,10 +30,11 @@ import {
   appendJournalIntent,
   appendJournalResult,
   appendJournalStart,
+  appendSessionLink,
   readPause,
 } from "../runtime/continuity-artifacts.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
-import { launchedNumber } from "./work-fixtures.js";
+import { githubWork, launchedNumber } from "./work-fixtures.js";
 
 /**
  * e2e of issue 181: a repair round that never reached a worker is neither an
@@ -326,6 +327,48 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     const cycle = await readRepairCycle(target);
     assert.equal(cycle.usedRounds, 2, "the delivered round stays charged; only the ghost fell away");
     assert.equal(cycle.consecutiveFalls, 1, "the ghost's fall is withdrawn once");
+  });
+
+  test("a planned session association alone never proves the worker started", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedOpenPr(tracker, runtime, deps, 7);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    const target = workDir(layout, REPO, 7);
+    const ghost: RepairAttempt = {
+      evidence: signatureOf(7, OBSERVED),
+      attempt: 2,
+      observedHeadSha: OBSERVED,
+      remoteHeadSha: null,
+      publication: "not-published",
+      localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
+    };
+    writeFileSync(
+      join(target, REPAIR_FILENAME),
+      `${JSON.stringify(
+        { usedRounds: 0, lastEvidence: ghost.evidence, consecutiveFalls: 2, attempt: ghost },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    // Continuity recorded the session it PLANNED, then the launch died before
+    // any worker: the association is not proof that an attempt started.
+    appendSessionLink(target, {
+      version: 1,
+      work: githubWork(REPO, 7),
+      attempt: 2,
+      round: 1,
+      sessionId: "sess-planned-only",
+      at: NOW,
+    });
+
+    const sweep = await runOnce(deps);
+    assert.equal(sweep.launched.length, 1, "the planned-only session does not block the work");
+    const cycle = await readRepairCycle(target);
+    assert.equal(cycle.consecutiveFalls, 1, "the ghost's fall is withdrawn");
+    assert.equal(cycle.usedRounds, 1, "only the real round is charged");
   });
 
   test("a legacy attempt without session evidence never blocks the next sweep", async () => {

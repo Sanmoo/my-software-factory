@@ -2492,7 +2492,7 @@ export class SweepEngine {
           if (returned !== stored) {
             await writeRepairCycle(work.dir, returned);
             this.log(
-              `repair attempt ${attempt.attempt} of ${key} unstarted (no session evidence) — ` +
+              `repair attempt ${attempt.attempt} of ${key} unstarted (no session artifacts) — ` +
                 `the round returns (${returned.usedRounds}/${MAX_REPAIR_ROUNDS}) and no fall is counted ` +
                 `(falls ${returned.consecutiveFalls}/${MAX_REPAIR_FALLS})`,
             );

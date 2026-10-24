@@ -338,7 +338,7 @@ export function reconcileRepairAttempt(input: {
    *  business — an attempt that fell counts one, an obsolete premise does not
    *  (issue 149). */
   const settledUnpublished = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
-    settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
+    settled("not-published", { ...cycle, usedRounds: refundedRounds(cycle) });
 
   // The remote carries exactly the commit this attempt produced: published,
   // and attributable — a different head proves nothing about this attempt.
@@ -379,13 +379,19 @@ export function reconcileRepairAttempt(input: {
   return { kind: "concurrent-change", ...settled("concurrent-change", input.cycle) };
 }
 
+/** The one refund rule of the round ledger. */
+function refundedRounds(cycle: RepairCycle): number {
+  return Math.max(0, cycle.usedRounds - 1);
+}
+
 /**
  * A recorded round that never reached a worker is not an attempt (issue 181).
  * The charge is returned only while it is still held — an unsettled attempt
  * (`unknown`/`pending`) — because a settled `not-published` fall already
  * returned its round; for that one only the fall it was counted as is
  * withdrawn. `published` and `concurrent-change` settle a real outcome and are
- * left untouched.
+ * left untouched: the SAME cycle instance is returned for them, so a caller
+ * can tell that nothing was healed.
  */
 export function returnUnstartedRound(cycle: RepairCycle): RepairCycle {
   const attempt = cycle.attempt;
@@ -395,7 +401,7 @@ export function returnUnstartedRound(cycle: RepairCycle): RepairCycle {
   }
   const settled = attempt.publication === "not-published";
   return {
-    usedRounds: settled ? cycle.usedRounds : Math.max(0, cycle.usedRounds - 1),
+    usedRounds: settled ? cycle.usedRounds : refundedRounds(cycle),
     lastEvidence: null,
     consecutiveFalls: settled
       ? Math.max(0, cycle.consecutiveFalls - 1)
