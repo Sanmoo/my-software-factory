@@ -2098,16 +2098,10 @@ export class SweepEngine {
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
 
-    // The round is charged only now, after continuity granted the launch, so a
-    // pause that prevented the session never spends a round or becomes a fall
-    // (issue 181) — and still before the worker starts (issue 107/112).
-    if (repair !== undefined) {
-      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
-    }
-
     if (launchable.callRecovery !== undefined) clearPause(dir);
-    // Charge only after continuity allowed the launch. A pause before a worker
-    // exists is not an unpublished Repair and cannot consume a round or fall.
+    // The round is charged only after continuity granted the launch, so a pause
+    // that prevented the session never spends a round or becomes a fall (issue
+    // 181) — and still before the worker starts (issue 107/112).
     if (repair !== undefined) {
       await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
     }
@@ -2504,9 +2498,6 @@ export class SweepEngine {
       if (attempt !== null && requestedStop &&
           ownWrittenOutcome(await readOutcomeRecord(work.dir), attempt.attempt) === null) {
         continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
-      }
-        }
-        if (isSettledPublication(attempt.publication)) continue;
       }
       // A work that never ran a repair round has nothing to reconcile — no git
       // inspection is paid for it on every sweep.
