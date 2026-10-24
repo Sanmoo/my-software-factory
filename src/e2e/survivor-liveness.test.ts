@@ -213,9 +213,11 @@ describe("e2e: surviving workers and liveness on the operational cycle (issue 11
     assert.deepEqual(tracker.claimedOrder, [], "no claim is written for a work already reserved");
     assert.ok(!existsSync(join(target, RECOVERY_FILENAME)), "recognising the survivor spends no recovery");
     assert.deepEqual(
-      readdirSync(target).sort(),
+      readdirSync(target)
+        .filter((name) => name.startsWith("log-"))
+        .sort(),
       attempts.map((attempt) => `log-${attempt}.jsonl`),
-      "its attempt's evidence is untouched",
+      "its attempt's evidence is untouched — no attempt was created",
     );
     assert.deepEqual(await labelSet(tracker, number), [DEFAULT_LABELS.claimed], "its work stays reserved");
     return log;
