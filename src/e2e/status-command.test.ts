@@ -66,7 +66,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
   /** The registry the operator's report describes: two interrupted attempts
    *  (one of them inside a repair cycle), one concluded attempt, one bare
    *  reservation and 20 archived works, plus an active and a resolved
-   *  continuity pause (issue 175). Only what status reads exists. */
+   *  continuity pause. Only what status reads exists. */
   function seedRegistry(): void {
     for (const number of [1, 4]) {
       const work = workDir(layout, REPO, number);
@@ -111,7 +111,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       "utf8",
     );
     // A pause that was resolved keeps its evidence beside the work and is
-    // NEVER an active pause (issue 175).
+    // NEVER an active pause.
     writePause(concluded, {
       version: 1,
       work: githubWork(REPO, 2),

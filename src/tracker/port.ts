@@ -32,7 +32,7 @@ export function isAgentSpeech(body: string): boolean {
 }
 
 /** The identity ONE continuity pause occurrence carries in every factory
- *  comment about it (issue 174). The request, a re-assertion and a diagnostic
+ *  comment about it. The request, a re-assertion and a diagnostic
  *  for a changed cause share it, so a human answer stays bound to the request
  *  it answered instead of to the last thing the factory said. */
 export function pauseMarker(id: string): string {

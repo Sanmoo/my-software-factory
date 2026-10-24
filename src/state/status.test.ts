@@ -448,7 +448,7 @@ describe("status — derivation on demand + local registry scan", () => {
     );
   });
 
-  test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt (issue 175)", async () => {
+  test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
