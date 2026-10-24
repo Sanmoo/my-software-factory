@@ -181,8 +181,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   return lines.join("\n");
 }
 
-/** One block per configured selection, in native Rank order. The header counts
- *  the selections: a candidate count would make an unreadable one read as zero. */
+/** The header counts the selections: a candidate count would make an unreadable
+ *  one read as zero. */
 function renderJiraSelections(
   selections: readonly JiraSelectionView[],
   ambiguous: readonly AmbiguousJiraTicket[],
