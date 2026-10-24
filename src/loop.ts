@@ -298,10 +298,10 @@ type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
 
 /**
  * The states consent never reopens: the work already reached a terminal
- * verdict, or a worker may still carry it. A blacklist, not a whitelist — a
- * newer state must not silently strand an authorization again (issue #128 hit
- * exactly that with `repair-fall-blocked`): consent answers the pause, so it
- * outranks the round the factory planned meanwhile.
+ * verdict, or a worker may still carry it. A blacklist, not a whitelist: a
+ * newer state must not silently strand an authorization — `repair-fall-blocked`
+ * is exactly such a state — because consent answers the pause, so it outranks
+ * the round the factory planned meanwhile.
  */
 const TERMINAL_FOR_CONSENT: ReadonlySet<ReservedDerivation["state"]> = new Set([
   "done",
