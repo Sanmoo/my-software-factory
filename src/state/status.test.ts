@@ -394,7 +394,7 @@ describe("status — derivation on demand + local registry scan", () => {
     });
     const before = readFileSync(join(dir, PAUSE_FILENAME), "utf8");
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(
       view.registry.continuityPauses.map((entry) => ({
@@ -429,7 +429,7 @@ describe("status — derivation on demand + local registry scan", () => {
     });
 
     const unreachable: LivenessProbe = () => Promise.reject(new Error("docker: command not found"));
-    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, unreachable));
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, unreachable));
 
     assert.match(
       text,
@@ -451,7 +451,7 @@ describe("status — derivation on demand + local registry scan", () => {
       at: "2026-02-01T00:00:00.000Z",
     });
 
-    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS));
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
 
     assert.match(text, new RegExp(`${REPO}#21 \\(attempt 2: journal-unreadable — the effect journal could not be read\\)`));
   });
@@ -468,7 +468,7 @@ describe("status — derivation on demand + local registry scan", () => {
       at: "2026-02-01T00:00:00.000Z",
     });
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(view.registry.continuityPauses, [], "attempt 2 is evidenced: attempt 1's pause is over");
     assert.match(renderStatus(view), /continuity paused[^\n]*: none/);
@@ -487,7 +487,7 @@ describe("status — derivation on demand + local registry scan", () => {
     });
     clearPause(dir);
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.ok(existsSync(join(dir, `${PAUSE_FILENAME}.resolved`)), "the resolved evidence stays on disk");
     assert.deepEqual(view.registry.continuityPauses, []);
@@ -499,7 +499,7 @@ describe("status — derivation on demand + local registry scan", () => {
     const dir = seedAttempt(21, 1);
     writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
 
-    const view = await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS);
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(
       view.registry.continuityPauses.map((entry) => ({
