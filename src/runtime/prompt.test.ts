@@ -316,7 +316,7 @@ describe("worker prompt — the feedback-round policy", () => {
     assert.match(prompt, /not.{0,80}blocked-self-report/i);
   });
 
-  test("the marker contract survives the policy change (regression)", () => {
+  test("the prompt states the marker contract on the comment it asks for", () => {
     const prompt = promptFor([{ author: "human", body: "Fix the typo." }]);
     assert.match(prompt, new RegExp(`comment MUST start with[\\s\\S]*${AGENT_MARKER}`));
   });

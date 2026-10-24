@@ -6,13 +6,13 @@ import { WORK_OPERATIONS, type LocalWorkFacts, type WorkOperation } from "../git
 import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
 
 /**
- * The durable repair cycle of a work: how many
- * automatic repair rounds were DELIVERED since the last confirmed recovery,
- * which evidence was already consumed, how many repair attempts ended without
- * publishing, and the structured facts of the attempt currently on disk. It
- * lives next to the other artifacts of the work
- * (trabalhos/<repo>#<n>/reparo.json), so a sweep or a factory restart reads
- * the same budget instead of renewing it or repeating a consumed round.
+ * The durable repair cycle of a work: how many automatic repair rounds were
+ * DELIVERED since the last confirmed recovery, which evidence was already
+ * consumed, how many repair attempts ended without publishing, and the
+ * structured facts of the attempt currently on disk. It lives next to the
+ * other artifacts of the work (trabalhos/<repo>#<n>/reparo.json), so a sweep or
+ * a factory restart reads the same budget instead of renewing it or repeating
+ * a consumed round.
  *
  * The two ledgers are independent: the ROUND budget counts
  * published rounds (a fall before publishing is refunded, never a free retry

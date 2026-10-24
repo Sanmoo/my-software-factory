@@ -429,9 +429,8 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
   /** 4. Claim: the padlock (the claim label) lands first, the assignee follows
    *  as decoration — never what holds the work — and the pool label leaves last,
    *  so an interruption leaves the work claimed and recoverable by the next
-   *  derivation's 1st fall. Only an absent label is tolerated; any other
-   *  failure propagates as a failed launch, the work stays in the pool and the
-   *  next tick retries it. */
+   *  derivation's 1st fall. The port's claim documents what a failed label
+   *  write leaves behind. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;

@@ -441,8 +441,8 @@ export type ReservedDerivation = ReservedWorkInput &
         modelProvider: ModelProviderDecision;
       }
     /** The work waits for the operator because its interrupted attempt cannot be
-     * continued safely: its session is missing/unreadable, its
-     *  identity does not match, or an external effect stayed ambiguous. The
+     *  continued safely: its session is missing/unreadable, its identity does
+     *  not match, or an external effect stayed ambiguous. The
      *  pause is persisted, so no cycle re-attempts the recovery. */
     | { state: "continuity-paused"; attempt: number; pause: PauseRecord }
     /** Never acted on: the issue is gone, or closed as not-planned (not done). */

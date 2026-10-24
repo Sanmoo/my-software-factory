@@ -266,7 +266,7 @@ describe("e2e: msf run exclusivity per real config path", { timeout: 60_000 }, (
     heldB.owner.kill("SIGKILL");
 
     // An independent configuration with its own workspace is likewise not
-    // blocked by the first (the spec's independent-workspace scenario).
+    // blocked by the first.
     writeConfig("c.yaml", join(dir, "ws-c"));
     const heldC = await spawnHeldOwner(["run", "--runtime", "fake", "--config", "c.yaml"]);
     assert.ok(existsSync(heldC.ready), "independent workspaces are not blocked by this rule");

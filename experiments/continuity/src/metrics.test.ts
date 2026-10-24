@@ -14,7 +14,7 @@ const entry = (at: number, event: string, fields: Record<string, unknown> = {}):
 	...fields,
 });
 
-const world = () => new ExternalWorld(join(mkdtempSync(join(tmpdir(), "msf111-met-")), "external.jsonl"));
+const world = () => new ExternalWorld(join(mkdtempSync(join(tmpdir(), "msf-continuity-met-")), "external.jsonl"));
 
 test("a clean single attempt reuses nothing and repeats nothing", () => {
 	const external = world();
