@@ -1,6 +1,5 @@
 import {
   claimRecord,
-  claimToJson,
   CLAIM_PROPERTY_KEY,
   parseClaim,
   ticketIdentityKey,
@@ -217,7 +216,7 @@ export class Factory {
         site: this.ticket.site,
         issueId: this.issueId(),
         propertyKey: CLAIM_PROPERTY_KEY,
-        value: claimToJson(record),
+        value: record,
         factory: this.id,
         ...(faults === undefined ? {} : { faults }),
       });

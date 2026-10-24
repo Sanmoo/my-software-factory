@@ -31,21 +31,31 @@ describe("interleaving matrix: documented semantics", () => {
     assert.ok(indexOf(trace.events, "B:commit") < indexOf(trace.events, "B:verify"));
   });
 
-  test("an enqueue-time eligibility snapshot defeats serialized writes", () => {
-    const variant = report("documented-enqueue-serialized");
+  test("an enqueue-time snapshot is admitted by the documentation and lets both write", () => {
+    const variant = report("documented-enqueue-not-isolated");
+    assert.equal(variant.runs, 3432);
+    assert.equal(variant.twoWinners, 520);
+  });
+
+  test("EVEN granting serialized writes (P-CAS), an enqueue snapshot approves both", () => {
+    const variant = report("premise-enqueue-serialized");
+    assert.equal(variant.premise, "premise");
     assert.equal(variant.runs, 924);
     assert.equal(variant.twoWinners, 60);
   });
 
   test("the documented stale search does not remove the race", () => {
     const variant = report("documented-stale-search");
+    assert.equal(variant.runs, 3432);
     assert.equal(variant.twoWinners, 200);
   });
 
   test("stale verification reads cannot reduce the two-winner count below zero", () => {
     const variant = report("documented-apply-prefix-reads");
+    assert.equal(variant.runs, 3432);
+    assert.equal(variant.oneWinner, 1200);
     assert.equal(variant.twoWinners, 0);
-    assert.ok(variant.noWinner > 0, "stale reads turn races into uncertainty, not into authority");
+    assert.equal(variant.noWinner, 2232);
   });
 });
 
@@ -87,7 +97,8 @@ describe("matrix honesty", () => {
 
   test("no documented variant is silently relabelled as a premise", () => {
     assert.equal(report("documented-apply-not-isolated").premise, "documented");
-    assert.equal(report("documented-enqueue-serialized").premise, "documented");
+    assert.equal(report("documented-enqueue-not-isolated").premise, "documented");
+    assert.equal(report("premise-enqueue-serialized").premise, "premise");
     assert.equal(report("cas-premise").premise, "premise");
   });
 

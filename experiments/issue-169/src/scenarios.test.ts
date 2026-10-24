@@ -16,6 +16,8 @@ import {
   existingClaimIsRespected,
   failedJobWritesNothing,
   failedReadDoesNotAuthorize,
+  failureBeforeScheduling,
+  currentValueTransfer,
   freeTicketProgresses,
   legacyClaimIsRespected,
   localRecoveryKeepsTheAttempt,
@@ -173,7 +175,28 @@ describe("uncertain acquisition", () => {
     assert.equal(facts.attemptsByFactory["A"], 1);
   });
 
-  test("a FAILED job wrote nothing, spends no Attempt, and a retry may acquire", () => {
+  test("a request that never reached Jira leaves no claim and spends no Attempt; a clean retry acquires", () => {
+    const facts = failureBeforeScheduling();
+    assert.match(facts.details["outcome after the failed request"] ?? "", /^not-acquired/);
+    assert.equal(facts.details["launch after the failed request"], "no");
+    assert.equal(facts.details["attempts after the failed request"], "0");
+    assert.equal(facts.details["launch after the retry"], "yes");
+    assert.equal(facts.workerCount, 1);
+    assert.equal(facts.attemptsByFactory["A"], 1);
+  });
+
+  test("currentValue is not a stronger primitive: two transfers conditioned on the same value both commit", () => {
+    const documented = currentValueTransfer("documented");
+    assert.equal(documented.details["final claim"], "C");
+    assert.equal(documented.details["transfer jobs committed"], "2");
+    assert.equal(documented.workerCount, 0);
+
+    const cas = currentValueTransfer("cas");
+    assert.equal(cas.details["final claim"], "B");
+    assert.equal(cas.details["transfer jobs committed"], "1");
+  });
+
+  test("a FAILED job (transactional, nothing updated) spends no Attempt and a retry may acquire", () => {
     const facts = failedJobWritesNothing();
     assert.match(facts.details["outcome after the failed job"] ?? "", /^not-acquired/);
     assert.equal(facts.details["launch after the failed job"], "no");

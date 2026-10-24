@@ -91,29 +91,6 @@ export function claimRecord(input: {
   };
 }
 
-/** The record as the JSON value Jira stores (a plain JSON object, no class). */
-export type ClaimJson = {
-  protocol: typeof CLAIM_PROTOCOL;
-  factory: string;
-  nonce: string;
-  ticket: string;
-  account: string;
-  destination: string;
-  createdAt: string;
-};
-
-export function claimToJson(record: ClaimRecord): ClaimJson {
-  return {
-    protocol: record.protocol,
-    factory: record.factory,
-    nonce: record.nonce,
-    ticket: record.ticket,
-    account: record.account,
-    destination: record.destination,
-    createdAt: record.createdAt,
-  };
-}
-
 export type ParsedClaim =
   | { kind: "valid"; record: ClaimRecord }
   | { kind: "malformed"; reason: string };

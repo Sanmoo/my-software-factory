@@ -20,7 +20,7 @@ investigação não aprova o protocolo nem torna a implementação (#170) pronta
 
 ```bash
 npm install
-npm test          # 60 testes: identidade, modelo, matriz exaustiva e cenários
+npm test          # 66 testes: identidade, modelo, matriz exaustiva e cenários
 npm run run       # imprime a matriz e os cenários; grava runs/evidence.json
 ```
 
