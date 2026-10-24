@@ -13,7 +13,7 @@
 export const RANK_ORDER = "Rank ASC";
 
 export type RankOrdering =
-  | { ok: true; jql: string }
+  | { ok: true; jql: string; selectionFilter: string }
   | { ok: false; because: string };
 
 /**
@@ -26,7 +26,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
 
   const masked = maskQuoted(trimmed);
   const clause = topLevelOrderBy(masked);
-  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}` };
+  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}`, selectionFilter: trimmed };
 
   const clauses = splitTopLevel(trimmed, masked, clause.bodyStart, ",");
   if (clauses.length !== 1) {
@@ -55,7 +55,31 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
       because: `ORDER BY Rank ${direction} conflicts with native Rank ascending order`,
     };
   }
-  return { ok: true, jql: trimmed };
+  const filter = trimmed.slice(0, clause.start).trim();
+  if (filter === "") {
+    return { ok: false, because: "the JQL carries only an ordering and no selection filter" };
+  }
+  return { ok: true, jql: trimmed, selectionFilter: filter };
+}
+
+/**
+ * One query for a whole Jira site's selections (issue 129): the union of the
+ * selections' filters, ordered ONLY by the site's native Rank. Each selection
+ * was already validated on its own; its own ordering clause is removed before
+ * the union, because independent selection orders cannot be concatenated into
+ * the site-wide order. A single selection keeps its exact query.
+ */
+export function withSiteRankOrdering(selections: readonly string[]): RankOrdering {
+  if (selections.length === 0) return { ok: false, because: "the site carries no selection" };
+  if (selections.length === 1) return withNativeRankOrdering(selections[0] ?? "");
+
+  const filters: string[] = [];
+  for (const selection of selections) {
+    const ordered = withNativeRankOrdering(selection);
+    if (!ordered.ok) return ordered;
+    filters.push(`(${ordered.selectionFilter})`);
+  }
+  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}`, selectionFilter: filters.join(" OR ") };
 }
 
 /** The text inside quoted JQL literals, blanked out (indices preserved). */
@@ -88,12 +112,12 @@ function maskQuoted(jql: string): string {
   return masked;
 }
 
-/** The top-level ORDER BY clause: where its body starts, or null when the
- *  query has none (a quoted literal is not a clause). */
-function topLevelOrderBy(masked: string): { bodyStart: number } | null {
+/** The top-level ORDER BY clause: where it starts and where its body starts,
+ *  or null when the query has none (a quoted literal is not a clause). */
+function topLevelOrderBy(masked: string): { start: number; bodyStart: number } | null {
   const pattern = /\border\s+by\b/gi;
   let depth = 0;
-  let found: { bodyStart: number } | null = null;
+  let found: { start: number; bodyStart: number } | null = null;
   let position = 0;
   for (const match of masked.matchAll(pattern)) {
     const start = match.index ?? 0;
@@ -101,7 +125,7 @@ function topLevelOrderBy(masked: string): { bodyStart: number } | null {
       if (masked[position] === "(") depth += 1;
       else if (masked[position] === ")") depth -= 1;
     }
-    if (depth === 0) found = { bodyStart: start + match[0].length };
+    if (depth === 0) found = { start, bodyStart: start + match[0].length };
   }
   return found;
 }

@@ -1,16 +1,16 @@
 import type { Labels } from "../config.js";
 import type {
   OpenTicket,
+  SiteTicketTracker,
   TicketBlocker,
   TicketSelection,
   TicketSnapshot,
-  TicketTracker,
 } from "./expanded-port.js";
 import type { IssueComment, Known, WriteOutcome } from "./port.js";
 import { known, notKnown } from "./port.js";
 import { jiraTicket, type JiraTicketIdentity, type TicketIdentity, type TicketSource } from "./identity.js";
 import { renderAdf } from "./jira-adf.js";
-import { withNativeRankOrdering } from "./jira-jql.js";
+import { withNativeRankOrdering, withSiteRankOrdering } from "./jira-jql.js";
 
 /**
  * The real Jira Cloud ticket adapter (issue 128): reads over the REST API v3
@@ -188,7 +188,7 @@ const PAGE_SIZE = 100;
 const RANK_UNAVAILABLE =
   /rank[^.;]{0,80}(?:not\s+(?:exist|searchable|supported|available)|unavailable|invalid|unsupported)|(?:not\s+(?:exist|searchable|supported|available)|invalid|unsupported)[^.;]{0,40}rank/i;
 
-export class JiraTicketAdapter implements TicketTracker {
+export class JiraTicketAdapter implements SiteTicketTracker {
   readonly site: string;
   readonly account: string;
   readonly tokenEnv: string;
@@ -245,21 +245,44 @@ export class JiraTicketAdapter implements TicketTracker {
    * operator's JQL is the whole selection.
    */
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
+    const ordering = withNativeRankOrdering(this.selectionJql(selection));
+    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
+    return this.readOrdered(ordering.jql);
+  }
+
+  /**
+   * The site's several selections as ONE native Rank-ordered result (issue
+   * 129): the union of their filters, read page by page in Jira's own order.
+   * Routing each result to its explicit destination remains the caller's job;
+   * this read never guesses one.
+   */
+  async listSiteTickets(selections: readonly TicketSelection[]): Promise<OpenTicket[]> {
+    if (selections.length === 0) {
+      throw new JiraSelectionError(`the Jira site "${this.site}" was asked for no selection`);
+    }
+    const ordering = withSiteRankOrdering(selections.map((selection) => this.selectionJql(selection)));
+    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
+    return this.readOrdered(ordering.jql);
+  }
+
+  /** The query of one selection after both facts it must carry are checked. */
+  private selectionJql(selection: TicketSelection): string {
     this.assertSource(selection.source);
     const jql = selection.jql;
     if (jql === undefined || jql.trim() === "") {
       throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
     }
-    const ordering = withNativeRankOrdering(jql);
-    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
-    await this.actingAccount();
+    return jql;
+  }
 
+  private async readOrdered(jql: string): Promise<OpenTicket[]> {
+    await this.actingAccount();
     const tickets: OpenTicket[] = [];
     const seenTokens = new Set<string>();
     let pageToken: string | undefined;
     for (;;) {
       const body: Record<string, unknown> = {
-        jql: ordering.jql,
+        jql,
         fields: LIST_FIELDS,
         maxResults: PAGE_SIZE,
         ...(pageToken === undefined ? {} : { nextPageToken: pageToken }),

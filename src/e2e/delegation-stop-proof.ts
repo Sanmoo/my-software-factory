@@ -41,7 +41,7 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot" });
     seedIssue(tracker, { repo, number: 1, createdAt: "2026-01-01T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     const config: Config = {
-      workerGhAccount: "bot", workerModel: "deterministico/roteiro", repos: [repo], concurrency: 1,
+      workerGhAccount: "bot", workerModel: "deterministico/roteiro", repos: [repo], jira: [], concurrency: 1,
       workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },

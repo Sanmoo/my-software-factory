@@ -256,14 +256,16 @@ carrying attempt evidence are still listed, unclassified, and the rest of the
 report is unchanged. A work carried by more than one container lists each
 container and a **duplicate workers** line — the decision is yours.
 
-**Jira candidates** are read-only: each `jira:` selection's JQL result in the
-site's native Rank order, naming its site, the ticket and the destination. They
-carry no claim and no reservation, so they never appear in the pool. A
-selection that cannot be read reads `unknown` with its reason instead of an
-empty list, and leaves the overlap it could have caused `unverified`. A ticket
-more than one selection promises to a **different** destination is held under
-`ambiguous` with those destinations instead of being offered as a candidate for
-either.
+**Jira candidates** are read-only and grouped per site; the selection semantics
+that produce each site's order are in the README. Every candidate names its
+site and explicit destination. A site with a selection that cannot be read
+reads `unknown` with the reason instead of an empty list or a guessed
+destination; none of that site's candidates is offered until every selection
+can be read. A ticket more than one selection promises to a **different**
+destination is held under `ambiguous` with those destinations instead of being
+offered as a candidate for either; the other candidates on that site remain
+usable. Jira candidates carry no claim and no reservation, so they never appear
+in the pool.
 
 ## (d) Local desktop notifications (issue 93)
 
