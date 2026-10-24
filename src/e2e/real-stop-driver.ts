@@ -89,12 +89,9 @@ async function main(): Promise<void> {
 
   const workspace = join(ROOT, "fabrica");
   const workDir = join(workspace, "trabalhos", "Sanmoo", "stop#1");
-  for (const path of [workDir, join(workspace, "toolchains", "mise"), join(workspace, "toolchains", "agent", "npm")]) {
+  for (const path of [workDir, join(workspace, "toolchains", "mise")]) {
     mkdirSync(path, { recursive: true });
   }
-  const profileDir = join(ROOT, "perfil");
-  mkdirSync(profileDir, { recursive: true });
-  writeFileSync(join(profileDir, "settings.json"), "{}", "utf8");
 
   // The factory's own read-only liveness probe (ADR 0002): Docker is the
   // authority on which containers carry the work.
@@ -116,7 +113,10 @@ async function main(): Promise<void> {
     model: "deterministic/stop-proof",
     token: "no-github-token",
     image: WORKER_IMAGE,
-    profileDir,
+    authEnv: {},
+    // The agent below is a shell `sleep`: this launch makes no model call and
+    // must carry no credential (a proof never spends one).
+    modelCredentials: "unused",
     workspace,
     // A short poll so the activity watch never interferes with the stop; the
     // agent is silent on purpose, and the stop arrives long before the limit.

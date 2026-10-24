@@ -858,6 +858,36 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
     await assert.rejects(failing, /never read from a personal Pi profile/);
   });
 
+  test("an agent that makes no model call declares it — the credential precondition stands down, every other one still runs", async () => {
+    const checks: string[][] = [];
+    const preflight = defaultPreflight({
+      token: "present",
+      image: WORKER_IMAGE,
+      model: "deterministic/stop-proof",
+      agentResources: RESOURCES,
+      authEnv: {},
+      modelCredentials: "unused",
+      dockerSocket: SOCKET,
+      // Any credential would be a lie for a deterministic agent: the probe is
+      // never called.
+      authProbe: async () => {
+        throw new Error("the credential probe must not run for a model-less agent");
+      },
+      run: async (command, args) => {
+        checks.push([command, ...args]);
+        if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+        if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+        return { stdout: "ok", stderr: "" };
+      },
+    });
+
+    await preflight();
+
+    assert.ok(checks.some((call) => call.includes(IMAGE_INVENTORY_PATH)), "the image inventory was still checked");
+    assert.ok(checks.some((call) => call.includes("git")), "the git credential helper was still checked");
+    assert.ok(checks.some((call) => call.includes("info")), "Docker inside the worker was still checked");
+  });
+
   test("an unreadable worker-auth-file fails before any probe and never echoes its content", async () => {
     const failing = defaultPreflight({
       token: "present",
@@ -1253,9 +1283,6 @@ describe("sandcastle runtime — the requested stop and the native session resum
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "msf-sandcastle-stop-"));
-    const profileDir = join(root, "perfil");
-    mkdirSync(profileDir, { recursive: true });
-    writeFileSync(join(profileDir, "auth.json"), "{}", "utf8");
     workDir = join(root, "trabalhos", "Sanmoo#my-tasks#42");
     mkdirSync(workDir, { recursive: true });
     request = {
@@ -1283,7 +1310,8 @@ describe("sandcastle runtime — the requested stop and the native session resum
     return new SandcastleRuntime({
       model: MODEL,
       token: "gh-token",
-      profileDir: join(root, "perfil"),
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: join(root, "fabrica"),
       dockerSocket,
       preflight: async () => {},
@@ -1366,7 +1394,8 @@ describe("sandcastle runtime — the requested stop and the native session resum
     const runtime = new SandcastleRuntime({
       model: MODEL,
       token: "gh-token",
-      profileDir: join(root, "perfil"),
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: join(root, "fabrica"),
       dockerSocket,
       preflight: async () => {},
@@ -1408,7 +1437,8 @@ describe("sandcastle runtime — the requested stop and the native session resum
     const runtime = new SandcastleRuntime({
       model: MODEL,
       token: "gh-token",
-      profileDir: join(root, "perfil"),
+      agentResources: RESOURCES,
+      authEnv: {},
       workspace: join(root, "fabrica"),
       dockerSocket,
       preflight: async () => {},
