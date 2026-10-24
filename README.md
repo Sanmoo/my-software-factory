@@ -77,8 +77,7 @@ npm run build
 node dist/cli.js run --once  # one sweep
 node dist/cli.js run         # sweeps forever
 node dist/cli.js status      # the trail, read-only
-node dist/cli.js retro <work> [--language <tag>]               # one finished work
-node dist/cli.js retro                                        # the full window
+node dist/cli.js retro [<work>] [--language <tag>]           # the window, or one finished work
 ```
 
 The worker model is required in `msf.yaml`; invocations do not select it.

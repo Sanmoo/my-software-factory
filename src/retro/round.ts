@@ -322,7 +322,9 @@ function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): R
   const boundaryAt =
     plan.observedThrough === null
       ? state.boundaryAt
-      : Math.max(state.boundaryAt ?? plan.observedThrough, plan.observedThrough);
+      : state.boundaryAt === null
+        ? plan.observedThrough
+        : Math.max(state.boundaryAt, plan.observedThrough);
   return {
     lastReport: reportName,
     boundaryAt,

@@ -112,10 +112,9 @@ export interface RetroWorkInput {
 }
 
 /**
- * The retro-specific launch shape (issue 141, ADR 0006): a factory job, not a
- * Work — no claim, no branch, no outcome record. The round reads a window of
- * finished works and writes a report plus a result record; its model and
- * language are the round's, never the worker's by accident.
+ * The retro-specific launch shape (issue 141, ADR 0006): the round reads a
+ * window of finished works and writes a report plus a result record; its model
+ * and language are the round's, never the worker's by accident.
  */
 export interface RetroRequest {
   /** The round id — also the report and result file names' prefix. */

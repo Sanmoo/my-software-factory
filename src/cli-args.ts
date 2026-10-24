@@ -18,6 +18,7 @@ export interface CliArgs {
 const usage =
   "usage: msf run [--once] [--config <path>] [--runtime <name>]\n" +
   "       msf status [--all] [--config <path>]\n" +
+  "       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]\n" +
   "       msf retro [<work>] [--language <tag>] [--config <path>]";
 
 export function parseCliArgs(argv: string[]): CliArgs {

@@ -408,6 +408,16 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
     const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
+    // The window's premise is that no live worker carries its works (issue
+    // 141). An empty workspace needs no premise — there is nothing to analyze
+    // either way — but a window with works cannot be launched on a guess: the
+    // sweep defers for the same reason, and the manual trigger is no exception.
+    if (observation.state !== "known" && finished.length > 0) {
+      throw new Error(
+        `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
+          "worker carries its works, so no round was launched; retry when Docker answers",
+      );
+    }
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),
