@@ -55,10 +55,19 @@ export interface PersistedWorkspace {
   readonly reservations: readonly Reservation[];
 }
 
+/** Distinguishes two process incarnations of the same installation. A
+ *  restarted factory gets a new one, so a claim written by an earlier
+ *  incarnation never matches a new acquisition's nonce — even if the workspace
+ *  (and its sequence) was lost. Recovery keeps working because the persisted
+ *  claim carries its original nonce. */
+let nextIncarnation = 1;
+
 export class FactoryInstance {
   private readonly reservations = new Map<string, Reservation>();
   private readonly pending = new Map<string, ClaimRecord>();
   private readonly decisions = new Map<string, Decision>();
+  private readonly launchedClaims = new Set<string>();
+  private readonly incarnation: string;
   private sequence = 0;
 
   constructor(
@@ -66,7 +75,10 @@ export class FactoryInstance {
     readonly actingAccount: string,
     readonly destination: string,
     private readonly protocol: ClaimProtocol,
-  ) {}
+    incarnation?: string,
+  ) {
+    this.incarnation = incarnation ?? `inc-${nextIncarnation++}`;
+  }
 
   attempts(ticket: TicketIdentity): number {
     return this.reservations.get(ticketKey(ticket))?.attempts ?? 0;
@@ -84,7 +96,7 @@ export class FactoryInstance {
     }
     const claim: ClaimRecord = {
       factoryId: this.factoryId,
-      nonce: `${this.factoryId}:${this.sequence + 1}`,
+      nonce: `${this.factoryId}:${this.incarnation}:${this.sequence + 1}`,
       ticket,
     };
     this.sequence += 1;
@@ -151,6 +163,12 @@ export class FactoryInstance {
   ): WorkerRecord | undefined {
     const key = ticketKey(ticket);
     if (this.decisions.get(key) !== "authorized") return undefined;
+    const witness = this.reservations.get(key)?.claim;
+    // One authorization launches one Worker: a second call for the same claim
+    // is not a second attempt. A new acquisition carries a new claim.
+    if (witness !== undefined && witness !== null && this.launchedClaims.has(witness.nonce)) {
+      return undefined;
+    }
 
     let reservation = this.reservations.get(key);
     if (reservation === undefined) {
@@ -170,6 +188,7 @@ export class FactoryInstance {
       reservation.attempts += 1;
     }
     reservation.state = "running";
+    if (witness !== undefined && witness !== null) this.launchedClaims.add(witness.nonce);
     this.pending.delete(key);
     return workers.start(ticket, this.factoryId, reservation.attempts);
   }
