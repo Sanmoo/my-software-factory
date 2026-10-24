@@ -1,14 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 
-import {
-  AGENT_DECLARATION_FILE,
-  declarationDigest,
-  type AgentResourcesDeclaration,
-} from "../../scripts/agent-resources.mjs";
+import type { AgentResourcesDeclaration } from "../../scripts/agent-resources.mjs";
 import {
   AGENT_DECLARATION_PATH,
   AgentImageMismatchError,
