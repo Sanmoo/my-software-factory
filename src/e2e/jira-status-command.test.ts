@@ -15,19 +15,19 @@ import {
 
 /**
  * `msf status` and `msf run` at the hermetic CLI seam over the REAL Jira
- * adapter: the spawned binary reads the configured selections
+ * adapter (issues 128-129): the spawned binary reads the configured selections
  * through a canned Jira REST channel (fetch preload), with an isolated HOME and
- * no ambient credential. Status presents the JQL candidates in the native Rank
- * order without claiming anything; a selection without its local credential is
- * unknown while the healthy one still lists; `run` refuses a Jira
- * configuration before any claim, launch or workspace write.
+ * no ambient credential. Status presents ONE site's candidates in native Rank
+ * order across destinations and pages, without claiming anything; a selection
+ * without its local credential is unknown while other sites still list; `run`
+ * refuses a Jira configuration before any claim, launch or workspace write.
  */
 
 const ALPHA = "acme.atlassian.net";
 const BETA = "beta.atlassian.net";
 const REPO = "Sanmoo/my-tasks";
 
-describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
+describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)", () => {
   let dir: string;
   let gh: GhShim;
   let jira: JiraFetchShim;
@@ -149,10 +149,10 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(
       result.stdout,
-      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 2 selections$/m,
-      "the header counts the configured selections it lists below, not the tickets they hold",
+      /jira candidates \(read-only[^)]*one native Rank order[^)]*nothing is claimed, commented or launched\): 2 sites$/m,
+      "the header counts sites: candidates of different sites are never one comparable order",
     );
-    assert.match(result.stdout, new RegExp(`${ALPHA} → ${REPO}: 2`));
+    assert.match(result.stdout, new RegExp(`${ALPHA} \\(1 selection\\) → ${REPO}: 2 candidates`));
     assert.match(
       result.stdout,
       new RegExp(`1\\. ABC-1 \\(jira:${ALPHA.replace(/\./g, "\\.")}\\) → ${REPO} — Fix login \\[assignee: Ana Silva\\]`),
@@ -165,7 +165,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
       result.stdout.indexOf("1. ABC-1") < result.stdout.indexOf("2. ABC-2"),
       "the returned Rank order is presented as-is, never re-sorted by creation age",
     );
-    assert.match(result.stdout, new RegExp(`${BETA} → ${REPO}: unknown`));
+    assert.match(result.stdout, new RegExp(`${BETA} \\(1 selection\\) → ${REPO}: unknown`));
     assert.match(result.stdout, /MSF_JIRA_BETA_TOKEN/, "the missing credential is diagnosed by its variable name");
     assert.match(result.stdout, /pool \(eligible\): none/, "a Jira candidate is never offered as an eligible Work");
 
@@ -224,8 +224,9 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
     assert.equal(existsSync(workspace), false, "no execution workspace is created");
   });
 
-  test("one Jira project feeds two destinations through two explicit selections and one identity", () => {
-    // Two selections on the SAME site: one account, one credential, one /myself.
+  test("two selections on one site produce one native Rank order across destinations and pages", () => {
+    // The backend selection is declared FIRST; the site's Rank puts frontend
+    // first. The report must follow Jira, never the declaration order.
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -237,52 +238,74 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
         `  - site: ${ALPHA}`,
         "    account: bot@acme.example",
         "    token-env: MSF_JIRA_ALPHA_TOKEN",
-        "    jql: project = ABC AND labels = frontend",
-        "    destination: Sanmoo/frontend",
+        "    jql: project = ABC AND labels = backend",
+        "    destination: Sanmoo/backend",
         `  - site: ${ALPHA}`,
         "    account: bot@acme.example",
         "    token-env: MSF_JIRA_ALPHA_TOKEN",
-        "    jql: project = ABC AND labels = backend",
-        "    destination: Sanmoo/backend",
+        "    jql: project = ABC AND labels = frontend",
+        "    destination: Sanmoo/frontend",
       ].join("\n"),
       "utf8",
     );
+    const frontend = {
+      id: "10010",
+      key: "ABC-10",
+      fields: { summary: "Frontend fix", labels: ["frontend"], created: "2026-02-01T00:00:00.000+0000", assignee: null },
+    };
+    const backend = {
+      id: "10020",
+      key: "ABC-20",
+      fields: { summary: "Backend fix", labels: ["backend"], created: "2026-01-01T00:00:00.000+0000", assignee: null },
+    };
     jira = installJiraFetchShim(dir, {
       [`GET /rest/api/3/myself`]: {
         body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
       },
-      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: {
-        body: {
-          isLast: true,
-          issues: [{ id: "10010", key: "ABC-10", fields: { summary: "Frontend fix", labels: ["frontend"], created: "2026-02-01T00:00:00.000+0000", assignee: null } }],
-        },
-      },
       [`POST /rest/api/3/search/jql :: project = ABC AND labels = backend ORDER BY Rank ASC`]: {
-        body: {
-          isLast: true,
-          issues: [{ id: "10020", key: "ABC-20", fields: { summary: "Backend fix", labels: ["backend"], created: "2026-01-01T00:00:00.000+0000", assignee: null } }],
-        },
+        body: { isLast: true, issues: [backend] },
       },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [frontend] },
+      },
+      // The site-wide union is the only source of the order: two native pages.
+      [`POST /rest/api/3/search/jql :: (project = ABC AND labels = backend) OR (project = ABC AND labels = frontend) ORDER BY Rank ASC`]: [
+        { body: { isLast: false, nextPageToken: "page-2", issues: [frontend] } },
+        { body: { isLast: true, issues: [backend] } },
+      ],
     });
 
     const result = runCli(dir, ["status"], cliEnv());
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/frontend: 1/);
+    assert.match(result.stdout, /jira candidates \(read-only[^)]*one native Rank order[^)]*\): 1 site$/m);
+    assert.match(
+      result.stdout,
+      /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: 2 candidates$/m,
+      "one site, two explicit destinations: one ordered set",
+    );
+    const first = result.stdout.indexOf("1. ABC-10");
+    const second = result.stdout.indexOf("2. ABC-20");
+    assert.ok(first >= 0 && first < second, "the site's Rank wins over the order the destinations were declared in");
     assert.match(result.stdout, /1\. ABC-10 \(jira:acme\.atlassian\.net\) → Sanmoo\/frontend — Frontend fix/);
-    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/backend: 1/);
-    assert.match(result.stdout, /1\. ABC-20 \(jira:acme\.atlassian\.net\) → Sanmoo\/backend — Backend fix/);
+    assert.match(result.stdout, /2\. ABC-20 \(jira:acme\.atlassian\.net\) → Sanmoo\/backend — Backend fix/);
     assert.match(result.stdout, /pool \(eligible\): none/, "still read-only: no candidate is executable work");
     assert.deepEqual(
       jira.calls(),
-      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
-      "one identity for the site and one native read per selection",
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+      ],
+      "one identity, the two selection membership reads, and the union's two pages; no write",
     );
     assert.deepEqual(gh.restCalls(), [], "no GitHub Issues read");
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 
-  test("a ticket two selections promise to different destinations is held, not listed as a candidate", () => {
+  test("a conflicting ticket is held alone while its sibling candidate remains usable", () => {
     writeFileSync(
       join(dir, "msf.yaml"),
       [
@@ -305,46 +328,120 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
       "utf8",
     );
     const shared = {
-      body: {
-        isLast: true,
-        issues: [
-          {
-            id: "10030",
-            key: "ABC-30",
-            fields: {
-              summary: "Shared across layers",
-              labels: ["frontend", "shared"],
-              created: "2026-01-01T00:00:00.000+0000",
-              assignee: null,
-            },
-          },
-        ],
+      id: "10030",
+      key: "ABC-30",
+      fields: {
+        summary: "Shared across layers",
+        labels: ["frontend", "shared"],
+        created: "2026-01-01T00:00:00.000+0000",
+        assignee: null,
       },
+    };
+    const frontendOnly = {
+      id: "10031",
+      key: "ABC-31",
+      fields: { summary: "Frontend only", labels: ["frontend"], created: "2026-02-01T00:00:00.000+0000", assignee: null },
     };
     jira = installJiraFetchShim(dir, {
       [`GET /rest/api/3/myself`]: {
         body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
       },
-      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: shared,
-      [`POST /rest/api/3/search/jql :: project = ABC AND labels = shared ORDER BY Rank ASC`]: shared,
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = frontend ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [frontendOnly, shared] },
+      },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = shared ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [shared] },
+      },
+      [`POST /rest/api/3/search/jql :: (project = ABC AND labels = frontend) OR (project = ABC AND labels = shared) ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [frontendOnly, shared] },
+      },
     });
 
     const result = runCli(dir, ["status"], cliEnv());
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/frontend: 0 candidates, 1 held as ambiguous/);
-    assert.match(result.stdout, /acme\.atlassian\.net → Sanmoo\/backend: 0 candidates, 1 held as ambiguous/);
+    assert.match(
+      result.stdout,
+      /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: 1 candidate, 1 held as ambiguous/,
+    );
+    assert.match(result.stdout, /1\. ABC-31 \(jira:acme\.atlassian\.net\) → Sanmoo\/frontend — Frontend only/);
     assert.match(result.stdout, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
     assert.match(
       result.stdout,
-      /1\. ABC-30 \(jira:acme\.atlassian\.net\) — Shared across layers → Sanmoo\/frontend, Sanmoo\/backend/,
+      /1\. ABC-30 \(jira:acme\.atlassian\.net\) — Shared across layers → Sanmoo\/backend, Sanmoo\/frontend/,
     );
+    assert.doesNotMatch(result.stdout, /→ Sanmoo\/(frontend|backend) — Shared across layers/, "the conflict is never a candidate");
     assert.match(result.stdout, /pool \(eligible\): none/);
     assert.deepEqual(
       jira.calls(),
-      ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql", "POST /rest/api/3/search/jql"],
-      "one identity and one native read per selection, no claim or write",
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+      ],
+      "one identity, the two selection reads and the site union; no claim or write",
     );
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
+
+  test("a ticket two selections share for one destination is deduplicated", () => {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${workspace}`,
+        "jira:",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC",
+        "    destination: Sanmoo/frontend",
+        `  - site: ${ALPHA}`,
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ALPHA_TOKEN",
+        "    jql: project = ABC AND labels = ready",
+        "    destination: Sanmoo/frontend",
+      ].join("\n"),
+      "utf8",
+    );
+    const ticket = {
+      id: "10040",
+      key: "ABC-40",
+      fields: { summary: "One Work, two selectors", labels: ["ready"], created: "2026-01-01T00:00:00.000+0000", assignee: null },
+    };
+    jira = installJiraFetchShim(dir, {
+      [`GET /rest/api/3/myself`]: {
+        body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
+      },
+      [`POST /rest/api/3/search/jql :: project = ABC ORDER BY Rank ASC`]: { body: { isLast: true, issues: [ticket] } },
+      [`POST /rest/api/3/search/jql :: project = ABC AND labels = ready ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [ticket] },
+      },
+      [`POST /rest/api/3/search/jql :: (project = ABC) OR (project = ABC AND labels = ready) ORDER BY Rank ASC`]: {
+        body: { isLast: true, issues: [ticket] },
+      },
+    });
+
+    const result = runCli(dir, ["status"], cliEnv());
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/frontend: 1 candidate$/m);
+    assert.equal((result.stdout.match(/ABC-40/g) ?? []).length, 1, "the same Work is listed once");
+    assert.doesNotMatch(result.stdout, /held as ambiguous/, "one destination is not a conflict");
+    assert.deepEqual(
+      jira.calls(),
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+        "POST /rest/api/3/search/jql",
+      ],
+      "both selectors and the site union were read; nothing was written",
+    );
+    assert.equal(existsSync(workspace), false, "no execution workspace");
+  });
+
 });

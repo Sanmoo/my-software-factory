@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { RANK_ORDER, withNativeRankOrdering } from "./jira-jql.js";
+import { RANK_ORDER, withNativeRankOrdering, withSiteRankOrdering } from "./jira-jql.js";
 
 /**
  * The configured query's effective ordering: Jira Rank ascending
@@ -72,5 +72,40 @@ describe("Jira JQL: native Rank ascending", () => {
 
   test("an empty query is refused instead of ordered", () => {
     assert.match(refused("   "), /empty/);
+  });
+});
+
+describe("Jira JQL: one native Rank order for a site's selections", () => {
+  test("several selections become one query, parenthesized and ordered only by Rank ascending", () => {
+    const result = withSiteRankOrdering(["project = ABC AND labels = frontend", "project = DEF ORDER BY Rank ASC"]);
+    assert.deepEqual(result, {
+      ok: true,
+      jql: `(project = ABC AND labels = frontend) OR (project = DEF) ORDER BY ${RANK_ORDER}`,
+    });
+  });
+
+  test("one selection keeps its own native query, ordering included", () => {
+    assert.deepEqual(withSiteRankOrdering(["project = ABC"]), {
+      ok: true,
+      jql: `project = ABC ORDER BY ${RANK_ORDER}`,
+    });
+  });
+
+  test("a conflicting ordering anywhere in the site is refused, never silently weakened", () => {
+    const result = withSiteRankOrdering(["project = ABC", "project = DEF ORDER BY created ASC"]);
+    assert.equal(result.ok, false);
+    if (result.ok) assert.fail("the site query is refused");
+    assert.match(result.because, /created/);
+    assert.match(result.because, /Rank ascending/);
+  });
+
+  test("an empty site has no query, and quoted ordering text is not a clause", () => {
+    const empty = withSiteRankOrdering([]);
+    assert.equal(empty.ok, false);
+    const quoted = withSiteRankOrdering(['summary ~ "order by rank desc"', "project = DEF"]);
+    assert.deepEqual(quoted, {
+      ok: true,
+      jql: `(summary ~ "order by rank desc") OR (project = DEF) ORDER BY ${RANK_ORDER}`,
+    });
   });
 });
