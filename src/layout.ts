@@ -5,12 +5,11 @@ import { join } from "node:path";
  * The workspace: root of clones, worktrees, works, the archive and the
  * retrospective reports.
  *
- * Disk names are decided in tickets 05/10 and stay in PT-BR — layout of disk
- * is a taken decision, not code:
+ * Disk names are taken decisions, not code, and stay in PT-BR:
  *   <workspace>/repos/      — single clone per target repo
  *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs (sessao/, log-<n>.jsonl, desfecho.json)
  *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
- *   <workspace>/retros/     — the retrospective reports (the marker) of issue 141
+ *   <workspace>/retros/     — the retrospective reports (the marker of the next window)
  */
 
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */
@@ -42,7 +41,7 @@ export interface WorkspaceLayout {
   repos: string;
   works: string;
   archive: string;
-  /** The retrospective reports: the marker of the next window (issue 141). */
+  /** The retrospective reports: the marker of the next window. */
   retros: string;
 }
 

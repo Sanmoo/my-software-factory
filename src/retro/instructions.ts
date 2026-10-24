@@ -1,5 +1,5 @@
 /**
- * The retrospective instructions (issue 141): factory-owned agent content,
+ * The retrospective instructions: factory-owned agent content,
  * versioned with the factory code and carried by every round's launch request
  * — never fetched at runtime, never inherited from a personal profile.
  *

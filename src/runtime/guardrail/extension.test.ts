@@ -19,7 +19,7 @@ import {
 } from "../../work-record/continuity.js";
 
 /**
- * The in-container guardrail (issue 119): executable protection at the tool
+ * The in-container guardrail: executable protection at the tool
  * boundary. The fake Pi API here is a deterministic "model" that tries the
  * same action again — what is asserted is that the code, not the prompt,
  * records the intent before the action and blocks a repeat after an
@@ -49,7 +49,7 @@ function fakePi(): { api: GuardrailApi; handlers: Handlers } {
   return { api, handlers };
 }
 
-describe("the in-container continuity guardrail (issue 119)", () => {
+describe("the in-container continuity guardrail", () => {
   let workMount: string;
 
   beforeEach(() => {
@@ -291,7 +291,7 @@ describe("the in-container continuity guardrail (issue 119)", () => {
 
   test("an unreadable state refuses every external effect instead of running unguarded", async () => {
     // No continuidade.json at all: the host's verdicts, the attempt and the
-    // session are unknown, so nothing can be authorized (issue 119). A call
+    // session are unknown, so nothing can be authorized. A call
     // that could reach outside the worktree is blocked; a provably local one
     // still runs, so the worker can inspect and report.
     const handlers = install();

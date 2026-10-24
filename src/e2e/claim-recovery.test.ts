@@ -21,7 +21,7 @@ import {
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * The interruption matrix of the claim swap (issue 98) at the sweep seam, with
+ * The interruption matrix of the claim swap at the sweep seam, with
  * a real workspace on disk: a claim failing at ANY write must leave a state the
  * NEXT sweep heals. The failure is never swallowed — it reaches the caller as a
  * failed launch and the factory keeps sweeping.
@@ -30,7 +30,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 const REPO = "Sanmoo/my-tasks";
 const CREATED = "2026-01-01T00:00:00Z";
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
@@ -60,7 +60,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 98)", () => {
+describe("e2e: an interrupted claim leaves a state the next sweep heals", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -166,7 +166,7 @@ describe("e2e: an interrupted claim leaves a state the next sweep heals (issue 9
     assert.deepEqual(await assigneesOf(tracker, 7), [], "the assignee never landed");
 
     // The derivation sees a claimed work with a reservation and no session
-    // evidence: an interruption (issue 123), not a fall. The recovery keeps
+    // evidence: an interruption, not a fall. The recovery keeps
     // the SAME attempt, re-asserts the claim (healing the missing assignee)
     // and launches in the same sweep.
     const second = await runOnce(deps);

@@ -20,7 +20,7 @@ import {
 } from "./persisted.js";
 
 /**
- * The persisted PR association (issue 125): which PRs a Work has had, kept in
+ * The persisted PR association: which PRs a Work has had, kept in
  * its registry dir as associacoes-pr.json. A PR number is only meaningful with
  * its repository, and the Work it delivers is fixed by its ticket identity —
  * so a restart correlates evidence instead of asking the current

@@ -1,5 +1,5 @@
 /**
- * Continuity of an interrupted attempt (issue 119): which Pi session the next
+ * Continuity of an interrupted attempt: which Pi session the next
  * launch opens, whether it may be reopened at all, and what the operator is
  * told when it may not.
  *

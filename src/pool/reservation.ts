@@ -16,7 +16,7 @@ import { readPersistedRecord, writePersistedRecord, type PersistedFacts, type Pe
 import { anchorOfKey, workKeyOf, workOfKey, type WorkAnchor } from "./work-key.js";
 
 /**
- * The reservation record (issue 125): the Work's own facts, persisted inside
+ * The reservation record: the Work's own facts, persisted inside
  * its registry dir as reserva.json — the ticket source (provider + site +
  * stable id) and the destination repository, side by side, plus the readable
  * presentation data. A restart reads the Work from here instead of
@@ -118,7 +118,7 @@ export function reserveWork(
 
   // Synchronous on purpose: the launch path reserves the dir, persists its
   // facts and claims without yielding, so concurrent launches keep their age
-  // order (issue 98).
+  // order.
   const existing = readPersistedRecord(dir, RESERVATION_FILE);
   if (existing.state === "persisted") {
     const mismatch = mismatchReason(existing.record, key);

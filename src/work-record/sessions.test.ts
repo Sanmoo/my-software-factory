@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./sessions.js";
 
 /**
- * Reading a persisted Pi session (issue 119): identity, the intact prefix and
+ * Reading a persisted Pi session: identity, the intact prefix and
  * the tool calls it records. The parser must never turn a broken file into a
  * complete history by dropping the broken line.
  */
@@ -38,7 +38,7 @@ const RESULT = (id: string, message: Record<string, unknown>): string =>
     message: { role: "toolResult", toolCallId: id, toolName: "bash", content: [], isError: false, ...message },
   });
 
-describe("the session reader (issue 119)", () => {
+describe("the session reader", () => {
   let dir: string;
 
   beforeEach(() => {

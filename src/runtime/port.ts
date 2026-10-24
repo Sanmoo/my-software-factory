@@ -1,6 +1,6 @@
 /**
  * The runtime port: how a worker session is born. The real adapter (ticket
- * 12/13) launches Sandcastle Pi sessions in containers; the fake (ticket 11)
+ * 12/13) launches Sandcastle Pi sessions in containers; the fake 
  * scripts outcomes without a container.
  */
 
@@ -9,7 +9,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import type { LocalWorkFacts } from "../git/port.js";
 
 /**
- * The repair context of a reactivated session (issue 107): why the factory
+ * The repair context of a reactivated session: why the factory
  * intervened, the remote HEAD observed before intervening (the lease value)
  * and the evidence of the failing required checks. Issue 112 adds what the
  * host found on disk: the local work the round takes over instead of redoing,
@@ -26,12 +26,12 @@ export interface RepairMaterial {
   /** The work branch as the host found it — commits, uncommitted changes, an
    *  interrupted operation. Absent only when git could not read it. */
   localWork?: LocalWorkFacts;
-  /** The attempt this session resumes (issue 112); absent on a fresh round. */
+  /** The attempt this session resumes; absent on a fresh round. */
   resuming?: number;
 }
 
 /**
- * The material the worker reads at session start (ticket 17, spec story 37):
+ * The material the worker reads at session start:
  * the issue, human issue replies on a blocked retomada, the PR conversation
  * on a feedback round, and the diff of the work branch — every session starts
  * from the relevant context, never from session memory.
@@ -45,7 +45,7 @@ export interface WorkerMaterial {
   pr?: { number: number; comments: IssueComment[] };
   /** Diff of the work branch against its base — the branch's memory so far. */
   diff: string;
-  /** Present only on a repair round (issue 107). */
+  /** Present only on a repair round. */
   repair?: RepairMaterial;
   /** Explicit operator consent, never a result of the interrupted call. */
   callRetry?: { id: string; command: string; cwd: string; reason: string; tool?: string; input?: string; sourceSessionId?: string };
@@ -73,7 +73,7 @@ export interface WorkRequest {
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
   /** The session this launch opens: new, or the interrupted attempt's own
-   *  (issue 119). The factory ALWAYS sets it — the recorded association is
+   * . The factory ALWAYS sets it — the recorded association is
    *  the recovery contract. Every relaunch of an attempt (a recovery, a model
    *  provider retry, the resume after the operator's requested stop) arrives
    *  here as `resume` with the id of ITS attempt; never a session chosen by
@@ -82,7 +82,7 @@ export interface WorkRequest {
    *  session — such a session has no association, pauses a later recovery, and
    *  carries no guardrail state, so the guardrail refuses its external effects. */
   session?: SessionSelection;
-  /** The material the prompt is built from (ticket 17). */
+  /** The material the prompt is built from. */
   material: WorkerMaterial;
 }
 
@@ -112,7 +112,7 @@ export interface RetroWorkInput {
 }
 
 /**
- * The retro-specific launch shape (issue 141, ADR 0006): the round reads a
+ * The retro-specific launch shape (ADR 0006): the round reads a
  * window of finished works and writes a report plus a result record; its model
  * and language are the round's, never the worker's by accident.
  */
@@ -143,7 +143,7 @@ export interface RetroRequest {
 export interface WorkerRuntime {
   launch(request: WorkRequest): Promise<SessionResult>;
   /**
-   * Ask the running session of this work to stop (issue #146). The launch
+   * Ask the running session of this work to stop. The launch
    * promise resolves when the session ended — the cooperative request never
    * abandons it. A request for a work with no session yet is remembered: a
    * launch of that work that starts afterwards ends before it leaves any
@@ -158,7 +158,7 @@ export interface WorkerRuntime {
    */
   forceStop(work: WorkIdentity): Promise<void>;
   /**
-   * Run one retrospective round (issue 141). It is not a Work: no claim, no
+   * Run one retrospective round. It is not a Work: no claim, no
    * slot, no branch, no outcome record — the round writes its report and
    * result record and ends, and the factory reads those artifacts back: the
    * round's word about what it produced is never a fact.

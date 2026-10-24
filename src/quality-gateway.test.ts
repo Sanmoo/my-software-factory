@@ -8,7 +8,7 @@ import { test, describe } from "node:test";
 import { WORKER_IMAGE } from "./worker-image.js";
 
 /**
- * The quality gateway's command contract (issue 113). Every test spawns a real
+ * The quality gateway's command contract. Every test spawns a real
  * command in an isolated working directory with a controlled environment. The
  * official composition is exercised end to end through the canonical entry
  * over a fixture project whose `npm`/`docker` are executable shims; deadline

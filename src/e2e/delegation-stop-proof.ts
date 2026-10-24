@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, type Config } from "../config.js";
+import {
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
+  DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
+  type Config,
+} from "../config.js";
 import { ensureWorkspace, workDir, SESSIONS_SUBDIR } from "../layout.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { seedFixtureRemote } from "../git/local-fixtures.js";
@@ -44,7 +51,8 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
       workerGhAccount: "bot", workerModel: "deterministico/roteiro", repos: [repo], concurrency: 1,
       workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null, jira: [],
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
-      liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+      liveness: { ...DEFAULT_LIVENESS_POLICY }, retro: { ...DEFAULT_RETRO },
+      modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false, configPath: join(root, "delegation.yaml"),
     };
     const runtime = new SandcastleRuntime({

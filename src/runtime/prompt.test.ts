@@ -10,7 +10,7 @@ import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
- * The worker prompt (ticket 17): the issue, the PR and its comments when a
+ * The worker prompt: the issue, the PR and its comments when a
  * round exists, the diff of the work branch — and the worker's THREE
  * obligations (the worker's ruler; the factory's ruler reads only the
  * structured facts these obligations produce).
@@ -30,7 +30,7 @@ const baseRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest => ({
   ...overrides,
 });
 
-// The feedback-round request (ticket 84): the base fixture with an open PR
+// The feedback-round request: the base fixture with an open PR
 // whose conversation the worker must judge, not blindly obey. Derived from
 // `baseRequest` so the issue/diff fixtures stay in one place.
 const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequest =>
@@ -50,7 +50,7 @@ const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequ
   });
 
 describe("worker prompt — the material the session starts from", () => {
-  test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them (issue #146)", () => {
+  test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them", () => {
     const resumed = buildWorkerPrompt(baseRequest(), {
       blockedLabel: DEFAULT_LABELS.blocked,
       continuesSession: true,
@@ -199,7 +199,7 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
   });
 });
 
-describe("worker prompt — the feedback-round policy (ticket 84)", () => {
+describe("worker prompt — the feedback-round policy", () => {
   const promptFor = (comments: { author: string; body: string }[]): string =>
     buildWorkerPrompt(feedbackRequest(comments), { blockedLabel: DEFAULT_LABELS.blocked });
 
@@ -322,7 +322,7 @@ describe("worker prompt — the feedback-round policy (ticket 84)", () => {
   });
 });
 
-describe("worker prompt — the initial round carries no feedback obligations (ticket 84)", () => {
+describe("worker prompt — the initial round carries no feedback obligations", () => {
   const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
 
   test("with no open PR, the feedback-round policy is absent and the round reply stays scoped to rounds with a PR", () => {
@@ -335,7 +335,7 @@ describe("worker prompt — the initial round carries no feedback obligations (t
     );
   });
 });
-describe("worker prompt — the implementation procedure (ticket 85)", () => {
+describe("worker prompt — the implementation procedure", () => {
   const initial = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
 
   const feedbackRequest = baseRequest({
@@ -546,7 +546,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
   });
 });
 
-describe("worker prompt — the repair round (issue 107)", () => {
+describe("worker prompt — the repair round", () => {
   const repairRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest =>
     baseRequest({
       baseBranch: "release/next",
@@ -616,7 +616,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /please rename it/);
   });
 
-  test("a resumed round takes over the local work: inspect it, never reset it (issue 112)", () => {
+  test("a resumed round takes over the local work: inspect it, never reset it", () => {
     const prompt = buildWorkerPrompt(
       repairRequest({
         material: {
@@ -650,7 +650,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /inspected and finished or aborted deliberately — never restarted blind/);
     assert.match(prompt, /Never reset, checkout or recreate the branch/);
     // The reviews must cover what is actually published; prior evidence is
-    // never presumed valid across a session (issue 112, stories 15-16).
+    // never presumed valid across a session.
     assert.match(prompt, /reuse evidence from attempt 2 ONLY for content that is byte-identical/);
     assert.match(prompt, /the two reviews must run again/);
     assert.match(prompt, /--force-with-lease=agent-issue-42:abc123/, "the lease is still pinned");

@@ -1,5 +1,5 @@
 /**
- * The continuity guardrail that runs INSIDE the worker container (issue 119).
+ * The continuity guardrail that runs INSIDE the worker container.
  *
  * It is executable code at the tool boundary, not a paragraph in the prompt:
  * before a bash call runs, the external effects it would have are journaled
@@ -139,7 +139,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // The state is the contract that makes a resumed effect safe: the verdicts
     // of the host's reconciliation, the attempt and the session this call
     // belongs to. Absent or unreadable, nothing can be authorized — a resumed
-    // session must never run unguarded (issue 119) — so every bash call the
+    // session must never run unguarded — so every bash call the
     // classifier does not prove local, and every delegation, is refused until
     // the state is readable. The file tools stay allowed: they edit the clone
     // (the branch is that record) and they are how a worker writes its outcome

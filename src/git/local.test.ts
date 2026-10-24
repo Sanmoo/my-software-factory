@@ -15,8 +15,8 @@ const execFile = promisify(execFileCallback);
 
 /**
  * The git host side, exercised with local git fixtures: bare remotes in a
- * temp workspace — no GitHub, no network. Every behavioral decision of
- * ticket 15 shows up here as an observable git fact of the clone on disk.
+ * temp workspace — no GitHub, no network. Every behavioral decision of the git
+ * host shows up here as an observable git fact of the clone on disk.
  */
 
 describe("git host — one clone per target repo", () => {
@@ -96,7 +96,7 @@ describe("git host — one clone per target repo", () => {
     assert.equal(afterRelaunch.stdout.trim(), workerHead.stdout.trim(), "worker commits intact");
   });
 
-  test("prepare reveals whether the work branch is on origin — the fact behind a relaunch's fetch (issue 96)", async () => {
+  test("prepare reveals whether the work branch is on origin — the fact behind a relaunch's fetch", async () => {
     const git = gitWork();
     const first = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.equal(first.branchCreated, true);
@@ -148,7 +148,7 @@ describe("git host — one clone per target repo", () => {
     assert.notEqual(observedNow, firstHead, "the stale lease would no longer match");
   });
 
-  test("a force-with-lease pinned to the OBSERVED head never overwrites a concurrent push (issue 107)", async () => {
+  test("a force-with-lease pinned to the OBSERVED head never overwrites a concurrent push", async () => {
     const git = gitWork();
     const ref = githubWork("Sanmoo/my-tasks", 7);
     await git.prepareWorkFor(ref);
@@ -186,7 +186,7 @@ describe("git host — one clone per target repo", () => {
     assert.notEqual(stdout.trim().split(/\s+/)[0], observed, "the remote still holds the concurrent work");
   });
 
-  test("a rebase onto the advanced base publishes with the lease when the observed head is unchanged (issue 107)", async () => {
+  test("a rebase onto the advanced base publishes with the lease when the observed head is unchanged", async () => {
     const git = gitWork();
     const ref = githubWork("Sanmoo/my-tasks", 7);
     await git.prepareWorkFor(ref);
@@ -360,7 +360,7 @@ describe("git host — cleanup only on done", () => {
     assert.ok(!existsSync(repoCloneDir(reposDir, "Sanmoo/never-touched")));
   });
 
-  test("diffWork returns the work branch's own changes against its base — the prompt's diff (ticket 17)", async () => {
+  test("diffWork returns the work branch's own changes against its base — the prompt's diff", async () => {
     const git = gitWork();
     await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
@@ -394,7 +394,7 @@ describe("git host — cleanup only on done", () => {
   });
 });
 
-describe("git host — the local work a resumption must preserve (issue 112)", () => {
+describe("git host — the local work a resumption must preserve", () => {
   let root: string;
   let reposDir: string;
   let remote: FixtureRemote;

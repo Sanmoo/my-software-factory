@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describeError } from "./format.js";
 
 /**
- * The durable operational log (issue 141): the CLI mirrors the stamped lines
+ * The durable operational log: the CLI mirrors the stamped lines
  * into the workspace, so a retrospective round can read the factory's own
  * history (mounted read-only) instead of trusting the summary alone.
  */

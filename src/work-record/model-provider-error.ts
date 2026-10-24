@@ -1,5 +1,5 @@
 /**
- * The model provider failure that ended an attempt's turn (issue 144), read
+ * The model provider failure that ended an attempt's turn, read
  * from the attempt's own stream log — never from generic stderr parsing.
  *
  * The runtime records pi's stdout verbatim in the attempt's event log

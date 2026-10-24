@@ -20,7 +20,7 @@ import {
 import { operationalLogPath } from "../log.js";
 
 /**
- * The retrospective window (issue 141): the finished works a round analyzes —
+ * The retrospective window: the finished works a round analyzes —
  * pr-open, clean-without-pr and blocked-self-report alike, anything with
  * attempt history and no live worker. Works whose current attempt has no
  * outcome record of its own (pending reconciliation) are deferred, never
@@ -159,7 +159,7 @@ async function completedAtOf(dir: string): Promise<number> {
 }
 
 /**
- * The factual summary the synthesis opens with (issue 141): counts from the
+ * The factual summary the synthesis opens with: counts from the
  * window's records and ledgers plus what the factory's own operational log
  * says about these works — numbers, never impressions. The agent verifies it
  * against the evidence and corrects it in the report if they disagree.

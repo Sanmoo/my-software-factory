@@ -12,7 +12,7 @@ import { githubRepository, githubTicket, type WorkIdentity } from "../tracker/id
 import { scanReservations } from "./reservation.js";
 
 /**
- * The registry (pool/registry.ts, ticket 13; issue 123): reads back the
+ * The registry (pool/registry.ts): reads back the
  * per-work artifacts the runtime wrote on real disk — desfecho.json (absent =
  * an interruption, never a failure), log-<n>.jsonl, sessao/ and
  * recuperacao.json — and derives the launch facts (attempt number + the
@@ -59,7 +59,7 @@ describe("registry — reading the artifacts back (launch facts)", () => {
     assert.deepEqual(read, { attempt: 3, previousFall: false });
   });
 
-  test("a previous attempt that wrote logs but no desfecho was INTERRUPTED: a new claim numbers the next attempt, but it is not a fall (issue 123)", async () => {
+  test("a previous attempt that wrote logs but no desfecho was INTERRUPTED: a new claim numbers the next attempt, but it is not a fall", async () => {
     mkdirSync(join(workDir, "sessao"), { recursive: true });
     writeFileSync(
       join(workDir, "log-1.jsonl"),
@@ -73,7 +73,7 @@ describe("registry — reading the artifacts back (launch facts)", () => {
     assert.deepEqual(read, { attempt: 2, previousFall: false });
   });
 
-  test("a recovery continues the interrupted attempt: the SAME number, never a new one (issue 123)", async () => {
+  test("a recovery continues the interrupted attempt: the SAME number, never a new one", async () => {
     mkdirSync(join(workDir, "sessao"), { recursive: true });
     writeFileSync(join(workDir, "log-1.jsonl"), "{}\n", "utf8");
     writeFileSync(join(workDir, "log-2.jsonl"), "{}\n", "utf8");
@@ -189,7 +189,7 @@ describe("registry — the status view (worked on by msf status, factory stopped
   });
 });
 
-describe("workspace registry — the reservations on disk and the done archive (ticket 14)", () => {
+describe("workspace registry — the reservations on disk and the done archive", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 

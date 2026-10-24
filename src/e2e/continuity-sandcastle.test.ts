@@ -38,8 +38,8 @@ import {
 import { SESSIONS_SUBDIR } from "../layout.js";
 
 /**
- * The mandatory REAL integration proof of continuity (issue 119, Testing
- * Decisions #2): the production runtime, Sandcastle, Pi and Docker, with the
+ * The mandatory REAL integration proof of continuity: the production runtime,
+ * Sandcastle, Pi and Docker, with the
  * session persisted on the bind-mounted work dir. A deterministic model pushes
  * the work branch and is SIGKILLed inside the tool; the factory then relaunches
  * the SAME attempt and the runtime must reopen the SAME Pi session, whose
@@ -55,7 +55,7 @@ import { SESSIONS_SUBDIR } from "../layout.js";
 
 import { bridgeAddress, hostVisibleBase, waitForPushThenFindWorker, killContainer, continuitySkipReason as skipReason } from "./real-continuity-fixtures.js";
 
-describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip: skipReason }, () => {
+describe("e2e: continuity in the real Sandcastle/Pi/Docker", { skip: skipReason }, () => {
   let root: string;
   let model: DeterministicModel | null = null;
 

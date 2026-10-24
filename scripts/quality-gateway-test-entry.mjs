@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { installSignalTermination, runGateway } from "./quality-gateway-runner.mjs";
 
 /**
- * TEST-ONLY fixture entry (issue 113, Testing Decisions): the bounded
+ * TEST-ONLY fixture entry: the bounded
  * command-contract tests run this entry with fixture checks and a short
  * budget, so they never wait four minutes or re-enter the official suite. The
  * canonical command (`quality-gateway.mjs`) reads neither variable and cannot

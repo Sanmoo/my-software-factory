@@ -29,7 +29,7 @@ import { githubWork } from "./work-fixtures.js";
  *
  * which sets MSF_REAL_PROOF=1. An explicitly enabled run FAILS on missing
  * prerequisites (docker, worker image, model) — a skipped run proves nothing
- * (ticket 85: "a ausência de pré-requisitos não conta como aceitação").
+ * .
  *
  * GitHub interactions are REPLACED, not performed: the disposable repo has no
  * remote, the spec forbids `gh` and pushes, no issue/PR is created — GitHub
@@ -92,7 +92,7 @@ function makeDisposableRepo(root: string): { repoDir: string; baseBranch: string
   return { repoDir, baseBranch: "main", branch: "agent-real-proof", roundStartSha: git(repoDir, "rev-parse", "HEAD") };
 }
 
-const SPEC_BODY = `# Prova real (container isolado) — ticket 85
+const SPEC_BODY = `# Prova real (container isolado)
 
 Esta é uma execução de PROVA em um repositório descartável e LOCAL. Não há GitHub: o
 repositório não tem remote.
@@ -118,7 +118,7 @@ e confirme que ele NÃO é carregado.
 Siga o procedimento de implementação do seu prompt (as skills declaradas pela imagem), terminando
 com a revisão de dois eixos e os relatórios gravados no work dir.`;
 
-describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { skip: ENABLED ? false : SKIP_REASON }, () => {
+describe("e2e: the REAL proof of the implement–review flow", { skip: ENABLED ? false: SKIP_REASON }, () => {
   test("a real container loads /implement, implements a local spec, commits locally and runs /code-review with two subagents", { timeout: 4 * 60 * 60 * 1000 }, async () => {
     if (MODEL === "") failIfMissingPrerequisite("MSF_REAL_PROOF_MODEL is unset — pass the model the worker session uses, e.g. MSF_REAL_PROOF_MODEL=provider/model-id");
     if (insideContainer()) {

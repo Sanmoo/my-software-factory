@@ -364,7 +364,7 @@ export interface SandcastleRuntimeOptions {
   /** Full agent runs per launch; defaults to 1 (one session, one full run). */
   maxIterations?: number;
   /** Sandcastle's idle timeout in seconds — the SANDBOX backstop; the effective
-   *  idle limit is measured on verifiable agent activity (issue 112). */
+   * idle limit is measured on verifiable agent activity. */
   idleTimeoutSeconds?: number;
   /** How often the activity watch reads the watched tree; derived from the idle
    *  limit when unset (tests shorten it). */
@@ -442,7 +442,7 @@ export class SandcastleRuntime implements WorkerRuntime {
 
   async launch(request: WorkRequest): Promise<SessionResult> {
     const key = workKeyOf(request.work);
-    // The session is registered BEFORE the preconditions (issue #146): a stop
+    // The session is registered BEFORE the preconditions: a stop
     // arriving during them reaches this launch instead of being lost in the
     // window between the factory's check and the worker's start.
     const session: RunningSession = { work: request.work, request, started: false, stop: new AbortController(), forced: deferred() };
@@ -458,7 +458,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   private async launchRegistered(request: WorkRequest, session: RunningSession): Promise<SessionResult> {
     const stopSignal = session.stop.signal;
     // Preconditions BEFORE any footprint: infra and config failures are not
-    // work falls — the factory fails fast with the reason (the v1's refusal).
+    // work falls — the factory fails fast with the reason.
     await this.preflight();
 
     // Stopped while the preconditions ran: no footprint, no worker. The
@@ -480,14 +480,14 @@ export class SandcastleRuntime implements WorkerRuntime {
     // factory failure, not a half-written attempt. The dir dies with the launch.
     const agentFilesDir = this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles);
     try {
-      // The footprint comes first (ticket 13): sessao/ and the attempt's log
+      // The footprint comes first: sessao/ and the attempt's log
       // exist before any outcome can exist. An abrupt death leaves exactly
       // this — the start line without an end, the record's absence.
       const sessionsDir = join(request.workDir, SESSIONS_SUBDIR);
       mkdirSync(sessionsDir, { recursive: true });
       // A relaunch reopens the attempt's OWN native Pi session (ADR 0005)
       // instead of reconstructing context — and the recorded association is
-      // the ONLY selection (issue 119): never the newest file on disk.
+      // the ONLY selection: never the newest file on disk.
       const resumeSession = request.session?.mode === "resume" ? request.session.sessionId : undefined;
       this.event(request, "session-start", {
         branch: request.branch,
@@ -511,7 +511,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       const watch = await this.activityWatch(request);
       const runSignal = AbortSignal.any([watch.signal, stopSignal]);
       let outcome: SessionResult["outcome"];
-      // The forced stop settles the launch on its own (issue #146): the
+      // The forced stop settles the launch on its own: the
       // runtime confirmed the container gone through Docker, so waiting for
       // Sandcastle's own unwind (which can outlive the container) would hold
       // the factory hostage. The in-flight run keeps unwinding in the
@@ -579,7 +579,7 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /**
-   * The verified-activity idle limit (issue 112): a watchdog over the files the
+   * The verified-activity idle limit: a watchdog over the files the
    * agents write, aborting the run once nothing verifiable happened for the
    * configured idle time. Reviewer subagent transcripts count (they are real
    * work); the factory's own logs do not (they only echo stdout). The returned
@@ -607,7 +607,7 @@ export class SandcastleRuntime implements WorkerRuntime {
     return { ...watch, signal: controller.signal };
   }
 
-  /** The toolchain binds (ticket 18): workspace-derived host dirs, created
+  /** The toolchain binds: workspace-derived host dirs, created
    * idempotently at launch (mkdir is a no-op on an existing volume) and bound
    * read-write. Convergence happens INSIDE the volume across launches — the
    * runtime itself never pre-installs a toolchain. */
@@ -687,7 +687,7 @@ export class SandcastleRuntime implements WorkerRuntime {
       maxIterations: this.maxIterations,
       completionSignal: COMPLETION_SIGNAL,
       idleTimeoutSeconds: this.idleTimeoutSeconds * SANDBOX_BACKSTOP_FACTOR,
-      // A resume reopens the attempt's OWN session (issue 119): Sandcastle
+      // A resume reopens the attempt's OWN session: Sandcastle
       // hands the id to Pi (`--session <id>`) from the bind-mounted store,
       // where the session file already lives.
       ...(resumeSession === undefined ? {} : { resumeSession }),
@@ -864,7 +864,7 @@ export class SandcastleRuntime implements WorkerRuntime {
 
   /**
    * The outcome the runtime observed: the class of THIS attempt's record, or
-   * the absence (issue 143). A record left by another attempt is absence here
+   * the absence. A record left by another attempt is absence here
    * — never that attempt's outcome read as this session's — and the attempt's
    * log names the mismatch so the diagnosis needs no guessing.
    */
@@ -1154,7 +1154,7 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
       );
     }
 
-    // The continuity guardrail must be IN the image (issue 119): the session
+    // The continuity guardrail must be IN the image: the session
     // journals effects before they happen and blocks a repeat on a resume. An
     // image built before this feature would run unguarded, so the launch is
     // refused instead of trusting the worker's prose. One throwaway container,

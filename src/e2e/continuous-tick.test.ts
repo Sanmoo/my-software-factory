@@ -22,7 +22,7 @@ import { installGhShim, spawnCli } from "./cli-harness.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * End-to-end of ticket 14's continuous mode: `msf run` follows the fixed
+ * End-to-end of the continuous mode: `msf run` follows the fixed
  * tick forever, waking by event on a worker's end — a work that becomes
  * eligible (a human labels it) is picked up at the next tick WITHOUT a
  * restart, and ending the factory is a human act (Ctrl-C) that exits clean.
@@ -71,7 +71,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the continuous run — tick forever, wake by event, clean exit (ticket 14)", () => {
+describe("e2e: the continuous run — tick forever, wake by event, clean exit", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -219,7 +219,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
     assert.ok(existsSync(workDir(layout, REPO, 3)), "the work's artifacts survive the exit");
   });
 
-  test("ticket 18 — a legit launch in flight is never released by a tick's derivation (zero footprint, held)", async () => {
+  test("a legit launch in flight is never released by a tick's derivation (zero footprint, held)", async () => {
     const config = makeConfig(1);
     const { tracker, deps, runtime } = makeFactory(config, ["pr-open"]);
 
@@ -263,7 +263,7 @@ describe("e2e: the continuous run — tick forever, wake by event, clean exit (t
   });
 
   test("Ctrl-C on the spawned cli ends the process cleanly (exit 0)", async () => {
-    // The tests-only fake runtime (ticket 18), an empty repo list and a shim
+    // The tests-only fake runtime, an empty repo list and a shim
     // `gh` on PATH: the sweep boots hermetically (no keyring, no network) and
     // runs idle forever, so the signal behavior is proven without GitHub.
     writeFileSync(

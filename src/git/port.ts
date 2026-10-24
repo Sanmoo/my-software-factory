@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../tracker/identity.js";
 
 /**
- * The git host side of the factory (ticket 10 / 15 decisions): one clone per
+ * The git host side of the factory: one clone per
  * target repo shared by all its parallel works, a work branch born from the
  * default branch the clone itself reveals — no API call — and cleanup only
  * on done. This is a host-side module, not a port to the external world: git
@@ -15,7 +15,7 @@ import { GITHUB_SITE, type RepositoryIdentity, type WorkIdentity } from "../trac
  *     launch, reused on every relaunch (retomada / feedback / repair) — never
  *     recreated; a mere base advance is never touched (the human asks on the
  *     PR), and the branch is rebased onto the PR's current base only when a
- *     confirmed conflict reactivates the worker (issue 107);
+ * confirmed conflict reactivates the worker;
  *   - the same branch cannot be checked out in two worktrees — git itself
  *     guarantees uniqueness across parallel works of the same repo;
  *   - done is the only state that cleans: remote branch deleted, local
@@ -27,7 +27,7 @@ export function workBranchName(number: number): string {
 }
 
 /**
- * The work branch of an explicit Work identity (issue 125).
+ * The work branch of an explicit Work identity.
  *
  * A GitHub ticket on github.com keeps the legacy `agent-issue-<n>` — the remote
  * branches of existing works stay theirs. Any other source derives the name
@@ -73,7 +73,7 @@ export function repoCloneDir(reposDir: string, repo: string): string {
 }
 
 /**
- * Directory of the single clone of a destination (issue 125): github.com keeps
+ * Directory of the single clone of a destination: github.com keeps
  * the legacy path above, so no existing clone is relocated; a destination on
  * another code-host site carries the site in the name. The remote is a
  * different host, and two Works of the same repo name on different sites must
@@ -108,7 +108,7 @@ export type WorkOperation = "rebase" | "merge" | "cherry-pick";
 export const WORK_OPERATIONS: readonly WorkOperation[] = ["rebase", "merge", "cherry-pick"];
 
 /**
- * What the work branch holds on disk right now (issue 112): the commits a
+ * What the work branch holds on disk right now: the commits a
  * resumed round must reuse instead of redoing, the changes it must inspect
  * instead of discarding, and the operation it must finish or abort instead of
  * blindly restarting. Read host-side, from the real repository — never from
@@ -150,13 +150,13 @@ export interface GitWork {
 
   /**
    * The diff of the work branch's own changes against its base (merge-base,
-   * three-dot) — the prompt's diff material (ticket 17). Empty string when
+   * three-dot) — the prompt's diff material. Empty string when
    * the branch has no changes yet; a later base advance never leaks in.
    */
   diffWorkFor(work: WorkIdentity): Promise<string>;
 
   /**
-   * The fact sheet of the work branch as it exists on disk (issue 112): its
+   * The fact sheet of the work branch as it exists on disk: its
    * tip, how many commits it carries beyond the base, whether the worktree is
    * dirty and whether an operation was left in progress. Throws when git
    * cannot answer — an unverifiable local state is never "nothing there".

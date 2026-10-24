@@ -27,7 +27,7 @@ import {
 } from "./window.js";
 
 /**
- * The retrospective round (issue 141): the factory job in the Repair mold — no
+ * The retrospective round: the factory job in the Repair mold — no
  * claim, no reservation, no tracker issue, not a Work. The orchestrator plans
  * a window from the finished works and the last report, launches it on the
  * worker runtime with a retro-specific shape (dedicated model, read-only
@@ -97,7 +97,7 @@ export interface RetroDeps {
 }
 
 /**
- * The automatic trigger (issue 141): checked at each sweep, it fires once
+ * The automatic trigger: checked at each sweep, it fires once
  * `threshold` ARCHIVED works exist since the last report.
  */
 export async function planAutomaticRound(

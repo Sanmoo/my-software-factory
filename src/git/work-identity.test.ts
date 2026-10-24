@@ -14,7 +14,7 @@ import { branchOfWork, repoCloneDir, repoCloneDirFor, workBranchName, workerWork
 const execFile = promisify(execFileCallback);
 
 /**
- * The work branch/worktree identity for the expanded Work (issue 125):
+ * The work branch/worktree identity for the expanded Work:
  * different ticket sources aimed at the SAME repository must never share a
  * branch, and every existing GitHub branch must keep its name.
  */

@@ -5,10 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Stage the compiled continuity guardrail into the worker image's build
- * context. Factory-owned code is provisioned at image build time, not at
- * worker startup: the image carries one compiled copy of the code the factory
- * version pins, and `npm run build:image` refuses to stage a missing build
- * instead of shipping an unguarded worker.
+ * context (ADR 0001). Factory-owned code is provisioned at image build time,
+ * not at worker startup: the image carries one compiled copy of the code the
+ * factory version pins, and `npm run build:image` refuses to stage a missing
+ * build instead of shipping an unguarded worker.
  *
  * What to stage is not a list to maintain (issue 193): it is EXACTLY the
  * relative-import closure of the compiled extension, computed from dist/. The

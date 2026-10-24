@@ -13,7 +13,7 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
- * exercise the ruler without any container (ticket 13 consumes it).
+ * exercise the ruler without any container.
  *
  * Scripted outcomes, per launch, in order (the last repeats once exhausted):
  *   pr-open             — writes the record (class pr-open) and opens a PR via the tracker
@@ -23,7 +23,7 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
  *
  * A launch may also be told to die by a model provider outage: the fake records the
  * provider's failing stream line into the attempt's log (the same artifact the
- * real runtime writes), so the factory's own detection reads it (issue 144).
+ * real runtime writes), so the factory's own detection reads it.
  *
  * Issue #146: the runtime also carries the stop contract. A cooperative
  * request ends a parked launch as an abrupt death with no record — exactly the
@@ -36,7 +36,7 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
 export type ScriptedOutcome = SessionResult["outcome"];
 
 /**
- * What one retrospective round's agent is scripted to do (issue 141): write
+ * What one retrospective round's agent is scripted to do: write
  * the report (or die without it) and file a declared set of items. The fake
  * writes the same two artifacts the real agent writes, so the factory's
  * artifact contract — the report as the marker, the result record as the
@@ -105,7 +105,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   readonly stopRequests: string[] = [];
   /** The works a forced stop was requested for, in order. */
   readonly forcedStops: string[] = [];
-  /** The sessions this fake continued (issue 119) — the launch carried a
+  /** The sessions this fake continued — the launch carried a
    *  resume, so the work's own session was reopened instead of a new one. */
   readonly resumed: WorkRequest[] = [];
   /** Instance-level hold hook — settable by tests after construction. */
@@ -241,8 +241,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's
-   * event log and the Pi session file the moment the session is up (ticket
-   * 13, issue 119). An attempt that dies abruptly leaves exactly this — a
+   * event log and the Pi session file the moment the session is up. An
+   * attempt that dies abruptly leaves exactly this — a
    * start line and no end. */
   private startSession(request: WorkRequest): void {
     mkdirSync(join(request.workDir, SESSIONS_SUBDIR), { recursive: true });
@@ -297,7 +297,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (outcome === "abrupt-death") {
       // A model provider outage leaves the provider's own stream line behind — the
       // real runtime records pi's stdout verbatim, and the factory reads the
-      // turn's ending from it (issue 144). One identity per launch keeps the
+      // turn's ending from it. One identity per launch keeps the
       // fake's failures as distinct as real sessions'.
       const message = this.options.modelProviderErrors?.(request, index) ?? null;
       if (message !== null) {
@@ -323,7 +323,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (outcome === "pr-open") {
       const tracker = this.options.tracker;
       if (!tracker) throw new Error("fake runtime: pr-open needs a tracker to open the PR");
-      // Same branch, same PR (ticket 04 Q10): when the work's PR is already
+      // Same branch, same PR: when the work's PR is already
       // open on this branch, the worker reuses it — a feedback round never
       // opens a second PR.
       const feedback = await tracker.readPullRequestFeedback({ work: request.work, pullRequest: null });
@@ -331,7 +331,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       const reused = existing !== null && existing.state === "open" && existing.headBranch === request.branch;
       if (reused && existing) {
         pr = { repo: request.work.destination.repo, number: existing.number, branch: request.branch };
-        // The norma (ticket 07 Q3): the worker ends EVERY feedback round by
+        // The norma: the worker ends EVERY feedback round by
         // commenting on the PR what it addressed — the ball goes back to the
         // human, derivable from the PR alone.
         tracker.addPrComment(

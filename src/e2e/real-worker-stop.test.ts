@@ -10,7 +10,7 @@ import { dockerSocketFromHost } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 
 /**
- * The real-runtime proof of the stop (issue #146, mandatory complement): a fake
+ * The real-runtime proof of the stop (mandatory complement): a fake
  * cannot prove that a worker container ends. The driver runs INSIDE a container
  * of the worker image, sharing the host's paths and daemon socket, and starts a
  * REAL Sandcastle worker (deterministic `sleep` agent — no LLM inference):
@@ -168,7 +168,7 @@ function freshRoot(): string {
   return mkdtempSync(join(base, ".msf-stop-"));
 }
 
-describe("e2e: the real worker container ends on the requested stop (issue #146)", { skip: skipReason, timeout: MODE_TIMEOUT_MS }, () => {
+describe("e2e: the real worker container ends on the requested stop", { skip: skipReason, timeout: MODE_TIMEOUT_MS }, () => {
   for (const mode of ["cooperative", "forced", "abort"] as const) {
     test(`the ${mode} stop ends the real Sandcastle container and leaves no surviving worker`, async () => {
       const root = freshRoot();

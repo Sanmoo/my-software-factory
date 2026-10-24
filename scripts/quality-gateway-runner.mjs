@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { WORKER_IMAGE } from "./worker-image.mjs";
 
 /**
- * The quality gateway runner (issue 113): composition of the required checks,
+ * The quality gateway runner: composition of the required checks,
  * elapsed-time measurement, the one global deadline, subprocess lifetime,
  * diagnostics and the exit status. The canonical entry composes the OFFICIAL
  * plan with the fixed ceiling; the test-only entry drives the same runner with

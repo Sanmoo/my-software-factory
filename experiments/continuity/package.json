@@ -1,8 +1,8 @@
 {
-  "name": "issue-111-continuity-experiment",
+  "name": "continuity-experiment",
   "private": true,
   "version": "0.0.0",
-  "description": "Throwaway harness comparing Pi native session resume and pi-durable for worker continuity (issue #111). Isolated: not part of the factory build or test path.",
+  "description": "Throwaway harness comparing Pi native session resume and pi-durable for worker continuity. Isolated: not part of the factory build or test path.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
