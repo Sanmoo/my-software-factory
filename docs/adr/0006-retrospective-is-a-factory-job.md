@@ -11,8 +11,8 @@ concerned. The operator stays the only gate between an item and the pool, at
 triage. The job runs outside the worker concurrency slots: a round runs even
 with every slot busy, because lightweight analysis neither queues behind nor
 pauses real work. One round runs at a time, enforced by the lane's own marker
-(the report's process record) rather than by the `msf run` lock — the manual
-trigger must work while the factory is sweeping.
+(the round's in-flight record, owned by its pid) rather than by the `msf run`
+lock — the manual trigger must work while the factory is sweeping.
 
 ## Considered options
 
@@ -22,6 +22,9 @@ trigger must work while the factory is sweeping.
 - Sharing the worker concurrency slots: rejected — the retro runs no builds
   and no quality gateway; competing with real work would add cost without
   value.
+- The `msf run` lock as the round's exclusivity: rejected — the factory holds
+  it for the whole sweep, so a forced round could never run while the factory
+  is working, which is when the operator wants one.
 - Inheriting the worker model with no key of its own: rejected — retro work
   is strategic analysis, not execution, so it gets its own model key instead
   of a fixed inheritance.
