@@ -152,10 +152,16 @@ export async function recheckPausedEffects(deps: ContinuityDeps, paused: PauseRe
   }
   if (SESSION_DOUBT_CAUSES.has(paused.reason)) {
     const facts = readSessionFacts(deps);
-    // A doubt still there is not a resolution: the pause keeps the SAME reason
-    // with the detail this read gives it, and the loop decides whether that is
-    // worth telling.
-    if (!facts.readable) return { resolved: false, pause: pauseOf(deps, paused.reason, facts.detail, facts.sessionId) };
+    // A doubt still there is not a resolution: the pause names the cause THIS
+    // read found, never the one the record was written with — the disk may have
+    // moved from that doubt to another (a journal readable again under a session
+    // that no longer is), and a stale reason would hide the real one.
+    if (!facts.readable) {
+      return {
+        resolved: false,
+        pause: pauseOf(deps, SESSION_DOUBT_REASONS[facts.cause], facts.detail, facts.sessionId),
+      };
+    }
     const doubt = missingIntentDoubt(deps, facts.sessionId, facts.file, facts.inspection, facts.journal);
     if (doubt !== null) return { resolved: false, pause: doubt };
   }
@@ -192,6 +198,17 @@ type SessionFacts =
       journal: EffectJournal;
     }
   | { readable: false; cause: SessionDoubt; detail: string; sessionId?: string };
+
+/** The pause reason each read cause names — the same pairs the resume plan
+ *  turns its read into. */
+const SESSION_DOUBT_REASONS: Readonly<Record<SessionDoubt, PauseReason>> = {
+  "association-unreadable": "session-identity",
+  "association-missing": "link-missing",
+  "session-file-missing": "session-missing",
+  "session-identity": "session-identity",
+  "session-unreadable": "session-unreadable",
+  "journal-unreadable": "journal-unreadable",
+};
 
 /**
  * One read of the attempt's continuation facts: the session its association

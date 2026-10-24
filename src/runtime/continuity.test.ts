@@ -11,7 +11,9 @@ import {
   appendJournalStart,
   readEffectJournal,
   readGuardrailState,
+  readPause,
   readSessionLinks,
+  type PauseReason,
   type PauseRecord,
 } from "./continuity-artifacts.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
@@ -35,7 +37,7 @@ const REF = githubWork(REPO, NUMBER);
 const BRANCH = "agent-issue-7";
 
 /** The pause record a recheck reads its cause from (issue 173). */
-function pauseUnderRecheck(reason: "effect-ambiguous", attempt: number): PauseRecord {
+function pauseUnderRecheck(reason: PauseReason, attempt: number): PauseRecord {
   return {
     version: 1,
     work: REF,
@@ -552,6 +554,31 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     git.remoteHead = "abc123";
     const resolved = await recheckPausedEffects(deps, pauseUnderRecheck("effect-ambiguous", 2));
     assert.equal(resolved.resolved, true);
+  });
+
+  test("a recheck names the cause the disk now holds, not the reason the pause was written with", async () => {
+    // The record was written while the journal could not be read. The journal is
+    // readable again, so that doubt is gone — but the session it can now read is
+    // not, and THAT is the cause the operator must see. Keeping the old reason
+    // would hide a real change of cause behind a doubt this read disproved.
+    const session = seedSession(workDir, REF, 2);
+    appendJournalStart(workDir, { attempt: 2, sessionId: session.sessionId });
+    writeFileSync(session.file, "{not-json}{\n", "utf8");
+
+    const kept = await recheckPausedEffects(deps, pauseUnderRecheck("journal-unreadable", 2));
+
+    assert.equal(kept.resolved, false, "a session that cannot be read settles nothing");
+    assert.equal(kept.pause?.reason, "session-unreadable", "the real cause, not the stale journal-unreadable");
+    assert.equal(kept.pause?.sessionId, session.sessionId, "the identity of the session it could not read is kept");
+    assert.match(kept.pause?.detail ?? "", /not a session header/, "the detail is the fresher read's");
+    assert.equal(readPause(workDir), null, "a recheck never writes a pause of its own");
+
+    // And nothing is launched over a history the factory cannot read.
+    const plan = await planContinuity(deps, "resume");
+    assert.equal(plan.decision, "pause", JSON.stringify(plan));
+    if (plan.decision !== "pause") return;
+    assert.equal(plan.pause.reason, "session-unreadable");
+    assert.equal(readGuardrailState(workDir), null, "no guardrail state is written for a session it cannot reopen");
   });
 
   /** The journaled intent of a call the interruption left without a result. */

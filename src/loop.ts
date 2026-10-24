@@ -2222,7 +2222,6 @@ export class SweepEngine {
       previous.announced === true &&
       (previous.id === undefined || previous.id === pause.id);
     if (alreadyAnnounced) {
->>>>>>> 0c8214b (fix(174): do not re-ask an already announced legacy pause)
       // The same pause was already announced: re-assert the blocked label
       // without repeating the request (a failed retomada swapped it), so the
       // work stays out of every launch and the human sees one request. Only the

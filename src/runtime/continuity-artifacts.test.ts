@@ -120,22 +120,22 @@ describe("the continuity artifacts (issue 119)", () => {
   });
 
   test("rewriting an unreadable pause copies the original aside instead of overwriting it", () => {
-  writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
-  writePause(dir, {
-    version: 1,
-    work: REF,
-    attempt: 2,
-    reason: "session-missing",
-    detail: "the recorded session is gone",
-    at: "2026-01-01T00:00:00.000Z",
+    writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
+    writePause(dir, {
+      version: 1,
+      work: REF,
+      attempt: 2,
+      reason: "session-missing",
+      detail: "the recorded session is gone",
+      at: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(readPause(dir)?.reason, "session-missing");
+    assert.equal(
+      readFileSync(join(dir, `${PAUSE_FILENAME}.unreadable`), "utf8"),
+      "{not json",
+      "the corrupt evidence is preserved for the operator",
+    );
   });
-  assert.equal(readPause(dir)?.reason, "session-missing");
-  assert.equal(
-    readFileSync(join(dir, `${PAUSE_FILENAME}.unreadable`), "utf8"),
-    "{not json",
-    "the corrupt evidence is preserved for the operator",
-  );
-});
 
   test("clearing keeps the resolved pause as evidence beside the work", () => {
     writePauseFile(validPause());

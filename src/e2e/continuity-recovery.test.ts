@@ -128,7 +128,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
       pending?: "push" | "unknown";
       remote?: string | null;
       labels?: string[];
-    result?: SeededCallResult;
+      result?: SeededCallResult;
     } = {},
   ): {
     session: ReturnType<typeof seedSession>;
@@ -330,8 +330,8 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(sweep.reserved.find((entry) => entry.state === "continuity-paused")?.attempt, 1);
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0);
     assert.ok(
-      logs.some((line) => line.includes("paused for help") && line.includes("session-missing")),
-      "the diagnosis names the pause",
+      logs.some((line) => line.includes("paused for help") && line.includes("link-missing")),
+      "the diagnosis names the pause the disk now gives (the attempt has no recorded session at all)",
     );
     // The death landed before the block and the request: the operator is told now.
     assert.equal((await labelsOf(7)).includes(DEFAULT_LABELS.blocked), true, "the block lands on the next cycle");
@@ -1163,7 +1163,7 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(notifier.notifications.length, 0);
   });
 
-  test("issue 173 — a session that is still unreadable keeps its pause, with the fresher detail", async () => {
+  test("issue 173 — a session that is still unreadable keeps its pause, naming the cause the disk now gives", async () => {
     const PAUSE_ID = "55555555-5555-4555-8555-555555555555";
     const { session, ref } = interruptedAttempt2({ pending: "push", remote: "abc123", labels: [DEFAULT_LABELS.blocked] });
     const target = persistAnnouncedPause(ref, 2, PAUSE_ID, {
@@ -1179,11 +1179,13 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     assert.equal(sweep.launched.length, 0, "a history it cannot read is the doubt itself, never a resolution");
     assert.equal(runtime.launched.length, 0);
     const kept = readPause(target);
-    assert.equal(kept?.reason, "session-missing", "the cause the operator was asked about does not silently change");
-    assert.equal(kept?.id, PAUSE_ID);
+    assert.equal(kept?.reason, "session-unreadable", "the session is on disk again and unreadable: the real cause, not the stale one");
+    assert.equal(kept?.id, PAUSE_ID, "the same occurrence");
     assert.equal(kept?.at, NOW, "and the moment the operator was asked stays");
     assert.match(kept?.detail ?? "", /not a session header|unreadable/, "the fresher read is persisted honestly");
-    assert.equal((await agentComments(7)).length, 0, "no new question");
+    const comments = await agentComments(7);
+    assert.equal(comments.length, 1, "a real change of cause is worth exactly one diagnostic");
+    assert.ok(comments[0]?.includes(`<!-- msf:pause:${PAUSE_ID} -->`), "the diagnostic keeps the occurrence's identity");
     assert.equal(readFileSync(session.file, "utf8"), "{not-json}{\n", "the unreadable history is preserved as evidence");
     assert.equal(await readRecoveryLedger(target).then((value) => value.consumed), 0, "no recovery is spent");
   });
