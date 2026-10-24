@@ -164,7 +164,6 @@ export interface GitWork {
   inspectLocalWorkFor(work: WorkIdentity): Promise<LocalWorkFacts>;
 }
 
-/** The git host side addressed by the explicit Work identity. The alias keeps
- *  the name the orchestration adopted during the expansion (issue 126); there
- *  is no longer a legacy ref-addressed shape beside it. */
+/** The git host side addressed by the explicit Work identity. `ExpandedGitWork`
+ *  is the interface's name at the orchestration boundary; there is one shape. */
 export type ExpandedGitWork = GitWork;

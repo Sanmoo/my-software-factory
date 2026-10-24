@@ -10,7 +10,7 @@ import {
   type CommandRunner,
   type GitHubTrackerAdapter,
 } from "./github-adapter.js";
-import { type ContractHarness, type ContractIssue } from "./contract.js";
+import { type GitHubContractHarness, type GitHubContractIssue } from "./github-contract-suite.js";
 import { AGENT_MARKER, type IssueRef, type TrackerPort } from "./port.js";
 import type { TicketTracker } from "./expanded-port.js";
 import { runSmokeCycle } from "./smoke-cycle.js";
@@ -113,7 +113,7 @@ interface Journal {
   repoLabelsCreated: string[];
 }
 
-class RealGithubHarness implements ContractHarness {
+class RealGithubHarness implements GitHubContractHarness {
   readonly name = "real (gh CLI)";
   readonly journal: Journal = { issues: [], prs: [], branches: new Set(), comments: [], blockers: [], repoLabelsCreated: [] };
   /** Internal issue ids (the dependencies API speaks ids, not numbers). */
@@ -183,7 +183,7 @@ class RealGithubHarness implements ContractHarness {
 
   // ---- seeding over REST ----
 
-  async createIssue(input: { title: string; labels?: string[]; closed?: boolean }): Promise<ContractIssue> {
+  async createIssue(input: { title: string; labels?: string[]; closed?: boolean }): Promise<GitHubContractIssue> {
     for (const label of input.labels ?? []) {
       await this.ensureRepoLabel(label);
     }

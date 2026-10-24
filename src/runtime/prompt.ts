@@ -373,8 +373,8 @@ End the round with one consolidated reply on the PR (marked, obligation 2): what
           `     followed by a short explanation of what blocks the work,`,
         ]
       : [
-          `   - do NOT edit or comment on any GitHub issue for this ticket: its origin is ${ticket.provider}:${ticket.site}, and the factory owns publication on that tracker — inventing a GitHub issue would address the wrong surface,`,
-          `   - name the blockage in your final message so the factory relays it to the ticket's origin,`,
+          `   - do NOT edit or comment on any GitHub issue for this ticket: its source is ${ticket.provider}:${ticket.site}, and the factory owns publication on that tracker — inventing a GitHub issue would address the wrong surface,`,
+          `   - name the blockage in your final message: the factory records it from the outcome record; this session does not publish on the ticket's tracker,`,
         ]),
     `   - write the outcome record with "class": "blocked-self-report",`,
     `   - then end the session. A human resumes from there.`,

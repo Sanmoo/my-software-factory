@@ -44,7 +44,7 @@ import { findSessionFile, inspectSessionFile, sessionToolCalls } from "./session
 export interface ContinuityDeps {
   workDir: string;
   sessionsDir: string;
-  /** The Work whose attempt is being continued: its ticket origin and destination. */
+  /** The Work whose attempt is being continued: its ticket source and destination. */
   work: WorkIdentity;
   attempt: number;
   git: ExpandedGitWork;
@@ -355,12 +355,12 @@ async function reconcileLabel(deps: ContinuityDeps, action: EffectAction): Promi
     return { verdict: "unknown", detail: "the label change was not recorded completely" };
   }
   const { ticket } = deps.work;
-  // Labels are a GitHub issue command: a non-GitHub origin has no GitHub issue
+  // Labels are a GitHub issue command: a non-GitHub source has no GitHub issue
   // to read, so the effect cannot be reconciled from the factory's side.
   if (ticket.provider !== "github") {
     return {
       verdict: "unknown",
-      detail: `the work's origin is ${ticket.provider}:${ticket.site}, so a GitHub label read cannot establish this effect`,
+      detail: `the the work's source is ${ticket.provider}:${ticket.site}, so a GitHub label read cannot establish this effect`,
     };
   }
   if (action.number !== ticket.number) {

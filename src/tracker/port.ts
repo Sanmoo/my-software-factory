@@ -1,12 +1,11 @@
 /**
- * The GitHub adapter's conformance and smoke surface (issue 124; reduced by
- * #127). Production orchestration, the worker context, continuity, status and
- * notifications speak the expanded `TicketTracker` / `PullRequestTracker`
- * contracts; this shape survives only for the adapter's own contract suite and
- * the real-GitHub smoke, which exercise the issue+PR cycle on a GitHub repo.
- * A future Jira adapter is never asked to satisfy it: that would force it to
- * emulate GitHub-only rules (native rank absence, issue-closing syntax,
- * completion by closing the issue), which the shared suite now keeps apart.
+ * The GitHub adapter's conformance and smoke surface. Production orchestration,
+ * the worker context, continuity, status and notifications speak the expanded
+ * `TicketTracker` / `PullRequestTracker` contracts; this shape serves only the
+ * adapter's own contract suite and the real-GitHub smoke, which exercise the
+ * issue+PR cycle on a GitHub repo. A Jira adapter is never asked to satisfy it:
+ * that suite carries GitHub-only rules (native rank absence, issue-closing
+ * syntax, completion by closing the issue) in their own group.
  *
  * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
  * speaks of works (trabalhos). Contract from ticket 02 / prior art of v1:
@@ -187,8 +186,8 @@ export class PartialWriteError extends Error {
 
 /**
  * @deprecated GitHub-adapter conformance only: new code speaks `TicketTracker` /
- * `PullRequestTracker`. This shape has no production consumer left after #127;
- * the GitHub adapter's own contract suite and smoke keep exercising it.
+ * `PullRequestTracker`. This shape has no production consumer; the GitHub
+ * adapter's contract suite and smoke keep exercising it.
  *
  * The 9 operations + rank (ticket 02, table 1), in port terms:
  *

@@ -2,7 +2,7 @@ import {
   renderUnbackedClaim,
   renderUnmarkedReservation,
 } from "./derive.js";
-import { workKeyOf, workOfKey } from "../pool/work-key.js";
+import { renderWorkKey } from "../pool/work-key.js";
 import { renderWorkIdentity } from "../tracker/identity.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
@@ -100,7 +100,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   lines.push(
     ...section(
       "reserved without attempt (the claim landed, no attempt evidence on disk)",
-      view.registry.reservedWithoutAttempt,
+      view.registry.reservedWithoutAttempt.map(renderWorkKey),
       cap,
     ),
   );
@@ -147,7 +147,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ...section(
       "last outcome",
       view.registry.lastOutcome.map(
-        (entry) => `${renderKey(entry.key)} = ${entry.record.class} (attempt ${entry.record.attempt})`,
+        (entry) => `${renderWorkKey(entry.key)} = ${entry.record.class} (attempt ${entry.record.attempt})`,
       ),
       cap,
     ),
@@ -171,19 +171,11 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   return lines.join("\n");
 }
 
-/** A registry key as the operator reads it: the Work's origin and destination
- *  when the key is a decided shape, the key itself otherwise. GitHub's legacy
- *  spelling is unchanged, so existing reports stay byte-identical. */
-function renderKey(key: string): string {
-  const work = workOfKey(key);
-  return work === null ? key : renderWorkIdentity(work);
-}
-
 /** One live worker: the work, how long it has run, which attempt it carries
  *  and which container — the container is the identity duplicates are read by. */
 function renderRunning(worker: RunningWorker): string {
   const attempt = worker.attempt === null ? "" : `, attempt ${worker.attempt}`;
-  return `${renderKey(worker.key)} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
+  return `${renderWorkKey(worker.key)} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
 }
 
 /** One persisted continuity pause: the work, its attempt and why it waits.
@@ -193,12 +185,12 @@ function renderRunning(worker: RunningWorker): string {
 function renderContinuityPause(entry: ContinuityPauseEntry): string {
   const known = knownAttempt(entry.pause.attempt);
   const attempt = known === null ? "attempt unknown" : `attempt ${known}`;
-  return `${renderKey(entry.key)} (${attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
+  return `${renderWorkKey(entry.key)} (${attempt}: ${entry.pause.reason} — ${entry.pause.detail})`;
 }
 
 /** The duplicate anomaly: the count per work, with no owner chosen. */
 function renderDuplicates(entry: DuplicateWorkers): string {
-  return `${renderKey(entry.key)} — ${entry.containers} containers carry this work; nothing was chosen or ended automatically`;
+  return `${renderWorkKey(entry.key)} — ${entry.containers} containers carry this work; nothing was chosen or ended automatically`;
 }
 
 /** The container id short enough to read: Docker's own 12-character form. */
@@ -219,7 +211,7 @@ function renderInterrupted(key: string, attempt: number, recordedAttempt: number
     recordedAttempt === null
       ? "no outcome record on disk"
       : `the record on disk is attempt ${recordedAttempt}'s — history, not this attempt's`;
-  return `${renderKey(key)} (attempt ${attempt} was interrupted — ${history})`;
+  return `${renderWorkKey(key)} (attempt ${attempt} was interrupted — ${history})`;
 }
 
 /**
@@ -230,7 +222,7 @@ function renderInterrupted(key: string, attempt: number, recordedAttempt: number
  * consumed the attempt.
  */
 function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBudget): string {
-  const label = renderKey(key);
+  const label = renderWorkKey(key);
   const spend = `${ledger.consumed}/${budget.maxRecoveries} recoveries (waits ${renderWaits(budget.waitsMs)})`;
   const attempt = `attempt ${ledger.attempt}`;
   const last = ledger.lastStop;
@@ -259,7 +251,7 @@ function renderModelProvider(entry: ModelProviderViewEntry, budget: ModelProvide
     ? "awaiting model provider — a help request, not a block"
     : "retrying after the model provider backoff";
   return (
-    `${renderKey(entry.key)} (attempt ${entry.attempt}: ${spend}; ` +
+    `${renderWorkKey(entry.key)} (attempt ${entry.attempt}: ${spend}; ` +
     `last model provider error: ${collapseWhitespace(last.message)} — ${state})`
   );
 }
@@ -285,7 +277,7 @@ function renderRepair(entry: RepairViewEntry): string {
     parts.push(`local work: ${renderLocalWork(cycle.attempt.localWork)}`);
   }
   if (evidence !== null) parts.push(`evidence: ${renderEvidence(evidence)}`);
-  return `${renderKey(entry.key)} (${parts.join("; ")})`;
+  return `${renderWorkKey(entry.key)} (${parts.join("; ")})`;
 }
 
 /** The three evidence locations in one clause: path, then what the probe said. */

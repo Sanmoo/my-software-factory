@@ -9,16 +9,11 @@ import {
   reviewNotice,
   type WorkNotification,
 } from "./port.js";
-import {
-  githubRepository,
-  githubTicket,
-  jiraTicket,
-  workIdentity,
-  type WorkIdentity,
-} from "../tracker/identity.js";
+import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
+import { githubWork } from "../e2e/work-fixtures.js";
 
 const REPO = "Sanmoo/my-tasks";
-const githubWork = workIdentity(githubTicket(REPO, 42), githubRepository(REPO));
+const github = githubWork(REPO, 42);
 const jiraWork = workIdentity(
   jiraTicket({
     site: "acme.atlassian.net",
@@ -29,8 +24,8 @@ const jiraWork = workIdentity(
   githubRepository(REPO),
 );
 
-const review: WorkNotification = reviewNotice(githubWork, 7);
-const help: WorkNotification = helpNotice(githubWork);
+const review: WorkNotification = reviewNotice(github, 7);
+const help: WorkNotification = helpNotice(github);
 
 describe("notify: the factory's own occurrence (issue 118)", () => {
   test("a Docker-unavailable notice is identified as the factory's, names no work and invents no issue", () => {
@@ -46,7 +41,7 @@ describe("notify: the factory's own occurrence (issue 118)", () => {
   });
 
   test("an intervention notice asks for a decision without claiming a block or an automatic act", () => {
-    const { title, body } = renderNotification(interventionNotice(githubWork));
+    const { title, body } = renderNotification(interventionNotice(github));
 
     assert.match(title, /Sanmoo\/my-tasks#42/);
     assert.match(title, /intervention/i);
@@ -61,8 +56,9 @@ describe("notify: the Linux desktop backend", () => {
 
     assert.match(title, /Sanmoo\/my-tasks#42/);
     assert.match(title, /review/i);
-    assert.ok(review.url === "https://github.com/Sanmoo/my-tasks/pull/7");
-    assert.ok(body.includes(review.url!), "the PR address is in the content");
+    const reviewUrl = "https://github.com/Sanmoo/my-tasks/pull/7";
+    assert.equal(review.url, reviewUrl);
+    assert.ok(body.includes(reviewUrl), "the PR address is in the content");
     assert.match(body, /review/i);
   });
 
@@ -71,7 +67,9 @@ describe("notify: the Linux desktop backend", () => {
 
     assert.match(title, /Sanmoo\/my-tasks#42/);
     assert.match(title, /help/i);
-    assert.ok(body.includes(help.url!), "the ticket address is in the content");
+    const helpUrl = "https://github.com/Sanmoo/my-tasks/issues/42";
+    assert.equal(help.url, helpUrl);
+    assert.ok(body.includes(helpUrl), "the ticket address is in the content");
     assert.match(body, /blocked|attention/i);
   });
 
@@ -124,7 +122,7 @@ describe("notify: the Linux desktop backend", () => {
     assert.equal(call.command, "notify-send");
     assert.ok(call.args.includes("--app-name=msf"));
     assert.ok(call.args.some((arg) => /Sanmoo\/my-tasks#42/.test(arg)), "the work is named");
-    assert.ok(call.args.some((arg) => arg.includes(review.url!)), "the address is shown");
+    assert.ok(call.args.some((arg) => arg.includes("https://github.com/Sanmoo/my-tasks/pull/7")), "the address is shown");
   });
 
   test("an unavailable backend (no binary / no graphical session) rejects — the loop reports it", async () => {

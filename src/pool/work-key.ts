@@ -1,5 +1,6 @@
 import {
   GITHUB_SITE,
+  renderWorkIdentity,
   githubRepository,
   githubTicket,
   githubTicketAt,
@@ -123,13 +124,25 @@ export function anchorOfKey(key: string): WorkAnchor | null {
   }
 }
 
-/** The Work a registry key anchors, with the readable key the key cannot
- *  carry. The GitHub key keeps its historical spelling; another provider's
- *  stable id stands in until a reservation supplies the presentation data. */
+/** The Work a registry key anchors, when the key can name it HONESTLY: a
+ *  GitHub key carries the issue number, which is its readable key. Another
+ *  provider's key cannot carry the readable ticket key, so no Work is invented
+ *  from its stable id — the reservation record is the only source of it. */
 export function workOfKey(key: string): WorkIdentity | null {
   const anchor = anchorOfKey(key);
-  if (anchor === null) return null;
-  return workOfAnchor(anchor, anchor.provider === "github" ? `#${anchor.stableId}` : anchor.stableId);
+  if (anchor === null || anchor.provider !== "github" || anchor.site !== GITHUB_SITE) return null;
+  return workOfAnchor(anchor, `#${anchor.stableId}`);
+}
+
+/** The presentation of a registry key whose readable ticket key the key cannot
+ *  carry: the stable id is shown as identity, never fabricated into a readable
+ *  key. GitHub's historical spelling is unchanged. */
+export function renderWorkKey(key: string): string {
+  const work = workOfKey(key);
+  if (work !== null) return renderWorkIdentity(work);
+  const anchor = anchorOfKey(key);
+  if (anchor === null) return key;
+  return `${anchor.provider}:${anchor.site}:${anchor.stableId} → ${anchor.repo}`;
 }
 
 /** URI-encoding: injective, and no component ever yields "@", "/" or "#". */

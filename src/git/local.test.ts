@@ -9,14 +9,9 @@ import { join } from "node:path";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "./local-fixtures.js";
 import { localGitWork } from "./local.js";
 import { repoCloneDir, workBranchName, type GitWork } from "./port.js";
-import { githubRepository, githubTicket, workIdentity, type WorkIdentity } from "../tracker/identity.js";
+import { githubWork } from "../e2e/work-fixtures.js";
 
 const execFile = promisify(execFileCallback);
-
-/** A GitHub Work on github.com: the ticket and destination the git host takes. */
-function work(number: number, repo = "Sanmoo/my-tasks"): WorkIdentity {
-  return workIdentity(githubTicket(repo, number), githubRepository(repo));
-}
 
 /**
  * The git host side, exercised with local git fixtures: bare remotes in a
@@ -47,7 +42,7 @@ describe("git host — one clone per target repo", () => {
 
   test("first work clones the remote into repos/<owner>#<name>; second work of the same repo never re-clones, only fetches delta", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     assert.ok(existsSync(join(cloneDir, ".git")), "the single clone exists under repos/");
@@ -57,7 +52,7 @@ describe("git host — one clone per target repo", () => {
 
     // The remote advances; the second work must reach it by delta fetch.
     await remote.commitFile("main", "file.txt", "v2\n", "advance base");
-    await git.prepareWorkFor(work(8, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 8));
 
     assert.equal(readFileSync(join(cloneDir, "marker.txt"), "utf8"), "keep", "never re-cloned");
     const fetched = await execFile("git", ["rev-parse", "origin/main"], { cwd: cloneDir });
@@ -72,7 +67,7 @@ describe("git host — one clone per target repo", () => {
       remoteUrl: (repo) => (repo === "Sanmoo/trunk-repo" ? trunk.barePath(repo) : remote.barePath(repo)),
     });
 
-    await git.prepareWorkFor(work(3, "Sanmoo/trunk-repo"));
+    await git.prepareWorkFor(githubWork("Sanmoo/trunk-repo", 3));
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/trunk-repo");
     const branchBase = await execFile("git", ["rev-parse", workBranchName(3)], { cwd: cloneDir });
@@ -82,7 +77,7 @@ describe("git host — one clone per target repo", () => {
 
   test("relaunch reuses the existing branch — worker commits survive, never recreated", async () => {
     const git = gitWork();
-    const first = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const first = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.ok(first.branchCreated, "first launch creates the branch");
 
     // The worker's round: a commit on the work branch (the memory of the work).
@@ -93,7 +88,7 @@ describe("git host — one clone per target repo", () => {
     await commitFileIn(cloneDir, "work.txt", "worker round 1\n", "round 1");
     const workerHead = await execFile("git", ["rev-parse", workBranchName(7)], { cwd: cloneDir });
 
-    const second = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const second = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     assert.equal(second.branchCreated, false, "relaunch reuses, never recreates");
     assert.equal(second.branch, first.branch);
@@ -103,32 +98,32 @@ describe("git host — one clone per target repo", () => {
 
   test("prepare reveals whether the work branch is on origin — the fact behind a relaunch's fetch (issue 96)", async () => {
     const git = gitWork();
-    const first = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const first = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.equal(first.branchCreated, true);
     assert.equal(first.branchOnOrigin, false, "born from the base is not the same as published");
 
     // The worker's round without publishing — a blocked self-report or an
     // abrupt death leaves the branch only in the clone.
-    const unpublished = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const unpublished = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.equal(unpublished.branchCreated, false);
     assert.equal(unpublished.branchOnOrigin, false, "a relaunch has nothing to fast-forward");
 
     // The worker published (push + PR): the retomada now has something to fetch.
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
-    const published = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const published = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.equal(published.branchOnOrigin, true);
 
     // The remote branch is gone (deleted by hand): the truth comes from the
     // remote itself, never from a stale local remote-tracking ref.
     await execFile("git", ["push", "-q", "origin", "--delete", workBranchName(7)], { cwd: cloneDir });
-    const deleted = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    const deleted = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.equal(deleted.branchOnOrigin, false, "a deleted remote branch is not on origin");
   });
 
   test("observeRemoteHead reports the remote branch SHA — the lease value observed before a repair", async () => {
     const git = gitWork();
-    const ref = work(7);
+    const ref = githubWork("Sanmoo/my-tasks", 7);
     await git.prepareWorkFor(ref);
     assert.equal(await git.observeRemoteHeadFor(ref), null, "not yet published: nothing to lease against");
 
@@ -155,7 +150,7 @@ describe("git host — one clone per target repo", () => {
 
   test("a force-with-lease pinned to the OBSERVED head never overwrites a concurrent push (issue 107)", async () => {
     const git = gitWork();
-    const ref = work(7);
+    const ref = githubWork("Sanmoo/my-tasks", 7);
     await git.prepareWorkFor(ref);
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
@@ -193,7 +188,7 @@ describe("git host — one clone per target repo", () => {
 
   test("a rebase onto the advanced base publishes with the lease when the observed head is unchanged (issue 107)", async () => {
     const git = gitWork();
-    const ref = work(7);
+    const ref = githubWork("Sanmoo/my-tasks", 7);
     await git.prepareWorkFor(ref);
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
@@ -222,7 +217,7 @@ describe("git host — one clone per target repo", () => {
 
   test("the base advanced between rounds — the work branch is untouched, no rebase, no merge", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     // Worker commits; then the human merges something and the default advances.
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
@@ -233,7 +228,7 @@ describe("git host — one clone per target repo", () => {
     const workerHead = await execFile("git", ["rev-parse", workBranchName(7)], { cwd: cloneDir });
 
     await remote.commitFile("main", "file.txt", "v2\n", "advance base");
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const after = await execFile("git", ["rev-parse", workBranchName(7)], { cwd: cloneDir });
     assert.equal(after.stdout.trim(), workerHead.stdout.trim(), "branch left alone");
@@ -241,8 +236,8 @@ describe("git host — one clone per target repo", () => {
 
   test("two parallel works in the same repo get distinct branches off the same single clone", async () => {
     const git = gitWork();
-    const a = await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
-    const b = await git.prepareWorkFor(work(8, "Sanmoo/my-tasks"));
+    const a = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
+    const b = await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 8));
 
     assert.notEqual(a.branch, b.branch, "agent-issue-7 vs agent-issue-8");
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
@@ -253,12 +248,12 @@ describe("git host — one clone per target repo", () => {
 
   test("non-done states clean nothing — preparing a work never deletes branches", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
-    await git.prepareWorkFor(work(8, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 8));
 
     // More rounds of prepare (claims, retomadas, feedback) — nothing is removed.
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
-    await git.prepareWorkFor(work(8, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 8));
 
     const branches = await execFile(
       "git",
@@ -302,14 +297,14 @@ describe("git host — cleanup only on done", () => {
 
   test("done: remote branch deleted, local branch deleted, refs pruned — idempotent", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     // The worker pushed the branch; the human merged it (merge left the remote branch).
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
     assert.ok((await execFile("git", ["ls-remote", "--heads", "origin"], { cwd: cloneDir })).stdout.includes(workBranchName(7)));
 
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const remoteAfter = await execFile("git", ["ls-remote", "--heads", "origin"], { cwd: cloneDir });
     assert.ok(!remoteAfter.stdout.includes(workBranchName(7)), "remote branch deleted");
@@ -319,14 +314,14 @@ describe("git host — cleanup only on done", () => {
     assert.ok(!tracking.stdout.includes(workBranchName(7)), "remote-tracking ref pruned");
 
     // Done is terminal: a second cleanup (re-derivation) changes nothing.
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/my-tasks", 7));
   });
 
   test("done after the merge already auto-deleted the remote branch: local branch still cleaned, no error", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     const localAfter = await execFile("git", ["for-each-ref", "refs/heads"], { cwd: cloneDir });
@@ -335,7 +330,7 @@ describe("git host — cleanup only on done", () => {
 
   test("done with the worktree Sandcastle left behind: the branch is checked out there, cleanup still lands", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     // The launch runs the worker in Sandcastle's own worktree on the work
     // branch (branchStrategy "branch"); the worker pushed the branch (the PR)
@@ -348,7 +343,7 @@ describe("git host — cleanup only on done", () => {
     writeFileSync(join(worktreeDir, "uncommitted.txt"), "dirty round\n", "utf8");
     await execFile("git", ["push", "-q", "origin", workBranchName(7)], { cwd: cloneDir });
 
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const localAfter = await execFile("git", ["for-each-ref", "refs/heads"], { cwd: cloneDir });
     assert.ok(!localAfter.stdout.includes(workBranchName(7)), "local branch deleted despite the worktree");
@@ -360,17 +355,17 @@ describe("git host — cleanup only on done", () => {
   test("cleanup on a repo that was never cloned is a no-op — nothing created, no error", async () => {
     const git = gitWork();
 
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/never-touched"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/never-touched", 7));
 
     assert.ok(!existsSync(repoCloneDir(reposDir, "Sanmoo/never-touched")));
   });
 
   test("diffWork returns the work branch's own changes against its base — the prompt's diff (ticket 17)", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     // The branch has no changes yet; the base advancing alone must not leak into the diff.
-    assert.equal(await git.diffWorkFor(work(7, "Sanmoo/my-tasks")), "");
+    assert.equal(await git.diffWorkFor(githubWork("Sanmoo/my-tasks", 7)), "");
 
     // The work's own commit shows up; a later base advance does not.
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
@@ -379,17 +374,17 @@ describe("git host — cleanup only on done", () => {
     await remote.commitFile("main", "file.txt", "v2\n", "advance base");
     await execFile("git", ["fetch", "-q", "origin"], { cwd: cloneDir });
 
-    const diff = await git.diffWorkFor(work(7, "Sanmoo/my-tasks"));
+    const diff = await git.diffWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.match(diff, /the work/);
     assert.doesNotMatch(diff, /v2/);
   });
 
   test("cleanup never touches other works' branches", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
-    await git.prepareWorkFor(work(8, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 8));
 
-    await git.cleanupDoneWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.cleanupDoneWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     const branches = await execFile("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], {
@@ -432,9 +427,9 @@ describe("git host — the local work a resumption must preserve (issue 112)", (
 
   test("a branch with no commits reports an empty local state — nothing invented", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
 
-    assert.deepEqual(await git.inspectLocalWorkFor(work(7, "Sanmoo/my-tasks")), {
+    assert.deepEqual(await git.inspectLocalWorkFor(githubWork("Sanmoo/my-tasks", 7)), {
       headSha: (await execFile("git", ["rev-parse", "agent-issue-7"], {
         cwd: repoCloneDir(reposDir, "Sanmoo/my-tasks"),
       })).stdout.trim(),
@@ -446,7 +441,7 @@ describe("git host — the local work a resumption must preserve (issue 112)", (
 
   test("a repo never cloned reports an empty local state, never an error", async () => {
     const git = gitWork();
-    assert.deepEqual(await git.inspectLocalWorkFor(work(7, "Sanmoo/my-tasks")), {
+    assert.deepEqual(await git.inspectLocalWorkFor(githubWork("Sanmoo/my-tasks", 7)), {
       headSha: null,
       commits: 0,
       uncommitted: false,
@@ -456,7 +451,7 @@ describe("git host — the local work a resumption must preserve (issue 112)", (
 
   test("commits, uncommitted changes and an interrupted rebase are all read from the worktree", async () => {
     const git = gitWork();
-    await git.prepareWorkFor(work(7, "Sanmoo/my-tasks"));
+    await git.prepareWorkFor(githubWork("Sanmoo/my-tasks", 7));
     const worktreeDir = await sandcastleWorktree(7);
 
     // The fallen attempt's own commits — the work a resumption must reuse.
@@ -471,7 +466,7 @@ describe("git host — the local work a resumption must preserve (issue 112)", (
     await execFile("git", ["fetch", "-q", "origin"], { cwd: worktreeDir });
     await assert.rejects(execFile("git", ["rebase", "origin/main"], { cwd: worktreeDir }));
 
-    const facts = await git.inspectLocalWorkFor(work(7, "Sanmoo/my-tasks"));
+    const facts = await git.inspectLocalWorkFor(githubWork("Sanmoo/my-tasks", 7));
     const cloneDir = repoCloneDir(reposDir, "Sanmoo/my-tasks");
     const tip = await execFile("git", ["rev-parse", "refs/heads/agent-issue-7"], { cwd: cloneDir });
     assert.equal(facts.headSha, tip.stdout.trim(), "the branch tip is the attempt's produced commit");
@@ -481,7 +476,7 @@ describe("git host — the local work a resumption must preserve (issue 112)", (
 
     // Inspection alone changes nothing: the rebase is still there to be finished.
     assert.ok(existsSync(join(worktreeDir, ".git")) || (await execFile("git", ["status", "--porcelain"], { cwd: worktreeDir })).stdout !== "");
-    const again = await git.inspectLocalWorkFor(work(7, "Sanmoo/my-tasks"));
+    const again = await git.inspectLocalWorkFor(githubWork("Sanmoo/my-tasks", 7));
     assert.deepEqual(again, facts, "reading the local state is idempotent");
   });
 });

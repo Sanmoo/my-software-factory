@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import { githubRepository, githubTicket, jiraTicket, type WorkIdentity } from "../tracker/identity.js";
-import { anchorOfKey, keyOfAnchor, anchorOfWork, workKeyOf, workOfAnchor } from "./work-key.js";
+import { anchorOfKey, keyOfAnchor, anchorOfWork, workKeyOf, workOfAnchor, workOfKey, renderWorkKey } from "./work-key.js";
 
 /**
  * The on-disk work key is the identity anchor a reservation is read back
@@ -103,6 +103,15 @@ describe("work key — the registry's identity anchor", () => {
     // reservation of the same Work.
     assert.equal(anchorOfKey("github@github.com@7@Sanmoo%2Fmy-tasks"), null);
     assert.notEqual(anchorOfKey("github@ghe.example@7@Sanmoo%2Fmy-tasks"), null);
+  });
+
+  test("a key without a readable ticket key names no Work; presentation keeps the stable identity", () => {
+    const jiraKey = "jira@acme.atlassian.net@10001@Sanmoo%2Fmy-tasks";
+    assert.equal(workOfKey(jiraKey), null, "a Jira key cannot invent the readable key a Work needs");
+    assert.equal(renderWorkKey(jiraKey), "jira:acme.atlassian.net:10001 → Sanmoo/my-tasks");
+    const githubKey = workKeyOf(githubWork("Sanmoo/my-tasks", 7));
+    assert.deepEqual(workOfKey(githubKey), githubWork("Sanmoo/my-tasks", 7));
+    assert.equal(renderWorkKey(githubKey), "Sanmoo/my-tasks#7", "GitHub keeps its historical spelling");
   });
 
   test("unrecognized dir names are not works", () => {
