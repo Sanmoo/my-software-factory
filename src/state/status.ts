@@ -213,8 +213,7 @@ function githubTracker(sources: StatusSources): TicketTracker {
 
 /**
  * Every Jira selection read independently (issue 128): one unavailable read is
- * UNKNOWN, never an empty list and never a conclusion about the healthy ones.
- * The listing is just that — candidates, not reservations and not a launch.
+ * UNKNOWN, never an empty list, and says nothing about the healthy ones.
  */
 async function readJiraCandidates(readers: readonly JiraSelectionReader[]): Promise<JiraSelectionView[]> {
   return Promise.all(
