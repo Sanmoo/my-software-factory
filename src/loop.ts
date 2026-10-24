@@ -291,23 +291,23 @@ interface InFlightLaunch {
 
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
 
-/** The derivation states where an authorized call retry may take over the
- *  planned round; a closed, merged, rejected or unconfirmed work is never
- *  reopened by consent. */
-const STATE_OF_CONSENT: ReadonlySet<ReservedDerivation["state"]> = new Set([
-  "idle",
-  "fall",
-  "interrupted",
-  "model-provider-failure",
-  "stop-resume",
-  "continuity-paused",
-  "feedback",
-  "resumable",
-  "repair",
-  "repair-recovered",
-  "repair-blocked",
-  "unknown",
+/**
+ * The states consent never reopens: the work already reached a terminal
+ * verdict, or a worker may still carry it. A blacklist, not a whitelist — a
+ * newer state must not silently strand an authorization again (issue #128 hit
+ * exactly that with `repair-fall-blocked`): consent answers the pause, so it
+ * outranks the round the factory planned meanwhile.
+ */
+const TERMINAL_FOR_CONSENT: ReadonlySet<ReservedDerivation["state"]> = new Set([
+  "done",
+  "done-fallback",
+  "rejected",
+  "stop-unconfirmed",
 ]);
+
+export function consentAppliesTo(state: ReservedDerivation["state"]): boolean {
+  return !TERMINAL_FOR_CONSENT.has(state);
+}
 
 /**
  * The class each reserved derivation state contributes to the observed state;
@@ -2285,7 +2285,7 @@ export class SweepEngine {
   ): Promise<boolean> {
     const key = workKeyOf(decision.work);
     if (this.carriedKeys.has(key) || this.slots.workKeys.includes(key)) return false;
-    if (!STATE_OF_CONSENT.has(decision.state)) return false;
+    if (!consentAppliesTo(decision.state)) return false;
     let retry: CallRecovery | undefined;
     let ledger: Awaited<ReturnType<typeof readAttemptLedger>>;
     try {
