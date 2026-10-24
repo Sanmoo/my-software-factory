@@ -5,8 +5,8 @@ import type { LocalWorkFacts } from "../git/port.js";
 import type { PrRepairFacts, RequiredCheckResult } from "../tracker/port.js";
 import { known, notKnown } from "../tracker/port.js";
 import type { RepairTrigger } from "../state/derive.js";
-import type { RepairAttempt } from "./repair.js";
-import { openRepairRound } from "./repair-round.js";
+import type { RepairAttempt, RepairCycle } from "./repair.js";
+import { openRepairRound, settleRepairRound, type RepairSettlementInput } from "./repair-round.js";
 
 const BASE = "main";
 
@@ -36,6 +36,50 @@ function attemptOn(observedHeadSha: string): RepairAttempt {
     remoteHeadSha: observedHeadSha,
     publication: "not-published",
     localWork,
+  };
+}
+
+const OBSERVED = "observed-head";
+
+/** The attempt a settlement finds on disk before the verdict: an attempt 2
+ *  whose publication is not verified yet. */
+function unsettledAttempt(
+  observedHeadSha = OBSERVED,
+  overrides: Partial<RepairAttempt> = {},
+): RepairAttempt {
+  return {
+    evidence: `Sanmoo/a#1|${observedHeadSha}|conflicts|`,
+    attempt: 2,
+    observedHeadSha,
+    remoteHeadSha: null,
+    publication: "unknown",
+    localWork: null,
+    ...overrides,
+  };
+}
+
+function repairCycle(attempt: RepairAttempt | null, overrides: Partial<RepairCycle> = {}): RepairCycle {
+  return { usedRounds: 1, lastEvidence: attempt?.evidence ?? null, consecutiveFalls: 0, attempt, ...overrides };
+}
+
+function workBranch(headSha: string | null): LocalWorkFacts {
+  return { headSha, commits: 1, uncommitted: false, operationInProgress: null };
+}
+
+/** Direct observations of a round whose publication is the only open question. */
+function settlementOf(
+  cycle: RepairCycle,
+  overrides: Partial<RepairSettlementInput> = {},
+): RepairSettlementInput {
+  return {
+    cycle,
+    operatorStopped: false,
+    observeRoundStart: async () => ({ reached: true }),
+    readOutcomeRecord: async () => null,
+    observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+    inspectLocalWork: async () => workBranch("local-head"),
+    readPremise: async () => known(conflicting(OBSERVED)),
+    ...overrides,
   };
 }
 
@@ -236,5 +280,245 @@ describe("repair-round — opening a round reads the premise once", () => {
       pinnedHeadSha: "head-a",
       concurrentChange: null,
     });
+  });
+});
+
+describe("repair-round — settling a non-finished round from direct observations", () => {
+  test("a round that never reached the runtime returns the round and counts no fall", async () => {
+    const attempt = unsettledAttempt();
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(attempt, { consecutiveFalls: 1 }), {
+        observeRoundStart: async () => ({ reached: false, journalIntact: true, journaledAttempts: [] }),
+        readOutcomeRecord: async () => ({ class: "pr-open", attempt: 1 }),
+      }),
+    );
+
+    assert.deepEqual(decision, {
+      kind: "returned-unstarted",
+      attempt,
+      cycle: { usedRounds: 0, lastEvidence: null, consecutiveFalls: 1, attempt: null },
+    });
+  });
+
+  test("a journaled session proves the round reached the runtime: it is settled as a fall", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRoundStart: async () => ({ reached: false, journalIntact: true, journaledAttempts: [2] }),
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published");
+    if (decision.kind !== "not-published") return;
+    assert.equal(decision.cycle.usedRounds, 0, "the unpublished round returns");
+    assert.equal(decision.cycle.consecutiveFalls, 1, "a round that ran and did not publish counts one fall");
+  });
+
+  test("an unreadable journal is not proof that the round never started", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRoundStart: async () => ({ reached: false, journalIntact: false, journaledAttempts: [] }),
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published", "uncertainty is never turned into a returned round");
+    assert.equal(decision.cycle.consecutiveFalls, 1);
+  });
+
+  test("the attempt's own outcome record proves it reached the runtime", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRoundStart: async () => ({ reached: false, journalIntact: true, journaledAttempts: [] }),
+        readOutcomeRecord: async () => ({ class: "clean-without-pr", attempt: 2 }),
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published");
+  });
+
+  test("an attempt the remote carries is published and the round stays charged", async () => {
+    const produced = "produced-head";
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: produced }),
+        inspectLocalWork: async () => workBranch(produced),
+      }),
+    );
+
+    assert.equal(decision.kind, "published");
+    if (decision.kind !== "published") return;
+    assert.equal(decision.cycle.usedRounds, 1, "a delivered round stays charged");
+    assert.equal(decision.cycle.consecutiveFalls, 0);
+    assert.equal(decision.attempt.publication, "published");
+    assert.equal(decision.attempt.remoteHeadSha, produced);
+    assert.deepEqual(decision.attempt.localWork, workBranch(produced), "the published work is recorded");
+  });
+
+  test("an attempt that never reached the remote returns its round and counts one fall", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published");
+    if (decision.kind !== "not-published") return;
+    assert.equal(decision.cycle.usedRounds, 0, "the unpublished round returns");
+    assert.equal(decision.cycle.consecutiveFalls, 1);
+    assert.equal(decision.attempt.publication, "not-published");
+    assert.equal(decision.attempt.remoteHeadSha, OBSERVED);
+  });
+
+  test("an unreadable remote holds the attempt pending: no round and no fall", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: false }),
+      }),
+    );
+
+    assert.equal(decision.kind, "pending");
+    if (decision.kind !== "pending") return;
+    assert.equal(decision.reason, "the remote head could not be read");
+    assert.equal(decision.cycle.usedRounds, 1, "the charge is not returned while publication is unknown");
+    assert.equal(decision.cycle.consecutiveFalls, 0, "no fall is invented");
+    assert.equal(decision.cycle.attempt?.publication, "pending");
+  });
+
+  test("an unreadable local worktree holds the attempt pending", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: "moved-head" }),
+        inspectLocalWork: async () => null,
+      }),
+    );
+
+    assert.equal(decision.kind, "pending");
+    if (decision.kind !== "pending") return;
+    assert.equal(decision.reason, "the local work could not be read");
+    assert.equal(decision.cycle.usedRounds, 1);
+    assert.equal(decision.cycle.attempt?.remoteHeadSha, "moved-head");
+  });
+
+  test("an unreadable premise holds the attempt pending when the remote moved", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: "moved-head" }),
+        readPremise: async () => notKnown,
+      }),
+    );
+
+    assert.equal(decision.kind, "pending");
+    if (decision.kind !== "pending") return;
+    assert.equal(decision.reason, "the impediment the round addressed could not be re-read");
+    assert.equal(decision.cycle.usedRounds, 1);
+    assert.equal(decision.cycle.consecutiveFalls, 0);
+  });
+
+  test("an obsolete premise returns the round where a concurrent change keeps it charged", async () => {
+    const resolved = "resolved-head";
+    const obsolete = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: resolved }),
+        readPremise: async () =>
+          known({ ...conflicting(resolved), mergeState: "mergeable", requiredChecks: [] }),
+      }),
+    );
+    const concurrent = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        observeRemote: async () => ({ known: true, headSha: resolved }),
+        readPremise: async () => known(conflicting(resolved)),
+      }),
+    );
+
+    assert.equal(obsolete.kind, "premise-obsolete");
+    assert.equal(concurrent.kind, "concurrent-change");
+    if (obsolete.kind !== "premise-obsolete" || concurrent.kind !== "concurrent-change") return;
+    assert.equal(obsolete.cycle.usedRounds, 0, "an obsolete premise returns the round with no fall");
+    assert.equal(obsolete.cycle.consecutiveFalls, 0);
+    assert.equal(
+      obsolete.attempt.publication,
+      "not-published",
+      "the returned round settles as unpublished; only the ledgers tell it from a fall",
+    );
+    assert.equal(concurrent.cycle.usedRounds, 1, "a concurrent change keeps the round charged");
+    assert.equal(concurrent.cycle.consecutiveFalls, 0);
+    assert.equal(concurrent.attempt.publication, "concurrent-change");
+    assert.equal(concurrent.attempt.remoteHeadSha, resolved);
+    assert.deepEqual(
+      concurrent.attempt.localWork,
+      workBranch("local-head"),
+      "the local work is preserved for the human",
+    );
+  });
+
+  test("an operator stop that has not written its outcome holds the round without a publication verdict", async () => {
+    let remoteReads = 0;
+    let localReads = 0;
+    let premiseReads = 0;
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        operatorStopped: true,
+        readOutcomeRecord: async () => null,
+        observeRemote: async () => {
+          remoteReads += 1;
+          return { known: true, headSha: OBSERVED };
+        },
+        inspectLocalWork: async () => {
+          localReads += 1;
+          return workBranch("local-head");
+        },
+        readPremise: async () => {
+          premiseReads += 1;
+          return known(conflicting(OBSERVED));
+        },
+      }),
+    );
+
+    assert.deepEqual(decision, { kind: "none" }, "the same Repair is stopped, not finished");
+    assert.equal(remoteReads, 0, "a stopped round pays no remote read");
+    assert.equal(localReads, 0, "a stopped round pays no local inspection");
+    assert.equal(premiseReads, 0, "a stopped round pays no premise read");
+  });
+
+  test("an operator stop whose attempt wrote its own outcome is settled", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt()), {
+        operatorStopped: true,
+        readOutcomeRecord: async () => ({ class: "clean-without-pr", attempt: 2 }),
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published");
+    if (decision.kind !== "not-published") return;
+    assert.equal(decision.cycle.consecutiveFalls, 1);
+  });
+
+  test("a settled attempt or an absent one has nothing to settle", async () => {
+    const settled = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt(OBSERVED, { publication: "not-published" }))),
+    );
+    const absent = await settleRepairRound(settlementOf(repairCycle(null)));
+
+    assert.deepEqual(settled, { kind: "none" });
+    assert.deepEqual(absent, { kind: "none" });
+  });
+
+  test("the never-started check only judges an unverified publication", async () => {
+    let startReads = 0;
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(unsettledAttempt(OBSERVED, { publication: "pending" })), {
+        observeRoundStart: async () => {
+          startReads += 1;
+          return { reached: false, journalIntact: true, journaledAttempts: [] };
+        },
+        observeRemote: async () => ({ known: true, headSha: OBSERVED }),
+      }),
+    );
+
+    assert.equal(decision.kind, "not-published", "a pending attempt is settled when the remote answers");
+    assert.equal(startReads, 0);
   });
 });

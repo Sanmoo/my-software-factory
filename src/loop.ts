@@ -35,7 +35,6 @@ import {
   deriveReserved,
   fallbackDoneComment,
   humanCommentsForPause,
-  readRepairPremise,
   repairSignature,
   workPullRequest,
   renderUnbackedClaim,
@@ -71,17 +70,20 @@ import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
   hasRepairCycle,
-  isSettledPublication,
   legacyRepairAttempt,
   readRepairCycle,
-  reconcileRepairAttempt,
   writeRepairCycle,
   type RemoteObservation,
   type RepairAttempt,
   type RepairCycle,
-  type RepairReconciliation,
 } from "./pool/repair.js";
-import { openRepairRound, type RepairRoundContext } from "./pool/repair-round.js";
+import {
+  openRepairRound,
+  settleRepairRound,
+  type RepairRoundContext,
+  type RepairRoundStart,
+  type RepairSettlement,
+} from "./pool/repair-round.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import {
   confirmStopRequest,
@@ -2156,10 +2158,13 @@ export class SweepEngine {
   /**
    * The repair reconciliation of the tick (issue 112): every repair attempt
    * that wrote its facts on disk and is not carried by a live worker is
-   * settled against the remote BEFORE the derivation reads the cycle. The
-   * settlement is idempotent — a settled attempt is never charged, refunded or
-   * counted again — and an unreadable remote leaves the attempt pending: no
-   * worker and no budget return until a later sweep gets an answer.
+   * settled BEFORE the derivation reads the cycle. The verdict lives in the
+   * Repair round module (pool/repair-round.ts); this method supplies its
+   * observations, persists the cycle through the record and says the verdict
+   * in the operator's log. The settlement is idempotent — a settled attempt is
+   * never charged, refunded or counted again — and an unreadable remote leaves
+   * the attempt pending: no worker and no budget return until a later sweep
+   * gets an answer.
    */
   private async reconcileRepairAttempts(
     works: readonly ReservedWorkInput[],
@@ -2172,59 +2177,49 @@ export class SweepEngine {
       if (inFlight.has(key)) continue;
 
       const stored = await readRepairCycle(work.dir);
-      const requestedStop = stored.attempt !== null && await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt);
-      if (stored.attempt !== null && !requestedStop && stored.attempt.publication === "unknown" &&
-          !existsSync(join(work.dir, eventLogName(stored.attempt.attempt)))) {
-        const journal = readEffectJournal(work.dir);
-        const record = await readOutcomeRecord(work.dir);
-        if (journal.intact && !journal.sessions.some((entry) => entry.attempt === stored.attempt!.attempt) &&
-            record?.attempt !== stored.attempt.attempt) {
-          await writeRepairCycle(work.dir, {
-            ...stored, usedRounds: Math.max(0, stored.usedRounds - 1), lastEvidence: null, attempt: null,
-          });
-          this.log(`repair attempt ${stored.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`);
-          continue;
-        }
-      }
-      if (stored.attempt !== null && requestedStop &&
-          ownWrittenOutcome(await readOutcomeRecord(work.dir), stored.attempt.attempt) === null) {
-        continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
-      }
-      if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
-      // A work that never ran a repair round has nothing to reconcile — no git
-      // inspection is paid for it on every sweep.
-      if (!hasRepairCycle(stored)) continue;
-
-      // Git is read only when there is a verdict to reach: a legacy cycle with
-      // no registry gap is not an attempt, and paying an inspection for it on
-      // every sweep would be waste, not diligence.
+      const recorded = stored.attempt;
       let cycle: RepairCycle;
-      let localWork: LocalWorkFacts | null;
-      if (stored.attempt !== null) {
+      let operatorStopped = false;
+      let observeRoundStart: () => Promise<RepairRoundStart>;
+      let inspectLocalWork: () => Promise<LocalWorkFacts | null>;
+      if (recorded !== null) {
+        operatorStopped = await this.operatorStoppedAttempt(work.dir, recorded.attempt);
         cycle = stored;
-        localWork = await this.inspectLocalWork(work.work);
+        observeRoundStart = () => this.observeRepairRoundStart(work.dir, recorded.attempt);
+        inspectLocalWork = () => this.inspectLocalWork(work.work);
       } else {
+        // A work that never ran a repair round has nothing to reconcile — no
+        // registry read or git inspection is paid for it on every sweep.
+        if (!hasRepairCycle(stored)) continue;
+        // A legacy cycle with no attempt on disk: only the registry gap can
+        // establish the attempt, and its local work is read once, by adoption.
         const adopted = await this.adoptLegacyCycle(work, stored);
-        if (adopted === null) continue;
+        const adoptedAttempt = adopted?.attempt ?? null;
+        if (adopted === null || adoptedAttempt === null) continue;
         cycle = adopted;
-        localWork = adopted.attempt?.localWork ?? null;
+        // An adopted cycle is settled as an attempt: the registry gap is
+        // today's evidence that it ran, and re-deciding that from the
+        // artifacts is #181's fix, not this settlement's.
+        observeRoundStart = async () => ({ reached: true });
+        inspectLocalWork = async () => adoptedAttempt.localWork;
       }
 
-      const remote = await this.observeRemote(work.work);
-      // The premise is part of the verdict (issue 149): a remote the attempt
-      // did not produce is a concurrent change ONLY while the impediment the
-      // round addressed still exists — a human's own resolution is never
-      // taken for a reason to ask for help. The read happens once per
-      // settlement: a settled or attempt-less cycle never reaches this line.
-      const premise = readRepairPremise(
-        await this.deps.pullRequests.readPullRequestRepairFacts(
-          workPullRequest(work.work),
-        ),
-      ).premise;
-      const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
+      const decision = await settleRepairRound({
+        cycle,
+        operatorStopped,
+        observeRoundStart,
+        readOutcomeRecord: () => readOutcomeRecord(work.dir),
+        observeRemote: () => this.observeRemote(work.work),
+        inspectLocalWork,
+        // The premise is part of the verdict (issue 149): a remote the attempt
+        // did not produce is a concurrent change ONLY while the impediment the
+        // round addressed still exists — a human's own resolution is never
+        // taken for a reason to ask for help. Read once per settlement.
+        readPremise: () => this.deps.pullRequests.readPullRequestRepairFacts(workPullRequest(work.work)),
+      });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
-      this.logReconciliation(key, decision);
+      this.logSettlement(key, decision);
     }
   }
 
@@ -2306,11 +2301,17 @@ export class SweepEngine {
     return { ...cycle, attempt: { ...candidate, localWork } };
   }
 
-  /** The reconciliation verdict, said once in the operator's log. */
-  private logReconciliation(
+  /** The settlement verdict, said once in the operator's log. */
+  private logSettlement(
     key: string,
-    decision: Exclude<RepairReconciliation, { kind: "none" }>,
+    decision: Exclude<RepairSettlement, { kind: "none" }>,
   ): void {
+    if (decision.kind === "returned-unstarted") {
+      this.log(
+        `repair attempt ${decision.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`,
+      );
+      return;
+    }
     const attempt = decision.cycle.attempt;
     if (attempt === null) return;
     switch (decision.kind) {
@@ -2371,6 +2372,19 @@ export class SweepEngine {
     } catch {
       return null;
     }
+  }
+
+  /** Whether a round with a recorded attempt ever reached the runtime: its own
+   *  event log is the cheap proof; when it is absent, the guardrail journal is
+   *  the remaining direct fact (an unreadable one proves nothing either way). */
+  private async observeRepairRoundStart(dir: string, attempt: number): Promise<RepairRoundStart> {
+    if (existsSync(join(dir, eventLogName(attempt)))) return { reached: true };
+    const journal = readEffectJournal(dir);
+    return {
+      reached: false,
+      journalIntact: journal.intact,
+      journaledAttempts: journal.sessions.map((session) => session.attempt),
+    };
   }
 
   /** The remote head now, or the honest uncertainty (an unreadable remote is

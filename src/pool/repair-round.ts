@@ -1,14 +1,26 @@
+import type { LocalWorkFacts } from "../git/port.js";
 import type { Known, PrRepairFacts } from "../tracker/port.js";
 import { readRepairPremise, type RepairTrigger } from "../state/derive.js";
-import type { RemoteObservation, RepairAttempt } from "./repair.js";
+import { ownWrittenOutcome } from "../state/outcome.js";
+import type { OutcomeRecord } from "../work-record/outcome.js";
+import {
+  isSettledPublication,
+  reconcileRepairAttempt,
+  type RemoteObservation,
+  type RepairAttempt,
+  type RepairCycle,
+  type RepairReconciliation,
+} from "./repair.js";
 
 /**
- * The opening of a Repair round (issue 189): given the confirmed trigger the
- * derivation produced, the module re-reads the premise ONCE at the opening
- * point and either returns the launch context — the trigger the session is
- * opened with, the head the intervention is pinned to, the PR's current base
- * and the unpublished attempt it takes over — or a verdict of return (the
- * impediment is gone) or hold (the facts cannot confirm it).
+ * The Repair round (issues 189 and 194): "open a round" re-reads the confirmed
+ * premise ONCE at the opening point and returns either the launch context —
+ * the trigger the session is opened with, the head the intervention is pinned
+ * to, the PR's current base and the unpublished attempt it takes over — or a
+ * verdict of return (the impediment is gone) or hold (the facts cannot confirm
+ * it); "settle a non-finished round" decides what became of a recorded attempt
+ * from direct observations of the record, the remote, the worktree and the
+ * premise, and returns the verdict and the cycle to persist.
  *
  * The premise is the PR's current facts, never the ones that opened the round
  * (issue 149): a resolution pushed between the derivation and the launch must
@@ -18,8 +30,12 @@ import type { RemoteObservation, RepairAttempt } from "./repair.js";
  * attempt as a concurrent change — its local work is preserved for the human,
  * never published over the collaborator's head.
  *
- * The ledger and the round budget stay in pool/repair.ts: this module decides
- * only what the opening spends, never how a settlement is recorded.
+ * The settlement is not a sweep: it is handed the observations and does no
+ * inspection of its own, so premise-obsolete, concurrent change, a round that
+ * never started and the publication verdicts are exercised directly. The
+ * publication decision itself is composed from pool/repair.ts; the ledger and
+ * the round budget stay there. This module decides only what the opening
+ * spends and what the settlement concludes, never how a verdict is recorded.
  */
 
 /** The facts the opening is decided from: the confirmed premise of the
@@ -100,4 +116,116 @@ export async function openRepairRound(input: RepairOpeningInput): Promise<Repair
       resuming: input.resuming,
     },
   };
+}
+
+/**
+ * Whether a round with a recorded attempt ever reached the runtime. The
+ * attempt's own event log is the direct proof; when it is absent, the
+ * guardrail's journaled session is the remaining fact — and an unreadable
+ * journal proves nothing either way.
+ */
+export type RepairRoundStart =
+  | { reached: true }
+  | { reached: false; journalIntact: boolean; journaledAttempts: readonly number[] };
+
+/**
+ * The facts a settlement is decided from: the persisted cycle and the direct
+ * observations of the record, the remote, the local worktree and the premise.
+ * The callbacks are not indirection for its own sake — they keep the sweep
+ * from paying a git inspection, a tracker read or a journal read that the
+ * verdict does not need.
+ */
+export interface RepairSettlementInput {
+  /** The cycle read from the record, with the attempt to settle — a legacy
+   *  cycle already adopted into one. */
+  cycle: RepairCycle;
+  /** The operator's requested stop owns the attempt's end: until the attempt
+   *  writes its own outcome, the same Repair is stopped, not finished. */
+  operatorStopped: boolean;
+  /** Whether the round ever reached the runtime. An adopted legacy cycle
+   *  reports `reached: true`: the adoption itself is the evidence that an
+   *  attempt ran (#181 owns re-deciding it from the artifacts). */
+  observeRoundStart: () => Promise<RepairRoundStart>;
+  /** The Work's outcome record on disk — another attempt's is not this one's. */
+  readOutcomeRecord: () => Promise<OutcomeRecord | null>;
+  /** The remote head now; an unreadable remote is uncertainty, never absence. */
+  observeRemote: () => Promise<RemoteObservation>;
+  /** The work branch on disk; null when git cannot answer. */
+  inspectLocalWork: () => Promise<LocalWorkFacts | null>;
+  /** The PR's facts re-read now, not the ones the round was launched on. */
+  readPremise: () => Promise<Known<PrRepairFacts>>;
+}
+
+/**
+ * The settlement of one non-finished round: the verdict and the cycle it
+ * persists. The publication verdicts are the reconciliation of pool/repair.ts
+ * composed with the round-start fact; `returned-unstarted` is this module's own
+ * verdict for a round no worker ever saw.
+ */
+export type RepairSettlement =
+  /** Nothing to settle: no attempt, one already settled, or one whose
+   *  operator stop has not written its own outcome yet. */
+  | { kind: "none" }
+  /** The round never reached the runtime: the charge returns and no fall is
+   *  counted. The attempt leaves the cycle; `attempt` names it for the log. */
+  | { kind: "returned-unstarted"; cycle: RepairCycle; attempt: RepairAttempt }
+  /** The publication reconciliation of the attempt (pool/repair.ts). */
+  | Exclude<RepairReconciliation, { kind: "none" }>;
+
+/**
+ * Settle the round's recorded attempt from the observations, in the order the
+ * facts decide it: an attempt that never reached the runtime returns the round
+ * with no fall; an operator stop that the attempt has not answered holds the
+ * round; otherwise the publication verdict composes the host's local work, the
+ * remote head and the premise re-read now (issue 149/194). Nothing is written
+ * here — the cycle in the verdict is what the caller persists.
+ */
+export async function settleRepairRound(input: RepairSettlementInput): Promise<RepairSettlement> {
+  const attempt = input.cycle.attempt;
+  if (attempt === null) return { kind: "none" };
+  if (isSettledPublication(attempt.publication)) return { kind: "none" };
+
+  // The requested stop owns the end of this attempt until the attempt writes
+  // its own outcome: an interrupted Repair is neither published nor a fall —
+  // the derivation will resume it without spending a recovery.
+  if (input.operatorStopped) {
+    const record = await input.readOutcomeRecord();
+    if (ownWrittenOutcome(record, attempt.attempt) === null) return { kind: "none" };
+  } else if (attempt.publication === "unknown") {
+    // A round with no runtime footprint is not an attempt — the home issue
+    // 181's fix lands in. The event log, the guardrail's session and the
+    // outcome record are the only facts that can prove it started. A record
+    // for another attempt, an intact journal with no session of this one, and
+    // no event log mean the charge returns and no fall is counted.
+    const start = await input.observeRoundStart();
+    if (!start.reached) {
+      const record = await input.readOutcomeRecord();
+      if (
+        start.journalIntact &&
+        !start.journaledAttempts.includes(attempt.attempt) &&
+        record?.attempt !== attempt.attempt
+      ) {
+        return {
+          kind: "returned-unstarted",
+          attempt,
+          cycle: {
+            ...input.cycle,
+            usedRounds: Math.max(0, input.cycle.usedRounds - 1),
+            lastEvidence: null,
+            attempt: null,
+          },
+        };
+      }
+    }
+  }
+
+  // The host's inspection is the only source of the produced commit; the
+  // premise is the PR's facts re-read now, never the ones the round opened on.
+  const localWork = await input.inspectLocalWork();
+  const remote = await input.observeRemote();
+  const premise = readRepairPremise(await input.readPremise()).premise;
+  const decision = reconcileRepairAttempt({ cycle: input.cycle, remote, localWork, premise });
+  // The cycle carries an unsettled attempt here, so the reconciliation has a
+  // verdict; "none" can only answer an absent or settled attempt, checked above.
+  return decision.kind === "none" ? { kind: "none" } : decision;
 }
