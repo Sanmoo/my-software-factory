@@ -42,7 +42,7 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
     seedIssue(tracker, { repo, number: 1, createdAt: "2026-01-01T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     const config: Config = {
       workerGhAccount: "bot", workerModel: "deterministico/roteiro", repos: [repo], concurrency: 1,
-      workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null,
+      workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null, jira: [],
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false, configPath: join(root, "delegation.yaml"),
