@@ -58,6 +58,31 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
   return { ok: true, jql: trimmed };
 }
 
+/**
+ * One query for a whole Jira site's selections (issue 129): the union of the
+ * selections' filters, ordered ONLY by the site's native Rank. Each selection
+ * was already validated on its own; its own ordering clause is removed before
+ * the union, because independent selection orders cannot be concatenated into
+ * the site-wide order. A single selection keeps its exact query.
+ */
+export function withSiteRankOrdering(selections: readonly string[]): RankOrdering {
+  if (selections.length === 0) return { ok: false, because: "the site carries no selection" };
+  if (selections.length === 1) return withNativeRankOrdering(selections[0] ?? "");
+
+  const filters: string[] = [];
+  for (const selection of selections) {
+    const ordered = withNativeRankOrdering(selection);
+    if (!ordered.ok) return ordered;
+    const clause = topLevelOrderBy(maskQuoted(ordered.jql));
+    // withNativeRankOrdering always returns an ordering, but the narrower
+    // slice keeps the function honest if that changes.
+    const filter = clause === null ? ordered.jql.trim() : ordered.jql.slice(0, clause.start).trim();
+    if (filter === "") return { ok: false, because: "a selection carries no filter before its ordering" };
+    filters.push(`(${filter})`);
+  }
+  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}` };
+}
+
 /** The text inside quoted JQL literals, blanked out (indices preserved). */
 function maskQuoted(jql: string): string {
   let masked = "";
@@ -88,12 +113,12 @@ function maskQuoted(jql: string): string {
   return masked;
 }
 
-/** The top-level ORDER BY clause: where its body starts, or null when the
- *  query has none (a quoted literal is not a clause). */
-function topLevelOrderBy(masked: string): { bodyStart: number } | null {
+/** The top-level ORDER BY clause: where it starts and where its body starts,
+ *  or null when the query has none (a quoted literal is not a clause). */
+function topLevelOrderBy(masked: string): { start: number; bodyStart: number } | null {
   const pattern = /\border\s+by\b/gi;
   let depth = 0;
-  let found: { bodyStart: number } | null = null;
+  let found: { start: number; bodyStart: number } | null = null;
   let position = 0;
   for (const match of masked.matchAll(pattern)) {
     const start = match.index ?? 0;
@@ -101,7 +126,7 @@ function topLevelOrderBy(masked: string): { bodyStart: number } | null {
       if (masked[position] === "(") depth += 1;
       else if (masked[position] === ")") depth -= 1;
     }
-    if (depth === 0) found = { bodyStart: start + match[0].length };
+    if (depth === 0) found = { start, bodyStart: start + match[0].length };
   }
   return found;
 }

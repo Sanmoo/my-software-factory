@@ -29,6 +29,9 @@ export interface SimJiraIssue {
   assignee: SimJiraAccount | null;
   labels: string[];
   issueType: string;
+  /** Jira Priority, when the test models it; Rank order deliberately does not
+   *  read this field. */
+  priority?: string;
   created: string;
   parentKey?: string;
 }
@@ -61,6 +64,9 @@ export class JiraSim {
   readonly account: SimJiraAccount;
   /** Every issue the sim holds, in the site's native Rank order. */
   issues: SimJiraIssue[] = [];
+  /** Test-side stand-in for Jira's JQL evaluation; absent means "select all",
+   *  which keeps the one-selection suites concise. */
+  select: ((jql: string, issues: readonly SimJiraIssue[]) => readonly SimJiraIssue[]) | null = null;
   /** The page size the sim caps answers at, whatever the request asks. */
   pageSize = 100;
   readonly requests: SimJiraRequest[] = [];
@@ -88,6 +94,7 @@ export class JiraSim {
       assignee: input.assignee === undefined ? this.account : input.assignee,
       labels: input.labels ?? [],
       issueType: input.issueType ?? "Task",
+      ...(input.priority === undefined ? {} : { priority: input.priority }),
       created: input.created ?? "2026-01-01T00:00:00.000+0000",
       ...(input.parentKey === undefined ? {} : { parentKey: input.parentKey }),
     };
@@ -169,11 +176,12 @@ export class JiraSim {
       start = Number(body.nextPageToken);
     }
     const size = Math.max(1, Math.min(requested, this.pageSize));
-    const page = this.issues.slice(start, start + size);
+    const selected = this.select === null ? this.issues : [...this.select(record.jql ?? "", this.issues)];
+    const page = selected.slice(start, start + size);
     const end = start + page.length;
     return answer(200, {
       issues: page.map((issue) => this.restIssue(issue)),
-      ...(end < this.issues.length ? { nextPageToken: String(end), isLast: false } : { isLast: true }),
+      ...(end < selected.length ? { nextPageToken: String(end), isLast: false } : { isLast: true }),
     });
   }
 
@@ -204,6 +212,7 @@ export class JiraSim {
               },
         labels: issue.labels,
         issuetype: { name: issue.issueType, subtask: issue.parentKey !== undefined },
+        priority: { name: issue.priority ?? "Medium" },
         created: issue.created,
         ...(issue.parentKey === undefined ? {} : { parent: { key: issue.parentKey } }),
       },

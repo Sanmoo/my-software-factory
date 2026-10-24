@@ -73,6 +73,16 @@ export interface TicketTracker {
   rankTicket(ticket: TicketIdentity): Promise<Known<number | null>>;
 }
 
+/**
+ * A tracker that can read several selections of ONE site as a single native
+ * ordered result (issue 129). Concatenating each selection's own order would
+ * pretend independent queues are the site's Rank; only the site as a whole
+ * can answer that.
+ */
+export interface SiteTicketTracker extends TicketTracker {
+  listSiteTickets(selections: readonly TicketSelection[]): Promise<OpenTicket[]>;
+}
+
 /** A PR read: the Work plus the PR already associated with it, when known. */
 export interface WorkPullRequest {
   work: WorkIdentity;
