@@ -72,7 +72,7 @@ function makeFixture(
 
   const declaration = {
     schema: "msf-agent-resources/v1",
-    pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+    pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
     skills: {
       repository: skillsRepo,
       revision: options.skills === false ? "f".repeat(40) : revision,
@@ -93,13 +93,14 @@ function makeFixture(
   const declarationPath = join(dir, "agent-resources.json");
   writeFileSync(declarationPath, `${JSON.stringify(declaration, null, 2)}\n`, "utf8");
 
-  // The installed global Pi the provisioner reads back (package + version).
+  // The installed global Pi the provisioner reads back (package, version and
+  // declared license — the manifest is the license's source of truth).
   const globalRoot = join(dir, "global");
   const piDir = join(globalRoot, "@earendil-works/pi-coding-agent");
   mkdirSync(piDir, { recursive: true });
   writeFileSync(
     join(piDir, "package.json"),
-    JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.3.0" }),
+    JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" }),
     "utf8",
   );
 
@@ -297,6 +298,44 @@ describe("agent-resource provisioning at image build time", () => {
         /Pi is installed as @earendil-works\/pi-coding-agent@1\.2\.9, declared .*@1\.3\.0/,
       );
       assert.ok(!existsSync(fixture.dest));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a Pi license that changed under the declaration fails the build — attribution is verified, not assumed", async () => {
+    const fixture = makeFixture();
+    try {
+      const badGlobal = join(fixture.dir, "global-license");
+      const badPi = join(badGlobal, "@earendil-works/pi-coding-agent");
+      mkdirSync(badPi, { recursive: true });
+      writeFileSync(
+        join(badPi, "package.json"),
+        JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "Apache-2.0" }),
+        "utf8",
+      );
+      await assert.rejects(
+        provisionAgentResources(options(fixture, { run: fakeRun({ globalRoot: badGlobal }) })),
+        /installed Pi declares the license Apache-2\.0, declared MIT/,
+      );
+      assert.ok(!existsSync(fixture.dest));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a Pi that ships a LICENSE has it copied into the image's licenses/ under its package name", async () => {
+    const fixture = makeFixture();
+    try {
+      writeFileSync(join(fixture.globalRoot, "@earendil-works/pi-coding-agent", "LICENSE"), "MIT pi license\n", "utf8");
+
+      await provisionAgentResources(options(fixture));
+
+      assert.equal(
+        readFileSync(join(fixture.dest, "licenses", "@earendil-works-pi-coding-agent-LICENSE"), "utf8"),
+        "MIT pi license\n",
+      );
+      assert.match(readFileSync(join(fixture.dest, "ATTRIBUTION.md"), "utf8"), /MIT \(LICENSE under licenses\/\)/);
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }

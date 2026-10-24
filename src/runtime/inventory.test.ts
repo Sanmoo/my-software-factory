@@ -22,7 +22,7 @@ import {
 function fixtureDeclaration(): Record<string, unknown> {
   return {
     schema: "msf-agent-resources/v1",
-    pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+    pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
     skills: {
       repository: "https://example.invalid/skills.git",
       revision: "0123456789abcdef0123456789abcdef01234567",
@@ -174,6 +174,29 @@ describe("the factory's agent-resource declaration and image inventory", () => {
       assert.match(error.message, /Pi is .*1\.2\.0/);
       assert.match(error.message, /skill "implement" is/);
       assert.match(error.message, /skill "evil" is in the image but not declared/);
+      return true;
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an image that put a declared resource somewhere else is refused — the launch loads the declared path", () => {
+    dir = mkdtempSync(join(tmpdir(), "msf-inventory-"));
+    const path = join(dir, "agent-resources.json");
+    const declaration = fixtureDeclaration();
+    writeFileSync(path, JSON.stringify(declaration), "utf8");
+    const loaded = loadAgentResources(path);
+
+    const misplaced = matchingInventory(path, declaration);
+    (misplaced as { skills: Array<{ path: string }> }).skills[0]!.path = "skills/elsewhere";
+    (misplaced as { extensions: Array<{ path: string }> }).extensions[0]!.path = "extensions/node_modules/other";
+
+    assert.throws(() => verifyAgentInventory(loaded, JSON.stringify(misplaced)), (error: unknown) => {
+      assert.ok(error instanceof AgentImageMismatchError);
+      assert.match(error.message, /skill "implement" is at skills\/elsewhere in the image, declared at skills\/implement/);
+      assert.match(
+        error.message,
+        /extension "pi-subagents" is at extensions\/node_modules\/other in the image, declared at extensions\/node_modules\/pi-subagents/,
+      );
       return true;
     });
     rmSync(dir, { recursive: true, force: true });

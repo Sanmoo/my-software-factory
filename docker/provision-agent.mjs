@@ -369,21 +369,42 @@ async function installedPi(declaration, run) {
         `declared ${declaration.pi.package}@${declaration.pi.version}`,
     );
   }
+  if (manifest.license !== declaration.pi.license) {
+    fail(
+      `installed Pi declares the license ${String(manifest.license)}, ` +
+        `declared ${declaration.pi.license} — review the attribution before shipping it`,
+    );
+  }
   const { stdout: versionOut } = await runCommand(run, "pi", ["--version"]);
   const reported = String(versionOut).trim();
   if (reported !== declaration.pi.version) {
     fail(`pi --version reports ${reported}, declared ${declaration.pi.version}`);
   }
-  return { package: manifest.name, version: manifest.version };
+  // The package is the license's source of truth; copy the file when it ships
+  // one (Pi 1.3.0 declares MIT in its manifest and ships no LICENSE).
+  const shippedLicense = join(packageDir, "LICENSE");
+  return {
+    package: manifest.name,
+    version: manifest.version,
+    licenseFile: existsSync(shippedLicense) ? shippedLicense : null,
+  };
 }
 
-function attribution(declaration) {
+/** A license file's name inside `licenses/`: the package name flattened to a
+ *  single file name (a scoped name's `/` would nest a directory that does not
+ *  exist, and the copy would fail). */
+function licenseFileName(packageName) {
+  return `${packageName.replaceAll("/", "-")}-LICENSE`;
+}
+
+function attribution(declaration, piInstall) {
   const lines = [
     "# Factory agent resources",
     "",
     "Provisioned into this image from the factory's committed declaration.",
     "",
-    `- Pi: ${declaration.pi.package}@${declaration.pi.version}`,
+    `- Pi: ${declaration.pi.package}@${declaration.pi.version} — ${declaration.pi.license} ` +
+      `(${piInstall.licenseFile === null ? "declared by the installed package, which ships no LICENSE file" : "LICENSE under licenses/"})`,
     `- Skills: ${declaration.skills.repository}@${declaration.skills.revision} — ${declaration.skills.license}`,
     ...declaration.skills.selected.map((skill) => `  - ${skill.name}: ${skill.path}`),
     ...declaration.extensions.map(
@@ -393,7 +414,7 @@ function attribution(declaration) {
     ),
     `- Reviewer agents: factory-owned (${declaration.agents.map((agent) => agent.path).join(", ")})`,
     "",
-    "The licenses of the declared skills and extensions are under `licenses/`.",
+    "The available licenses of the declared resources are under `licenses/`.",
     "Upstream skill content is copied unchanged.",
     "",
   ];
@@ -429,7 +450,8 @@ export async function provisionAgentResources(options) {
     throw error;
   }
 
-  const installed = await installedPi(declaration, run);
+  const piInstall = await installedPi(declaration, run);
+  const installed = { package: piInstall.package, version: piInstall.version };
 
   const staging = `${resolve(dest)}.staging-${process.pid}`;
   rmSync(staging, { recursive: true, force: true });
@@ -476,7 +498,7 @@ export async function provisionAgentResources(options) {
       );
       validateReferences(guidance, installedPackageRoot, `extension "${extension.package}" guidance`);
       const license = requireFile(join(installedPackageRoot, "LICENSE"), `extension "${extension.package}" LICENSE`);
-      copyFileSync(license, join(licensesRoot, `${extension.package}-LICENSE`));
+      copyFileSync(license, join(licensesRoot, licenseFileName(extension.package)));
       extensionRecords.push({
         package: extension.package,
         version: extension.version,
@@ -494,6 +516,9 @@ export async function provisionAgentResources(options) {
     }
 
     copyFileSync(requireFile(join(repoDir, "LICENSE"), "upstream skills LICENSE"), join(licensesRoot, "skills-LICENSE"));
+    if (piInstall.licenseFile !== null) {
+      copyFileSync(piInstall.licenseFile, join(licensesRoot, licenseFileName(declaration.pi.package)));
+    }
 
     const skills = expectedSkills(declaration).map((skill) => {
       const imagePath = skill.imagePath;
@@ -518,7 +543,7 @@ export async function provisionAgentResources(options) {
       };
     });
 
-    writeFileSync(join(staging, "ATTRIBUTION.md"), attribution(declaration), "utf8");
+    writeFileSync(join(staging, "ATTRIBUTION.md"), attribution(declaration, piInstall), "utf8");
 
     const inventory = {
       schema: AGENT_INVENTORY_SCHEMA,

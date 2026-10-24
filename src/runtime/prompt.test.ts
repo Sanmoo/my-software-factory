@@ -384,7 +384,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
       sha256: "",
       declaration: {
         schema: "msf-agent-resources/v1",
-        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
         skills: {
           repository: "https://example.invalid/skills.git",
           revision: "a".repeat(40),
@@ -434,7 +434,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
       sha256: "",
       declaration: {
         schema: "msf-agent-resources/v1",
-        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0" },
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
         skills: {
           repository: "https://example.invalid/skills.git",
           revision: "a".repeat(40),

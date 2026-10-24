@@ -4,7 +4,7 @@ export type AgentRole = "standards" | "spec";
 
 export interface AgentResourcesDeclaration {
   schema: "msf-agent-resources/v1";
-  pi: { package: string; version: string };
+  pi: { package: string; version: string; license: string };
   skills: {
     repository: string;
     revision: string;
