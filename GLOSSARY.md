@@ -164,10 +164,10 @@ _Avoid_: Orphan, when the worker is alive.
 
 **Liveness unknown**:
 Docker did not answer — a failure, a timeout, an invalid answer, or a container carrying a work this workspace cannot name. The factory cannot tell a live worker from a dead one, so new launches are suspended and no attempt, recovery or block is spent until a reliable answer returns.
-_Avoid_: No workers, when the answer is missing; decided zero, when Docker listed the host's running containers.
+_Avoid_: No workers, when the answer is missing; decided zero, when Docker listed the daemon's running containers.
 
 **Decided zero**:
-Docker listed the host's running containers and none carries a work of this workspace. Every worker is a container, so a complete listing hides none: the factory acts on the zero instead of suspending.
+Docker listed the daemon's running containers and none carries a work of this workspace. Every worker is a container, so a complete listing hides none: the factory acts on the zero instead of suspending.
 _Avoid_: Liveness unknown, when Docker answered.
 
 **Duplicate workers**:
