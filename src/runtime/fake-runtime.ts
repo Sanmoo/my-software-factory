@@ -134,7 +134,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (hold !== undefined) await hold(request, index);
     const script = this.retroScript[Math.min(index, Math.max(0, this.retroScript.length - 1))];
     if (script === undefined || script.report === false) {
-      return { request, outcome: "no-report" };
+      return { outcome: "no-report" };
     }
     const filed = script.filed ?? [];
     const discarded = script.discarded ?? [];
@@ -169,7 +169,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       )}\n`,
       "utf8",
     );
-    return { request, outcome: "report-written" };
+    return { outcome: "report-written" };
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfigFrom, type Config } from "./config.js";
 import { parseCliArgs } from "./cli-args.js";
 <<<<<<< HEAD
+<<<<<<< HEAD
 import { collectFinishedWorks } from "./retro/window.js";
 import { anchorOfKey } from "./pool/work-key.js";
 import { RetroBusyError, emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
@@ -13,6 +14,10 @@ import { liveRoundInFlight } from "./retro/marker.js";
 import { collectFinishedWorks, liveWorkKeys } from "./retro/window.js";
 import { planManualRound, runRetroRound } from "./retro/round.js";
 >>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)
+=======
+import { collectFinishedWorks } from "./retro/window.js";
+import { emptyWindowNotice, planManualRound, runRetroRound } from "./retro/round.js";
+>>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
 import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./layout.js";
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
@@ -22,6 +27,7 @@ import { stopConfirmed, type StopReport } from "./pool/stop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { appendOperationalLog, operationalLog, utcStamp } from "./log.js";
 import { describeError } from "./format.js";
+<<<<<<< HEAD
 import { deriveStatus, type JiraSelectionReader } from "./state/status.js";
 import {
   carriedWorkKeys,
@@ -29,6 +35,10 @@ import {
   workspaceLivenessProbe,
   type LivenessProbe,
 } from "./state/liveness.js";
+=======
+import { deriveStatus } from "./state/status.js";
+import { carriedKeys, probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
+>>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -407,20 +417,13 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const finished = await collectFinishedWorks(workspace, liveWorkKeys(observation));
+    const finished = await collectFinishedWorks(workspace, carriedKeys(observation));
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),
     });
     if ("empty" in plan) {
-      writeOperationalLog(
-        workspace,
-        utcStamp(
-          plan.empty === "no-finished-works"
-            ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"
-            : "retro: nothing new since the last report — nothing was launched and no report was written",
-        ),
-      );
+      writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
       return;
     }
 >>>>>>> 79e559d4 (chore(141): rebase onto main's continuity work and the second pass's polish)

@@ -45,6 +45,13 @@ export class RetroError extends Error {
 /** Why a plan asks for no round: the caller turns it into a notice. */
 export type RetroEmptyWindow = "no-finished-works" | "nothing-new";
 
+/** The line the operator reads when there is nothing to launch. */
+export function emptyWindowNotice(reason: RetroEmptyWindow): string {
+  return reason === "no-finished-works"
+    ? "retro: the workspace has no finished work to analyze — nothing was launched and no report was written"
+    : "retro: nothing new since the last report — nothing was launched and no report was written";
+}
+
 export interface RetroPlan {
   round: string;
   manual: boolean;
@@ -57,7 +64,8 @@ export interface RetroPlan {
   model: string;
 }
 
-export interface FiledRetroItem {
+/** One improvement item the round filed, as the result record reports it. */
+export interface FiledImprovementItem {
   repo: string;
   number: number;
   title: string;
@@ -68,11 +76,13 @@ export interface DiscardedCandidate {
   reason: string;
 }
 
-export interface RetroRoundReport {
+/** What the factory read back from a round: the report's existence, the items
+ *  it filed and the candidates it discarded. Not the Retrospective report. */
+export interface RetroRoundFacts {
   round: string;
   window: string[];
   reportPath: string | null;
-  filed: FiledRetroItem[];
+  filed: FiledImprovementItem[];
   discarded: DiscardedCandidate[];
 }
 
@@ -104,13 +114,8 @@ export async function planAutomaticRound(
   if (window.length === 0) return { empty: "nothing-new" };
 
   return {
-    round: roundId(new Date(now())),
+    ...plannedRound(config, finished, { works: window, singleWork: false, language: config.retro.language, now }),
     manual: false,
-    works: [...window],
-    observedThrough: newestFinish(finished),
-    singleWork: false,
-    language: config.retro.language,
-    model: retroModel(config),
   };
 }
 
@@ -134,36 +139,49 @@ export async function planManualRound(
     const work = finished.find((entry) => entry.key === key);
     if (work === undefined) {
       throw new RetroError(
-        `${key} is not a finished work of this workspace (finished works only: delivered, cancelled or blocked, ` +
-          "with an outcome record and no live worker)",
+        `${key} is not a finished work of this workspace (finished works only: pr-open, clean-without-pr ` +
+          "or blocked-self-report, with an outcome record and no live worker)",
       );
     }
     return {
-      round: roundId(new Date(now())),
+      ...plannedRound(config, finished, {
+        works: [work],
+        singleWork: true,
+        language: options.language ?? config.retro.language,
+        now,
+      }),
       manual: true,
-      works: [work],
-      observedThrough: newestFinish(finished),
-      singleWork: true,
-      language: options.language ?? config.retro.language,
-      model: retroModel(config),
     };
   }
 
   const window = windowFor(finished, state);
   if (window.length === 0) return { empty: finished.length === 0 ? "no-finished-works" : "nothing-new" };
   return {
-    round: roundId(new Date(now())),
+    ...plannedRound(config, finished, {
+      works: window,
+      singleWork: false,
+      language: options.language ?? config.retro.language,
+      now,
+    }),
     manual: true,
-    works: window,
-    observedThrough: newestFinish(finished),
-    singleWork: false,
-    language: options.language ?? config.retro.language,
-    model: retroModel(config),
   };
 }
 
-function retroModel(config: Config): string {
-  return config.retro.model ?? config.workerModel;
+/** The facts every plan shares: the round id, the window, the boundary it may
+ *  advance, the one language and the model. */
+function plannedRound(
+  config: Config,
+  finished: readonly FinishedWork[],
+  round: { works: readonly FinishedWork[]; singleWork: boolean; language: string; now: () => number },
+): Omit<RetroPlan, "manual"> {
+  return {
+    round: roundId(new Date(round.now())),
+    works: [...round.works],
+    observedThrough: newestFinish(finished),
+    singleWork: round.singleWork,
+    language: round.language,
+    model: config.retro.model ?? config.workerModel,
+  };
 }
 
 function isUnseen(work: FinishedWork, state: RetroState): boolean {
@@ -176,8 +194,12 @@ function isUnseen(work: FinishedWork, state: RetroState): boolean {
  * finished works when no report has covered a window yet.
  */
 function windowFor(finished: readonly FinishedWork[], state: RetroState): FinishedWork[] {
-  if (state.boundaryAt === null) return finished.slice(-FIRST_WINDOW_SIZE);
-  return finished.filter((work) => isUnseen(work, state) && !state.analyzed.includes(work.key));
+  // A work a post-mortem already analyzed is never analyzed twice, in the
+  // first window of ten either: its report covers it, and the boundary the
+  // full round advances leaves it behind.
+  const pending = (work: FinishedWork): boolean => !state.analyzed.includes(work.key);
+  if (state.boundaryAt === null) return finished.filter(pending).slice(-FIRST_WINDOW_SIZE);
+  return finished.filter((work) => isUnseen(work, state) && pending(work));
 }
 
 function newestFinish(works: readonly FinishedWork[]): number | null {
@@ -193,7 +215,7 @@ function newestFinish(works: readonly FinishedWork[]): number | null {
  * existence is the marker — a round that produced no report advances nothing,
  * so the same window is retried by the next sweep.
  */
-export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<RetroRoundReport> {
+export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<RetroRoundFacts> {
   const { workspace: layout } = deps;
   const log = deps.log ?? (() => {});
   const reportPath = retroReportPath(layout, plan.round);
@@ -247,7 +269,7 @@ async function settleRound(
   plan: RetroPlan,
   request: RetroRequest,
   result: RetroResult,
-): Promise<RetroRoundReport> {
+): Promise<RetroRoundFacts> {
   const log = deps.log ?? (() => {});
   const { workspace: layout } = deps;
   const record = await readResultRecord(request.resultPath);
@@ -296,7 +318,7 @@ function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): R
 }
 
 /** One notice per destination: the operator learns the triage queue grew. */
-async function notifyFiled(deps: RetroDeps, filed: readonly FiledRetroItem[]): Promise<void> {
+async function notifyFiled(deps: RetroDeps, filed: readonly FiledImprovementItem[]): Promise<void> {
   const log = deps.log ?? (() => {});
   const notifier = deps.notifier;
   if (notifier === undefined) return;
@@ -324,9 +346,9 @@ function retroWorkInput(work: FinishedWork): RetroWorkInput {
 }
 
 /** The result record's filed list; anything unreadable is an honest empty list. */
-function readFiledItems(record: Record<string, unknown> | null): FiledRetroItem[] {
+function readFiledItems(record: Record<string, unknown> | null): FiledImprovementItem[] {
   if (record === null || !Array.isArray(record["filed"])) return [];
-  const items: FiledRetroItem[] = [];
+  const items: FiledImprovementItem[] = [];
   for (const entry of record["filed"] as unknown[]) {
     if (entry === null || typeof entry !== "object") continue;
     const item = entry as Record<string, unknown>;

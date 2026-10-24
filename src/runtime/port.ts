@@ -143,7 +143,6 @@ export interface RetroRequest {
 }
 
 export interface RetroResult {
-  request: RetroRequest;
   /** What the runtime saw the round produce: the report artifact, or nothing. */
   outcome: "report-written" | "no-report";
 }

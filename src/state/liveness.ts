@@ -41,6 +41,16 @@ export type LivenessObservation =
   | { state: "known"; workers: LiveWorker[] }
   | { state: "unknown"; reason: string };
 
+/**
+ * The works a known answer says a live container carries. An unknown answer
+ * carries none: nothing is excluded on a guess.
+ */
+export function carriedKeys(observation: LivenessObservation): ReadonlySet<string> {
+  return observation.state === "known"
+    ? new Set(observation.workers.map((worker) => worker.key))
+    : new Set<string>();
+}
+
 /** Every probe query ends or fails within this bound; a hung Docker call must
  *  not stall the cycles and the diagnostics forever. */
 export const DEFAULT_PROBE_TIMEOUT_MS = 5_000;

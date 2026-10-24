@@ -294,5 +294,9 @@ The finished works one retrospective round analyzes: those finished after the la
 _Avoid_: Pool, when the finished works are meant.
 
 **Retrospective report**:
-The dated Markdown artifact a round writes in the workspace; its existence is the marker that defines the next window's boundary, and it records every candidate with its outcome.
+The dated Markdown artifact a round writes in the workspace; it records every candidate with its outcome, and the last one that covered a window is the marker that defines the next window's boundary.
 _Avoid_: Work artifact, when the round's own report is meant.
+
+**Retrospective result record**:
+The JSON artifact a round writes beside its report: the machine contract with the factory — which improvement items it filed and where, and which candidates it discarded.
+_Avoid_: Outcome record, which is a Work's.
