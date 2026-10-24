@@ -1,4 +1,4 @@
-import type { JiraSourceConfig } from "../config.js";
+import type { JiraSelectionConfig } from "../config.js";
 import type { TicketSelection } from "./expanded-port.js";
 
 /**
@@ -103,7 +103,7 @@ export function jiraSource(site: string): TicketSource {
  *  and the explicit GitHub destination. Two queries may share a site (one
  *  Source, one account); each entry stays its own selection, so no destination
  *  is guessed. */
-export function jiraSelectionOf(source: JiraSourceConfig): TicketSelection {
+export function jiraSelectionOf(source: JiraSelectionConfig): TicketSelection {
   return {
     source: jiraSource(source.site),
     destination: githubRepository(source.destination),

@@ -12,7 +12,7 @@ import { runForever, runOnce, stopConfirmed, type LoopDeps, type StopReport } fr
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 import { utcStamp } from "./log.js";
 import { describeError } from "./format.js";
-import { deriveStatus, type JiraCandidateSource } from "./state/status.js";
+import { deriveStatus, type JiraSelectionReader } from "./state/status.js";
 import { workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
@@ -166,7 +166,7 @@ function assertNoJiraExecution(config: Config): void {
 
 /** The read-only Jira selections of `msf status`: one adapter per site (so the
  *  Acting account is identified once) and one selection per configured source. */
-function jiraStatusSources(config: Config): JiraCandidateSource[] {
+function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   const adapters = new Map<string, JiraTicketAdapter>();
   const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {
     const known = adapters.get(entry.site);
@@ -355,7 +355,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // selection and native Rank order the adapter contract suite proves. A source
   // whose credential is missing is reported as unknown, never skipped.
   const view = await deriveStatus(
-    { github, jira: jiraStatusSources(config) },
+    { github, jira: jiraSelectionReaders(config) },
     config,
     layout,
     workspaceLivenessProbe(layout),

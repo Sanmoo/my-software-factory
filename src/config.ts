@@ -112,12 +112,11 @@ export interface Labels {
  * `tokenEnv` is the NAME of the local environment variable carrying the API
  * token — the token value never enters this file, a log or a message. The JQL
  * is stored with its effective ordering: native Rank ascending, supplied when
- * the operator gave none and refused when they gave a conflicting one.
- *
- * One `jira:` entry IS one selection: two rules on one site (one Source in the
- * glossary's sense) are two entries, sharing that site's account and token.
+ * the operator gave none and refused when they gave a conflicting one. One
+ * entry IS one selection: two rules on one site (one Source) are two entries,
+ * sharing that site's account and token.
  */
-export interface JiraSourceConfig {
+export interface JiraSelectionConfig {
   /** The Jira Cloud site host (`<tenant>.atlassian.net`). */
   site: string;
   /** The Atlassian account email the API token belongs to. */
@@ -138,7 +137,7 @@ export interface Config {
   /** Target repos whose issues feed the pool. */
   repos: string[];
   /** Jira Cloud selections, read-only in this slice (issue 128); [] = GitHub-only. */
-  jira: JiraSourceConfig[];
+  jira: JiraSelectionConfig[];
   /** The `y` — worker slots in process. */
   concurrency: number;
   /** Workspace root (tilde expanded): repos/, trabalhos/, arquivo/ live under it. */
@@ -195,7 +194,7 @@ export function loadConfig(filePath: string): Config {
   if (!/^[^/\s]+\/[^/\s]+$/.test(workerModel)) {
     throw new ConfigError('config field "worker-model" must be "provider/model-id"');
   }
-  const jira = optionalJiraSources(doc);
+  const jira = optionalJiraSelections(doc);
   const repos = requireRepos(doc);
   const concurrency = optionalConcurrency(doc);
   const workspace = optionalWorkspace(doc);
@@ -238,18 +237,18 @@ function requireString(doc: Record<string, unknown>, key: string): string {
 
 /** The Jira selections, strictly shaped: an unknown field (notably a token
  *  value) is refused instead of silently ignored (issue 128). */
-function optionalJiraSources(doc: Record<string, unknown>): JiraSourceConfig[] {
+function optionalJiraSelections(doc: Record<string, unknown>): JiraSelectionConfig[] {
   const value = doc["jira"];
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
     throw new ConfigError(`config field "jira" must be a list of Jira selections when given`);
   }
-  const sources = value.map((entry, index) => parseJiraSource(entry, index));
-  assertOneIdentityPerSite(sources);
-  return sources;
+  const selections = value.map((entry, index) => parseJiraSelection(entry, index));
+  assertOneIdentityPerSite(selections);
+  return selections;
 }
 
-const JIRA_SOURCE_FIELDS = ["site", "account", "token-env", "jql", "destination"] as const;
+const JIRA_SELECTION_FIELDS = ["site", "account", "token-env", "jql", "destination"] as const;
 
 /** Keys that would carry the credential itself — never a config value. */
 const JIRA_SECRET_FIELDS = ["token", "api-token", "apiToken", "apitoken", "password", "secret"];
@@ -257,7 +256,7 @@ const JIRA_SECRET_FIELDS = ["token", "api-token", "apiToken", "apitoken", "passw
 const JIRA_CLOUD_SITE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.atlassian\.net$/;
 const JIRA_TOKEN_ENV = /^[A-Z][A-Z0-9_]*$/;
 
-function parseJiraSource(value: unknown, index: number): JiraSourceConfig {
+function parseJiraSelection(value: unknown, index: number): JiraSelectionConfig {
   const label = `jira[${index}]`;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ConfigError(`config field "${label}" must be a mapping when given`);
@@ -270,9 +269,9 @@ function parseJiraSource(value: unknown, index: number): JiraSourceConfig {
           `name the local environment variable that holds it with "token-env" instead`,
       );
     }
-    if (!(JIRA_SOURCE_FIELDS as readonly string[]).includes(key)) {
+    if (!(JIRA_SELECTION_FIELDS as readonly string[]).includes(key)) {
       throw new ConfigError(
-        `config field "${label}.${key}" is not a Jira source field (${JIRA_SOURCE_FIELDS.join(", ")})`,
+        `config field "${label}.${key}" is not a Jira selection field (${JIRA_SELECTION_FIELDS.join(", ")})`,
       );
     }
   }
@@ -326,17 +325,17 @@ function requireJiraString(given: Record<string, unknown>, label: string, key: s
 
 /** One site, one authenticated identity: two accounts would silently act as
  *  whichever adapter won, and the factory never falls back to another account. */
-function assertOneIdentityPerSite(sources: readonly JiraSourceConfig[]): void {
+function assertOneIdentityPerSite(selections: readonly JiraSelectionConfig[]): void {
   const identities = new Map<string, { account: string; tokenEnv: string }>();
-  for (const source of sources) {
-    const known = identities.get(source.site);
+  for (const selection of selections) {
+    const known = identities.get(selection.site);
     if (known === undefined) {
-      identities.set(source.site, { account: source.account, tokenEnv: source.tokenEnv });
+      identities.set(selection.site, { account: selection.account, tokenEnv: selection.tokenEnv });
       continue;
     }
-    if (known.account !== source.account || known.tokenEnv !== source.tokenEnv) {
+    if (known.account !== selection.account || known.tokenEnv !== selection.tokenEnv) {
       throw new ConfigError(
-        `config field "jira" declares the site "${source.site}" with more than one authenticated identity — ` +
+        `config field "jira" declares the site "${selection.site}" with more than one authenticated identity — ` +
           `one site has one account and one credential reference (no account fallback)`,
       );
     }
