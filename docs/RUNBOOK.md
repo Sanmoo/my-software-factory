@@ -309,7 +309,9 @@ address, with no window opened and no focus taken.
 
 The retrospective is a factory job on its own lane (ADR 0006): enable the
 `retro:` block; manual triggers are in README (Usage) and never wait for the
-threshold.
+threshold. A forced round needs no stopped factory: the lane's marker is its
+exclusivity, and Docker must answer before any round launches (an unverifiable
+window would come from a guess).
 
 Live proof: let the archived works reach the threshold, run one sweep — the log
 names the round, `<workspace>/retros/<instant>-retro.md` exists, the filed
