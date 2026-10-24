@@ -1,5 +1,5 @@
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
-import { githubRepository, jiraTicket, renderWorkIdentity, workIdentity } from "../tracker/identity.js";
+import { githubRepository, jiraTicket, renderWorkIdentity, ticketUrl, workIdentity } from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -893,7 +893,6 @@ describe("status — derivation on demand + local registry scan", () => {
     const view: StatusView = {
       pool: [{ work: jiraWork, title: "a Jira request", createdAt: "2026-01-01T00:00:00Z" }],
       jira: [],
-      jiraAmbiguous: [],
       unbackedClaims: [],
       unmarkedReservations: [],
       registry: {
@@ -961,9 +960,9 @@ describe("status — derivation on demand + local registry scan", () => {
   });
 });
 
-// ---- Jira candidates: read-only, native Rank order, per-selection unknown (issue 128) ----
+// ---- Jira candidates: read-only, one native Rank order per site (issue 129) ----
 
-describe("status: Jira candidates are read-only and each selection stands alone", () => {
+describe("status: Jira candidates are read-only, and one site has one native Rank order", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -1014,7 +1013,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
     };
   }
 
-  test("candidates keep native Rank order; a failing selection is unknown while a healthy one lists", async () => {
+  test("one site's candidates keep native Rank order; another site that cannot be read is unknown", async () => {
     const healthy = new JiraSim();
     healthy.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: null });
     healthy.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout" });
@@ -1033,35 +1032,37 @@ describe("status: Jira candidates are read-only and each selection stands alone"
       NO_WORKERS,
     );
 
-    const [first, second] = view.jira;
-    if (first?.state !== "known") assert.fail("the healthy selection is readable");
+    const [alpha, beta] = view.jira;
+    if (alpha?.state !== "known" || beta?.state !== "unknown") assert.fail("one site reads, the other does not");
+    assert.equal(alpha.site, "acme.atlassian.net");
     assert.deepEqual(
-      first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
+      alpha.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       [
         "ABC-1 (jira:acme.atlassian.net) → Sanmoo/my-tasks",
         "ABC-2 (jira:acme.atlassian.net) → Sanmoo/my-tasks",
       ],
-      "the adapter's Rank order is presented as-is",
+      "the site's adapter Rank order is presented as-is",
     );
-    assert.deepEqual(first.candidates[0]?.assignees, [], "an unassigned candidate is presented, not dropped");
-    assert.equal(second?.state, "unknown", "a selection that cannot be read is unknown, never an empty list");
-    if (second?.state !== "unknown") assert.fail("unreachable");
-    assert.match(second.reason, new RegExp(TOKEN_ENV), "the diagnostic names the missing local credential");
-    assert.match(second.reason, /not set/);
+    assert.deepEqual(alpha.candidates[0]?.assignees, [], "an unassigned candidate is presented, not dropped");
+    assert.equal(beta.site, "beta.atlassian.net");
+    assert.match(beta.reason, new RegExp(TOKEN_ENV), "the diagnostic names the missing local credential");
+    assert.match(beta.reason, /not set/);
+    assert.deepEqual(beta.candidates, []);
+    assert.deepEqual(beta.ambiguous, []);
 
     assert.deepEqual(
       healthy.requests.map((request) => `${request.method} ${request.path}`),
       ["GET /rest/api/3/myself", "POST /rest/api/3/search/jql"],
-      "status only reads: one identity read and the native search, no claim, comment or transition",
+      "status only reads: one identity read and one selection's native search, no claim or transition",
     );
-    assert.deepEqual(broken.requests, [], "the selection without a credential never reaches the network");
+    assert.deepEqual(broken.requests, [], "the site without a credential never reaches the network");
     assert.deepEqual(readdirSync(join(layout.works)), [], "no reservation, workspace or attempt is created");
   });
 
-  test("the report presents the candidates apart from the executable pool and says they are read-only", async () => {
+  test("the report presents each site's candidates apart from the executable pool and says they are read-only", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Fix login", assignee: { accountId: "h", emailAddress: "ana@acme.example", displayName: "Ana Silva" } });
-    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout" });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Fix logout", assignee: null });
 
     const view = await deriveStatus(
       {
@@ -1074,41 +1075,50 @@ describe("status: Jira candidates are read-only and each selection stands alone"
     );
     const text = renderStatus(view);
 
-    // One selection holding two tickets: the header counts the selection, so a
-    // regression to summing the candidates would change this line.
     assert.match(
       text,
-      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1 selection$/m,
-      "one configured selection: the header never counts the candidates below it",
+      /jira candidates \(read-only[^)]*one native Rank order[^)]*nothing is claimed, commented or launched\): 1 site$/m,
+      "the header counts sites: candidates are never summed across sites as one order",
     );
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 2 candidates/);
+    assert.match(text, /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: 2 candidates$/m);
     assert.match(
       text,
       /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix login \[assignee: Ana Silva\]/,
     );
+    assert.match(text, /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout$/m);
     assert.match(text, /pool \(eligible\): none/, "a Jira candidate is not presented as an eligible Work");
+    assert.doesNotMatch(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1 candidate/, "no per-selection queues");
   });
 
-  test("one project feeds several destinations, and a ticket two selections promise is held as ambiguous", async () => {
-    // One site answers both selections: each sim is the site's reply to one query.
-    const frontend = new JiraSim();
-    frontend.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend fix" });
-    frontend.addIssue({ id: "10002", key: "ABC-2", summary: "Touches both layers" });
-    const backend = new JiraSim();
-    backend.addIssue({ id: "10002", key: "ABC-2", summary: "Touches both layers" });
-    backend.addIssue({ id: "10003", key: "ABC-3", summary: "Backend fix" });
+  test("several selections on one site keep the site's Rank across destinations and pages; only the conflicting ticket is held", async () => {
+    const sim = new JiraSim();
+    sim.pageSize = 2;
+    // The site's Rank order deliberately disagrees with both creation age and
+    // Jira Priority; neither may reorder the candidates.
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend"], created: "2026-06-01T00:00:00.000+0000", priority: "Low" });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend first", labels: ["backend"], created: "2026-05-01T00:00:00.000+0000", priority: "Highest" });
+    sim.addIssue({ id: "10003", key: "ABC-3", summary: "Touches both layers", labels: ["frontend", "backend"], created: "2026-04-01T00:00:00.000+0000", priority: "Medium", assignee: null });
+    sim.addIssue({ id: "10004", key: "ABC-4", summary: "Frontend second", labels: ["frontend"], created: "2026-03-01T00:00:00.000+0000", priority: "Lowest" });
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Backend second", labels: ["backend"], created: "2026-02-01T00:00:00.000+0000", priority: "High" });
+    sim.select = (jql, issues) => {
+      if (jql.includes(") OR (")) return issues;
+      if (jql.includes("labels = frontend")) return issues.filter((issue) => issue.labels.includes("frontend"));
+      if (jql.includes("labels = backend")) return issues.filter((issue) => issue.labels.includes("backend"));
+      return [];
+    };
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          {
-            selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
-            tickets: jiraAdapter(frontend),
-          },
+          // Declared backend first: the site's Rank must not follow declarations.
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = backend", "Sanmoo/backend"),
-            tickets: jiraAdapter(backend),
+            tickets: jiraAdapter(sim),
+          },
+          {
+            selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
+            tickets: jiraAdapter(sim),
           },
         ],
       },
@@ -1117,58 +1127,62 @@ describe("status: Jira candidates are read-only and each selection stands alone"
       NO_WORKERS,
     );
 
-    const [front, back] = view.jira;
-    if (front?.state !== "known" || back?.state !== "known") assert.fail("both selections are readable");
+    const [site] = view.jira;
+    assert.equal(view.jira.length, 1, "one site is one ordered set, not one queue per selection");
+    if (site?.state !== "known") assert.fail("the site is readable");
     assert.deepEqual(
-      front.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
-      ["ABC-1 (jira:acme.atlassian.net) → Sanmoo/frontend"],
+      site.candidates.map((candidate) => `${candidate.work.ticket.key} -> ${candidate.work.destination.repo}`),
+      ["ABC-1 -> Sanmoo/frontend", "ABC-2 -> Sanmoo/backend", "ABC-4 -> Sanmoo/frontend", "ABC-5 -> Sanmoo/backend"],
+      "the candidate order is the site's native Rank across destinations and pages",
     );
     assert.deepEqual(
-      back.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
-      ["ABC-3 (jira:acme.atlassian.net) → Sanmoo/backend"],
-      "each selection feeds its own explicit destination",
-    );
-    assert.deepEqual(
-      view.jiraAmbiguous.map((entry) => ({
+      site.ambiguous.map((entry) => ({
         key: entry.ticket.key,
         destinations: entry.destinations.map((destination) => destination.repo),
       })),
-      [{ key: "ABC-2", destinations: ["Sanmoo/frontend", "Sanmoo/backend"] }],
-      "a ticket two selections promise to different destinations is held, not listed twice",
+      [{ key: "ABC-3", destinations: ["Sanmoo/backend", "Sanmoo/frontend"] }],
+      "only the ticket two destinations promise is held; the other candidates stay usable",
+    );
+    assert.ok(
+      sim.requests.some((request) => request.jql === "(project = ABC AND labels = backend) OR (project = ABC AND labels = frontend) ORDER BY Rank ASC"),
+      "the site is read as one Rank-ordered union, never as concatenated selection queues",
+    );
+    assert.ok(
+      sim.requests.filter((request) => request.path === "/rest/api/3/search/jql").length > 3,
+      "the union and the selection reads both followed Jira's page tokens",
     );
 
     const text = renderStatus(view);
     assert.match(
       text,
-      /nothing is claimed, commented or launched\): 2 selections$/m,
-      "two selections on one Source: the header counts selections, never Sites",
+      /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: 4 candidates, 1 held as ambiguous$/m,
     );
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 candidate, 1 held as ambiguous/);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 candidate, 1 held as ambiguous/);
-    assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
+    const frontendFirst = text.indexOf("1. ABC-1");
+    const backendFirst = text.indexOf("2. ABC-2");
+    assert.ok(frontendFirst >= 0 && frontendFirst < backendFirst, "the declared-later frontend candidate still comes first by Rank");
     assert.match(
       text,
-      /1\. ABC-2 \(jira:acme\.atlassian\.net\) — Touches both layers \[assignee: Factory Bot\] → Sanmoo\/frontend, Sanmoo\/backend/,
+      /ambiguous \(more than one destination — held, no destination chosen\): 1[\s\S]*ABC-3 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/backend, Sanmoo\/frontend/,
     );
-    assert.doesNotMatch(
-      text,
-      /^\s+\d+\. ABC-2 \(jira:[^)]*\) → /m,
-      "the ambiguous ticket is never offered as a candidate",
-    );
+    assert.doesNotMatch(text, /^\s+\d+\. ABC-3 \(jira:[^)]*\) → /m, "the ambiguous ticket is never offered as a candidate");
   });
 
-  test("a selection whose only tickets are held says so instead of 'none'", async () => {
-    const left = new JiraSim();
-    left.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections" });
-    const right = new JiraSim();
-    right.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections" });
+  test("a site whose only tickets are held says so instead of 'none'", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections", labels: ["a", "b"] });
+    sim.select = (jql, issues) => {
+      if (jql.includes(") OR (")) return issues;
+      if (jql.includes("labels = a")) return issues.filter((issue) => issue.labels.includes("a"));
+      if (jql.includes("labels = b")) return issues.filter((issue) => issue.labels.includes("b"));
+      return [];
+    };
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/b"), tickets: jiraAdapter(right) },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/a"), tickets: jiraAdapter(sim) },
+          { selection: selection("acme.atlassian.net", "labels = b", "Sanmoo/b"), tickets: jiraAdapter(sim) },
         ],
       },
       statusConfig(),
@@ -1177,49 +1191,105 @@ describe("status: Jira candidates are read-only and each selection stands alone"
     );
     const text = renderStatus(view);
 
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 held as ambiguous/);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: 0 candidates, 1 held as ambiguous/);
-    assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held selection never reads as an empty JQL result");
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a, Sanmoo\/b: 0 candidates, 1 held as ambiguous/);
+    assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);
+    assert.doesNotMatch(text, /→ Sanmoo\/[ab]: none/, "a held ticket never reads as an empty JQL result");
   });
 
   test("a readable selection on a site with an unreadable sibling says the overlap is unverified", async () => {
-    const readable = new JiraSim();
-    readable.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
-    const blind = new JiraSim();
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One", labels: ["abc"] });
+    sim.select = (jql, issues) => {
+      if (jql.includes("labels = abc")) return issues.filter((issue) => issue.labels.includes("abc"));
+      return issues;
+    };
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(readable) },
-          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/b"), tickets: jiraAdapter(blind, {}) },
+          { selection: selection("acme.atlassian.net", "labels = abc", "Sanmoo/a"), tickets: jiraAdapter(sim) },
+          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/b"), tickets: jiraAdapter(sim, {}) },
         ],
       },
       statusConfig(),
       layout,
       NO_WORKERS,
     );
+    const [site] = view.jira;
+    if (site?.state !== "known") assert.fail("the readable selection still lists");
+    assert.equal(site.candidates[0]?.unverified, true, "the unknown sibling names another destination");
     const text = renderStatus(view);
 
-    assert.match(
-      text,
-      /acme\.atlassian\.net → Sanmoo\/a: 1 candidate \(unverified: another selection on this site is unknown\)/,
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a, Sanmoo\/b: 1 candidate/);
+    assert.match(text, /1\. ABC-1 .*\(unverified: another selection on this site is unknown\)/);
+    assert.match(text, /selection \(project = XYZ\) → Sanmoo\/b: unknown \(/);
+  });
+
+  test("a site whose ordered union cannot be read is unknown, never its selections concatenated", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend", labels: ["frontend"] });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend", labels: ["backend"] });
+    sim.select = (jql, issues) => {
+      if (jql.includes(") OR (")) return issues;
+      return issues.filter((issue) => jql.includes(`labels = ${issue.labels[0]}`));
+    };
+    const transport = async (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }) => {
+      if (url.endsWith("/rest/api/3/search/jql")) {
+        const body = JSON.parse(init.body ?? "{}") as { jql?: string };
+        if (body.jql?.includes(") OR (")) {
+          return { status: 503, text: JSON.stringify({ errorMessages: ["The service is unavailable"] }) };
+        }
+      }
+      return sim.transport(url, init);
+    };
+    const reader = (jql: string, destination: string) => ({
+      selection: selection("acme.atlassian.net", jql, destination),
+      tickets: new JiraTicketAdapter({
+        site: sim.site,
+        account: sim.account.emailAddress,
+        tokenEnv: TOKEN_ENV,
+        env: { [TOKEN_ENV]: sim.token },
+        transport,
+      }),
+    });
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [reader("labels = frontend", "Sanmoo/frontend"), reader("labels = backend", "Sanmoo/backend")],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
     );
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/b: unknown \(/);
+
+    const [site] = view.jira;
+    if (site?.state !== "unknown") assert.fail("without the ordered union, the site is unknown");
+    assert.deepEqual(site.candidates, [], "independent selection queues are never offered as the site order");
+    assert.deepEqual(site.ambiguous, []);
+    assert.match(site.reason, /could not read Jira site/);
+    assert.match(site.reason, /503|unavailable/);
+    assert.deepEqual(
+      site.selections.map((entry) => entry.state),
+      ["known", "known"],
+      "the individual selectors were readable; only the order is unknown",
+    );
+    const text = renderStatus(view);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: unknown \(/);
+    assert.doesNotMatch(text, /^    \d+\. ABC-/m, "no candidate line is invented from a concatenated order");
   });
 
   test("the same Work selected by two selections for one destination is listed once", async () => {
-    const left = new JiraSim();
-    left.addIssue({ id: "10001", key: "ABC-1", summary: "One Work" });
-    const right = new JiraSim();
-    right.addIssue({ id: "10001", key: "ABC-1", summary: "One Work" });
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One Work", labels: ["ready"] });
 
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(left) },
-          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: jiraAdapter(right) },
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: jiraAdapter(sim) },
+          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: jiraAdapter(sim) },
         ],
       },
       statusConfig(),
@@ -1227,20 +1297,59 @@ describe("status: Jira candidates are read-only and each selection stands alone"
       NO_WORKERS,
     );
 
-    const [first, second] = view.jira;
-    if (first?.state !== "known" || second?.state !== "known") assert.fail("both selections are readable");
+    const [site] = view.jira;
+    if (site?.state !== "known") assert.fail("the site is readable");
     assert.deepEqual(
-      first.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
+      site.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
       ["ABC-1 (jira:acme.atlassian.net) → Sanmoo/a"],
     );
-    assert.deepEqual(second.candidates, [], "the same Work is not offered twice");
-    assert.deepEqual(view.jiraAmbiguous, [], "one destination is not a conflict");
+    assert.deepEqual(site.ambiguous, [], "one destination is not a conflict");
+    assert.deepEqual(
+      site.selections.map((entry) => (entry.state === "known" ? entry.selected : null)),
+      [1, 1],
+      "both selections did select the ticket; it is still one candidate",
+    );
     const text = renderStatus(view);
-    assert.match(text, /acme\.atlassian\.net → Sanmoo\/a: 1 candidate$/m);
-    assert.match(
-      text,
-      /acme\.atlassian\.net → Sanmoo\/a: 0 candidates, 1 already listed by another selection$/m,
-      "the losing selection says why it lists nothing",
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: 1 candidate$/m);
+  });
+
+  test("equal readable keys on different sites stay distinct Works with their own browse URLs", async () => {
+    const alpha = new JiraSim({ site: "alpha.atlassian.net" });
+    alpha.addIssue({ id: "10001", key: "ABC-1", summary: "Alpha request" });
+    const beta = new JiraSim({ site: "beta.atlassian.net" });
+    beta.addIssue({ id: "10001", key: "ABC-1", summary: "Beta request" });
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("beta.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(beta) },
+          { selection: selection("alpha.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(alpha) },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    assert.deepEqual(view.jira.map((site) => site.site), ["alpha.atlassian.net", "beta.atlassian.net"]);
+    const candidates = view.jira.flatMap((site) => (site.state === "known" ? site.candidates : []));
+    assert.equal(candidates.length, 2, "the same key/stable id on another site is another Work");
+    assert.deepEqual(
+      candidates.map((candidate) => ticketUrl(candidate.work.ticket)),
+      [
+        "https://alpha.atlassian.net/browse/ABC-1",
+        "https://beta.atlassian.net/browse/ABC-1",
+      ],
+      "each candidate keeps its own site's browse URL",
+    );
+    const text = renderStatus(view);
+    assert.match(text, /alpha\.atlassian\.net \(1 selection\)/);
+    assert.match(text, /beta\.atlassian\.net \(1 selection\)/);
+    assert.equal(
+      (text.match(/^    1\. ABC-1 /gm) ?? []).length,
+      2,
+      "each site restarts its own numbering: no global order is implied across sites",
     );
   });
 });
