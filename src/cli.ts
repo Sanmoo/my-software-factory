@@ -121,6 +121,7 @@ export async function wireRunDeps(
   };
 }
 
+<<<<<<< HEAD
 /**
  * The production launch composition: config → SandcastleRuntime options.
  * Exported so the wiring itself is testable without a container: the model,
@@ -165,6 +166,9 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
  * instead of trusting the round's summary alone. A workspace it cannot write
  * never takes the factory down: the console is the primary log.
  */
+=======
+/** The CLI's log: the console plus the workspace record a round reads. */
+>>>>>>> a361dd5 (fix(141): the rebase adaptation's review — any source in the window, an unverifiable window waits)
 function writeOperationalLog(workspace: WorkspaceLayout, message: string): void {
   console.log(message);
   appendOperationalLog(workspace.root, message);

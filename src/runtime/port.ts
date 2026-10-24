@@ -99,7 +99,7 @@ export interface SessionResult {
  * change.
  */
 export interface RetroWorkInput {
-  /** "<repo>#<n>" — the registry key the report names. */
+  /** The registry key (the work's identity on disk) the report names. */
   key: string;
   repo: string;
   /** The work's artifacts as mounted read-only inside the round's container. */

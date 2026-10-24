@@ -406,8 +406,6 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
   return a.createdAt.localeCompare(b.createdAt) || workKeyOf(a.work).localeCompare(workKeyOf(b.work));
 }
 
-/** The no-worker view of {@link SweepEngine.carriedKeys} (liveness unknown). */
-const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
 /**
  * The pause as it is PERSISTED and announced, now that the factory knows which
@@ -1059,6 +1057,13 @@ export class SweepEngine {
 
   private async startRetroRound(): Promise<void> {
     const { config, runtime, workspace, notifier, now } = this.deps;
+    // The window's premise is that no live worker carries these works. An
+    // unknown liveness cannot confirm it, so the round waits for a sweep that
+    // can — the trigger stays armed, nothing is consumed.
+    if (this.liveness.state !== "known") {
+      this.log("retro: liveness is unknown — no round is launched; the window is analyzed once Docker answers");
+      return;
+    }
     const finished = await collectFinishedWorks(workspace, this.carriedKeys);
     const plan = await planAutomaticRound(config, workspace, finished, now);
     if (plan === null) return;
@@ -1128,7 +1133,6 @@ export class SweepEngine {
   /** The works a live container carries, read from the latest answer: the
    *  launch and capacity decisions never ask Docker a second question. */
   private get carriedKeys(): ReadonlySet<string> {
-    if (this.liveness.state !== "known") return EMPTY_KEYS;
     return carriedWorkKeys(this.liveness);
   }
 
