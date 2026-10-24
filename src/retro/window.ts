@@ -12,7 +12,7 @@ import {
   RETRO_MOUNT_PATHS,
   type WorkspaceLayout,
 } from "../layout.js";
-import { OPERATIONAL_LOG_FILENAME } from "../log.js";
+import { operationalLogPath } from "../log.js";
 
 /**
  * The retrospective window (issue 141): the finished works a round analyzes —
@@ -198,7 +198,7 @@ async function operationalLogFacts(
   let raw: string;
   try {
     // The tail is enough for the anchor and bounds the read of a long-lived log.
-    raw = (await readFile(`${layout.root}/${OPERATIONAL_LOG_FILENAME}`, "utf8")).slice(-1_000_000);
+    raw = (await readFile(operationalLogPath(layout.root), "utf8")).slice(-1_000_000);
   } catch {
     return "Operational log: absent — the window's records are the only evidence of this round.";
   }
