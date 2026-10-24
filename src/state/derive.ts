@@ -26,6 +26,7 @@ import {
   selfReportedBlocked,
 } from "./outcome.js";
 import { peekRecovery, type RecoveryDecision } from "../pool/recovery.js";
+import { operatorStopClaim } from "../pool/stop.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { modelProviderDecision, type ModelProviderDecision } from "../pool/model-provider.js";
 import {
@@ -35,7 +36,12 @@ import {
   hasPendingReconciliation,
   repairEvidenceSignature,
 } from "../pool/repair.js";
-import { openWorkRecord, type ModelProviderFailure, type WorkRecordSnapshot } from "../work-record/record.js";
+import {
+  openWorkRecord,
+  type ModelProviderFailure,
+  type WorkRecord,
+  type WorkRecordSnapshot,
+} from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
 import type { RecoveryLedger } from "../work-record/recovery.js";
@@ -504,8 +510,8 @@ async function deriveReservedWork(
     // with a CURRENT continuity pause the boundary is the pause's own request,
     // never the last thing the factory said. Every other blocked cause (a
     // fall, a repair, a rejection) keeps the generic last-marker rule.
-    const record = await openWorkRecord(dir).read();
-    const pause = currentPause(record);
+    const snapshot = await openWorkRecord(dir).read();
+    const pause = currentPause(snapshot);
     const issueReplies = comments.known
       ? pause === null
         ? humanCommentsAfterLastMarker(comments.value)
@@ -518,7 +524,7 @@ async function deriveReservedWork(
       // reconciliation has not settled yet. The answer survives and applies as
       // soon as the next sweep gets its verdict; until then this hold is what
       // status shows.
-      const cycle = record.repair;
+      const cycle = snapshot.repair;
       if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) {
         return { work, dir, state: "idle" };
       }
@@ -545,17 +551,17 @@ async function deriveReservedWork(
       return { work, dir, state: "rejected", pr, comment: rejectionComment(pr) };
     }
 
-    const record = await openWorkRecord(dir).read();
-    const lastAttempt = record.attempt ?? 0;
-    const stop = record.recovery.lastStop;
-    if (stop !== null && (stop.kind === "stop-requested" || stop.kind === "stop-unconfirmed") &&
+    const snapshot = await openWorkRecord(dir).read();
+    const claim = operatorStopClaim(snapshot.recovery, {
+      lastAttempt: snapshot.attempt ?? 0,
+      acceptNextAttempt: true,
+      outcome: snapshot.outcome,
+    });
+    if (claim.kind !== "none" &&
         issue.value.labels.includes(labels.claimed) && !inFlight?.has(workKeyOf(work))) {
-      if (stop.attempt >= Math.max(1, lastAttempt) && stop.attempt <= lastAttempt + 1 &&
-          ownWrittenOutcome(record.outcome, stop.attempt) === null) {
-        return stop.kind === "stop-requested"
-          ? { work, dir, state: "stop-resume", attempt: stop.attempt }
-          : { work, dir, state: "stop-unconfirmed", attempt: stop.attempt, because: stop.because };
-      }
+      return claim.kind === "requested"
+        ? { work, dir, state: "stop-resume", attempt: claim.attempt }
+        : { work, dir, state: "stop-unconfirmed", attempt: claim.attempt, because: claim.because };
     }
 
     // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
@@ -564,7 +570,7 @@ async function deriveReservedWork(
     // never do, and the Block above already won over all of it.
     const repairFacts = await pullRequests.readPullRequestRepairFacts(target);
     const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
-    const cycle = record.repair;
+    const cycle = snapshot.repair;
     const attempt = cycle.attempt;
 
     // The attempt's own state comes before the trigger and the evidence
@@ -574,10 +580,10 @@ async function deriveReservedWork(
     // fall. An attempt that fell without publishing is taken over instead of
     // being mistaken for a consumed round.
     if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
-      return repairFallBlocked(work, dir, pr, cycle, record.outcome, workspace, attempt, "consecutive-falls");
+      return repairFallBlocked(work, dir, pr, cycle, snapshot.outcome, workspace, attempt, "consecutive-falls");
     }
     if (attempt?.publication === "concurrent-change") {
-      return repairFallBlocked(work, dir, pr, cycle, record.outcome, workspace, attempt, "concurrent-change");
+      return repairFallBlocked(work, dir, pr, cycle, snapshot.outcome, workspace, attempt, "concurrent-change");
     }
     if (attempt !== null && hasPendingReconciliation(attempt)) {
       // Pending reconciliation: NO worker of any kind (repair, resumption or
@@ -659,11 +665,12 @@ async function deriveReservedWork(
     // A pending reconciliation holds the claim even when the PR cannot be
     // read: releasing it would hand the work back to the pool while its
     // publication is still unknown (issue 112).
-    const record = await openWorkRecord(dir).read();
-    if (record.repair.attempt !== null && hasPendingReconciliation(record.repair.attempt)) {
+    const workRecord = openWorkRecord(dir);
+    const snapshot = await workRecord.read();
+    if (snapshot.repair.attempt !== null && hasPendingReconciliation(snapshot.repair.attempt)) {
       return { work, dir, state: "idle" };
     }
-    const unreconciled = await deriveUnreconciledAttempt(work, dir, workspace, recovery, record, inFlight);
+    const unreconciled = await deriveUnreconciledAttempt(work, dir, workspace, recovery, snapshot, inFlight);
     // Only an interruption can be a model provider failure: the attempt's own
     // stream decides it (issue 144) — a written outcome or a bare reservation
     // never reads the model provider ledger.
@@ -678,7 +685,8 @@ async function deriveReservedWork(
           createdAt: issue.value.createdAt,
         },
         modelProvider,
-        record,
+        snapshot,
+        workRecord,
       );
       if (providerFailure !== null) return providerFailure;
     }
@@ -707,17 +715,17 @@ async function deriveUnreconciledAttempt(
   dir: string,
   workspace: WorkspaceLayout,
   recovery: RecoveryBudget,
-  record: WorkRecordSnapshot,
+  snapshot: WorkRecordSnapshot,
   inFlight?: ReadonlySet<string>,
 ): Promise<ReservedDerivation> {
-  const lastAttempt = record.attempt ?? 0;
+  const lastAttempt = snapshot.attempt ?? 0;
   const current = lastAttempt === 0 ? 1 : lastAttempt;
 
   // A confirmed Outcome prevails over the interpretation of the stop (issue
   // #146): the attempt really ended with a verdict, so a stop record left on
   // top of it (the operator stopped the factory while that verdict was being
   // applied) never turns the attempt into a requested-stop resume.
-  const outcome = record.outcome;
+  const outcome = snapshot.outcome;
   if (selfReportedBlocked(outcome, lastAttempt)) {
     // The worker reported blocked but the label never landed (an interrupted
     // claim swap): a written outcome that is neither a failure to rule nor an
@@ -726,23 +734,26 @@ async function deriveUnreconciledAttempt(
     return { work, dir, state: "idle" };
   }
   if (ownWrittenOutcome(outcome, lastAttempt) !== null) {
-    return deriveUnreconciledFailure(work, dir, workspace, lastAttempt, outcome, record.recovery);
+    return deriveUnreconciledFailure(work, dir, workspace, lastAttempt, outcome, snapshot.recovery);
   }
 
   // The persisted stop of THIS attempt (issue #146): it says the operator
   // ended the attempt deliberately, so it is neither an interruption to charge
   // nor a failure to rule. An unconfirmed stop holds the work.
-  const stop = record.recovery.lastStop;
-  if (stop !== null && stop.attempt === current) {
-    if (stop.kind === "stop-requested") return { work, dir, state: "stop-resume", attempt: current };
-    if (stop.kind === "stop-unconfirmed") {
-      return { work, dir, state: "stop-unconfirmed", attempt: current, because: stop.because };
-    }
+  const claim = operatorStopClaim(snapshot.recovery, {
+    lastAttempt: current,
+    outcome,
+  });
+  if (claim.kind === "requested") {
+    return { work, dir, state: "stop-resume", attempt: claim.attempt };
+  }
+  if (claim.kind === "unconfirmed") {
+    return { work, dir, state: "stop-unconfirmed", attempt: claim.attempt, because: claim.because };
   }
 
   if (lastAttempt === 0) {
     if (inFlight?.has(workKeyOf(work))) return { work, dir, state: "idle" };
-    if (record.pause !== null) return { work, dir, state: "continuity-paused", attempt: 1, pause: record.pause };
+    if (snapshot.pause !== null) return { work, dir, state: "continuity-paused", attempt: 1, pause: snapshot.pause };
     return {
       work,
       dir,
@@ -752,8 +763,8 @@ async function deriveUnreconciledAttempt(
     };
   }
 
-  if (record.pause !== null) {
-    return { work, dir, state: "continuity-paused", attempt: lastAttempt, pause: record.pause };
+  if (snapshot.pause !== null) {
+    return { work, dir, state: "continuity-paused", attempt: lastAttempt, pause: snapshot.pause };
   }
 
   return {
@@ -770,10 +781,10 @@ async function deriveUnreconciledAttempt(
  *  a later attempt advanced past, is history). The attempt reported is the one
  *  the pause waits for — its own, or the claim's first when the record cannot
  *  name one. */
-function currentPause(record: WorkRecordSnapshot): { pause: PauseRecord; attempt: number } | null {
-  const pause = record.pause;
+function currentPause(snapshot: WorkRecordSnapshot): { pause: PauseRecord; attempt: number } | null {
+  const pause = snapshot.pause;
   if (pause === null) return null;
-  return { pause, attempt: pause.attempt >= 1 ? pause.attempt : Math.max(record.attempt ?? 0, 1) };
+  return { pause, attempt: pause.attempt >= 1 ? pause.attempt : Math.max(snapshot.attempt ?? 0, 1) };
 }
 
 /**
@@ -787,14 +798,15 @@ async function deriveModelProviderFailure(
   pullRequests: PullRequestTracker,
   work: InterruptedAttempt,
   modelProvider: ModelProviderBudget,
-  record: WorkRecordSnapshot,
+  snapshot: WorkRecordSnapshot,
+  workRecord: WorkRecord,
 ): Promise<ReservedDerivation | null> {
-  // The stream read is the attempt's own; the ledger is the one the same
-  // record read returned, so the settlement and the failure cannot disagree.
-  const failure = await openWorkRecord(work.dir).readModelProviderFailure(work.attempt);
+  // The stream read is the attempt's own, through the handle the snapshot came
+  // from: the ledger and the failure cannot disagree on which record they read.
+  const failure = await workRecord.readModelProviderFailure(work.attempt);
   if (failure === null) return null;
 
-  const decision = modelProviderDecision(record.modelProvider, modelProvider, work.attempt, failure);
+  const decision = modelProviderDecision(snapshot.modelProvider, modelProvider, work.attempt, failure);
   if (decision.decision === "awaiting-model-provider") {
     // The model provider budget is exhausted: the work waits for the operator
     // — a help request, never a block. A human answer after the marker resumes it,

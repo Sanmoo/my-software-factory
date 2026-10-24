@@ -80,6 +80,7 @@ export type RepairOpening =
     };
 
 export async function openRepairRound(input: RepairOpeningInput): Promise<RepairOpening> {
+  // The derivation's trigger is the input; this is the single opening re-read (issue 149).
   const reading = readRepairPremise(await input.readPremise());
   if (reading.premise === "obsolete") return { kind: "returned", premise: "obsolete" };
   if (reading.premise === "unknown") return { kind: "held", because: "premise-unknown" };
@@ -130,9 +131,6 @@ export type RepairRoundStart =
 /**
  * The facts a settlement is decided from: the persisted cycle and the direct
  * observations of the record, the remote, the local worktree and the premise.
- * The callbacks are not indirection for its own sake — they keep the sweep
- * from paying a git inspection, a tracker read or a journal read that the
- * verdict does not need.
  */
 export interface RepairSettlementInput {
   /** The cycle read from the record, with the attempt to settle — a legacy
@@ -172,21 +170,15 @@ export type RepairSettlement =
   | Exclude<RepairReconciliation, { kind: "none" }>;
 
 /**
- * Settle the round's recorded attempt from the observations, in the order the
- * facts decide it: an attempt that never reached the runtime returns the round
- * with no fall; an operator stop that the attempt has not answered holds the
- * round; otherwise the publication verdict composes the host's local work, the
- * remote head and the premise re-read now (issue 149/194). Nothing is written
- * here — the cycle in the verdict is what the caller persists.
+ * Decide what became of the round's recorded attempt from the observations;
+ * nothing is inspected and nothing is written here — the cycle in the verdict
+ * is what the caller persists.
  */
 export async function settleRepairRound(input: RepairSettlementInput): Promise<RepairSettlement> {
   const attempt = input.cycle.attempt;
   if (attempt === null) return { kind: "none" };
   if (isSettledPublication(attempt.publication)) return { kind: "none" };
 
-  // The requested stop owns the end of this attempt until the attempt writes
-  // its own outcome: an interrupted Repair is neither published nor a fall —
-  // the derivation will resume it without spending a recovery.
   if (input.operatorStopped) {
     const record = await input.readOutcomeRecord();
     if (ownWrittenOutcome(record, attempt.attempt) === null) return { kind: "none" };

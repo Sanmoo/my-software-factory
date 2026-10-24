@@ -5,11 +5,13 @@ import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import { deferred } from "../runtime/deferred.js";
 import type { WorkerRuntime } from "../runtime/port.js";
 import type { LivenessObservation } from "../state/liveness.js";
+import { ownWrittenOutcome } from "../state/outcome.js";
 import { COOPERATIVE_STOP_MS } from "../stop-signals.js";
 import { renderWorkIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { readLastAttempt } from "../work-record/attempts.js";
+import type { OutcomeRecord } from "../work-record/outcome.js";
 import { readLaunchFacts } from "./registry.js";
-import { readRecoveryLedger } from "../work-record/recovery.js";
+import { readRecoveryLedger, type RecoveryLedger } from "../work-record/recovery.js";
 import {
   confirmStopRequest,
   recordStopRequest,
@@ -36,6 +38,13 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  * sequenced from here.
  */
 
+/** One work whose stop the factory could not confirm: the registry key and
+ *  the reason the hold rule gave. */
+export interface StopHold {
+  key: string;
+  because: string;
+}
+
 /**
  * The facts of one requested stop, for the operator and for the exit status:
  * the works the deadline/second signal forced, and the works whose worker the
@@ -43,7 +52,7 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  */
 export interface StopReport {
   forced: string[];
-  unconfirmed: Array<{ key: string; because: string }>;
+  unconfirmed: StopHold[];
   /** Why the liveness probe could not answer: the factory cannot say that no
    *  worker survives, and never calls a stop safe on a guess. */
   unreadBecause: string | null;
@@ -113,9 +122,7 @@ const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.l
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
 /** Why a work's end cannot be confirmed, or null when it is: an unreadable
- *  probe is uncertainty, never an empty factory. It is THE reading of the hold
- *  rule: the stop's confirmation and the next invocation's reconciliation both
- *  ask it, so the same persisted facts get the same verdict. */
+ *  probe is uncertainty, never an empty factory. */
 export function stopHoldReason(observation: LivenessObservation, key: string): string | null {
   if (observation.state === "unknown") {
     return `the worker liveness could not be read (${observation.reason})`;
@@ -123,6 +130,49 @@ export function stopHoldReason(observation: LivenessObservation, key: string): s
   return observation.workers.some((worker) => worker.key === key)
     ? "a worker of this work is still alive"
     : null;
+}
+
+/** The operator-stop fact of one attempt: no stop owns it, or the persisted
+ *  requested/unconfirmed stop that does. */
+export type OperatorStopClaim =
+  | { kind: "none" }
+  | { kind: "requested"; attempt: number }
+  | { kind: "unconfirmed"; attempt: number; because: string };
+
+export interface OperatorStopOptions {
+  /** The last attempt the record numbers (0 when it numbers none). */
+  lastAttempt: number;
+  /** Accept the attempt after `lastAttempt` too: the derivation tolerates a
+   *  stop recorded for an attempt whose log has not landed yet. The launch
+   *  path knows its exact attempt and does not. */
+  acceptNextAttempt?: boolean;
+  /** The outcome record the caller read, when it read one: an attempt that
+   *  wrote its own verdict is not resumed by a stop left over it. */
+  outcome?: OutcomeRecord | null;
+}
+
+/**
+ * Which attempt, if any, the persisted stop owns (issue #146). The derivation
+ * that resumes a stop and the launch path that consumes it ask this one
+ * reading instead of comparing kinds and numbers each in its own way; the
+ * tolerance for an unnumbered next attempt belongs to the caller.
+ */
+export function operatorStopClaim(
+  ledger: RecoveryLedger,
+  options: OperatorStopOptions,
+): OperatorStopClaim {
+  const stop = ledger.lastStop;
+  if (stop === null) return { kind: "none" };
+  if (stop.kind !== "stop-requested" && stop.kind !== "stop-unconfirmed") return { kind: "none" };
+  const accepted =
+    options.acceptNextAttempt === true
+      ? stop.attempt >= Math.max(1, options.lastAttempt) && stop.attempt <= options.lastAttempt + 1
+      : stop.attempt === options.lastAttempt;
+  if (!accepted) return { kind: "none" };
+  if (ownWrittenOutcome(options.outcome ?? null, stop.attempt) !== null) return { kind: "none" };
+  return stop.kind === "stop-requested"
+    ? { kind: "requested", attempt: stop.attempt }
+    : { kind: "unconfirmed", attempt: stop.attempt, because: stop.because };
 }
 
 /** A reserved Work as the next invocation's reconciliation addresses it: the
@@ -141,12 +191,10 @@ export type UnconfirmedStopVerdict =
 
 /**
  * Settle the stops a previous invocation could not confirm (issue #146, ADR
- * 0008) with the same reading the stop itself applies: the persisted
- * `lastStop` names the attempt, `stopHoldReason` answers over the fresh
- * observation, a worker confirmed gone promotes the record to the
- * requested-stop resume it was meant to be, and a hold never relaunches. The
- * caller only presents the verdicts; the persisted facts and the recovery write
- * are decided here.
+ * 0008): a worker the fresh observation confirms gone promotes the persisted
+ * stop to the requested-stop resume it was meant to be; a hold never
+ * relaunches. The caller only presents the verdicts; the recovery write is
+ * decided here.
  */
 export async function reconcileUnconfirmedStops(
   works: Iterable<StopWorkRef>,
@@ -203,12 +251,6 @@ export class OperatorStop {
     return this.run;
   }
 
-  /**
-   * The operator's requested stop: admissions close, the evidence of the stop
-   * is persisted, the workers are asked to end, and the factory waits the
-   * cooperative window (or the escalation) before forcing what remains. The
-   * returned report says what was forced and what could not be confirmed.
-   */
   begin(input: StopInput): Promise<StopReport> {
     if (this.run !== null) return this.run;
     this.run = this.runStop(input.launches, input.survivors, input.isInFlight, input.settled);
@@ -414,20 +456,18 @@ export class OperatorStop {
   }
 
   /**
-   * The confirmation the factory never skips (issue #146): no worker of this
-   * workspace may survive — neither the launches this process started nor the
-   * ones it found alive (issue 118). The liveness probe answers, freshly,
-   * because the workers just ended or were forced; an unreadable answer is
-   * uncertainty, never an empty factory. An unconfirmed work is persisted so
+   * Confirm the end of every worker this stop is answerable for, over a fresh
+   * probe: the workers just ended or were forced, so the confirmation never
+   * reuses the stop's own observation. An unconfirmed work is persisted, so
    * the next invocation holds it.
    */
   private async confirmStop(
     entries: readonly StopLaunch[],
     survivors: () => Iterable<string>,
-  ): Promise<{ unconfirmed: Array<{ key: string; because: string }>; observation: LivenessObservation }> {
+  ): Promise<{ unconfirmed: StopHold[]; observation: LivenessObservation }> {
     const { workers: answerable, observation } = await this.stopWorkers(entries, survivors);
 
-    const unconfirmed: Array<{ key: string; because: string }> = [];
+    const unconfirmed: StopHold[] = [];
     for (const [key, knownAttempt] of answerable) {
       const because = stopHoldReason(observation, key);
       if (because === null) continue;

@@ -9,8 +9,6 @@ import {
 } from "../work-record/recovery.js";
 import { renderWaits } from "./waits.js";
 
-export { renderWaits } from "./waits.js";
-
 /**
  * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
  * an attempt that ended with no outcome record is interrupted, not failed, so

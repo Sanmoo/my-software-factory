@@ -10,6 +10,7 @@ import {
 } from "../layout.js";
 import { isRecordedFailure } from "../state/outcome.js";
 import { openWorkRecord } from "../work-record/record.js";
+import { lastAttemptOf } from "../work-record/attempts.js";
 import { pauseWaits, readPause, type PauseRecord } from "../work-record/continuity.js";
 import { readWorkEvidence, type WorkEvidence } from "../work-record/evidence.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
@@ -77,7 +78,7 @@ export async function readLaunchFacts(
     // A stale record: an attempt started (logs) after the last recorded one.
     // Its consecutiveness is still the record's — the extra attempt without
     // a record only exists mid-flight or as an interruption recovery.
-    const attempt = Math.max(record.attempt + 1, (logs.at(-1) ?? 0) + 1);
+    const attempt = lastAttemptOf(logs, record) + 1;
     return { attempt, previousFall };
   }
 
@@ -85,7 +86,7 @@ export async function readLaunchFacts(
   // previous attempt was interrupted. The session dir and the per-attempt
   // logs are the evidence the runtime leaves at launch time.
   if (hasAttemptEvidence(workDir, logs)) {
-    return { attempt: logs.at(-1)! + 1, previousFall: false };
+    return { attempt: lastAttemptOf(logs, null) + 1, previousFall: false };
   }
 
   return { attempt: 1, previousFall: false };
@@ -236,8 +237,8 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const continuityPauses: ContinuityPauseEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
-    const record = openWorkRecord(dir);
-    const snapshot = await record.read();
+    const workRecord = openWorkRecord(dir);
+    const snapshot = await workRecord.read();
     const lastAttempt = snapshot.attempt ?? 0;
     // The record never stops being history: a work whose record and whose
     // orphaned attempt coexist shows BOTH (issue 112) — the record is not
@@ -275,7 +276,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const modelProviderLedger = snapshot.modelProvider;
     const last = modelProviderLedger.last;
     if (last !== null && snapshot.ownOutcome === null) {
-      const ending = await record.readModelProviderFailure(lastAttempt);
+      const ending = await workRecord.readModelProviderFailure(lastAttempt);
       if (ending !== null && isModelProviderFailureSettled(modelProviderLedger, lastAttempt, ending)) {
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }

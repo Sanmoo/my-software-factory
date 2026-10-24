@@ -5,7 +5,7 @@ import {
   type AttemptWithoutOwnOutcome,
   type RegistryView,
 } from "../pool/registry.js";
-import { openWorkRecord } from "../work-record/record.js";
+import { readLastAttempt } from "../work-record/attempts.js";
 import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
 import {
   githubSelections,
@@ -329,7 +329,7 @@ function unknownSelectionConflicts(
 
 /** The attempt the Work record numbers on disk, or null when nothing does. */
 async function recordAttempt(workDir: string): Promise<number | null> {
-  return (await openWorkRecord(workDir).read()).attempt;
+  return readLastAttempt(workDir);
 }
 
 /**

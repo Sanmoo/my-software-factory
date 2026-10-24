@@ -2,7 +2,7 @@ import {
   readTurnModelProviderError,
   type ModelProviderFailure,
 } from "./model-provider-error.js";
-import { attemptNumbers } from "./attempts.js";
+import { attemptNumbers, lastAttemptOf } from "./attempts.js";
 import {
   appendJournalIntent,
   appendJournalResult,
@@ -123,7 +123,7 @@ export function openWorkRecord(workDir: string): WorkRecord {
     async read(): Promise<WorkRecordSnapshot> {
       const outcome = await readOutcomeRecord(workDir);
       const attempts = await attemptNumbers(workDir);
-      const numbered = Math.max(attempts.at(-1) ?? 0, outcome?.attempt ?? 0);
+      const numbered = lastAttemptOf(attempts, outcome);
       const attempt = numbered === 0 ? null : numbered;
       const ownOutcome = attempt === null ? null : ownOutcomeRecord(outcome, attempt);
       const [recovery, modelProvider, repair] = await Promise.all([

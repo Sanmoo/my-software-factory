@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, posix, relative, sep } from "node:path";
+import { join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+
+import { posixPath, relativeSpecifiers } from "../runtime/guardrail/staging.js";
 
 /**
  * The pool's side of the Work record contract (issue 192): the ledgers read
@@ -25,24 +27,20 @@ function productionSources(): string[] {
     }
   };
   walk(SRC);
-  return sources.map((path) => relative(SRC, path).split(sep).join("/"));
+  return sources.map((path) => posixPath(relative(SRC, path)));
 }
 
-/** The relative specifiers a source imports or re-exports, static and dynamic. */
-function relativeSpecifiersOf(source: string): string[] {
-  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  const specifiers = new Set<string>();
-  for (const match of text.matchAll(/\bfrom\s+["']([^"']+)["']/g)) specifiers.add(match[1]!);
-  for (const match of text.matchAll(/^\s*import\s+["']([^"']+)["']/gm)) specifiers.add(match[1]!);
-  for (const match of text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) specifiers.add(match[1]!);
-  return [...specifiers].filter((specifier) => specifier.startsWith("."));
+/** The source's imports, comments removed: an import inside a comment is never
+ *  an edge of the graph. */
+function importedSpecifiers(source: string): string[] {
+  return relativeSpecifiers(source.replace(/\/\*[\s\S]*?\*\//g, ""));
 }
 
 function graphOf(files: readonly string[]): Map<string, string[]> {
   const known = new Set(files);
   const graph = new Map<string, string[]>();
   for (const file of files) {
-    const targets = relativeSpecifiersOf(readFileSync(join(SRC, file), "utf8"))
+    const targets = importedSpecifiers(readFileSync(join(SRC, file), "utf8"))
       .map((specifier) => posix.normalize(posix.join(posix.dirname(file), specifier)).replace(/\.js$/, ".ts"))
       .filter((target) => known.has(target));
     graph.set(file, targets);

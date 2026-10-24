@@ -6,7 +6,7 @@ import { renderWorkKey } from "../pool/work-key.js";
 import { renderWorkIdentity, renderTicketIdentity, renderRepositoryIdentity } from "../tracker/identity.js";
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
-import { renderWaits } from "../pool/recovery.js";
+import { renderWaits } from "../pool/waits.js";
 import type { RecoveryLedger } from "../work-record/recovery.js";
 import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";

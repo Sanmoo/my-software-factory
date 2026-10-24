@@ -6,10 +6,11 @@ import { EVENT_LOG_PATTERN } from "./logs.js";
 
 /**
  * The attempt numbering of a Work's record (issues 102/112; Work record, issue
- * 187): the attempts the per-attempt event logs and the outcome record number,
- * read from disk. This is the one place that answers "which attempt is this?"
- * — the launch facts, the status view and the repair reconciliation all ask it
- * instead of guessing from another artifact.
+ * 187): the per-attempt event logs the runtime writes and the attempt ledger
+ * read from an outcome record. `lastAttemptOf` is the one derivation of the
+ * number the two carry; the Work record's snapshot and the launch facts compose
+ * it instead of repeating it, and callers ask this module rather than guess
+ * from another artifact.
  */
 
 /**
@@ -53,7 +54,9 @@ export async function attemptNumbers(workDir: string): Promise<number[]> {
   return numbers.sort((a, b) => a - b);
 }
 
-function lastAttemptOf(logs: readonly number[], record: OutcomeRecord | null): number {
+/** The attempt the two facts number: the highest per-attempt log, or the
+ *  outcome record's own attempt — never a guess from another artifact. */
+export function lastAttemptOf(logs: readonly number[], record: OutcomeRecord | null): number {
   return Math.max(logs.at(-1) ?? 0, record?.attempt ?? 0);
 }
 

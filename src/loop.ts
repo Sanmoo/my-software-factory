@@ -92,7 +92,14 @@ import {
   recordStopRequest,
   type RecoveryDecision,
 } from "./pool/recovery.js";
-import { OperatorStop, reconcileUnconfirmedStops, stopConfirmed, type StopLaunch, type StopReport } from "./pool/stop.js";
+import {
+  OperatorStop,
+  operatorStopClaim,
+  reconcileUnconfirmedStops,
+  stopConfirmed,
+  type StopLaunch,
+  type StopReport,
+} from "./pool/stop.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
 import { readModelProviderLedger } from "./work-record/model-provider.js";
 import {
@@ -1860,19 +1867,16 @@ export class SweepEngine {
 
   /**
    * Whether the operator's own requested stop owns the end of this attempt
-   * (issue #146): the persisted stop-requested, or a stop-unconfirmed one whose
-   * worker this invocation just confirmed gone (promoted, so the launch
-   * consumes it like any other requested stop). A stop of another attempt, or
-   * a failure, never answers yes.
+   * (issue #146): the persisted requested stop of exactly this attempt, or a
+   * stop-unconfirmed one of it, promoted here so the launch consumes it like
+   * any other requested stop. A stop of another attempt, or a failure, never
+   * answers yes.
    */
   private async operatorStoppedAttempt(dir: string, attempt: number): Promise<boolean> {
-    const { lastStop } = await readRecoveryLedger(dir);
-    if (lastStop === null || lastStop.attempt !== attempt) return false;
-    if (lastStop.kind === "stop-unconfirmed") {
-      await confirmStopRequest(dir, attempt);
-      return true;
-    }
-    return lastStop.kind === "stop-requested";
+    const ledger = await readRecoveryLedger(dir);
+    const claim = operatorStopClaim(ledger, { lastAttempt: attempt });
+    if (claim.kind === "unconfirmed") await confirmStopRequest(dir, attempt);
+    return claim.kind !== "none";
   }
 
   /** The facts a continuity decision reads for one paused work: its artifacts,

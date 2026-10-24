@@ -9,10 +9,12 @@ import { ensureWorkspace, workDirOfKey, type WorkspaceLayout } from "../layout.j
 import { deferred } from "../runtime/deferred.js";
 import type { LivenessObservation, LiveWorker } from "../state/liveness.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import { readRecoveryLedger } from "../work-record/recovery.js";
+import type { OutcomeRecord } from "../work-record/outcome.js";
+import { readRecoveryLedger, type RecoveryLedger, type RecoveryStop } from "../work-record/recovery.js";
 import { consumeRecovery, recordUnconfirmedStop } from "./recovery.js";
 import {
   OperatorStop,
+  operatorStopClaim,
   reconcileUnconfirmedStops,
   stopConfirmed,
   type StopInput,
@@ -312,5 +314,84 @@ describe("the next invocation's reconciliation of an unconfirmed stop (issue #19
       },
     ]);
     assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-unconfirmed");
+  });
+});
+
+describe("the operator-stop claim shared by the derivation and the launch path (issue #190)", () => {
+  const AT = NOW.toISOString();
+
+  function ledger(lastStop: RecoveryStop | null): RecoveryLedger {
+    return { attempt: lastStop?.attempt ?? 1, consumed: 0, events: [], lastStop, lastFallAttempt: null };
+  }
+
+  test("a stop of another attempt, another kind or none claims nothing", () => {
+    assert.deepEqual(operatorStopClaim(ledger(null), { lastAttempt: 1 }), { kind: "none" });
+    assert.deepEqual(
+      operatorStopClaim(ledger({ kind: "interruption", attempt: 2, at: AT }), { lastAttempt: 2 }),
+      { kind: "none" },
+    );
+    assert.deepEqual(
+      operatorStopClaim(ledger({ kind: "failure", attempt: 2, at: AT, outcome: "clean-without-pr" }), {
+        lastAttempt: 2,
+      }),
+      { kind: "none" },
+    );
+    assert.deepEqual(
+      operatorStopClaim(ledger({ kind: "stop-requested", attempt: 1, at: AT }), { lastAttempt: 2 }),
+      { kind: "none" },
+    );
+  });
+
+  test("the launch path claims exactly its attempt and keeps the unconfirmed reason", () => {
+    const requested = ledger({ kind: "stop-requested", attempt: 2, at: AT });
+    assert.deepEqual(operatorStopClaim(requested, { lastAttempt: 2 }), { kind: "requested", attempt: 2 });
+    assert.deepEqual(operatorStopClaim(requested, { lastAttempt: 1 }), { kind: "none" });
+    assert.deepEqual(operatorStopClaim(requested, { lastAttempt: 3 }), { kind: "none" });
+    const unconfirmed = ledger({ kind: "stop-unconfirmed", attempt: 2, at: AT, because: "still alive" });
+    assert.deepEqual(operatorStopClaim(unconfirmed, { lastAttempt: 2 }), {
+      kind: "unconfirmed",
+      attempt: 2,
+      because: "still alive",
+    });
+  });
+
+  test("the derivation's tolerance accepts the attempt before a log numbers it", () => {
+    const next = ledger({ kind: "stop-requested", attempt: 2, at: AT });
+    assert.deepEqual(operatorStopClaim(next, { lastAttempt: 1, acceptNextAttempt: true }), {
+      kind: "requested",
+      attempt: 2,
+    });
+    assert.deepEqual(operatorStopClaim(next, { lastAttempt: 1 }), { kind: "none" });
+    assert.deepEqual(
+      operatorStopClaim(next, { lastAttempt: 0, acceptNextAttempt: true }),
+      { kind: "none" },
+      "a record that numbers nothing accepts only attempt 1",
+    );
+    assert.deepEqual(
+      operatorStopClaim(ledger({ kind: "stop-requested", attempt: 1, at: AT }), {
+        lastAttempt: 0,
+        acceptNextAttempt: true,
+      }),
+      { kind: "requested", attempt: 1 },
+    );
+    assert.deepEqual(
+      operatorStopClaim(ledger({ kind: "stop-requested", attempt: 3, at: AT }), {
+        lastAttempt: 1,
+        acceptNextAttempt: true,
+      }),
+      { kind: "none" },
+      "the window closes after the next attempt",
+    );
+  });
+
+  test("an attempt that wrote its own verdict is not resumed by a stop left over it", () => {
+    const stop = ledger({ kind: "stop-requested", attempt: 2, at: AT });
+    const written: OutcomeRecord = { class: "clean-without-pr", attempt: 2 };
+    assert.deepEqual(operatorStopClaim(stop, { lastAttempt: 2, outcome: written }), { kind: "none" });
+    const earlier: OutcomeRecord = { class: "clean-without-pr", attempt: 1 };
+    assert.deepEqual(operatorStopClaim(stop, { lastAttempt: 2, outcome: earlier }), {
+      kind: "requested",
+      attempt: 2,
+    });
   });
 });

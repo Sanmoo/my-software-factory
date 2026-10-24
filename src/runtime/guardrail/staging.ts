@@ -57,7 +57,7 @@ export function relativeImportClosure(rootDir: string, entryModules: readonly st
       continue;
     }
     modules.push(module);
-    for (const specifier of relativeImports(readFileSync(absolute, "utf8"))) {
+    for (const specifier of relativeSpecifiers(readFileSync(absolute, "utf8"))) {
       const target = resolve(dirname(absolute), specifier);
       if (!existsSync(target)) {
         missing.push({ from: module, module: posixPath(relative(root, target)) });
@@ -82,17 +82,20 @@ export function guardrailContainerModules(rootDir: string = COMPILED_ROOT): stri
   return closure.modules.map((module) => `${GUARDRAIL_IMAGE_ROOT}/${module}`);
 }
 
-function posixPath(path: string): string {
+export function posixPath(path: string): string {
   return path.split(sep).join("/");
 }
 
-/** `from "./x.js"`, `import "./x.js"` and dynamic `import("./x.js")`. */
-function relativeImports(source: string): string[] {
+/** The relative specifiers a source imports or re-exports, static and dynamic:
+ *  `from "./x.js"`, `import "./x.js"` and `import("./x.js")`. One scanner serves
+ *  the image closure and the source import-graph pin, so the two cannot read
+ *  the same tree differently. */
+export function relativeSpecifiers(source: string): string[] {
   const specifiers = new Set<string>();
   const patterns = [
-    /from\s+["'](\.\.?\/[^"']+)["']/g,
-    /import\s+["'](\.\.?\/[^"']+)["']/g,
-    /import\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g,
+    /\bfrom\s+["'](\.\.?\/[^"']+)["']/g,
+    /^\s*import\s+["'](\.\.?\/[^"']+)["']/gm,
+    /\bimport\s*\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) specifiers.add(match[1]!);

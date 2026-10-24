@@ -75,7 +75,8 @@ The factory's mark on a Ticket, together with assignment to its acting account, 
 The claim mark identifying a Ticket as already reserved and unavailable for another pickup.
 
 **Reservation**:
-The workspace record of a work: its source and destination facts, attempts, outcomes and PR associations.
+The registry's record of a Work: its source and destination facts and the attempt the registry numbers. It is not the whole on-disk record — the Work record owns that.
+_Avoid_: Work record, when the whole on-disk record is meant.
 
 **Unbacked claim**:
 A factory claim mark on the tracker with no reservation in this workspace. It does not establish abandonment or the absence of an owner elsewhere.
