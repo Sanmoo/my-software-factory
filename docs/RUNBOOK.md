@@ -180,9 +180,10 @@ attempt that cannot be continued safely, with its reason), the **repair**
 cycles, last outcomes, the pool, archived dones — and the two reconciliation
 leftovers when tracker and workspace disagree:
 
-- an **unbacked claim** carries the copyable `gh issue edit …` that returns the
-  issue to the pool; its report warns that another factory or workspace may be
-  the one holding the claim, so confirm before releasing;
+- an **unbacked claim** carries the copyable `gh issue edit …` that returns a
+  GitHub issue to the pool (a non-GitHub ticket offers no command: none is
+  invented); its report warns that another factory or workspace may be the one
+  holding the claim, so confirm before releasing;
 - an **unmarked reservation** is a fact for a human decision — the report
   offers no command.
 
