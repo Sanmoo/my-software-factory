@@ -166,7 +166,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
   // Jira candidates are read-only in this release (issue 128): the section
   // never claims, comments or launches, and a selection that could not be read
   // says unknown instead of "none" — a candidate is not a reservation.
-  lines.push(...renderJiraSources(view.jira, view.jiraAmbiguous, cap));
+  lines.push(...renderJiraSelections(view.jira, view.jiraAmbiguous, cap));
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
@@ -188,7 +188,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
  *  an unreadable selection says unknown, and a held ticket gets its own
  *  section. The header counts the selections: a candidate count would make an
  *  unreadable selection read as zero. */
-function renderJiraSources(
+function renderJiraSelections(
   selections: readonly JiraSelectionView[],
   ambiguous: readonly JiraAmbiguousTicket[],
   cap: number,

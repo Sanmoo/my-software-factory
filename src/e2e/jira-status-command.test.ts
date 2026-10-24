@@ -27,7 +27,7 @@ const ALPHA = "acme.atlassian.net";
 const BETA = "beta.atlassian.net";
 const REPO = "Sanmoo/my-tasks";
 
-describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () => {
+describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", () => {
   let dir: string;
   let gh: GhShim;
   let jira: JiraFetchShim;
@@ -45,7 +45,7 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
   });
 
   /** Two sites, one healthy and one whose local credential is missing: the
-   *  independent source must not be treated as absent. */
+   *  independent selection must not be treated as absent. */
   function writeConfig(overrides: { alphaJql?: string; alphaSecret?: string } = {}): void {
     const alphaSecretLine =
       overrides.alphaSecret === undefined
