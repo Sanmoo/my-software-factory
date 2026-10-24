@@ -17,8 +17,7 @@ import { runSmokeCycle } from "./smoke-cycle.js";
 import { DEFAULT_LABELS } from "../config.js";
 
 /**
- * The real smoke of the GitHub adapter, in the empirical-proof
- * pattern of the empirical proof: against a REAL repo (default
+ * The real smoke of the GitHub adapter, against a REAL repo (default
  * `Sanmoo/my-tasks`, the config's example repo) with the bot account, ONE
  * issue's full cycle is executed, verified and reverted — nothing stays
  * behind (comments deleted, labels and assignees removed, blockers unlinked,
@@ -35,9 +34,8 @@ import { DEFAULT_LABELS } from "../config.js";
  * explicitly: `npm run smoke:github`. Overrides: MSF_SMOKE_REPO,
  * MSF_SMOKE_ACCOUNT.
  *
- * op1 is designed around GitHub's eventual consistency (the lesson of two
- * failed full-cycle runs): listings converge
- * LATE (the label-filtered one lagged minutes; even the plain open-issues
+ * op1 is designed around GitHub's eventual consistency: listings converge LATE
+ * (the label-filtered one lagged minutes; even the plain open-issues
  * listing lagged >30s behind a freshly CREATED issue), while DIRECT GETs
  * are immediate. Eligibility is proven via direct reads right after seeding
  * with no settle wait, and the neutral open-issues read is re-checked ONCE
@@ -47,10 +45,10 @@ import { DEFAULT_LABELS } from "../config.js";
  * offline suites run the same flow over the sim.
  */
 
-const SMOKE_BODY = `seeded by the msf ticket-16 smoke — reverted by its cleanup\n\n${AGENT_MARKER}`;
+const SMOKE_BODY = `seeded by the msf smoke — reverted by its cleanup\n\n${AGENT_MARKER}`;
 
-/** The smoke's planned REST calls, recounted after the op1 restructure (the
- *  listing's eventual consistency is tolerated — no settle waits anywhere):
+/** The smoke's planned REST calls (the listing's eventual consistency is
+ *  tolerated — no settle waits anywhere):
  *
  *    - label inventory (pre/post sweep) .................. 2
  *    - seeding ........................................... 5

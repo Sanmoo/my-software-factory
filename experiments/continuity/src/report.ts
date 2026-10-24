@@ -20,7 +20,7 @@ const ms = (value: number): string => `${(value / 1000).toFixed(1)} s`;
 
 /**
  * The requirement a scenario exercises, and whether the run met it. These are
- * the contract clauses of #111, not preferences: a fail here is a reprovação.
+ * contract clauses, not preferences: a fail here is a reprovação.
  */
 function requirementFor(scenarioId: string, metrics: RunMetrics): { text: string; met: boolean } | undefined {
 	switch (scenarioId) {
@@ -72,7 +72,7 @@ function requirementFor(scenarioId: string, metrics: RunMetrics): { text: string
 	}
 }
 
-/** Safety requirements that decide pass/fail, from #111's acceptance criteria. */
+/** Safety requirements that decide pass/fail, from the harness's acceptance criteria. */
 function safetyOf(metrics: RunMetrics): { ownerExclusion: boolean; effectReconciliation: boolean; sameAttempt: boolean } {
 	return {
 		// No run may ever show two workers conducting the same execution.
@@ -103,7 +103,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	const labels = [...new Set(bundles.map((metrics) => metrics.label))];
 	const mechanisms = [...new Set(bundles.map((metrics) => metrics.mechanism))].sort();
 
-	lines.push("# Experimento #111 — retomada nativa do Pi vs pi durable");
+	lines.push("# Experimento — retomada nativa do Pi vs pi durable");
 	lines.push("");
 	lines.push(`- Commit da fábrica (base): \`${context.factoryCommit}\``);
 	lines.push(`- Repetições por configuração: ${context.repeats}`);
@@ -313,7 +313,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	lines.push("### Recomendação");
 	lines.push("");
 	lines.push(
-		"**Avançar com B (retomada nativa de sessão do Pi), acompanhada dos guardrails compartilhados, em uma issue de produto própria.** Em ganho medido e segurança, B e C empatam em todos os cenários desta matriz: mesmo reaproveitamento, mesma tentativa, nenhuma duplicação com guardrails, mesmo comportamento nos guardrails. O critério da #111 é explícito — em ganho e segurança equivalentes, preferir a solução menor — e B é a menor: uma dependência já em uso, nenhum storage novo, nenhuma migração de schema, um caminho de sessão a fixar e a seleção explícita da sessão no lançamento. C acrescenta uma dependência de runtime, um storage a operar e um dono de processo por storage, e seu benefício exclusivo medido (fato de interrupção registrado, sinal de tarefa viva, política de replay por ferramenta) só paga quando existir trabalho durável próprio — delegações/subagentes recuperáveis e efeitos internos ao run, que este experimento explicitamente não exercitou.",
+		"**Avançar com B (retomada nativa de sessão do Pi), acompanhada dos guardrails compartilhados, em uma issue de produto própria.** Em ganho medido e segurança, B e C empatam em todos os cenários desta matriz: mesmo reaproveitamento, mesma tentativa, nenhuma duplicação com guardrails, mesmo comportamento nos guardrails. O critério é explícito — em ganho e segurança equivalentes, preferir a solução menor — e B é a menor: uma dependência já em uso, nenhum storage novo, nenhuma migração de schema, um caminho de sessão a fixar e a seleção explícita da sessão no lançamento. C acrescenta uma dependência de runtime, um storage a operar e um dono de processo por storage, e seu benefício exclusivo medido (fato de interrupção registrado, sinal de tarefa viva, política de replay por ferramenta) só paga quando existir trabalho durável próprio — delegações/subagentes recuperáveis e efeitos internos ao run, que este experimento explicitamente não exercitou.",
 	);
 	lines.push("");
 	lines.push(

@@ -49,15 +49,13 @@ import {
  * Docker the liveness is unknown — named, never guessed — and the
  * registry-only view stays complete. No reports are written: the per-work
  * artifacts are the interface — including the interruption-recovery ledger,
- * which says whether the last stop consumed a recovery or a failure (issue
- * 123).
+ * which says whether the last stop consumed a recovery or a failure.
  *
- * Issue 100: the SAME single derivation returns the pool and the
- * reconciliation (unbacked claim, unmarked reservation) from one open-issues
- * read per repo.
+ * The SAME single derivation returns the pool and the reconciliation (unbacked
+ * claim, unmarked reservation) from one open-issues read per repo.
  *
- * Issue 118: the liveness facts are read and interpreted ONCE, by the same
- * functions the operational cycle uses (probeLiveness, duplicateWorkers), so
+ * The liveness facts are read and interpreted ONCE, by the same functions the
+ * operational cycle uses (probeLiveness, duplicateWorkers), so
  * status and the operation never disagree about the same Docker answer.
  */
 

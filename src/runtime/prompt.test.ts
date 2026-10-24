@@ -170,7 +170,7 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
     assert.match(prompt, /"pr".*"repo".*"number".*"branch"/s);
   });
 
-  test("obligation 1: the schema example shows the optional `paths` — the record's artifact trail (story 19)", () => {
+  test("obligation 1: the schema example shows the optional `paths` — the record's artifact trail", () => {
     // The record carries classe, tentativa, PR, caminhos — the schema example
     // must teach `paths`, or the worker never learns the field exists.
     assert.match(prompt, /"paths": \{"<artifact name>": "<path, relative to the work dir>"\}/);
@@ -203,7 +203,7 @@ describe("worker prompt — the feedback-round policy", () => {
   const promptFor = (comments: { author: string; body: string }[]): string =>
     buildWorkerPrompt(feedbackRequest(comments), { blockedLabel: DEFAULT_LABELS.blocked });
 
-  test("the round no longer commands addressing every comment indiscriminately", () => {
+  test("the round does not command addressing every comment indiscriminately", () => {
     const prompt = promptFor([{ author: "human", body: "Please split the module." }]);
     assert.doesNotMatch(prompt, /address every comment/i);
   });
@@ -357,14 +357,14 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /skills\/code-review\/SKILL\.md/);
   });
 
-  test("a feedback round that changes code carries the SAME cycle (story 2)", () => {
+  test("a feedback round that changes code carries the SAME cycle", () => {
     const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
     assert.match(prompt, /## The implementation procedure — MANDATORY for this session/);
     assert.match(prompt, /skills\/implement\/SKILL\.md/);
     assert.match(prompt, /applicable PR comments/, "the reviewers' spec context names the feedback comments");
   });
 
-  test("a purely explanatory session is exempt from the cycle (story 3)", () => {
+  test("a purely explanatory session is exempt from the cycle", () => {
     assert.match(initial, /purely explanatory answer\) skips it/);
   });
 
@@ -500,7 +500,7 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /never your own inline review/);
   });
 
-  test("a missing axis is a mandatory-capability failure: blocked, not silent self-review (story 16)", () => {
+  test("a missing axis is a mandatory-capability failure: blocked, not silent self-review", () => {
     assert.match(initial, /if an axis CANNOT run — a declared skill missing from the image, the subagent tool failing —/);
     assert.match(initial, /mandatory capability being absent: self-report blocked \(obligation 3\)/);
     assert.match(initial, /NEVER[\s\S]*silently replace the subagents with your own review/);
@@ -531,7 +531,7 @@ describe("worker prompt — the implementation procedure", () => {
     assert.match(initial, /success report for an axis that did not run/);
   });
 
-  test("the reviewers receive the spec context: the issue and, in feedback, the applicable comments (story 12)", () => {
+  test("the reviewers receive the spec context: the issue and, in feedback, the applicable comments", () => {
     assert.match(initial, /spec \(the issue and, in a feedback\s+round, the applicable PR comments\)/);
     const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
     assert.match(prompt, /applicable PR comments/);

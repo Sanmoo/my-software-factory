@@ -1,7 +1,7 @@
 /**
- * The runtime port: how a worker session is born. The real adapter (ticket
- * 12/13) launches Sandcastle Pi sessions in containers; the fake 
- * scripts outcomes without a container.
+ * The runtime port: how a worker session is born. The real adapter launches
+ * Sandcastle Pi sessions in containers; the fake scripts outcomes without a
+ * container.
  */
 
 import type { IssueComment, RepairReason, RequiredCheckResult } from "../tracker/port.js";
@@ -11,9 +11,9 @@ import type { LocalWorkFacts } from "../git/port.js";
 /**
  * The repair context of a reactivated session: why the factory
  * intervened, the remote HEAD observed before intervening (the lease value)
- * and the evidence of the failing required checks. Issue 112 adds what the
- * host found on disk: the local work the round takes over instead of redoing,
- * and the number of the unpublished attempt it resumes (absent on a new round).
+ * and the evidence of the failing required checks. What the host found on disk
+ * — the local work the round takes over instead of redoing, and the number of
+ * the unpublished attempt it resumes (absent on a new round) — rides with them.
  */
 export interface RepairMaterial {
   reasons: RepairReason[];
@@ -72,8 +72,8 @@ export interface WorkRequest {
   baseBranch: string;
   /** 1st, 2nd... attempt on the same branch. */
   attempt: number;
-  /** The session this launch opens: new, or the interrupted attempt's own
-   * . The factory ALWAYS sets it — the recorded association is
+  /** The session this launch opens: new, or the interrupted attempt's own.
+   *  The factory ALWAYS sets it — the recorded association is
    *  the recovery contract. Every relaunch of an attempt (a recovery, a model
    *  provider retry, the resume after the operator's requested stop) arrives
    *  here as `resume` with the id of ITS attempt; never a session chosen by
@@ -93,10 +93,9 @@ export interface SessionResult {
 }
 
 /**
- * One work of a retrospective window, as the round's agent reads it (issue
- * 141): where the evidence lives inside the container, what the work ended as
- * and when — never the work's issue body or diff, which the round does not
- * change.
+ * One work of a retrospective window, as the round's agent reads it: where the
+ * evidence lives inside the container, what the work ended as and when — never
+ * the work's issue body or diff, which the round does not change.
  */
 export interface RetroWorkInput {
   /** The registry key (the work's identity on disk) the report names. */

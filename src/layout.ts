@@ -24,8 +24,8 @@ export const WORKSPACE_SUBPATHS = {
 } as const;
 
 /**
- * Where the retrospective round reads and writes inside its container (issue
- * 141): the archive and the works are mounted read-only, the retros directory
+ * Where the retrospective round reads and writes inside its container: the
+ * archive and the works are mounted read-only, the retros directory
  * read-write (the report is the only artifact that leaves the round). Layout,
  * not prose — the prompt and the runtime agree on these paths here.
  */

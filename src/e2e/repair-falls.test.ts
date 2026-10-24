@@ -49,7 +49,7 @@ const execFile = promisify(execFileCallback);
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
-/** The head the #100 incident observed: the PR's head and the remote's. */
+/** The head the failed repair observed: the PR's head and the remote's. */
 const OBSERVED = "2b45c0421fd9528df1d12032a942b60e1fff6518";
 
 class ScenarioGitWork implements LegacyGitWork {
@@ -177,8 +177,9 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     return feedback.value.pr.number;
   }
 
-  /** The durable state of the #100 incident: a charged round, the evidence it
-   *  addressed, and a LATER attempt whose log exists but whose record does not.
+  /** The durable state of a repair that fell before publishing: a charged
+   *  round, the evidence it addressed, and a LATER attempt whose log exists but
+   *  whose record does not.
    *  The record on disk is still attempt 1's. */
   function seedFallenLegacyRound(
     number: number,
@@ -563,7 +564,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     };
     seedFallenLegacyRound(118, cycle, 2);
     // The work recovered by another path: the PR is clean on its head and
-    // every required check is approved — the confirmed recovery of story 25.
+    // every required check is approved — the confirmed recovery.
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
