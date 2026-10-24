@@ -46,12 +46,12 @@ EOF
 
 ## The worker's agent environment
 
-`agent-resources.yaml` is the single declaration: Pi's exact version, the
-upstream skills repository with an immutable commit, the selected skills, the
-delegation extension at an exact version with its operating guidance, and the
-factory's reviewer agents. `npm run build:image` fetches and verifies all of
-it, records the result in `/opt/msf/agent-inventory.json`, and only then moves
-the image tag — a failed build leaves the previous valid image in place.
+`agent-resources.yaml` is the single declaration of the environment: Pi, the
+selected upstream skills at an immutable commit, the delegation extension with
+its operating guidance, and the reviewer agents. `npm run build:image` fetches
+and verifies all of it, records the result in `/opt/msf/agent-inventory.json`,
+and only then moves the image tag — a failed build leaves the previous valid
+image in place.
 
 - **Update a resource**: change `agent-resources.yaml` in a reviewed commit,
   then `npm run build:image`. Never edit files inside a running image. The
@@ -80,11 +80,10 @@ MSF_REAL_PROOF_MODEL=provider/model-id npm run proof:real
 
 This starts the built image with no personal profile and an empty cache,
 loads the declared skills, implements a local spec, and requires two distinct
-reviewer subagents plus the outcome record. It consumes model credits and is
-never part of `npm test`/`gateway`. The GitHub-delivery half of ADR 0001
-(an actual PR in an authorized disposable repo) remains an operator-gated run:
-no credentials or disposable repo are assumed here, so it is recorded as
-outstanding rather than claimed.
+reviewer subagents plus the outcome record. It is never part of the automatic
+suite. The GitHub-delivery half of ADR 0001 (an actual PR in an authorized
+disposable repo) remains an operator-gated run: no credentials or disposable
+repo are assumed here, so it is recorded as outstanding rather than claimed.
 
 ## Toolchains — the convergence layer (ticket 18)
 

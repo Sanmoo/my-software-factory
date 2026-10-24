@@ -25,8 +25,10 @@ import {
   AgentResourcesError,
   declarationDigest,
   expectedSkills,
+  extensionImagePath,
   normalizeAgentResources,
   sha256,
+  skillImagePath,
 } from "../scripts/agent-resources.mjs";
 
 /**
@@ -116,7 +118,7 @@ export function directoryDigest(dir) {
 }
 
 /** A deterministic content digest of one file. */
-export function fileDigest(file) {
+function fileDigest(file) {
   return `sha256:${sha256(readFileSync(file))}`;
 }
 
@@ -220,6 +222,13 @@ async function installExtension(extension, prefix, workDir, run) {
   if (manifest.name !== extension.package || manifest.version !== extension.version) {
     fail(
       `extension ${extension.package}@${extension.version} installed as ${String(manifest.name)}@${String(manifest.version)}`,
+    );
+  }
+  const declaredLicense = licenseId(extension.license);
+  if (manifest.license !== declaredLicense) {
+    fail(
+      `extension ${extension.package} declares the license ${String(manifest.license)}, ` +
+        `declared ${declaredLicense} — review the attribution before shipping it`,
     );
   }
   requireDependencies(manifest, installed);
@@ -399,6 +408,23 @@ function licenseFileName(packageName) {
   return `${packageName.replaceAll("/", "-")}-LICENSE`;
 }
 
+/** The licence a declaration names: its identifier, without the prose. */
+function licenseId(declared) {
+  return declared.trim().split(/[\s(;,/]/)[0] ?? "";
+}
+
+/** A shipped licence must name the declared licence: one that changed upstream
+ *  fails the build instead of shipping a wrong attribution. */
+function requireLicenseFile(file, declared, what) {
+  const id = licenseId(declared);
+  const required = requireFile(file, `${what} LICENSE`);
+  const text = readFileSync(required, "utf8");
+  if (id === "" || !text.toLowerCase().includes(id.toLowerCase())) {
+    fail(`${what} LICENSE does not name the declared license "${declared}"`);
+  }
+  return required;
+}
+
 function attribution(declaration, piInstall) {
   const lines = [
     "# Factory agent resources",
@@ -464,11 +490,9 @@ export async function provisionAgentResources(options) {
 
   try {
     const repoDir = await fetchSkills(declaration, workDir, run);
-    const skillsRoot = join(staging, "skills");
-    mkdirSync(skillsRoot, { recursive: true });
     for (const skill of declaration.skills.selected) {
       const source = requireSkill(join(repoDir, skill.path), skill.name, `selected skill "${skill.name}"`);
-      const target = join(skillsRoot, skill.name);
+      const target = join(staging, skillImagePath(skill.name));
       copyTree(source, target);
       if (directoryDigest(source) !== directoryDigest(target)) {
         fail(`skill "${skill.name}" changed while being copied`);
@@ -502,25 +526,34 @@ export async function provisionAgentResources(options) {
         `extension "${extension.package}" guidance`,
       );
       validateReferences(guidance, installedPackageRoot, `extension "${extension.package}" guidance`);
-      const license = requireFile(join(installedPackageRoot, "LICENSE"), `extension "${extension.package}" LICENSE`);
+      const license = requireLicenseFile(
+        join(installedPackageRoot, "LICENSE"),
+        extension.license,
+        `extension "${extension.package}"`,
+      );
       copyFileSync(license, join(licensesRoot, licenseFileName(extension.package)));
       extensionRecords.push({
         package: extension.package,
         version: extension.version,
         license: extension.license,
-        path: `extensions/node_modules/${extension.package}`,
+        path: extensionImagePath(extension.package),
         entry: extension.entry,
         digest: directoryDigest(installedPackageRoot),
         dependencies: installedPackages(join(extensionsRoot, "node_modules")),
         guidance: {
           name: extension.guidance.name,
-          path: `extensions/node_modules/${extension.package}/${extension.guidance.path}`,
+          path: `${extensionImagePath(extension.package)}/${extension.guidance.path}`,
           digest: directoryDigest(guidance),
         },
       });
     }
 
-    copyFileSync(requireFile(join(repoDir, "LICENSE"), "upstream skills LICENSE"), join(licensesRoot, "skills-LICENSE"));
+    const skillsLicense = requireLicenseFile(
+      join(repoDir, "LICENSE"),
+      declaration.skills.license,
+      "upstream skills",
+    );
+    copyFileSync(skillsLicense, join(licensesRoot, "skills-LICENSE"));
     if (piInstall.licenseFile !== null) {
       copyFileSync(piInstall.licenseFile, join(licensesRoot, licenseFileName(declaration.pi.package)));
     }

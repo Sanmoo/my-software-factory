@@ -197,9 +197,9 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
   });
 
   test("the launch never reads the operator's personal Pi profile — a profile on the host reaches nothing", async () => {
-    // Issue #159: no snapshot, no personal skills, no personal credentials.
-    // A poisoned ~/.pi/agent is the honest probe: nothing of it may enter the
-    // container or the launch's arguments.
+    // A poisoned ~/.pi/agent is the honest probe: no snapshot, no personal
+    // skills and no personal credential may reach the container or the launch's
+    // arguments.
     const fakeHome = join(root, "home");
     mkdirSync(join(fakeHome, ".pi", "agent", "skills", "implement"), { recursive: true });
     writeFileSync(

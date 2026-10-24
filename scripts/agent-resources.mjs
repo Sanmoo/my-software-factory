@@ -212,8 +212,7 @@ export function declarationDigest(declaration) {
 }
 
 /** The skills the image must carry, in the order the launch loads them: the
- *  selected upstream skills, then each extension's operating guidance. Paths
- *  are relative to the agent directory inside the worker image. */
+ *  selected upstream skills, then each extension's operating guidance. */
 export function expectedSkills(declaration) {
   return [
     ...declaration.skills.selected.map((skill) => ({
@@ -221,7 +220,7 @@ export function expectedSkills(declaration) {
       origin: "git",
       upstreamPath: skill.path,
       revision: declaration.skills.revision,
-      imagePath: `skills/${skill.name}`,
+      imagePath: skillImagePath(skill.name),
     })),
     ...declaration.extensions.map((extension) => ({
       name: extension.guidance.name,
@@ -233,8 +232,13 @@ export function expectedSkills(declaration) {
   ];
 }
 
-/** Where an extension's package root lives inside the image's agent dir. */
-function extensionImagePath(packageName) {
+/** Where a skill directory sits, relative to the image's agent dir. */
+export function skillImagePath(name) {
+  return `skills/${name}`;
+}
+
+/** Where an extension's package root sits, relative to the image's agent dir. */
+export function extensionImagePath(packageName) {
   return `extensions/node_modules/${packageName}`;
 }
 

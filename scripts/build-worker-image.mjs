@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadAgentDeclaration } from "./agent-declaration.mjs";
-import { canonicalDeclaration } from "./agent-resources.mjs";
+import { AGENT_DECLARATION_FILE, canonicalDeclaration } from "./agent-resources.mjs";
 import { WORKER_IMAGE } from "./worker-image.mjs";
 
 /**
@@ -17,7 +17,7 @@ import { WORKER_IMAGE } from "./worker-image.mjs";
  */
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const DECLARATION = join(ROOT, "agent-resources.yaml");
+const DECLARATION = join(ROOT, AGENT_DECLARATION_FILE);
 /** Generated build-context copy of the declaration (gitignored). */
 const STAGED_DECLARATION = join(ROOT, "docker", "agent-resources.json");
 

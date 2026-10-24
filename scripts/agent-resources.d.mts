@@ -58,6 +58,8 @@ export function normalizeAgentResources(document: unknown, source?: string): Age
 export function sha256(input: string | Uint8Array): string;
 export function canonicalDeclaration(declaration: AgentResourcesDeclaration): string;
 export function declarationDigest(declaration: AgentResourcesDeclaration): string;
+export function skillImagePath(name: string): string;
+export function extensionImagePath(packageName: string): string;
 export function expectedSkills(declaration: AgentResourcesDeclaration): Array<{
   name: string;
   origin: "git" | "npm";

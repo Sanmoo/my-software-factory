@@ -3,32 +3,31 @@ import type {
   AgentRole,
   SkillRole,
 } from "../../scripts/agent-resources.mjs";
+import { extensionImagePath, skillImagePath } from "../../scripts/agent-resources.mjs";
 
 /**
  * Where the image-provisioned agent resources live inside the worker
- * container, derived from the single declaration in `agent-resources.yaml`.
- * The launch flags and the worker prompt both read the layout from here, so
- * neither keeps a second list of skills, agents or extension paths to drift
- * from the declaration.
+ * container: the declaration's own layout, anchored at the image's agent dir.
+ * The launch flags, the worker prompt and the inventory comparison all read
+ * the layout from here, so the loaded path and the verified path cannot drift.
  */
 
 /** The image's agent dir; only `sessions/` is a host bind inside it. */
 export const AGENT_DIR = "/home/agent/.pi/agent";
-const AGENT_SKILLS_DIR = `${AGENT_DIR}/skills`;
 
 export function agentSkillPath(name: string): string {
-  return `${AGENT_SKILLS_DIR}/${name}`;
+  return `${AGENT_DIR}/${skillImagePath(name)}`;
 }
 
 export function agentExtensionEntry(extension: { package: string; entry: string }): string {
-  return `${AGENT_DIR}/extensions/node_modules/${extension.package}/${extension.entry}`;
+  return `${AGENT_DIR}/${extensionImagePath(extension.package)}/${extension.entry}`;
 }
 
 export function agentGuidancePath(extension: {
   package: string;
   guidance: { path: string };
 }): string {
-  return `${AGENT_DIR}/extensions/node_modules/${extension.package}/${extension.guidance.path}`;
+  return `${AGENT_DIR}/${extensionImagePath(extension.package)}/${extension.guidance.path}`;
 }
 
 export interface AgentLayout {

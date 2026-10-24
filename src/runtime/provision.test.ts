@@ -76,14 +76,14 @@ function makeFixture(
     skills: {
       repository: skillsRepo,
       revision: options.skills === false ? "f".repeat(40) : revision,
-      license: "MIT fixture",
+      license: "MIT (fixture LICENSE)",
       selected: [{ name: skillName, path: `skills/engineering/${skillName}`, role: "implement" }],
     },
     extensions: [
       {
         package: "pi-subagents",
         version: options.extensionVersion ?? "0.79.1",
-        license: "MIT fixture",
+        license: "MIT (fixture LICENSE)",
         entry: "index.js",
         guidance: { name: "pi-subagents", path: "skills/pi-subagents" },
       },
@@ -118,7 +118,13 @@ function makeFixture(
 
 /** The external-boundary simulation: real git on a local repository, a fake
  *  `pi --version`, and an npm that materialises the package tree. */
-function fakeRun(install: { extensionVersion?: string; globalRoot: string; omitDependency?: string }) {
+function fakeRun(install: {
+  extensionVersion?: string;
+  globalRoot: string;
+  omitDependency?: string;
+  manifestLicense?: string;
+  licenseText?: string;
+}) {
   return async (
     command: string,
     args: string[],
@@ -140,13 +146,17 @@ function fakeRun(install: { extensionVersion?: string; globalRoot: string; omitD
         JSON.stringify({
           name: "pi-subagents",
           version,
-          license: "MIT fixture",
+          license: install.manifestLicense ?? "MIT",
           dependencies: { acorn: "^8.18.0" },
         }),
         "utf8",
       );
       writeFileSync(join(packageDir, "index.js"), "export default function () {}\n", "utf8");
-      writeFileSync(join(packageDir, "LICENSE"), "MIT fixture extension license\n", "utf8");
+      writeFileSync(
+        join(packageDir, "LICENSE"),
+        install.licenseText ?? "MIT fixture extension license\n",
+        "utf8",
+      );
       writeFileSync(
         join(packageDir, "skills", "pi-subagents", "SKILL.md"),
         "---\nname: pi-subagents\ndescription: Delegate.\n---\n\nDelegate with the subagent tool.\n",
@@ -268,6 +278,55 @@ describe("agent-resource provisioning at image build time", () => {
 
       await assert.rejects(provisionAgentResources(options(fixture)), /selected skill "code-review" SKILL\.md is missing/);
       assert.equal(readFileSync(join(fixture.dest, "previous.txt"), "utf8"), "previous image content\n");
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an extension whose installed manifest declares another license fails the build — the declaration is verified", async () => {
+    const fixture = makeFixture();
+    try {
+      await assert.rejects(
+        provisionAgentResources(
+          options(fixture, { run: fakeRun({ globalRoot: fixture.globalRoot, manifestLicense: "Apache-2.0" }) }),
+        ),
+        /extension pi-subagents declares the license Apache-2\.0, declared MIT/,
+      );
+      assert.ok(!existsSync(fixture.dest), "nothing is swapped in");
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a shipped LICENSE for which the upgrade changed the license fails the build — attribution is not copied blind", async () => {
+    const fixture = makeFixture();
+    try {
+      await assert.rejects(
+        provisionAgentResources(
+          options(fixture, { run: fakeRun({ globalRoot: fixture.globalRoot, licenseText: "Apache License 2.0\n" }) }),
+        ),
+        /extension "pi-subagents" LICENSE does not name the declared license "MIT \(fixture LICENSE\)"/,
+      );
+      assert.ok(!existsSync(fixture.dest));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the upstream skills LICENSE must name the declared license", async () => {
+    const fixture = makeFixture();
+    try {
+      const bad = JSON.parse(readFileSync(fixture.declarationPath, "utf8")) as {
+        skills: { license: string };
+      };
+      bad.skills.license = "Apache-2.0 (upstream LICENSE)";
+      writeFileSync(fixture.declarationPath, JSON.stringify(bad), "utf8");
+
+      await assert.rejects(
+        provisionAgentResources(options(fixture)),
+        /upstream skills LICENSE does not name the declared license "Apache-2\.0 \(upstream LICENSE\)"/,
+      );
+      assert.ok(!existsSync(fixture.dest));
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }
