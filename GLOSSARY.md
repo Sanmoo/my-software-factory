@@ -241,7 +241,7 @@ What the agents themselves write under the dirs the session binds (the session t
 A repair attempt that STARTED and ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall. A Requested stop or a round that never started is not a Repair fall.
 
 **Unstarted repair round**:
-A repair round whose launch a continuity pause, the operator's stop or a death prevented before any worker session existed. It is not an attempt and not a Repair fall: its round returns to the budget, no fall is counted, and it leaves no attempt record behind.
+A repair round whose launch a continuity pause, the operator's stop or a death prevented before any worker session existed. It is not an attempt and not a Repair fall: its round returns to the budget, no fall is counted, and it leaves no attempt record behind. The verdict outranks Pending reconciliation — a round with no session has nothing to reconcile — and a record an older version left behind is healed on the next sweep, returning the round and withdrawing the one fall it had counted.
 _Avoid_: Repair fall, when no worker ever ran.
 
 **Repair premise**:

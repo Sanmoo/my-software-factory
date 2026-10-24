@@ -385,19 +385,19 @@ function refundedRounds(cycle: RepairCycle): number {
 }
 
 /**
- * A recorded round that never reached a worker is not an attempt (issue 181).
- * The charge is returned only while it is still held — an unsettled attempt
+ * A recorded round that never reached a worker is not an attempt (issue 181):
+ * the healed cycle, or null when there is nothing to heal. The charge is
+ * returned only while it is still held — an unsettled attempt
  * (`unknown`/`pending`) — because a settled `not-published` fall already
  * returned its round; for that one only the fall it was counted as is
- * withdrawn. `published` and `concurrent-change` settle a real outcome and are
- * left untouched: the SAME cycle instance is returned for them, so a caller
- * can tell that nothing was healed.
+ * withdrawn. `published` and `concurrent-change` settle a real outcome and
+ * leave the cycle untouched.
  */
-export function returnUnstartedRound(cycle: RepairCycle): RepairCycle {
+export function returnUnstartedRound(cycle: RepairCycle): RepairCycle | null {
   const attempt = cycle.attempt;
-  if (attempt === null) return cycle;
+  if (attempt === null) return null;
   if (attempt.publication === "published" || attempt.publication === "concurrent-change") {
-    return cycle;
+    return null;
   }
   const settled = attempt.publication === "not-published";
   return {

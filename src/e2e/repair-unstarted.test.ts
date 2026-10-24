@@ -147,6 +147,34 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
   const signatureOf = (number: number, headSha: string): string =>
     `${REPO}#${number}|${headSha}|conflicts|`;
 
+  /** The record an older order left behind: an attempt that no worker ever
+   *  carried, settled as unpublished. */
+  const ghostAttempt = (number: number, attempt: number): RepairAttempt => ({
+    evidence: signatureOf(number, OBSERVED),
+    attempt,
+    observedHeadSha: OBSERVED,
+    remoteHeadSha: null,
+    publication: "not-published",
+    localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
+  });
+
+  /** A `reparo.json` as an older version wrote it. */
+  function writeLegacyGhost(
+    target: string,
+    ghost: RepairAttempt,
+    usedRounds: number,
+    consecutiveFalls: number,
+  ): RepairCycle {
+    const cycle: RepairCycle = {
+      usedRounds,
+      lastEvidence: ghost.evidence,
+      consecutiveFalls,
+      attempt: ghost,
+    };
+    writeFileSync(join(target, REPAIR_FILENAME), `${JSON.stringify(cycle, null, 2)}\n`, "utf8");
+    return cycle;
+  }
+
   async function seedOpenPr(
     tracker: FakeTrackerAdapter,
     runtime: FakeWorkerRuntime,
@@ -214,7 +242,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
   }
 
   test("a repair launch paused by continuity spends no round, counts no fall and never reaches the repair section", async () => {
-    const { pr, target, tracker, deps } = await pausedRepairRound(1);
+    const { target, tracker, deps } = await pausedRepairRound(1);
 
     const cycle = await readRepairCycle(target);
     assert.equal(cycle.usedRounds, 0, "the round returns to the budget");
@@ -234,7 +262,11 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
       /repair \(unpublished attempts, local work, pending reconciliation\): none/,
       "the rendered status section is empty",
     );
-    assert.ok(pr > 0);
+    assert.equal(
+      (await tracker.readPrFeedback({ repo: REPO, number: 1 })).known,
+      true,
+      "the work keeps its open PR",
+    );
   });
 
   test("after the pause the work continues and the real repair fall does not become a block", async () => {
@@ -301,26 +333,10 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     git.remoteHead = OBSERVED;
 
     const target = workDir(layout, REPO, 6);
-    const ghost: RepairAttempt = {
-      evidence: signatureOf(6, OBSERVED),
-      attempt: 6,
-      observedHeadSha: OBSERVED,
-      remoteHeadSha: null,
-      publication: "not-published",
-      localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
-    };
     // One earlier, genuinely delivered round stays charged. The ghost's own
     // settlement already returned ITS round; healing it must not return the
     // delivered one a second time.
-    writeFileSync(
-      join(target, REPAIR_FILENAME),
-      `${JSON.stringify(
-        { usedRounds: 1, lastEvidence: ghost.evidence, consecutiveFalls: 2, attempt: ghost },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    writeLegacyGhost(target, ghostAttempt(6, 6), 1, 2);
 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 1, "the persisting impediment opens the next round");
@@ -336,23 +352,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     git.remoteHead = OBSERVED;
 
     const target = workDir(layout, REPO, 7);
-    const ghost: RepairAttempt = {
-      evidence: signatureOf(7, OBSERVED),
-      attempt: 2,
-      observedHeadSha: OBSERVED,
-      remoteHeadSha: null,
-      publication: "not-published",
-      localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
-    };
-    writeFileSync(
-      join(target, REPAIR_FILENAME),
-      `${JSON.stringify(
-        { usedRounds: 0, lastEvidence: ghost.evidence, consecutiveFalls: 2, attempt: ghost },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    writeLegacyGhost(target, ghostAttempt(7, 2), 0, 2);
     // Continuity recorded the session it PLANNED, then the launch died before
     // any worker: the association is not proof that an attempt started.
     appendSessionLink(target, {
@@ -378,26 +378,18 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     git.remoteHead = OBSERVED;
 
     const target = workDir(layout, REPO, 4);
-    const ghost: RepairAttempt = {
-      evidence: signatureOf(4, OBSERVED),
-      attempt: 6,
-      observedHeadSha: OBSERVED,
-      remoteHeadSha: null,
-      publication: "not-published",
-      localWork: {
-        headSha: OBSERVED,
-        commits: 3,
-        uncommitted: false,
-        operationInProgress: null,
-      },
-    };
-    const legacy: RepairCycle = {
-      usedRounds: 0,
-      lastEvidence: ghost.evidence,
-      consecutiveFalls: 2,
-      attempt: ghost,
-    };
-    writeFileSync(join(target, REPAIR_FILENAME), `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+    const legacy = writeLegacyGhost(target, ghostAttempt(4, 6), 0, 2);
+
+    // A status read before any sweep reaches the same verdict and writes
+    // nothing: the record is healed by the sweep, never by the order the
+    // operator happens to read first.
+    const before = await scanRegistry(layout);
+    assert.deepEqual(
+      before.repair.some((entry) => entry.key === `${REPO}#4`),
+      false,
+      "the status does not present a round whose attempt never reached a worker",
+    );
+    assert.deepEqual(await readRepairCycle(target), legacy, "the status read is read-only");
 
     const sweep = await runOnce(deps);
     assert.equal(sweep.launched.length, 1, "the ghost record no longer blocks the work");
@@ -422,23 +414,7 @@ describe("e2e: a repair round that never started is not a fall (issue 181)", () 
     git.remoteHead = OBSERVED;
 
     const target = workDir(layout, REPO, 5);
-    const ghost: RepairAttempt = {
-      evidence: signatureOf(5, OBSERVED),
-      attempt: 7,
-      observedHeadSha: OBSERVED,
-      remoteHeadSha: null,
-      publication: "not-published",
-      localWork: { headSha: OBSERVED, commits: 1, uncommitted: false, operationInProgress: null },
-    };
-    writeFileSync(
-      join(target, REPAIR_FILENAME),
-      `${JSON.stringify(
-        { usedRounds: 0, lastEvidence: ghost.evidence, consecutiveFalls: 2, attempt: ghost },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    writeLegacyGhost(target, ghostAttempt(5, 7), 0, 2);
 
     // The operator's workspace moves (a new disk, a restored backup): the same
     // artifacts land elsewhere and a fresh invocation must reach the same

@@ -341,8 +341,14 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     }
 
     const cycle = await readRepairCycle(dir);
-    if (hasRepairCycle(cycle)) {
-      const attempt = cycle.attempt;
+    const attempt = cycle.attempt;
+    // A round whose attempt never reached a worker is not presented as one
+    // (issue 181): it is neither an attempt nor a fall, and the next sweep
+    // heals the record it left behind.
+    const unstarted =
+      attempt !== null &&
+      (await readAttemptStartEvidence(dir, attempt.attempt)) === "unstarted";
+    if (hasRepairCycle(cycle) && !unstarted) {
       const evidence =
         attempt === null ? null : await readWorkEvidence(layout, dir, attempt.attempt);
       repair.push({ key, cycle, evidence });

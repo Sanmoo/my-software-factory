@@ -51,7 +51,6 @@ export async function probeAttemptArtifacts(
   return { eventLog, sandcastleLog };
 }
 
-/** A probe that cannot answer is uncertainty, never absence. */
 export function unverified(presence: EvidencePresence): boolean {
   return presence === "could not be verified";
 }
@@ -71,7 +70,7 @@ export async function readWorkEvidence(
     workDir: { path: `${shownDir}/`, presence: dirPresence },
     eventLog: { path: `${shownDir}/${eventLogName(attempt)}`, presence: artifacts.eventLog },
     sandcastleLog: {
-      path: `${shownDir}/sessao/${sandcastleLogName(attempt)}`,
+      path: `${shownDir}/${SESSIONS_SUBDIR}/${sandcastleLogName(attempt)}`,
       presence: artifacts.sandcastleLog,
     },
   };
