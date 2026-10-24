@@ -13,12 +13,7 @@ import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
 import { clearWorkerStop, requestWorkerStop } from "./stop-request.js";
-import {
-  describeForeignRecord,
-  ownOutcomeRecord,
-  readOutcomeRecord,
-  type OutcomeRecord,
-} from "../state/outcome.js";
+import { describeForeignRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
@@ -41,7 +36,14 @@ import {
   type LoadedAgentResources,
 } from "./inventory.js";
 import { agentFileProblem, modelAuthSources } from "./model-auth.js";
-import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
+import { appendAttemptEvent, sandcastleLogName } from "../work-record/logs.js";
+import { ownOutcomeRecord } from "../work-record/outcome.js";
+import { openWorkRecord } from "../work-record/record.js";
+import {
+  GUARDRAIL_ENTRY_MODULE,
+  GUARDRAIL_IMAGE_ROOT,
+  guardrailContainerModules,
+} from "./guardrail/staging.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
 
@@ -283,19 +285,14 @@ export function workerFlagArgs(resources: LoadedAgentResources): string[] {
  *  `npm run build:image` (not a distributed package), and the staged tree
  *  mirrors `dist/` so the extension's relative imports resolve; the preflight
  *  refuses an image without it rather than running the session unguarded. */
-export const GUARDRAIL_CONTAINER_FILE = "/opt/msf/runtime/guardrail/extension.js";
+export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
 
-/** Every module the in-container guardrail loads at session start. The image
- *  must carry all of them: the extension's relative imports fail closed, and a
- *  preflight that proved only one path let a half-staged image through while
- *  naming the file that WAS present. */
-export const GUARDRAIL_CONTAINER_MODULES = [
-  GUARDRAIL_CONTAINER_FILE,
-  "/opt/msf/runtime/call-recovery.js",
-  "/opt/msf/runtime/stop-request.js",
-  "/opt/msf/runtime/guardrail/delegation.js",
-  "/opt/msf/runtime/guardrail/journal-lock.js",
-] as const;
+/** Every module the in-container guardrail loads, computed from the compiled
+ *  extension's own relative imports (issue 193): the image must carry all of
+ *  them and nothing else. The stage script provisions the same closure, so a
+ *  stale image is refused by the exact missing names and a dissolved
+ *  compatibility re-export cannot be demanded as a dead file. */
+export const GUARDRAIL_CONTAINER_MODULES: readonly string[] = guardrailContainerModules();
 
 const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
@@ -734,7 +731,7 @@ export class SandcastleRuntime implements WorkerRuntime {
    * log names the mismatch so the diagnosis needs no guessing.
    */
   private async observedOutcome(request: WorkRequest): Promise<SessionResult["outcome"]> {
-    const record: OutcomeRecord | null = await readOutcomeRecord(request.workDir);
+    const { outcome: record } = await openWorkRecord(request.workDir).read();
     const own = ownOutcomeRecord(record, request.attempt);
     if (own !== null) return own.class;
     if (record !== null) {

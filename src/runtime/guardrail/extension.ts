@@ -8,9 +8,10 @@
  * previous round already attempted — is blocked before it can be repeated. The
  * prompt cannot make a worker safe by obedience; this can.
  *
- * It shares the classifier and the artifact layout with the host
- * (`runtime/effects.ts`, `runtime/continuity-artifacts.ts`), so "which effect
- * is this?" has one answer on both sides of the container boundary.
+ * It shares the classifier and the Work record with the host
+ * (`runtime/effects.ts`, `work-record/continuity.ts`), so "which effect is
+ * this?" and "what does the record say?" have one answer on both sides of the
+ * container boundary.
  *
  * Installed by the worker image at /opt/msf/runtime/guardrail/extension.js and loaded
  * with `--extension`; it reads the work mount from MSF_WORK_MOUNT.
@@ -33,7 +34,7 @@ import {
   readEffectJournal,
   readGuardrailState,
   type GuardrailState,
-} from "../continuity-artifacts.js";
+} from "../../work-record/continuity.js";
 
 /** What Pi's `on()` returns: the function that removes the handler. */
 export type GuardrailSubscription = () => void;

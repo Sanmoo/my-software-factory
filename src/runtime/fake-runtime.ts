@@ -6,7 +6,7 @@ import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { LiveWorker } from "../state/liveness.js";
-import { appendAttemptEvent } from "./attempt-logs.js";
+import { appendAttemptEvent } from "../work-record/logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";

@@ -23,7 +23,7 @@ import { workIdentityKey, type WorkIdentity } from "../tracker/identity.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { classifyCommand, type EffectAction } from "./effects.js";
-import { eventLogName } from "./attempt-logs.js";
+import { eventLogName } from "../work-record/logs.js";
 import { pendingCallRecovery, readCallRecoveries, recoveryForIntent, recoveryConsumption } from "./call-recovery.js";
 import {
   appendJournalResult,
@@ -42,7 +42,7 @@ import {
   type JournalResult,
   type PauseReason,
   type PauseRecord,
-} from "./continuity-artifacts.js";
+} from "../work-record/continuity.js";
 import {
   findSessionFile,
   inspectSessionFile,
@@ -50,7 +50,7 @@ import {
   sessionToolResults,
   type SessionInspection,
   type SessionToolResult,
-} from "./session-log.js";
+} from "../work-record/sessions.js";
 
 export interface ContinuityDeps {
   workDir: string;
