@@ -52,7 +52,7 @@ by `account` — the API token's owner, not an implicitly different human
 operator. The token is never a YAML value: `token-env` names the local
 environment variable that holds it. This release only reads Jira: `msf status`
 lists the candidates (no claim, comment or launch), and `msf run` refuses a
-Jira configuration before any claim.
+Jira configuration before any claim. A Jira-only factory writes `repos: []`.
 
 ## Usage
 

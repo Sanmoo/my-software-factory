@@ -110,7 +110,6 @@ export function jiraSelectionOf(source: JiraSourceConfig): TicketSelection {
   };
 }
 
-
 export function githubTicket(repo: string, number: number): GitHubTicketIdentity {
   return githubTicketAt(GITHUB_SITE, repo, number);
 }

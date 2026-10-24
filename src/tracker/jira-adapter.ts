@@ -98,6 +98,19 @@ export class JiraAuthenticationError extends Error {
   }
 }
 
+/** The credential was accepted, but the site did not say WHICH account it
+ *  authenticated: the configured account cannot be verified. */
+export class JiraAccountUnverifiedError extends Error {
+  constructor(site: string, configured: string) {
+    super(
+      `Jira site "${site}" accepted the credential but did not report which account it authenticated ` +
+        `(/myself carries no emailAddress), so the configured account "${configured}" cannot be verified. ` +
+        `The factory refuses to act as an unidentified account`,
+    );
+    this.name = "JiraAccountUnverifiedError";
+  }
+}
+
 export class JiraAccountMismatchError extends Error {
   constructor(site: string, authenticated: string, configured: string) {
     super(
@@ -215,10 +228,7 @@ export class JiraTicketAdapter implements TicketTracker {
     // The configured account must be the one the credential authenticated as:
     // an unidentified identity is refused, never relabelled as the config's.
     if (account.emailAddress === null) {
-      throw new JiraAuthenticationError(
-        this.site,
-        "the site did not report the authenticated account's email, so the configured account cannot be verified",
-      );
+      throw new JiraAccountUnverifiedError(this.site, this.account);
     }
     if (account.emailAddress.toLowerCase() !== this.account.toLowerCase()) {
       throw new JiraAccountMismatchError(this.site, account.emailAddress, this.account);
