@@ -472,13 +472,14 @@ function parseSearchPage(site: string, body: unknown): {
   if (isLast !== undefined && typeof isLast !== "boolean") {
     throw new JiraProtocolError(site, "the search response carries a non-boolean isLast");
   }
-  // A page that does not state its own end would make a truncated answer read as
-  // the whole selection; that is a read failure (unknown), never a short list.
-  if (isLast === undefined && nextPageToken === null) {
-    throw new JiraProtocolError(site, "the search page neither ends the result nor carries a page token");
-  }
+  // Exactly one of Jira's two completeness statements must hold; a page that
+  // leaves it open would make a truncated answer read as the whole selection,
+  // which is a read failure (unknown), never a short list.
   if (isLast === true && nextPageToken !== null) {
     throw new JiraProtocolError(site, "the search page ends the result and also carries a page token");
+  }
+  if (isLast !== true && nextPageToken === null) {
+    throw new JiraProtocolError(site, "the search page neither ends the result nor carries a page token");
   }
   return { issues: body["issues"] as unknown[], nextPageToken };
 }
