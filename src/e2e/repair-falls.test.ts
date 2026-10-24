@@ -40,12 +40,11 @@ const execFile = promisify(execFileCallback);
  * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing
  * must not burn the round, must stay visible, and must be resumed automatically
  * on the same branch and PR while the remote is still where it was observed.
- * The
- * two ledgers are covered here — the DELIVERED rounds (two before the block)
- * and the consecutive FALLS (two before the block, PR open or not) — plus the
- * three publication verdicts, the pending reconciliation, the concurrent change
- * and the preserved local work. Fake tracker + fake runtime, real temp
- * workspace, git behind the same fake GitWork port.
+ * The two ledgers are covered here — the DELIVERED rounds (two before the
+ * block) and the consecutive FALLS (two before the block, PR open or not) —
+ * plus the three publication verdicts, the pending reconciliation, the
+ * concurrent change and the preserved local work. Fake tracker + fake runtime,
+ * real temp workspace, git behind the same fake GitWork port.
  */
 
 const REPO = "Sanmoo/my-tasks";
