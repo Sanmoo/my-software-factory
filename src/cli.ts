@@ -327,8 +327,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
  * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
  * manual trigger of a retrospective round (issue 141). A full window since the
  * last report ignores the threshold; `<work>` (the work's on-disk key) analyzes
- * exactly that finished work. The lane's marker is its exclusivity, so the
- * trigger works while `msf run` is sweeping.
+ * exactly that finished work.
  */
 async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
   const config = loadConfigFrom(process.cwd(), args.configPath);
