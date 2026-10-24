@@ -19,12 +19,12 @@ Automatic recoveries draw on a separate, finite budget with explicit backoff;
 exhausting it pauses the work and asks the human. `@earendil-works/pi-durable`
 is not adopted.
 
-The consequence, stated so nobody rediscovers it as a bug: `src/state/outcome.ts`
-keeps a missing outcome as absence rather than as the `abrupt-fall` class ("its
-fact IS the absence"), and `src/state/derive.ts` applies *first fall frees the
-work, a second consecutive one blocks it* to falls alone — factory or container
-death spends no attempt, and `Orphaned` describes the interrupted attempt
-awaiting reconciliation.
+The consequence, stated so nobody rediscovers it as a bug:
+`src/state/outcome.ts` keeps a missing outcome as absence rather than as the
+`abrupt-fall` class ("its fact IS the absence"), and `src/state/derive.ts`
+applies *first fall frees the work, a second consecutive one blocks it* to
+falls alone — factory or container death spends no attempt, and `Orphaned`
+describes the interrupted attempt awaiting reconciliation.
 
 Rejected: pi durable (alternative C). In 186 runs across the scenario matrix it
 tied with the native session on every measured axis — same confirmed progress

@@ -46,7 +46,7 @@ import {
 
 /**
  * The in-memory fake tracker: the second adapter the port foresees from the
- * start (fundação #3). It feeds the state machine, derivation and launches of
+ * start. It feeds the state machine, derivation and launches of
  * the whole loop with deterministic scenarios — no network, no container.
  */
 

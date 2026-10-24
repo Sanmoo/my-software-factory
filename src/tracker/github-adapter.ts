@@ -428,8 +428,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
   /** 4. Claim: the padlock (the claim label) lands first, the assignee follows
    *  as decoration — never what holds the work — and the pool label leaves last,
    *  so an interruption leaves the work claimed and recoverable by the next
-   * derivation's 1st fall; the reverse order left it in neither the
-   *  pool nor the reserved set. Only an absent label is tolerated; any other
+   *  derivation's 1st fall. Only an absent label is tolerated; any other
    *  failure propagates as a failed launch, the work stays in the pool and the
    *  next tick retries it. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
@@ -474,7 +473,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
   /** 5. Release: swaps claimed→ready back (the ruler's 1st fall — the work
    *  re-enters the pool) or removes only the padlock when no ready label is
-   * given. Mirrors the claim: the pool label comes back first, the
+   *  given. Mirrors the claim's order: the pool label comes back first, the
    *  padlock leaves last. */
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
@@ -517,8 +516,8 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
   /** 5b. Block: swaps claimed→blocked on the 2nd consecutive fall —
    *  the claim is held until the terminal state, so the assignee stays. Same
-   * order as the claim: the blocked label lands first, the padlock
-   *  leaves last. */
+   *  order as the claim: the blocked label lands first, the padlock leaves
+   *  last. */
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -675,7 +674,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
         // so they are dropped here (an approval is not feedback; the inline
         // comments come from the other channel below). Dropped, a null body
         // can never reach the state derivation, where isAgentSpeech would
-        // crash on it (body.includes of null — spec #7). A review that DID
+        // crash on it (body.includes of null). A review that DID
         // speak keeps its submitted_at; one without it falls back to ""
         // (sorted first — the honest floor, never a lie).
         ...(reviews ?? []).filter(isSpeechReview).map((review) => ({
@@ -1053,7 +1052,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
 /** A review submission that carries speech — body null/empty is the
  *  approval-only review: no signal, dropped before it can reach the
- *  derivation (a null body would crash isAgentSpeech — spec #7). */
+ *  derivation (a null body would crash isAgentSpeech). */
 function isSpeechReview(review: RestReview): review is RestReview & { body: string } {
   return review.body !== null && review.body !== "";
 }

@@ -227,8 +227,8 @@ export function repairEvidenceSignature(input: {
 /**
  * The observed head a signature was built on: component 2 of the signature
  * (Work key | headSha | reasons | checks). Legacy reparo.json files carry only
- * the signature, so this is how the incident's state is reconciled without
- * metadata that did not exist when it was written. Null for a signature of an
+ * the signature, so this is how a state written in the older shape is
+ * reconciled without metadata that did not exist when it was written. Null for a signature of an
  * unknown shape — never a guessed SHA.
  */
 export function observedHeadShaOfSignature(signature: string): string | null {

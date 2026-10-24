@@ -36,7 +36,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
  *   1. outcome with PR open → stays reserved awaiting the human (claim held);
  *   2. fall without PR, 1st consecutive → release (claimed→ready; branch stays);
  *   3. fall without PR, 2nd consecutive → blocked + comment with the exact outcome;
- * 4. NO outcome record → an interruption, absorbed by its recovery budget;
+ *   4. NO outcome record → an interruption, absorbed by its recovery budget;
  *   5. PR already existing on the issue → reserved, no launch, no fall recorded;
  *   6. blocked self-report → the factory only records it.
  */

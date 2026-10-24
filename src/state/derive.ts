@@ -339,8 +339,8 @@ export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseRea
 /** Confirmed recovery: no conflicts and every required check
  *  approved — narrower than an obsolete premise, which also holds for pending,
  *  neutral or skipped checks. The required set must be KNOWN: the empty set a
- * repository without CI declares is a confirmation; null
- *  (unknown) is never one. */
+ *  repository without CI declares is a confirmation; null (unknown) is never
+ *  one. */
 function repairRecovered(facts: PrRepairFacts): boolean {
   if (facts.mergeState !== "mergeable") return false;
   const checks = facts.requiredChecks;

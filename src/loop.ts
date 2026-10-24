@@ -186,9 +186,9 @@ export interface LoopDeps {
   /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
   /** The liveness probe the operational cycle reads before deciding anything
-   * that could replace a worker. The composition (wireRunDeps)
-   *  supplies the real read-only Docker probe; absent means this process sees
-   *  only its own launches. Never a CLI flag — tests inject a fake probe. */
+   *  that could replace a worker. The composition (wireRunDeps) supplies the
+   *  real read-only Docker probe; absent means this process sees only its own
+   *  launches. Never a CLI flag — tests inject a fake probe. */
   probe?: LivenessProbe;
   /** The bound of one probe query; a hung Docker call is unknown, never a stall. */
   probeTimeoutMs?: number;
@@ -528,7 +528,7 @@ interface Launchable {
   /** The unpublished attempt this repair takes over, when resuming. */
   resuming?: RepairAttempt | null;
   /** The attempt a recovery or a model provider retry continues — the SAME
-   * number. */
+   *  number. */
   attempt?: number;
   /** The attempt was ended by the operator's requested stop: it
    *  resumes now, spending no recovery. */
@@ -598,8 +598,8 @@ export class SweepEngine {
   /** The works whose duplicate containers were already reported. */
   private announcedDuplicates: ReadonlySet<string> = new Set();
   /** Live containers whose reservation names no Work this composition can
-   * address: said once, and once more when the worker is gone —
-   *  never a line per tick. */
+   *  address: said once, and once more when the worker is gone — never a line
+   *  per tick. */
   private readonly heldSurvivors = new Set<string>();
   /** The reason each held reservation was last reported: said once per
    * appearance, re-said only when the reason changes. */
