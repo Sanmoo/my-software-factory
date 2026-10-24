@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ExternalWorld, writeExternalWorld } from "./effects.js";
 
-const fresh = () => join(mkdtempSync(join(tmpdir(), "msf111-eff-")), "external.jsonl");
+const fresh = () => join(mkdtempSync(join(tmpdir(), "msf-continuity-eff-")), "external.jsonl");
 
 test("nothing recorded means the effect can be performed", () => {
 	const world = new ExternalWorld(fresh());

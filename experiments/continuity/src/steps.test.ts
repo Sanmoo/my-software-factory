@@ -8,7 +8,7 @@ import { Journal } from "./journal.js";
 import { runStep, type StepRunHooks } from "./steps.js";
 import { FaultSpec, stepAt } from "./workload.js";
 
-const scratch = () => mkdtempSync(join(tmpdir(), "msf111-step-"));
+const scratch = () => mkdtempSync(join(tmpdir(), "msf-continuity-step-"));
 
 class Killed extends Error {}
 

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Ownership, OwnershipConflict, isProcessAlive } from "./ownership.js";
 
-const fresh = () => mkdtempSync(join(tmpdir(), "msf111-own-"));
+const fresh = () => mkdtempSync(join(tmpdir(), "msf-continuity-own-"));
 
 test("a free work dir can be acquired, and a second owner is refused", () => {
 	const dir = fresh();

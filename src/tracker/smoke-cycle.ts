@@ -15,11 +15,10 @@ import { DEFAULT_LABELS } from "../config.js";
  * — the label-filtered one lags minutes (search index), and even the plain
  * open-issues listing lags >30s behind a freshly created issue — while DIRECT
  * GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies read) are immediately
- * consistent. So the cycle proves eligibility via
- * DIRECT reads right after seeding (ops 1+2 and 1+3) with NO settle wait,
- * and the LISTING's live proof becomes ONE non-blocking open-issues()
- * re-check after the cycle's LAST operation — by then the listing has had
- * minutes to converge. A stale listing is explicitly reported, never a
+ * consistent. So the cycle proves eligibility via DIRECT reads right after
+ * seeding (ops 1+2 and 1+3) with NO settle wait, and the LISTING's live proof
+ * becomes ONE non-blocking open-issues() re-check after the cycle's LAST
+ * operation — by then the listing has had minutes to converge. A stale listing is explicitly reported, never a
  * failure: the FACTORY tolerates listing lag by design (the pool is
  * re-derived every tick and self-heals); the smoke must not demand instant
  * listing visibility.

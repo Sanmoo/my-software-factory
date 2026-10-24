@@ -148,9 +148,9 @@ describe("the 9 operations over gh", () => {
     const gh = ghCall(calls, (c) => c.args[0] === "api");
     const path = gh.args.find((a) => a.startsWith("repos/"));
     assert.ok(path?.includes("state=open"));
-    // the dialect: NO labels query param — GitHub's
-    // label-filtered listing is search-index-backed and lags minutes behind a
-    // fresh label; the neutral read hands every issue to the derivation
+    // the dialect: NO labels query param — the label-filtered listing is
+    // search-index-backed and lags minutes behind a fresh label, while the
+    // neutral read hands every issue to the derivation
     assert.ok(!path?.includes("labels="), "the labels query param is never sent");
     assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
   });
