@@ -93,7 +93,7 @@ import {
   recordStopRequest,
   type RecoveryDecision,
 } from "./pool/recovery.js";
-import { OperatorStop, stopConfirmed, stopHoldReason, type StopLaunch, type StopReport } from "./pool/stop.js";
+import { OperatorStop, reconcileUnconfirmedStops, stopConfirmed, type StopLaunch, type StopReport } from "./pool/stop.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
@@ -698,8 +698,9 @@ export class SweepEngine {
 
     // A stop whose confirmation failed on the previous invocation is settled
     // BEFORE the derivation (issue #146): the work only resumes once the
-    // previous worker is known to be gone.
-    await this.reconcileUnconfirmedStops(allReserved, inFlight);
+    // previous worker is known to be gone. The stop module re-reads the rule
+    // the stop applied; this tick only says the verdicts.
+    await this.settleUnconfirmedStops(allReserved, inFlight);
 
     const derived = await deriveReserved(
       this.deps.tickets,
@@ -2230,40 +2231,35 @@ export class SweepEngine {
 
   /**
    * A requested stop whose confirmation failed on a previous invocation
-   * (issue #146): the work is held until a probe proves the previous worker
-   * gone, and only then becomes the requested-stop resume it was meant to be. An
-   * unreadable probe is uncertainty: the work stays held, the reason said out
-   * loud, and no worker is launched on top of it.
+   * (issue #146): the stop module re-derives the hold over the same rule it
+   * applied — the persisted `lastStop` and the latest liveness observation —
+   * and promotes a worker confirmed gone to the free resume. An unreadable
+   * probe is uncertainty: the work stays held, said out loud, and no worker is
+   * launched on top of it.
    */
-  private async reconcileUnconfirmedStops(
+  private async settleUnconfirmedStops(
     works: readonly ReservedWorkInput[],
     inFlight: ReadonlySet<string>,
   ): Promise<void> {
-    const held: Array<{ dir: string; work: WorkIdentity; attempt: number; because: string }> = [];
-    for (const work of works) {
-      const key = workKeyOf(work.work);
-      if (inFlight.has(key)) continue;
-      const ledger = await readRecoveryLedger(work.dir);
-      const stop = ledger.lastStop;
-      if (stop === null || stop.kind !== "stop-unconfirmed") continue;
-      held.push({ dir: work.dir, work: work.work, attempt: stop.attempt, because: stop.because });
-    }
-    if (held.length === 0) {
+    const verdicts = await reconcileUnconfirmedStops(
+      works
+        .map((work) => ({ key: workKeyOf(work.work), dir: work.dir }))
+        .filter((work) => !inFlight.has(work.key)),
+      this.liveness,
+    );
+    if (verdicts.length === 0) {
       this.reportedStopHolds.clear();
       return;
     }
 
-    for (const entry of held) {
-      const key = workKeyOf(entry.work);
-      const because = stopHoldReason(this.liveness, key);
-      if (because !== null) {
-        this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
+    for (const verdict of verdicts) {
+      if (verdict.kind === "hold") {
+        this.reportStopHold(verdict.key, verdict.because);
         continue;
       }
-      this.reportedStopHolds.delete(key);
-      await confirmStopRequest(entry.dir, entry.attempt);
+      this.reportedStopHolds.delete(verdict.key);
       this.log(
-        `derived ${key}: the worker of the previous stop is confirmed gone — attempt ${entry.attempt} resumes ` +
+        `derived ${verdict.key}: the worker of the previous stop is confirmed gone — attempt ${verdict.attempt} resumes ` +
           "without spending a recovery",
       );
     }

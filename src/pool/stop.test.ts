@@ -9,12 +9,14 @@ import { ensureWorkspace, workDirOfKey, type WorkspaceLayout } from "../layout.j
 import { deferred } from "../runtime/deferred.js";
 import type { LivenessObservation, LiveWorker } from "../state/liveness.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import { consumeRecovery, readRecoveryLedger } from "./recovery.js";
+import { consumeRecovery, readRecoveryLedger, recordUnconfirmedStop } from "./recovery.js";
 import {
   OperatorStop,
+  reconcileUnconfirmedStops,
   stopConfirmed,
   type StopInput,
   type StopLaunch,
+  type StopWorkRef,
 } from "./stop.js";
 import { workKeyOf } from "./work-key.js";
 
@@ -231,5 +233,83 @@ describe("the operator's stop of this run (issue #188)", () => {
     const ledger = await readRecoveryLedger(dir);
     assert.equal(ledger.consumed, 0);
     assert.equal(ledger.lastStop?.kind, "stop-requested");
+  });
+});
+
+describe("the next invocation's reconciliation of an unconfirmed stop (issue #190)", () => {
+  let root: string;
+  let layout: WorkspaceLayout;
+  let dir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "msf-stop-reconcile-"));
+    layout = ensureWorkspace(join(root, "ws"));
+    dir = workDirOfKey(layout, KEY);
+    mkdirSync(dir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const PERSISTED = "a worker of this work is still alive";
+
+  async function persistedStop(): Promise<void> {
+    await recordUnconfirmedStop(dir, 1, PERSISTED, () => NOW);
+  }
+
+  const works = (): StopWorkRef[] => [{ key: KEY, dir }];
+
+  test("a worker confirmed gone resumes the attempt free of charge", async () => {
+    await persistedStop();
+
+    const verdicts = await reconcileUnconfirmedStops(
+      works(),
+      { state: "known", workers: [] },
+      () => NOW,
+    );
+
+    assert.deepEqual(verdicts, [{ kind: "resume", key: KEY, attempt: 1 }]);
+    const ledger = await readRecoveryLedger(dir);
+    assert.equal(ledger.lastStop?.kind, "stop-requested", "the confirmed stop becomes the resume it was meant to be");
+    assert.equal(ledger.lastStop?.attempt, 1);
+    assert.equal(ledger.lastStop?.at, NOW.toISOString());
+    assert.equal(ledger.consumed, 0, "the resume spends no recovery");
+  });
+
+  test("a worker still alive holds the work instead of relaunching over it", async () => {
+    await persistedStop();
+
+    const verdicts = await reconcileUnconfirmedStops(works(), {
+      state: "known",
+      workers: [liveWorker()],
+    });
+
+    assert.deepEqual(verdicts, [
+      { kind: "hold", key: KEY, because: `${PERSISTED} — the previous stop (${PERSISTED}) stays unconfirmed` },
+    ]);
+    const ledger = await readRecoveryLedger(dir);
+    assert.equal(ledger.lastStop?.kind, "stop-unconfirmed", "the hold never promotes the stop");
+    assert.equal(ledger.consumed, 0);
+  });
+
+  test("an unreadable liveness is a hold, never a relaunch", async () => {
+    await persistedStop();
+
+    const verdicts = await reconcileUnconfirmedStops(works(), {
+      state: "unknown",
+      reason: "Cannot connect to the Docker daemon",
+    });
+
+    assert.deepEqual(verdicts, [
+      {
+        kind: "hold",
+        key: KEY,
+        because:
+          `the worker liveness could not be read (Cannot connect to the Docker daemon) — ` +
+          `the previous stop (${PERSISTED}) stays unconfirmed`,
+      },
+    ]);
+    assert.equal((await readRecoveryLedger(dir)).lastStop?.kind, "stop-unconfirmed");
   });
 });
