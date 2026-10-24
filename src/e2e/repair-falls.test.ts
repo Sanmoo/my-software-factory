@@ -191,6 +191,17 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     );
   }
 
+  /** The evidence a started repair attempt leaves: its own event log. The
+   *  never-started verdict (issue 181) reads this, so a scenario about a real
+   *  in-flight attempt must carry it. */
+  function seedAttemptLog(number: number, attempt: number): void {
+    writeFileSync(
+      join(workDir(layout, REPO, number), `log-${attempt}.jsonl`),
+      `${JSON.stringify({ event: "session-start", attempt })}\n`,
+      "utf8",
+    );
+  }
+
   /** The impediment that persists: conflicts on the observed head. */
   async function conflictingOn(
     tracker: FakeTrackerAdapter,
@@ -619,7 +630,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       `${JSON.stringify({ usedRounds: 1, lastEvidence: evidence })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 107), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(107, 2);
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
@@ -679,6 +690,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
+    seedAttemptLog(115, 2);
     tracker.setPrRepairFacts({ repo: REPO, prNumber: pr, mergeState: "unknown", requiredChecks: null });
     tracker.addPrComment({ repo: REPO, prNumber: pr }, "humano", "please also check the docs");
     git.remoteUnavailable = true;
@@ -715,6 +727,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
+    seedAttemptLog(114, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     // The remote moved, but the branch cannot be read: the truth is "unknown",
     // not "the attempt produced the new head" nor "a stranger did".
@@ -791,6 +804,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
+    seedAttemptLog(111, 2);
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
@@ -834,6 +848,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
+    seedAttemptLog(119, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     await tracker.blockClaim({ repo: REPO, number: 119 }, DEFAULT_LABELS);
     tracker.addComment({ repo: REPO, number: 119 }, "humano", "authorized — go ahead");
@@ -919,7 +934,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 113), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(113, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     // A collaborator pushed to the same branch AFTER the fall.
     git.remoteHead = "collaborator777";
@@ -1235,7 +1250,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       `${JSON.stringify({ class: "clean-without-pr", attempt: 2 })}\n`,
       "utf8",
     );
-    writeFileSync(join(workDir(layout, REPO, 126), "log-2.jsonl"), "{}\n", "utf8");
+    seedAttemptLog(126, 2);
     await conflictingOn(tracker, pr, OBSERVED);
     git.remoteHead = OBSERVED;
 
