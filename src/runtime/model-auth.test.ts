@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import {
   NO_MODEL_AUTH_MESSAGE,
   PI_MODEL_AUTH_ENV_VARS,
-  authFileProblem,
+  agentFileProblem,
   modelAuthEnv,
 } from "./model-auth.js";
 
@@ -52,17 +52,17 @@ describe("model authentication — explicit sources only", () => {
     const dir = mkdtempSync(join(tmpdir(), "msf-auth-"));
     const path = join(dir, "auth.json");
 
-    assert.match(authFileProblem(path) ?? "", /unreadable/);
+    assert.match(agentFileProblem("worker-auth-file", path) ?? "", /unreadable/);
 
     writeFileSync(path, "{ broken", "utf8");
-    assert.match(authFileProblem(path) ?? "", /not valid JSON/);
-    assert.ok(!(authFileProblem(path) ?? "").includes("broken"));
+    assert.match(agentFileProblem("worker-auth-file", path) ?? "", /not valid JSON/);
+    assert.ok(!(agentFileProblem("worker-auth-file", path) ?? "").includes("broken"));
 
     writeFileSync(path, "[]", "utf8");
-    assert.match(authFileProblem(path) ?? "", /not a Pi auth\.json object/);
+    assert.match(agentFileProblem("worker-auth-file", path) ?? "", /not a Pi JSON object/);
 
     writeFileSync(path, '{"openai":{"type":"api_key","key":"sentinel-secret"}}', "utf8");
-    assert.equal(authFileProblem(path), null);
+    assert.equal(agentFileProblem("worker-auth-file", path), null);
 
     rmSync(dir, { recursive: true, force: true });
   });

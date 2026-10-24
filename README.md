@@ -52,6 +52,7 @@ node dist/cli.js status      # the trail, read-only
 ```
 
 The worker model is required in `msf.yaml`; invocations do not select it.
+Move any model previously selected on the command line into `worker-model`.
 `npm run build:image` provisions every declared skill, extension and reviewer
 agent into the image. The operator's exact script — build, model credentials,
 clean-host verification and the real proof — lives in the
@@ -67,8 +68,9 @@ check results) — never LLM prose.
 The worker's agent environment is factory-owned and needs nothing of Pi on the
 host: `agent-resources.json` pins Pi, the upstream skill revision, the
 delegation extension and the reviewer agents; the image records what it
-provisioned in an inventory. Only those resources load — target-project and
-host skills/packages are ignored (ADR 0001).
+provisioned in an inventory and stages the continuity guardrail from this
+checkout. Only those resources load — target-project and host skills/packages
+are ignored (ADR 0001).
 
 ## Tests
 

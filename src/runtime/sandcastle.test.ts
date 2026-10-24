@@ -15,8 +15,7 @@ import {
   SandcastleRuntime,
   SESSIONS_CONTAINER_DIR,
   AGENT_DIR_ENV,
-  AUTH_MOUNT,
-  AUTH_MOUNT_DIR,
+  AGENT_FILES_MOUNT_DIR,
   MISE_CONTAINER_DIR,
   SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
@@ -26,8 +25,7 @@ import {
   agentSkillPath,
   defaultPreflight,
   dockerSocketFromHost,
-  latestPiSessionId,
-  stageAuthFile,
+  stageAgentFiles,
   unixSocketPath,
   workerFlagArgs,
   workerShapedDockerRun,
@@ -332,7 +330,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(runOptions?.maxIterations, 1, "v0.1: one session, one full agent run");
   });
 
-  test("an explicitly supplied auth file is mounted read-only and copied into the agent dir at start — never baked in", async () => {
+  test("an explicitly supplied agent file is mounted read-only and copied into the agent dir at start — never baked in", async () => {
     let authContent: string | undefined;
     const withAuth = new SandcastleRuntime({
       model: MODEL,
@@ -340,7 +338,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
       workspace,
       dockerSocket,
       agentResources: RESOURCES,
-      authFile,
+      agentFiles: [{ name: "auth.json", hostPath: authFile }],
       authEnv: {},
       blockedLabel: DEFAULT_LABELS.blocked,
       preflight: async () => {},
@@ -350,7 +348,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
       },
       dockerProvider: (options) => {
         dockerOptions = options;
-        const mount = (options.mounts ?? []).find((candidate) => candidate.sandboxPath === AUTH_MOUNT_DIR);
+        const mount = (options.mounts ?? []).find((candidate) => candidate.sandboxPath === AGENT_FILES_MOUNT_DIR);
         if (mount !== undefined) authContent = readFileSync(join(mount.hostPath, "auth.json"), "utf8");
         return dummySandbox();
       },
@@ -358,23 +356,23 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
 
     await withAuth.launch(request);
 
-    const authMount = (dockerOptions?.mounts ?? []).find((mount) => mount.sandboxPath === AUTH_MOUNT_DIR);
-    assert.ok(authMount, "the auth dir is mounted read-only");
-    assert.equal(authMount?.readonly, true);
-    assert.match(authMount?.hostPath ?? "", /msf-auth-/);
+    const agentFilesMount = (dockerOptions?.mounts ?? []).find((mount) => mount.sandboxPath === AGENT_FILES_MOUNT_DIR);
+    assert.ok(agentFilesMount, "the supplied-files dir is mounted read-only");
+    assert.equal(agentFilesMount?.readonly, true);
+    assert.match(agentFilesMount?.hostPath ?? "", /msf-agent-files-/);
     assert.equal(authContent, readFileSync(authFile, "utf8"));
     const hook = runOptions?.hooks?.sandbox?.onSandboxReady?.[0];
     assert.ok(hook, "the auth copy runs first");
-    assert.ok(hook?.command.includes(AUTH_MOUNT));
+    assert.ok(hook?.command.includes(`${AGENT_FILES_MOUNT_DIR}/auth.json`));
     assert.match(hook?.command ?? "", /\$HOME\/\.pi\/agent/);
-    assert.ok(!existsSync(authMount!.hostPath), "the staged auth dir dies with the launch");
+    assert.ok(!existsSync(agentFilesMount!.hostPath), "the staged dir dies with the launch");
   });
 
-  test("without an auth file no auth mount is created — provider env vars are the other explicit source", async () => {
+  test("without a supplied file no files mount is created — provider env vars are the other explicit source", async () => {
     await runtime.launch(request);
 
     const mounts = dockerOptions?.mounts ?? [];
-    assert.ok(mounts.every((mount) => mount.sandboxPath !== AUTH_MOUNT_DIR));
+    assert.ok(mounts.every((mount) => mount.sandboxPath !== AGENT_FILES_MOUNT_DIR));
   });
 
   test("the toolchain converges BEFORE the prompt: mise install lands the declared tools in the persistent volume", async () => {
@@ -895,7 +893,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       model: "openai/gpt-4o",
       agentResources: RESOURCES,
       authEnv: {},
-      authFile: "/does/not/exist/auth.json",
+      agentFiles: [{ name: "auth.json", hostPath: "/does/not/exist/auth.json" }],
       dockerSocket: SOCKET,
       authProbe: READY_PROBE,
       run: async (_command, args) => {

@@ -114,7 +114,7 @@ ENV PATH="/home/agent/.local/share/mise/shims:${PATH}"
 # already happened. Staged from dist/ by `npm run build:image`, so the image
 # carries exactly the code this factory version pins; the launch preflight
 # refuses an image without it. Read-only to the worker user.
-COPY guardrail /opt/msf/
+COPY docker/guardrail /opt/msf/
 RUN chmod -R a+rX /opt/msf
 
 USER ${AGENT_UID}:${AGENT_GID}
