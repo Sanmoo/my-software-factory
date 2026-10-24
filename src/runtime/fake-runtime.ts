@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
-import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
+import { writeOutcomeRecord, type OutcomeRecord } from "../work-record/outcome.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { LiveWorker } from "../state/liveness.js";
@@ -278,8 +278,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       attempt: request.attempt,
       ...(pr === undefined ? {} : { pr }),
     };
-    mkdirSync(request.workDir, { recursive: true });
-    writeFileSync(join(request.workDir, DESFECHO_FILENAME), JSON.stringify(record, null, 2), "utf8");
+    writeOutcomeRecord(request.workDir, record);
     this.event(request, "session-end", { outcome });
   }
 }

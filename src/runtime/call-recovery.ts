@@ -6,7 +6,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import {
   callKey, linkForAttempt, readEffectJournal, readPause, readSessionLinks,
   type EffectJournal, type JournalIntent,
-} from "./continuity-artifacts.js";
+} from "../work-record/continuity.js";
 import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./session-log.js";
 import { parseJsonObject, type JsonValue } from "./json-line.js";
 

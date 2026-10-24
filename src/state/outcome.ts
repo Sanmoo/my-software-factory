@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { WorkspaceLayout } from "../layout.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { RepairAttempt } from "../pool/repair.js";
@@ -9,9 +6,20 @@ import { exhaustedModelProviderReason } from "../pool/model-provider.js";
 import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
-import type { PauseReason } from "../runtime/continuity-artifacts.js";
-import { effectUnverifiable, knownAttempt } from "../runtime/continuity-artifacts.js";
+import { effectUnverifiable, knownAttempt, type PauseReason } from "../work-record/continuity.js";
 import { pauseMarker } from "../tracker/port.js";
+import {
+  DESFECHO_FILENAME,
+  describeForeignRecord,
+  isRecordedFailure,
+  ownOutcomeRecord,
+  ownWrittenOutcome,
+  readOutcomeRecord,
+  selfReportedBlocked,
+  writeOutcomeRecord,
+  type OutcomeClass,
+  type OutcomeRecord,
+} from "../work-record/outcome.js";
 
 /**
  * The factory's ruler (state/outcome.ts) — classification of outcomes and
@@ -27,35 +35,23 @@ import { pauseMarker } from "../tracker/port.js";
  * natural-language parsing in the critical path.
  */
 
-/** Disk name is a taken decision (tickets 05/10) and stays in PT-BR. */
-export const DESFECHO_FILENAME = "desfecho.json";
-
-/** The class field of the outcome record — vocabulary of ticket 05. */
-export type OutcomeClass =
-  /** The work ended with an open PR: stays reserved, waiting for the human. */
-  | "pr-open"
-  /** The worker self-reported blocked (marker + label) and exited. */
-  | "blocked-self-report"
-  /** Clean end without an open PR — still a fall, per the single ruler. */
-  | "clean-without-pr";
-
 /**
- * Schema of desfecho.json — the artifact contract between the two rulers.
- * The factory validates this schema; it never interprets text.
+ * The outcome record's schema, its reader/writer and its attribution rule are
+ * the Work record's (work-record/outcome.ts); the ruler re-exports them so the
+ * one entry point stays. The factory validates the schema; it never interprets
+ * text.
  */
-export interface OutcomeRecord {
-  class: OutcomeClass;
-  /** Attempt number of this session (1st, 2nd... on the same branch). */
-  attempt: number;
-  /** Present when class is "pr-open". */
-  pr?: {
-    repo: string;
-    number: number;
-    branch: string;
-  };
-  /** Paths of artifacts of this attempt, when the session recorded them. */
-  paths?: Record<string, string>;
-}
+export {
+  DESFECHO_FILENAME,
+  describeForeignRecord,
+  isRecordedFailure,
+  ownOutcomeRecord,
+  ownWrittenOutcome,
+  readOutcomeRecord,
+  selfReportedBlocked,
+  writeOutcomeRecord,
+};
+export type { OutcomeClass, OutcomeRecord };
 
 /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
@@ -149,48 +145,6 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
     };
   }
   return { decision: "release", because: "fall-first" };
-}
-
-/**
- * The record OF THIS ATTEMPT, or null: the ONE place the criterion "is this
- * record this attempt's?" lives — the collection path, the ruler and the
- * status call it, so they cannot diverge (issue 143). A record without an
- * `attempt` (legacy) never parses, so it is absence too.
- */
-export function ownOutcomeRecord(
-  record: OutcomeRecord | null,
-  attempt: number,
-): OutcomeRecord | null {
-  return record !== null && record.attempt === attempt ? record : null;
-}
-
-/**
- * The written failure the ruler counts for CONSECUTIVENESS at launch: a clean
- * end without a PR. A `pr-open` record is a success and resets the count; a
- * self-report is the worker's own stop, not a failure (issue 123).
- */
-export function isRecordedFailure(record: OutcomeRecord | null): boolean {
-  return record?.class === "clean-without-pr";
-}
-
-/**
- * The attempt's own written outcome, unless it is the blocked self-report the
- * `record-only` ruling handles: the record that lets the fall ruler decide
- * (issue 123). One rule, shared by collection and by the derivation that
- * settles an unreconciled attempt.
- */
-export function ownWrittenOutcome(
-  record: OutcomeRecord | null,
-  attempt: number,
-): OutcomeRecord | null {
-  const own = ownOutcomeRecord(record, attempt);
-  return own !== null && own.class !== "blocked-self-report" ? own : null;
-}
-
-/** The ACTUAL blocked self-report of one attempt — a record left by another
- *  attempt is never the current attempt's self-report (issue 103). */
-export function selfReportedBlocked(record: OutcomeRecord | null, attempt: number): boolean {
-  return ownOutcomeRecord(record, attempt)?.class === "blocked-self-report";
 }
 
 /** A self-report is the current attempt's record class, or the label — both structured facts. */
@@ -452,45 +406,4 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
     "ended without an outcome record of its own " +
     `(${describeForeignRecord(record.attempt)})`
   );
-}
-
-/**
- * The one rendering of the history fact "the record on disk is another
- * attempt's", so the operator's wording cannot drift apart (issue 143).
- */
-export function describeForeignRecord(attempt: number): string {
-  return `the record on disk belongs to attempt ${attempt}`;
-}
-
-/**
- * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt. Absence is the FACT "no-outcome" (issue 123): the
- * recovery budget, never the fall ruler, answers it.
- */
-export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {
-  let raw: string;
-  try {
-    raw = await readFile(join(workDir, DESFECHO_FILENAME), "utf8");
-  } catch {
-    return null;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isOutcomeRecord(parsed)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function isOutcomeRecord(value: unknown): value is OutcomeRecord {
-  if (value === null || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  if (typeof record["class"] !== "string") return false;
-  if (!["pr-open", "blocked-self-report", "clean-without-pr"].includes(record["class"])) {
-    return false;
-  }
-  if (typeof record["attempt"] !== "number") return false;
-  return true;
 }

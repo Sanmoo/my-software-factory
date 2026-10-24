@@ -10,7 +10,7 @@ import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
-import { readEffectJournal, readPause } from "../runtime/continuity-artifacts.js";
+import { readEffectJournal, readPause } from "../work-record/continuity.js";
 import { findSessionFile as findSession, inspectSessionFile, sessionToolResults } from "../runtime/session-log.js";
 import { startDeterministicModel, type DeterministicModel } from "./deterministic-model.js";
 import { hostVisibleBase, bridgeAddress, waitForPushThenFindWorker, killContainer } from "./real-continuity-fixtures.js";
@@ -45,7 +45,7 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
       workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
-      notifications: false, configPath: join(root, "delegation.yaml"),
+      notifications: false, configPath: join(root, "delegation.yaml"), jira: [],
     };
     const runtime = new SandcastleRuntime({
       model: config.workerModel, token: "no-github", image: WORKER_IMAGE,

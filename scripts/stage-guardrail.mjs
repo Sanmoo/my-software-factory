@@ -31,11 +31,12 @@ const modules = [
   "runtime/session-log.js",
   "pool/work-key.js",
   "runtime/json-line.js",
-  "runtime/continuity-artifacts.js",
+  "work-record/files.js",
+  "work-record/continuity.js",
   "runtime/guardrail/extension.js",
   "runtime/guardrail/delegation.js",
   "runtime/guardrail/journal-lock.js",
-  "runtime/stop-request.js",
+  "work-record/stop-request.js",
   "tracker/identity.js",
 ];
 const files = modules.map((module) => ({ from: join(root, "dist", module), to: join(stage, module) }));

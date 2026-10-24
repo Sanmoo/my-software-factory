@@ -42,7 +42,7 @@ import {
   type JournalResult,
   type PauseReason,
   type PauseRecord,
-} from "./continuity-artifacts.js";
+} from "../work-record/continuity.js";
 import {
   findSessionFile,
   inspectSessionFile,

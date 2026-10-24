@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { PauseReason, PauseRecord } from "./runtime/continuity-artifacts.js";
+import type { PauseReason, PauseRecord } from "./work-record/continuity.js";
 
 const summaries: Record<PauseReason, string> = {
   "effect-unsupported": "command outcome unknown; operator decision needed",

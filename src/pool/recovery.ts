@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RecoveryBudget } from "../config.js";
-import type { OutcomeClass } from "../state/outcome.js";
+import type { OutcomeClass } from "../work-record/outcome.js";
 
 /**
  * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):

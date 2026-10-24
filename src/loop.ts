@@ -49,7 +49,6 @@ import {
   type ReservedWorkInput,
 } from "./state/derive.js";
 import {
-  readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
   isRecordedFailure,
@@ -72,26 +71,31 @@ import {
   MAX_REPAIR_ROUNDS,
   hasRepairCycle,
   isSettledPublication,
+  chargeRepairRound,
   legacyRepairAttempt,
   readRepairCycle,
-  reconcileRepairAttempt,
   writeRepairCycle,
   type RemoteObservation,
   type RepairAttempt,
   type RepairCycle,
-  type RepairReconciliation,
 } from "./pool/repair.js";
+import {
+  confirmRepairRound,
+  repairOpening,
+  returnUnstartedRound,
+  settleConcurrentChange,
+  settleRepairRound,
+  type RepairLaunchVerdict,
+  type RepairRoundOpening,
+  type RepairSettlement,
+} from "./repair/round.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import {
-  confirmStopRequest,
   consumeRecovery,
   consumeStopRequest,
   readRecoveryLedger,
   recordFailure,
   recordInterruptionStop,
-  recordStopRequest,
-  recordUnconfirmedStop,
-  refundRecovery,
   type RecoveryDecision,
 } from "./pool/recovery.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
@@ -106,19 +110,21 @@ import {
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
 import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
+import {
+  beginOperatorStop,
+  operatorStoppedAttempt,
+  reconcileUnconfirmedStops,
+  recordStopEvidence,
+  settleStoppedAdmission,
+  stopConfirmed,
+  type StopReport,
+} from "./stop/operator-stop.js";
 import { deferred } from "./runtime/deferred.js";
 import { planContinuity, recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
 import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
-import {
-  clearPause,
-  readEffectJournal,
-  knownAttempt,
-  readPause,
-  recheckablePause,
-  writePause,
-  type PauseRecord,
-} from "./runtime/continuity-artifacts.js";
+import { knownAttempt, recheckablePause, type PauseRecord } from "./work-record/continuity.js";
+import { openWorkRecord } from "./work-record/record.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -139,7 +145,7 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
+import { appendAttemptEvent } from "./runtime/attempt-logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
@@ -148,13 +154,14 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * The loop is the general workflow and is thin: the only module that knows
- * the process is a loop — owner of time (the fixed 60 s tick), of the --once
+ * The loop is the general workflow and is thin: the only module that knows the
+ * process is a loop — owner of time (the fixed 60 s tick), of the --once
  * boundary and of waking by event (end of worker vs tick). It interlaces the
  * four phases deciding nothing of the domain: the states live in state/, the
- * liveness policy and the survivor ledger in state/ + pool/, and IO in
- * tracker/ + pool/ + git/ + runtime/ (ticket 07) — the loop only reads the
- * facts and applies what they decide (issue 118).
+ * liveness policy and the survivor ledger in state/ + pool/, the operator's
+ * stop in stop/, the Repair round in repair/, a Work's on-disk record in
+ * work-record/, and IO in tracker/ + pool/ + git/ + runtime/ (ticket 07) — the
+ * loop only reads the facts and applies what they decide (issues 118, 186).
  *
  * Ticket 14: the derivation of the tick covers the states of ALL reserved
  * works (done · done-fallback · rejected · feedback · resumable — state/
@@ -255,24 +262,10 @@ export interface StopOptions {
   cooperativeMs?: number;
 }
 
-/**
- * The facts of one requested stop, for the operator and for the exit status:
- * the works the deadline/second signal forced, and the works whose worker the
- * factory could NOT confirm gone (those are held on the next run).
- */
-export interface StopReport {
-  forced: string[];
-  unconfirmed: Array<{ key: string; because: string }>;
-  /** Why the liveness probe could not answer: the factory cannot say that no
-   *  worker survives, and never calls a stop safe on a guess. */
-  unreadBecause: string | null;
-}
-
-/** The one verdict of a stop: safe only when every worker's end was confirmed
- *  and the factory could see the workspace while it concluded. */
-export function stopConfirmed(report: StopReport): boolean {
-  return report.unconfirmed.length === 0 && report.unreadBecause === null;
-}
+/** The stop's verdict and its one reading live in stop/operator-stop.ts; the
+ *  loop re-exports them so the composition keeps one entry point. */
+export { stopConfirmed };
+export type { StopReport };
 
 /** What the engine tracks of one launch while it may still be carrying a worker. */
 interface InFlightLaunch {
@@ -543,6 +536,12 @@ interface Launchable {
  * end (régua applied, slot replenished in the same cycle), and the wait for
  * the next event. The --once boundary awaits everything launched; the
  * continuous run keeps sweeping on the tick and wakes by event.
+ *
+ * The engine orchestrates and owns the cycle's own state (slots, the in-flight
+ * map, the parked queue); the domains it calls are modules of their own — the
+ * operator's stop (stop/operator-stop.ts), a Repair round (repair/round.ts) and
+ * a Work's record (work-record/record.ts) — so a fix in one of them lands in
+ * one place (issue #186).
  */
 export class SweepEngine {
   private readonly slots: Slots;
@@ -788,7 +787,7 @@ export class SweepEngine {
           // A WRITTEN failure the factory died before ruling: it consumes the
           // attempt and the ruler applies as at collection (issue 123).
           const dir = decision.dir;
-          await this.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
+          await this.settleFailure(dir, decision.attempt, await openWorkRecord(dir).outcome());
           if (decision.decision === "release") {
             this.log(
               `derived ${key}: unreconciled failure (the factory died before ruling it) — ` +
@@ -925,7 +924,7 @@ export class SweepEngine {
             // comment and no notice — the operator was asked once, and the
             // request has not changed.
             const fresher = current.detail !== pause.detail;
-            if (fresher) writePause(decision.dir, { ...pause, detail: current.detail });
+            if (fresher) openWorkRecord(decision.dir).writePause({ ...pause, detail: current.detail });
             this.reportContinuityPause(decision.work, decision.dir, { ...pause, detail: current.detail });
           } else {
             this.reportContinuityPause(decision.work, decision.dir, pause);
@@ -1430,167 +1429,24 @@ export class SweepEngine {
     return this.requestedStopRun;
   }
 
+  /**
+   * The protocol itself lives in stop/operator-stop.ts: this method only hands
+   * it the facts of THIS execution — the launches in flight, the survivors a
+   * previous process left, the probe, the registry — and its own waits.
+   */
   private async runRequestedStop(): Promise<StopReport> {
-    const entries = [...this.inFlight.values()];
-    this.log(
-      `stop requested: no new worker is admitted; asking ${entries.length} in-flight launch(es) to stop ` +
-        `(cooperative window ${formatDuration(this.cooperativeMs)})`,
-    );
-    // The workers a previous factory process left (issue 118) are the
-    // operator's workers too: this process has no session to ask, so they get
-    // the same window to end on their own and are forced with the rest.
-    if (this.survivors.size > 0) {
-      this.log(
-        `the stop also covers ${this.survivors.size} surviving worker(s) of a previous run (${byKey(this.survivors.keys()).join(", ")}) — ` +
-          "they are not this process's sessions, so they are never asked, only waited for and then forced",
-      );
-    }
-
-    // The evidence of the requested stop is persisted BEFORE any worker is
-    // asked to end: a factory that dies inside the requested stop still lets the
-    // next invocation resume the attempt without charging it. A recovery
-    // granted but never launched is returned — the stop cancelled it.
-    for (const entry of entries) {
-      const attempt = entry.attempt ?? (await this.plannedAttempt(entry));
-      if (attempt === null) continue;
-      entry.attempt = attempt;
-      if (await this.settleStoppedAdmission(entry, attempt)) {
-        this.log(
-          `the recovery granted to ${renderWorkIdentity(entry.work)} is returned: the requested stop cancelled its relaunch`,
-        );
-      }
-    }
-
-    // The runtime's stop request speaks the Work identity — a ticket from any
-    // source and the destination are addressable without a GitHub issue number.
-    for (const entry of entries) {
-      this.deps.runtime.requestStop(entry.work);
-    }
-
-    // Whatever still carries a work is forced now. The evidence of the stop
-    // lands on a survivor's attempt BEFORE it is ended, exactly as for the
-    // launches below: the next invocation resumes it instead of charging it.
-    await this.awaitCooperativeWindow();
-    const doomed = await this.stopCandidates(entries);
-    const own = new Set(entries.map((entry) => workKeyOf(entry.work)));
-    for (const key of doomed) if (!own.has(key)) await this.recordStopOf(key);
-
-    const forced: string[] = [];
-    if (doomed.length > 0) {
-      this.log(
-        `the cooperative phase is over: forcing the stop of ${doomed.length} worker(s) now — ` +
-          "the end of each one is still confirmed before the factory calls the stop safe",
-      );
-    }
-    await Promise.all(
-      doomed.map(async (key) => {
-        const work = workOfKey(key);
-        if (work === null) return undefined;
-        try {
-          await this.deps.runtime.forceStop(work);
-          forced.push(key);
-          this.log(`forced stop of ${key}: its worker is gone`);
-        } catch (error) {
-          this.log(`forcing ${key} failed: ${describeError(error)}`);
-        }
-        return undefined;
-      }),
-    );
-
-    const { unconfirmed, observation } = await this.confirmStop(entries);
-    const unreadBecause = observation.state === "unknown" ? observation.reason : null;
-    if (unreadBecause !== null) {
-      this.log(
-        `stop NOT confirmed: the worker liveness could not be read (${unreadBecause}) — the factory cannot ` +
-          "say that no worker survives; the next run asks the same question again",
-      );
-    }
-    return { forced, unconfirmed, unreadBecause };
-  }
-
-  /**
-   * Every worker this stop is answerable for (issue #146), with the attempt
-   * already known when the caller has it: the launches this run carried, the
-   * survivors it recognised (issue 118) — which it knows were alive even when
-   * the probe stops answering — and whatever a live container names right now.
-   * An unreadable probe cannot LOSE a known worker, it only fails to add one.
-   */
-  private async stopWorkers(
-    entries: readonly InFlightLaunch[],
-  ): Promise<{ workers: Map<string, number | null>; observation: LivenessObservation }> {
-    const workers = new Map<string, number | null>();
-    for (const entry of entries) {
-      if (entry.launched) workers.set(workKeyOf(entry.work), entry.attempt);
-    }
-    for (const key of this.survivors.keys()) if (!workers.has(key)) workers.set(key, null);
-    await this.observeLiveness();
-    const observation = this.liveness;
-    if (observation.state === "known") {
-      for (const worker of observation.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
-    }
-    return { workers, observation };
-  }
-
-  /**
-   * The works the stop has to end: every worker the stop knows about — the
-   * survivors of a previous process included, which it can only end, never
-   * ask — minus the launches that really ended. A launch whose end the window
-   * saw is gone, and forcing it again would only race a container that is
-   * already going away; one whose container the probe still names is forced.
-   */
-  private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
-    const { workers, observation } = await this.stopWorkers(entries);
-    const live =
-      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : EMPTY_KEYS;
-    for (const entry of entries) {
-      const key = workKeyOf(entry.work);
-      if (this.inFlight.has(key) || live.has(key)) continue;
-      workers.delete(key);
-    }
-    return byKey(workers.keys());
-  }
-
-  /** Persist the operator's stop on a work the stop ends: the next
-   *  invocation resumes that attempt rather than charging it a recovery. A work
-   *  with no registry dir has nothing to resume. */
-  private async recordStopOf(key: string): Promise<void> {
-    const attempt = await this.lastAttemptOf(key);
-    if (attempt === null) return;
-    await recordStopRequest(workDirOfKey(this.deps.workspace, key), attempt);
-  }
-
-  /**
-   * The attempt a work is on right now, or null when the registry has no dir
-   * for it. A bare reservation (a claim whose worker never wrote anything) is
-   * on attempt 1 — the number its first launch would carry — so the stop is
-   * recorded for it and its resume is free.
-   */
-  private async lastAttemptOf(key: string): Promise<number | null> {
-    const dir = workDirOfKey(this.deps.workspace, key);
-    if (!existsSync(dir)) return null;
-    return (await readLastAttempt(dir)) ?? 1;
-  }
-
-  /**
-   * Wait out the cooperative phase: until every launch of this engine settled,
-   * the window ran out, or the second signal escalated it — whichever is first.
-   * Callers only need the wait to be over; why it ended is the deadline's or the
-   * escalation's own fact, not a value to branch on.
-   */
-  private async awaitCooperativeWindow(): Promise<void> {
-    const escalation = deferred();
-    if (this.escalated) escalation.resolve();
-    else this.escalationWaiters.push(escalation.resolve);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, this.cooperativeMs);
+    return beginOperatorStop([...this.inFlight.values()], {
+      workspace: this.deps.workspace,
+      runtime: this.deps.runtime,
+      ...(this.deps.probe === undefined ? {} : { probe: this.deps.probe }),
+      ...(this.deps.probeTimeoutMs === undefined ? {} : { probeTimeoutMs: this.deps.probeTimeoutMs }),
+      survivors: () => this.survivors.keys(),
+      isCarried: (key) => this.inFlight.has(key),
+      launchesSettled: () => this.waitPending(),
+      escalation: () => this.escalationWait(),
+      cooperativeMs: this.cooperativeMs,
+      log: this.log,
     });
-    try {
-      await Promise.race([this.waitPending(), deadline, escalation.promise]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      dropWaiter(this.escalationWaiters, escalation.resolve);
-    }
   }
 
   /** Wait until no launch of this engine is pending, failures included. */
@@ -1600,72 +1456,14 @@ export class SweepEngine {
     }
   }
 
-  /**
-   * The confirmation the factory never skips (issue #146): no worker of this
-   * workspace may survive — neither the launches this process started nor the
-   * ones it found alive (issue 118). The liveness probe answers, freshly,
-   * because the workers just ended or were forced; an unreadable answer is
-   * uncertainty, never an empty factory. An unconfirmed work is persisted so
-   * the next invocation holds it.
-   */
-  private async confirmStop(
-    entries: readonly InFlightLaunch[],
-  ): Promise<{ unconfirmed: Array<{ key: string; because: string }>; observation: LivenessObservation }> {
-    const { workers: answerable, observation } = await this.stopWorkers(entries);
-
-    const unconfirmed: Array<{ key: string; because: string }> = [];
-    for (const [key, knownAttempt] of answerable) {
-      const because = this.stopHoldReason(observation, key);
-      if (because === null) continue;
-      unconfirmed.push({ key, because });
-      const attempt = knownAttempt ?? (await this.lastAttemptOf(key));
-      if (attempt !== null) {
-        await recordUnconfirmedStop(workDirOfKey(this.deps.workspace, key), attempt, because);
-      }
-      this.log(
-        `cannot confirm the stop of ${key}: ${because} — the work will not relaunch until a worker is known to be gone`,
-      );
-    }
-
-    if (unconfirmed.length > 0) {
-      this.log(
-        `stop NOT confirmed for ${unconfirmed.length} work(s) — the next run holds them until the worker is known gone`,
-      );
-    } else if (observation.state === "known" && answerable.size === 0) {
-      this.log("stop confirmed: no worker had started and none survives");
-    } else if (observation.state === "known") {
-      this.log(`stop confirmed: every worker ended and none survives (${answerable.size} checked)`);
-    }
-    return { unconfirmed, observation };
-  }
-
-  /**
-   * A stop cancelled this admission before any worker existed: the granted
-   * recovery is returned and the requested stop is (re)recorded, so the next
-   * invocation resumes the attempt for free. The grant's own event index makes
-   * it idempotent — the requested stop and the admission may both reach it,
-   * and neither can return an earlier, legitimate recovery. Returns whether a
-   * grant was actually returned.
-   */
-  private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    const grant = entry.recoveryIndex !== null && !entry.launched ? entry.recoveryIndex : null;
-    entry.recoveryIndex = null;
-    const refunded = grant === null ? false : await refundRecovery(entry.dir, attempt, grant);
-    await recordStopRequest(entry.dir, attempt);
-    return refunded;
-  }
-
-  /** The attempt the pending launch would use, read from the registry. A work
-   *  with no registry dir left no reservation behind: nothing to reconcile, so
-   *  no stop evidence is recorded for it. */
-  private async plannedAttempt(entry: InFlightLaunch): Promise<number | null> {
-    if (!existsSync(entry.dir)) return null;
-    try {
-      const facts = await readLaunchFacts(entry.dir, entry.attemptHint);
-      return facts.attempt;
-    } catch {
-      return null;
-    }
+  /** The operator's second signal, as the stop's window reads it: a promise
+   *  that fires on the signal (at once when it already came) and the
+   *  unsubscribe that keeps the waiters array as short as the run. */
+  private escalationWait(): { promise: Promise<void>; dispose: () => void } {
+    const waiter = deferred();
+    if (this.escalated) waiter.resolve();
+    else this.escalationWaiters.push(waiter.resolve);
+    return { promise: waiter.promise, dispose: () => dropWaiter(this.escalationWaiters, waiter.resolve) };
   }
 
   /** The boundary of `run --once`: the launch settling, or the requested stop
@@ -1843,73 +1641,45 @@ export class SweepEngine {
       derivedTrigger === undefined
         ? undefined
         : {
-            trigger: derivedTrigger,
-            resuming,
+            ...repairOpening(derivedTrigger, resuming),
             localWork: null,
-            pinnedHeadSha: resuming?.observedHeadSha ?? derivedTrigger.facts.headSha,
           };
     let baseBranch = prepared.baseBranch;
     if (repair !== undefined) {
-      // The facts are re-read before the round spends work (issue 149): the
-      // impediment that opened it may have been resolved meanwhile — by a
-      // human pushing the resolution, by a base advance. Only a confirmed
-      // premise buys a session; an obsolete one returns the round unspent,
-      // and an unconfirmed one waits for the next derivation instead of
-      // paying for stale evidence. The round is announced below, after this
-      // decision: a returned round is never also "reactivated".
+      // The facts are re-read before the round spends work (issue 149): only a
+      // confirmed premise buys a session, and the round is pinned to the head
+      // its evidence was read on. A returned or held round is never announced
+      // as reactivated.
       const reading = readRepairPremise(
         await pullRequests.readPullRequestRepairFacts(
           workPullRequest(work, launchable.pr),
         ),
       );
-      if (reading.premise !== "persisting") {
-        this.log(
-          reading.premise === "obsolete"
-            ? `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
-                "(the premise is obsolete) — no round is spent"
-            : `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
-                "nothing is spent and the next sweep re-derives",
-        );
-        return null;
-      }
-      const confirmed = reading.trigger;
-      // A FRESH round follows the facts as they read now: when the head moved
-      // while the impediment persists, the evidence was recalculated, so the
-      // round opens on the current head and is charged on the new evidence
-      // (issue 149). A resumption keeps its observed head — moving it would
-      // publish the fallen attempt's local history over a concurrent one.
-      if (resuming === null) {
-        if (confirmed.facts.headSha !== repair.pinnedHeadSha) {
-          this.log(
-            `repair round for ${key}: the evidence was recalculated on the current head ` +
-              `${shortSha(confirmed.facts.headSha)} — the round opens there`,
-          );
-        }
-        repair.trigger = confirmed;
-        repair.pinnedHeadSha = confirmed.facts.headSha;
-      }
-      baseBranch = confirmed.facts.baseBranch;
-      const observed = await this.observeRemote(work);
-      if (!observed.known) {
-        this.log(
-          `repair round for ${key} skipped: the remote head could not be read — ` +
-            "its reconciliation stays pending and nothing is launched (the next sweep retries)",
-        );
-        return null;
-      }
-      if (observed.headSha !== repair.pinnedHeadSha) {
-        this.log(
-          `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
-            `observed ${repair.pinnedHeadSha} — nothing is launched`,
-        );
-        if (resuming !== null) {
-          // Somebody moved the branch after the fall: the local work must not
-          // be published over it. The attempt is settled as a concurrent
-          // change, and the next derivation asks the human for a reconciliation.
-          await this.markConcurrentChange(work, resuming, observed.headSha);
+      const verdict = confirmRepairRound({
+        round: repairOpening(repair.trigger, repair.resuming),
+        reading,
+        remote: await this.observeRemote(work),
+      });
+      if (verdict.kind !== "launch") {
+        this.logRepairLaunchHold(key, verdict, repair);
+        if (verdict.kind === "hold" && verdict.because === "remote-moved" && verdict.concurrent !== undefined) {
+          // Somebody moved the branch after the fall: the local work must not be
+          // published over it. The attempt is settled as a concurrent change,
+          // and the next derivation asks the human for a reconciliation.
+          await this.markConcurrentChange(work, verdict.concurrent.attempt, verdict.remoteHeadSha);
         }
         return null;
       }
+      if (repair.resuming === null && verdict.round.pinnedHeadSha !== repair.pinnedHeadSha) {
+        this.log(
+          `repair round for ${key}: the evidence was recalculated on the current head ` +
+            `${shortSha(verdict.round.pinnedHeadSha)} — the round opens there`,
+        );
+      }
+      repair.trigger = verdict.round.trigger;
+      repair.pinnedHeadSha = verdict.round.pinnedHeadSha;
+      repair.baseBranch = verdict.round.baseBranch;
+      baseBranch = verdict.round.baseBranch;
       this.log(
         `repair round for ${key}: ${repair.trigger.reasons.join(" + ")} reactivated the worker — ` +
           "same branch, same PR, no human comment needed",
@@ -1983,7 +1753,7 @@ export class SweepEngine {
       pullRequests,
     };
     if (kind === "resume") {
-      const pause = readPause(dir);
+      const pause = openWorkRecord(dir).pause();
       if (pause !== null) {
         const recheck = await recheckPausedEffects(
           {
@@ -2002,7 +1772,7 @@ export class SweepEngine {
         }
         // The fresh read settled it: the answer becomes the updated context
         // of a NEW round (the material above already carries it).
-        clearPause(dir);
+        openWorkRecord(dir).settle(facts.attempt);
         this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
       }
     }
@@ -2053,7 +1823,7 @@ export class SweepEngine {
       );
       await this.wait(decision.waitMs);
       if (this.stopping) {
-        await this.settleStoppedAdmission(entry, facts.attempt);
+        await settleStoppedAdmission(entry, facts.attempt);
         this.log(
           `the recovery of ${key} stopped during the backoff — nothing is launched and the grant is returned ` +
             "with the requested-stop evidence",
@@ -2085,7 +1855,7 @@ export class SweepEngine {
     // bookkeeping (the grant, or the consumption of the requested stop): what
     // it wrote is undone and the requested stop is what the work keeps.
     if (this.stopping) {
-      await this.settleStoppedAdmission(entry, facts.attempt);
+      await settleStoppedAdmission(entry, facts.attempt);
       this.log(`the launch of ${key} stopped before the worker started — the requested stop stays on record`);
       return null;
     }
@@ -2097,14 +1867,19 @@ export class SweepEngine {
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
 
-    if (launchable.callRecovery !== undefined) clearPause(dir);
+    if (launchable.callRecovery !== undefined) openWorkRecord(dir).settle(facts.attempt);
     // Charge only after continuity allowed the launch. A pause before a worker
     // exists is not an unpublished Repair and cannot consume a round or fall.
     if (repair !== undefined) {
-      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
+      await chargeRepairRound(dir, {
+        signature: repairSignature(work, repair.trigger),
+        attempt: facts.attempt,
+        observedHeadSha: repair.trigger.facts.headSha,
+        localWork: repair.localWork,
+      });
     }
     if (this.stopping) {
-      await this.settleStoppedAdmission(entry, facts.attempt);
+      await settleStoppedAdmission(entry, facts.attempt);
       return null;
     }
     entry.launched = true;
@@ -2122,9 +1897,9 @@ export class SweepEngine {
       });
     } catch (error) {
       if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
-          ownWrittenOutcome(await readOutcomeRecord(dir), facts.attempt) === null &&
+          ownWrittenOutcome(await openWorkRecord(dir).outcome(), facts.attempt) === null &&
           (await readRecoveryLedger(dir)).lastStop === null) {
-        await recordStopRequest(dir, facts.attempt);
+        await recordStopEvidence(dir, facts.attempt);
       }
       throw error;
     }
@@ -2145,34 +1920,6 @@ export class SweepEngine {
     } finally {
       dropWaiter(this.stopWaiters, stopped.resolve);
     }
-  }
-
-  /** Why a work's end cannot be confirmed, or null when it is: an unreadable
-   *  probe is uncertainty, never an empty factory. */
-  private stopHoldReason(observation: LivenessObservation, key: string): string | null {
-    if (observation.state === "unknown") {
-      return `the worker liveness could not be read (${observation.reason})`;
-    }
-    return observation.workers.some((worker) => worker.key === key)
-      ? "a worker of this work is still alive"
-      : null;
-  }
-
-  /**
-   * Whether the operator's own requested stop owns the end of this attempt
-   * (issue #146): the persisted stop-requested, or a stop-unconfirmed one whose
-   * worker this invocation just confirmed gone (promoted, so the launch
-   * consumes it like any other requested stop). A stop of another attempt, or
-   * a failure, never answers yes.
-   */
-  private async operatorStoppedAttempt(dir: string, attempt: number): Promise<boolean> {
-    const { lastStop } = await readRecoveryLedger(dir);
-    if (lastStop === null || lastStop.attempt !== attempt) return false;
-    if (lastStop.kind === "stop-unconfirmed") {
-      await confirmStopRequest(dir, attempt);
-      return true;
-    }
-    return lastStop.kind === "stop-requested";
   }
 
   /** The facts a continuity decision reads for one paused work: its artifacts,
@@ -2207,7 +1954,7 @@ export class SweepEngine {
       // The clear lands first because the answer self-heals a death on either
       // side of it: with the record still there the answer is read again, and
       // with it cleared the resume launch swaps the block off.
-      clearPause(dir);
+      openWorkRecord(dir).settle(attempt);
       this.log(
         `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
           "the human answer orients a NEW round (no recovery is spent)",
@@ -2223,7 +1970,7 @@ export class SweepEngine {
     // while a death after the clear leaves an unblocked interrupted attempt,
     // which derives to a recovery on its own.
     await tickets.resumeTicketClaim(work.ticket, config.labels);
-    clearPause(dir);
+    openWorkRecord(dir).settle(attempt);
     this.log(
       `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
         `attempt ${attempt} continues (the recovery ruler applies)`,
@@ -2249,7 +1996,7 @@ export class SweepEngine {
     attempt: number,
   ): Promise<void> {
     const { tickets, config, workspace } = this.deps;
-    const previous = readPause(dir);
+    const previous = openWorkRecord(dir).pause();
     // By now the factory knows which work and attempt it is pausing, whatever
     // the record could say: an unreadable record's unknown work/attempt is
     // replaced here, so the persisted pause and the operator's comment name the
@@ -2274,14 +2021,14 @@ export class SweepEngine {
       // detail may carry fresher evidence. The record is not marked
       // unannounced on the way: the request DID land.
       await tickets.blockTicketClaim(work.ticket, config.labels);
-      writePause(dir, reassertedPause(pause, previous));
+      openWorkRecord(dir).writePause(reassertedPause(pause, previous));
       this.reportContinuityPause(work, dir, pause);
       return;
     }
     // The record lands FIRST (a restart must know the work waits), marked
     // unannounced until the block and the request really landed: a death in
     // between leaves the fact that the operator was never told.
-    writePause(dir, { ...pause, announced: false });
+    openWorkRecord(dir).writePause({ ...pause, announced: false });
     this.reportContinuityPause(work, dir, pause);
     await this.applyBlockWithComment(
       work,
@@ -2296,7 +2043,7 @@ export class SweepEngine {
         ...(pause.sessionId === undefined ? {} : { sessionId: pause.sessionId }),
       }),
     );
-    writePause(dir, { ...pause, announced: true });
+    openWorkRecord(dir).writePause({ ...pause, announced: true });
   }
 
   /**
@@ -2335,7 +2082,7 @@ export class SweepEngine {
       pr: feedback.value.pr,
       attempt: retry.attempt,
       callRecovery: retry,
-      requestedStop: await this.operatorStoppedAttempt(decision.dir, retry.attempt),
+      requestedStop: await operatorStoppedAttempt(decision.dir, retry.attempt),
     });
     this.announce(decision.work, "reserved");
     return true;
@@ -2361,7 +2108,7 @@ export class SweepEngine {
     const comment = await interruptionPausedCommentBody({
       attempt,
       budget: config.recovery,
-      record: await readOutcomeRecord(dir),
+      record: await openWorkRecord(dir).outcome(),
       workDir: dir,
       workspace,
     });
@@ -2472,22 +2219,27 @@ export class SweepEngine {
       if (inFlight.has(key)) continue;
 
       const stored = await readRepairCycle(work.dir);
-      const requestedStop = stored.attempt !== null && await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt);
-      if (stored.attempt !== null && !requestedStop && stored.attempt.publication === "unknown" &&
-          !existsSync(join(work.dir, eventLogName(stored.attempt.attempt)))) {
-        const journal = readEffectJournal(work.dir);
-        const record = await readOutcomeRecord(work.dir);
-        if (journal.intact && !journal.sessions.some((entry) => entry.attempt === stored.attempt!.attempt) &&
-            record?.attempt !== stored.attempt.attempt) {
-          await writeRepairCycle(work.dir, {
-            ...stored, usedRounds: Math.max(0, stored.usedRounds - 1), lastEvidence: null, attempt: null,
-          });
+      const requestedStop = stored.attempt !== null && await operatorStoppedAttempt(work.dir, stored.attempt.attempt);
+      if (stored.attempt !== null && !requestedStop && stored.attempt.publication === "unknown") {
+        // A round that never reached the runtime is not a fall (issue 181's
+        // home): the record says whether the attempt ever started, and the
+        // Repair module decides what that means for the round.
+        const record = openWorkRecord(work.dir);
+        const journal = record.effects();
+        const returned = returnUnstartedRound(stored, {
+          hasEventLog: existsSync(record.logPath(stored.attempt.attempt)),
+          journalIntact: journal.intact,
+          journalHasSession: journal.sessions.some((entry) => entry.attempt === stored.attempt!.attempt),
+          hasOwnOutcome: (await record.outcome())?.attempt === stored.attempt.attempt,
+        });
+        if (returned !== null) {
+          await writeRepairCycle(work.dir, returned);
           this.log(`repair attempt ${stored.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`);
           continue;
         }
       }
       if (stored.attempt !== null && requestedStop &&
-          ownWrittenOutcome(await readOutcomeRecord(work.dir), stored.attempt.attempt) === null) {
+          ownWrittenOutcome(await openWorkRecord(work.dir).outcome(), stored.attempt.attempt) === null) {
         continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
       }
       if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
@@ -2521,7 +2273,7 @@ export class SweepEngine {
           workPullRequest(work.work),
         ),
       ).premise;
-      const decision = reconcileRepairAttempt({ cycle, remote, localWork, premise });
+      const decision = settleRepairRound(cycle, { remote, localWork, premise });
       if (decision.kind === "none") continue;
       await writeRepairCycle(work.dir, decision.cycle);
       this.logReconciliation(key, decision);
@@ -2539,31 +2291,22 @@ export class SweepEngine {
     works: readonly ReservedWorkInput[],
     inFlight: ReadonlySet<string>,
   ): Promise<void> {
-    const held: Array<{ dir: string; work: WorkIdentity; attempt: number; because: string }> = [];
-    for (const work of works) {
-      const key = workKeyOf(work.work);
-      if (inFlight.has(key)) continue;
-      const ledger = await readRecoveryLedger(work.dir);
-      const stop = ledger.lastStop;
-      if (stop === null || stop.kind !== "stop-unconfirmed") continue;
-      held.push({ dir: work.dir, work: work.work, attempt: stop.attempt, because: stop.because });
-    }
-    if (held.length === 0) {
+    const { held, resumed } = await reconcileUnconfirmedStops({
+      works,
+      inFlight,
+      observation: this.liveness,
+    });
+    if (held.length === 0 && resumed.length === 0) {
       this.reportedStopHolds.clear();
       return;
     }
-
     for (const entry of held) {
-      const key = workKeyOf(entry.work);
-      const because = this.stopHoldReason(this.liveness, key);
-      if (because !== null) {
-        this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
-        continue;
-      }
-      this.reportedStopHolds.delete(key);
-      await confirmStopRequest(entry.dir, entry.attempt);
+      this.reportStopHold(entry.key, `${entry.because} — the previous stop (${entry.previous}) stays unconfirmed`);
+    }
+    for (const entry of resumed) {
+      this.reportedStopHolds.delete(entry.key);
       this.log(
-        `derived ${key}: the worker of the previous stop is confirmed gone — attempt ${entry.attempt} resumes ` +
+        `derived ${entry.key}: the worker of the previous stop is confirmed gone — attempt ${entry.attempt} resumes ` +
           "without spending a recovery",
       );
     }
@@ -2606,10 +2349,42 @@ export class SweepEngine {
     return { ...cycle, attempt: { ...candidate, localWork } };
   }
 
+  /**
+   * The launch's gate said no: the round is returned unspent or held, with the
+   * reason the operator reads — never announced as reactivated.
+   */
+  private logRepairLaunchHold(
+    key: string,
+    verdict: Exclude<RepairLaunchVerdict, { kind: "launch" }>,
+    repair: RepairLaunchContext,
+  ): void {
+    if (verdict.kind === "return") {
+      this.log(
+        verdict.because === "premise-obsolete"
+          ? `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
+              "(the premise is obsolete) — no round is spent"
+          : `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
+              "nothing is spent and the next sweep re-derives",
+      );
+      return;
+    }
+    if (verdict.because === "remote-unreadable") {
+      this.log(
+        `repair round for ${key} skipped: the remote head could not be read — ` +
+          "its reconciliation stays pending and nothing is launched (the next sweep retries)",
+      );
+      return;
+    }
+    this.log(
+      `repair round for ${key} skipped: the remote head ${verdict.remoteHeadSha ?? "(absent)"} no longer matches the ` +
+        `observed ${repair.pinnedHeadSha} — nothing is launched`,
+    );
+  }
+
   /** The reconciliation verdict, said once in the operator's log. */
   private logReconciliation(
     key: string,
-    decision: Exclude<RepairReconciliation, { kind: "none" }>,
+    decision: Exclude<RepairSettlement, { kind: "none" }>,
   ): void {
     const attempt = decision.cycle.attempt;
     if (attempt === null) return;
@@ -2660,10 +2435,7 @@ export class SweepEngine {
   ): Promise<void> {
     const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
     const cycle = await readRepairCycle(dir);
-    await writeRepairCycle(dir, {
-      ...cycle,
-      attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
-    });
+    await writeRepairCycle(dir, settleConcurrentChange(cycle, attempt, remoteHeadSha));
     this.log(
       `repair attempt ${attempt.attempt} of ${renderWorkIdentity(work)}: the remote branch ` +
         `${describeRemoteChange(remoteHeadSha)} while the attempt's observed head was ` +
@@ -2688,34 +2460,6 @@ export class SweepEngine {
     } catch {
       return { known: false };
     }
-  }
-
-  /** Charge one automatic repair round before its session: the budget, the
-   *  consumed evidence and the attempt's own facts persist on disk, so a
-   *  restart neither renews the cap nor repeats the same round, and a death is
-   *  attributable once the remote answers (issue 112). */
-  private async recordRepairRound(
-    dir: string,
-    work: WorkIdentity,
-    trigger: RepairTrigger,
-    attempt: number,
-    localWork: LocalWorkFacts | null,
-  ): Promise<void> {
-    const cycle = await readRepairCycle(dir);
-    const signature = repairSignature(work, trigger);
-    await writeRepairCycle(dir, {
-      usedRounds: cycle.usedRounds + 1,
-      lastEvidence: signature,
-      consecutiveFalls: cycle.consecutiveFalls,
-      attempt: {
-        evidence: signature,
-        attempt,
-        observedHeadSha: trigger.facts.headSha,
-        remoteHeadSha: null,
-        publication: "unknown",
-        localWork,
-      },
-    });
   }
 
   /**
@@ -2767,12 +2511,12 @@ export class SweepEngine {
     const prConfirmed = pr !== null && pr.state === "open";
     const issue = await tickets.readTicket(work.ticket);
     const blockedLabelOnIssue = issue.known && issue.value.labels.includes(config.labels.blocked);
-    const record = await readOutcomeRecord(dir);
+    const record = await openWorkRecord(dir).outcome();
     const ruling = await classifyOutcome({
       record,
       prOpen: prConfirmed,
       prMerged: pr !== null && pr.merged,
-      requestedStop: this.stopping || await this.operatorStoppedAttempt(dir, attempt),
+      requestedStop: this.stopping || await operatorStoppedAttempt(dir, attempt),
       blockedLabelOnIssue,
       consecutiveFall,
       attempt,
@@ -2784,7 +2528,7 @@ export class SweepEngine {
     // A settled attempt makes any continuity pause of its own history (issue
     // 119): the new record (or block) is the current fact, and a stale pause
     // must not keep the work out of later rounds. An interruption keeps it.
-    if (ruling.decision !== "interrupt") clearPause(dir);
+    if (ruling.decision !== "interrupt") openWorkRecord(dir).settle(attempt);
 
     // A known PR — open, merged or closed — is persisted beside the Work
     // (issue 125): the facts survive a restart, and a later attempt appends
@@ -2846,7 +2590,7 @@ export class SweepEngine {
           `collected ${key}: attempt ${attempt} ended without an outcome record while the factory stops — ` +
             "no recovery is spent and the next run resumes the same attempt",
         );
-      } else if (await this.operatorStoppedAttempt(dir, attempt)) {
+      } else if (await operatorStoppedAttempt(dir, attempt)) {
         // The worker outlived the operator's stop (a survivor whose end this
         // invocation confirmed): the attempt ends where the requested stop
         // left it, so it resumes for free — the stop never charges the budget,
@@ -3122,12 +2866,8 @@ export async function runForever(
 /** The repair context a session is launched with (issue 112): the confirmed
  *  trigger, the unpublished attempt it takes over (when resuming) and the
  *  local work read from the host. */
-interface RepairLaunchContext {
-  trigger: RepairTrigger;
-  resuming: RepairAttempt | null;
+interface RepairLaunchContext extends RepairRoundOpening {
   localWork: LocalWorkFacts | null;
-  /** The remote head the intervention observed — the force-with-lease value. */
-  pinnedHeadSha: string;
 }
 
 /**

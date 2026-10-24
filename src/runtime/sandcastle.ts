@@ -12,13 +12,13 @@ import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
-import { clearWorkerStop, requestWorkerStop } from "./stop-request.js";
+import { clearWorkerStop, requestWorkerStop } from "../work-record/stop-request.js";
 import {
   describeForeignRecord,
   ownOutcomeRecord,
   readOutcomeRecord,
   type OutcomeRecord,
-} from "../state/outcome.js";
+} from "../work-record/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";

@@ -9,7 +9,7 @@ import {
   authorizeCallRecovery, CALL_RECOVERY_FILENAME, DUPLICATE_RISK_WARNING,
   readCallRecoveries, recoveryConsumption, reviewCallRecovery,
 } from "./runtime/call-recovery.js";
-import { readEffectJournal } from "./runtime/continuity-artifacts.js";
+import { readEffectJournal } from "./work-record/continuity.js";
 import { drainRecoveryRequests, queueRecovery, recoveryRequestStatus } from "./recovery-requests.js";
 
 export interface RecoveryConsent {

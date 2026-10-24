@@ -13,7 +13,7 @@ import {
   readOutcomeRecord,
   isRecordedFailure,
   type OutcomeRecord,
-} from "../state/outcome.js";
+} from "../work-record/outcome.js";
 import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
 import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
 import {
@@ -22,8 +22,8 @@ import {
   type ModelProviderLedger,
   type ModelProviderSettlement,
 } from "./model-provider.js";
-import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
-import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
+import { openWorkRecord, pauseWaits, type PauseRecord } from "../work-record/record.js";
+import { readWorkEvidence, type WorkEvidence } from "../work-record/evidence.js";
 import { EVENT_LOG_PATTERN } from "../runtime/attempt-logs.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
@@ -341,7 +341,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // A pause the ledger has not advanced beyond — the attempt it planned may
     // be exactly the current one, or one no log evidences yet (issue 175):
     // only a pause left BEHIND by a later attempt is history.
-    const pause = readPause(dir);
+    const pause = openWorkRecord(dir).pause();
     if (pause !== null && pauseWaits(pause, lastAttempt)) continuityPauses.push({ key, pause, lastAttempt });
   }
   const byKey = (a: string, b: string): number => a.localeCompare(b);

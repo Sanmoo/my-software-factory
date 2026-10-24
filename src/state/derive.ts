@@ -8,26 +8,22 @@ import type {
   TicketTracker,
   WorkPullRequest,
 } from "../tracker/expanded-port.js";
-import type {
-  IssueComment,
-  Known,
-  PrRepairFacts,
-  RepairReason,
-  RequiredCheckResult,
-} from "../tracker/port.js";
+import type { IssueComment } from "../tracker/port.js";
 import { isAgentSpeech, pauseMarkerId } from "../tracker/port.js";
 import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
-import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
+import { openWorkRecord, pauseWaits, type PauseRecord } from "../work-record/record.js";
 import {
-  readOutcomeRecord,
   blockedCommentBody,
   repairFallComment,
+} from "./outcome.js";
+import {
   ownWrittenOutcome,
+  readOutcomeRecord,
   selfReportedBlocked,
   type OutcomeRecord,
-} from "./outcome.js";
+} from "../work-record/outcome.js";
 import { readAttemptLedger } from "../pool/registry.js";
 import { peekRecovery, readRecoveryLedger, type RecoveryDecision } from "../pool/recovery.js";
 import { workKeyOf } from "../pool/work-key.js";
@@ -38,12 +34,8 @@ import {
 } from "../pool/model-provider.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "../runtime/model-provider-error.js";
 import {
-  MAX_REPAIR_FALLS,
-  MAX_REPAIR_ROUNDS,
-  hasRepairCycle,
   hasPendingReconciliation,
   readRepairCycle,
-  repairEvidenceSignature,
   type RepairAttempt,
   type RepairCycle,
 } from "../pool/repair.js";
@@ -281,72 +273,21 @@ async function hasNoOpenBlocker(tickets: TicketTracker, ticket: OpenTicket["tick
 
 // ---- the reserved states — the tick's full derivation (ticket 14) ----
 
-/** A confirmed impediment of an open PR, read from structured facts alone. */
-export interface RepairTrigger {
-  reasons: RepairReason[];
-  facts: PrRepairFacts;
-  /** The required checks that concluded with failure or timeout on this head. */
-  failingChecks: RequiredCheckResult[];
-}
+/**
+ * The repair channel's vocabulary and verdicts are the Repair module's
+ * (repair/round.ts, issue #186): the trigger, the premise reading and the
+ * opening decision are re-exported here so the derivation keeps one entry point.
+ */
+import { openRepairRound, readRepairPremise, repairSignature, repairTriggerOf } from "../repair/round.js";
+import type {
+  RepairPremiseReading,
+  RepairRoundOpening,
+  RepairRoundVerdict,
+  RepairTrigger,
+} from "../repair/round.js";
 
-/** A check only reacts when it concluded, and failed or timed out — never
- *  pending, cancelled, skipped, neutral or an optional one. */
-function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
-  return check.status === "completed" && (check.conclusion === "failure" || check.conclusion === "timed_out");
-}
-
-/** The trigger of an open PR, or null when nothing is confirmed. */
-function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
-  const reasons: RepairReason[] = [];
-  if (facts.mergeState === "conflicting") reasons.push("conflicts");
-  const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
-  if (failingChecks.length > 0) reasons.push("required-checks");
-  if (reasons.length === 0) return null;
-  return { reasons, facts, failingChecks };
-}
-
-/** The consumed-evidence signature of a trigger — one authority for the
- *  derivation and the launch's durable record. */
-export function repairSignature(work: WorkIdentity, trigger: RepairTrigger): string {
-  return repairEvidenceSignature({
-    workKey: workKeyOf(work),
-    headSha: trigger.facts.headSha,
-    reasons: trigger.reasons,
-    failingChecks: trigger.failingChecks,
-  });
-}
-
-/** A premise reading: `persisting` always carries the trigger it presents. */
-export type RepairPremiseReading =
-  | { premise: "persisting"; trigger: RepairTrigger }
-  | { premise: "obsolete" }
-  | { premise: "unknown" };
-
-/** The premise of a repair round read from the PR's current facts (issue 149):
- *  a confirmed trigger persists; only a mergeable PR with a known required set
- *  is obsolete (an unknown mergeability, or an undetermined required set,
- *  proves nothing); an unreadable read is unknown, never an invented clean
- *  bill. The vocabulary lives in pool/repair.ts. */
-export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseReading {
-  if (!facts.known) return { premise: "unknown" };
-  const trigger = repairTrigger(facts.value);
-  if (trigger !== null) return { premise: "persisting", trigger };
-  if (facts.value.mergeState !== "mergeable") return { premise: "unknown" };
-  if (facts.value.requiredChecks === null) return { premise: "unknown" };
-  return { premise: "obsolete" };
-}
-
-/** Confirmed recovery (story 22): no conflicts and every required check
- *  approved — narrower than an obsolete premise, which also holds for pending,
- *  neutral or skipped checks. The required set must be KNOWN: the empty set a
- *  repository without CI declares is a confirmation (issue 149); null
- *  (unknown) is never one. */
-function repairRecovered(facts: PrRepairFacts): boolean {
-  if (facts.mergeState !== "mergeable") return false;
-  const checks = facts.requiredChecks;
-  if (checks === null) return false;
-  return checks.every((check) => check.conclusion === "success");
-}
+export { openRepairRound, readRepairPremise, repairSignature, repairTriggerOf };
+export type { RepairPremiseReading, RepairRoundOpening, RepairRoundVerdict, RepairTrigger };
 
 /** The Work as the derivation addresses it: the identity on disk plus its dir. */
 export interface ReservedWorkInput {
@@ -566,82 +507,41 @@ async function deriveReservedWork(
     // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
     // trigger — conflicts with the current base, or required checks concluded
     // with failure/timeout. Unknown mergeability and pending/optional checks
-    // never do, and the Block above already won over all of it.
+    // never do, and the Block above already won over all of it. The decision
+    // itself is the Repair module's (repair/round.ts): the trigger is this
+    // derivation's input, the verdict is one.
     const repairFacts = await pullRequests.readPullRequestRepairFacts(target);
-    const trigger = repairFacts.known ? repairTrigger(repairFacts.value) : null;
     const cycle = await readRepairCycle(dir);
-    const attempt = cycle.attempt;
-
-    // The attempt's own state comes before the trigger and the evidence
-    // consumption (issue 112): two consecutive falls and an unattributable
-    // remote change block the work EVEN with the PR open and even when the
-    // tracker's current facts are not confirmed — the open PR never hides a
-    // fall. An attempt that fell without publishing is taken over instead of
-    // being mistaken for a consumed round.
-    if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
-      return repairFallBlocked(work, dir, pr, cycle, workspace, attempt, "consecutive-falls");
-    }
-    if (attempt?.publication === "concurrent-change") {
-      return repairFallBlocked(work, dir, pr, cycle, workspace, attempt, "concurrent-change");
-    }
-    if (attempt !== null && hasPendingReconciliation(attempt)) {
-      // Pending reconciliation: NO worker of any kind (repair, resumption or
-      // feedback round) and no budget return until the remote or the host
-      // answers — a later sweep repeats the query (the reconciliation owns the
-      // transition). Placed before the trigger so an unconfirmed PR fact
-      // cannot open a session while the reconciliation is pending.
-      return { work, dir, state: "idle" };
-    }
-
-    if (trigger !== null) {
-      const signature = repairSignature(work, trigger);
-      // A resumption takes over the attempt whose evidence is still the one
-      // this head presents (issue 112): a fall on OLDER evidence is history,
-      // and the current head gets a round of its own, pinned to its own head.
-      if (
-        attempt !== null &&
-        attempt.publication === "not-published" &&
-        attempt.evidence === signature
-      ) {
+    const verdict = openRepairRound({
+      work,
+      trigger: repairFacts.known ? repairTriggerOf(repairFacts.value) : null,
+      facts: repairFacts,
+      cycle,
+    });
+    switch (verdict.kind) {
+      case "fall-blocked":
+        return repairFallBlocked(work, dir, pr, cycle, workspace, verdict.attempt, verdict.because);
+      case "wait":
+        // Nothing opens now: the evidence was already consumed, or the previous
+        // round's publication is still being reconciled — no worker of any kind
+        // until the reconciliation answers.
+        return { work, dir, state: "idle" };
+      case "block":
+        return repairBlocked(work, dir, pr, verdict.trigger, verdict.usedRounds);
+      case "open":
         return {
           work,
           dir,
           state: "repair",
           pr,
           createdAt: issue.value.createdAt,
-          trigger,
-          resuming: attempt,
+          trigger: verdict.round.trigger,
+          resuming: verdict.round.resuming,
         };
-      }
-      // Story 19: re-finding the same failure without new evidence is never a
-      // new session; the exhausted cap still blocks.
-      if (cycle.lastEvidence === signature) {
-        if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
-          return repairBlocked(work, dir, pr, trigger, cycle.usedRounds);
-        }
-        return { work, dir, state: "idle" };
-      }
-      if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
-        return repairBlocked(work, dir, pr, trigger, cycle.usedRounds);
-      }
-      return {
-        work,
-        dir,
-        state: "repair",
-        pr,
-        createdAt: issue.value.createdAt,
-        trigger,
-        resuming: null,
-      };
-    }
-
-    // Confirmed recovery (story 22): no conflicts and every required check
-    // approved — the only thing besides a human unblock that resets the cap.
-    // The gate is "this work has a repair cycle", not "a round is charged":
-    // after a fall the charged round was returned, and the fall ledger it left
-    // behind is exactly what recovery must clear (issue 112, story 25).
-    if (repairFacts.known && hasRepairCycle(cycle) && repairRecovered(repairFacts.value)) {
-      return { work, dir, state: "repair-recovered", pr };
+      case "recovered":
+        return { work, dir, state: "repair-recovered", pr };
+      case "none":
+        break;
     }
 
     const last = lastPrComment(feedback.known ? feedback.value : null);
@@ -776,7 +676,7 @@ async function deriveUnreconciledAttempt(
  *  record whose own attempt is unreadable waits for whichever attempt is
  *  current, because guessing one is how a pause disappears. */
 function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
-  const pause = readPause(dir);
+  const pause = openWorkRecord(dir).pause();
   return pause !== null && pauseWaits(pause, attempt) ? pause : null;
 }
 
@@ -787,7 +687,7 @@ function pausedAttempt(dir: string, attempt: number): PauseRecord | null {
  *  first when the record cannot name one. Read only when a record exists — a
  *  blocked work without one never touches the ledger for this. */
 async function currentPause(dir: string): Promise<{ pause: PauseRecord; attempt: number } | null> {
-  const pause = readPause(dir);
+  const pause = openWorkRecord(dir).pause();
   if (pause === null) return null;
   const { lastAttempt } = await readAttemptLedger(dir);
   if (!pauseWaits(pause, lastAttempt)) return null;

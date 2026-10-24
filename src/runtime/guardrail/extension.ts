@@ -19,7 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { parseJsonObject } from "../json-line.js";
-import { watchWorkerStop, workerStopRequested } from "../stop-request.js";
+import { watchWorkerStop, workerStopRequested } from "../../work-record/stop-request.js";
 import { tryJournalLock } from "./journal-lock.js";
 import { childGuardrailRegistrar, guardedDelegation, type RegisterChildGuardrail, type ChildGuardrailRegistration } from "./delegation.js";
 
@@ -33,7 +33,7 @@ import {
   readEffectJournal,
   readGuardrailState,
   type GuardrailState,
-} from "../continuity-artifacts.js";
+} from "../../work-record/continuity.js";
 
 /** What Pi's `on()` returns: the function that removes the handler. */
 export type GuardrailSubscription = () => void;

@@ -3,16 +3,17 @@
  * launch leaves on disk — the session association and, when the session
  * actually started, its Pi-format file in the bind-mounted sessions dir.
  *
- * The fixtures write the REAL artifact shapes (`continuity-artifacts.ts`,
- * `session-log.ts`), so a test that seeds an interrupted attempt exercises the
- * same readers the production recovery uses. No test bypasses verification.
+ * The fixtures write the REAL artifact shapes through the Work record's own
+ * interface (`work-record/record.ts`), so a test that seeds an interrupted
+ * attempt exercises the same readers the production recovery uses — and the
+ * fixture needs one import, not five modules of three directories. No test
+ * bypasses verification.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { SESSIONS_SUBDIR } from "../layout.js";
-import { appendSessionLink, type SessionLink } from "../runtime/continuity-artifacts.js";
+import { openWorkRecord, type SessionLink } from "../work-record/record.js";
 import {
   isLegacyWorkRef,
   workOfLegacyRef,
@@ -49,9 +50,10 @@ export function seedSession(
     sessionId,
     at: "2026-01-01T00:00:00.000Z",
   };
-  appendSessionLink(workDir, link);
+  const record = openWorkRecord(workDir);
+  record.associateSession(link);
 
-  const dir = join(workDir, SESSIONS_SUBDIR, "--fake-worker--");
+  const dir = join(record.sessionsDir, "--fake-worker--");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `2026-01-01T00-00-00-000Z_${options.shortId ?? sessionId}.jsonl`);
   const header = { type: "session", version: 3, id: sessionId, cwd: "/fake/worker", timestamp: link.at };
