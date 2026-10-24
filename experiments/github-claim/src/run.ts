@@ -75,7 +75,7 @@ function main(): void {
   const cells = cellsOf(results);
   const scenarios = SCENARIOS.map((scenario) => scenario.run());
   const evidence = {
-    producedBy: "experiments/issue-168",
+    producedBy: "experiments/github-claim",
     profiles: READ_PROFILES.map((profile) => ({
       name: profile.name,
       summary: profile.summary,
@@ -89,7 +89,7 @@ function main(): void {
     scenarios,
   };
 
-  line("# Experimento #168 — Claim exclusivo entre fábricas pelo GitHub Issues");
+  line("# Experimento — Claim exclusivo entre fábricas pelo GitHub Issues");
   line("");
   line("Modelo determinístico: duas instâncias independentes, tracker como único meio.");
   line("Este harness NÃO fala com o GitHub real; ver RELATORIO.md para as premissas.");

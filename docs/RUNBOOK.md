@@ -81,7 +81,6 @@ GitHub-delivery half (an actual PR in an authorized disposable repo) remains an
 operator-gated run: no credentials or disposable repo are assumed here, so it is
 recorded as outstanding rather than claimed.
 
-
 ## Toolchains — the convergence layer
 
 The worker image ships the `mise` binary (its apt repo, mise.jdx.dev/deb) and

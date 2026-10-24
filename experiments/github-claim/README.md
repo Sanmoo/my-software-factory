@@ -1,4 +1,4 @@
-# Experimento #168 — Claim exclusivo entre fábricas pelo GitHub Issues
+# Experimento — Claim exclusivo entre fábricas pelo GitHub Issues
 
 Harness isolado e determinístico que examina se um protocolo mínimo, usando
 somente GitHub Issues, autoriza no máximo uma fábrica a executar um Worker por

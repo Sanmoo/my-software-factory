@@ -1,5 +1,5 @@
 /**
- * The minimum tracker-only candidates examined for issue #168. Each candidate
+ * The minimum tracker-only candidates examined. Each candidate
  * is expressed as the three phases a factory really has: what it reads before
  * writing, the blind writes it performs, and the decision it derives from the
  * verification read. The decision vocabulary is the one the spec requires:

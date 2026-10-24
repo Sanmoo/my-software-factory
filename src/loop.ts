@@ -881,8 +881,8 @@ export class SweepEngine {
           break;
         }
         case "continuity-paused": {
-          // Continuity could not safely reopen the attempt's session (issue
-          // 119). The pause is persisted and asks for help once; every sweep
+          // Continuity could not safely reopen the attempt's session. The
+          // pause is persisted and asks for help once; every sweep
           // re-reads the doubt this pause names — a terminal result in the
           // attempt's own session, or the real state — and clears it on its own
           // once that evidence settles it. Other works keep going.
