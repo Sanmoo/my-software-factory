@@ -59,7 +59,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: a launch refused before any worker existed returns its recovery (issue 178)", () => {
+describe("e2e: a launch refused before any worker existed refunds its recovery (issue 178)", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let tracker: FakeTrackerAdapter;
@@ -125,7 +125,7 @@ describe("e2e: a launch refused before any worker existed returns its recovery (
       index < launches ? { error: new LaunchPreconditionError(message), footprint: "none" } : null;
   }
 
-  test("the refusal returns the grant: the budget stays intact, the work reserved, and the next tick retries the same attempt", async () => {
+  test("the refusal refunds the grant: the budget stays intact, the work reserved, and the next tick retries the same attempt", async () => {
     const target = interruptedAttempt1();
     const runtime = new FakeWorkerRuntime({
       tracker,

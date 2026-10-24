@@ -631,7 +631,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a returned recovery shows the real budget in the section (issue 178)", async () => {
+  test("a refunded recovery shows the real budget in the section (issue 178)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(35, 1);
     const now = () => new Date("2026-01-01T00:00:00Z");

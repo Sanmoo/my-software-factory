@@ -1656,18 +1656,18 @@ export class SweepEngine {
    * actually refunded.
    */
   private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    const grant = entry.recoveryIndex !== null && !entry.launched ? entry.recoveryIndex : null;
-    const refunded = await this.refundGrant(entry, attempt, grant);
+    // A stop refunds only a grant no worker may already be carrying.
+    if (entry.launched) entry.recoveryIndex = null;
+    const refunded = await this.refundGrant(entry, attempt);
     await recordStopRequest(entry.dir, attempt);
     return refunded;
   }
 
   /**
-   * A launch the runtime refused before any worker existed (issue 178): the
-   * grant this admission persisted is refunded and the refusal keeps
-   * propagating, because it is the environment's failure, never the work's.
-   * Only that proof refunds; an ambiguous failure may have left a worker and
-   * keeps the grant consumed.
+   * A runtime refusal that PROVES no worker existed (issue 178): refund the
+   * admission's grant and keep the environment's failure propagating — it is
+   * not the work's outcome. A failure that may have left a worker behind is
+   * the caller's, with the grant consumed.
    */
   private async launchWorker(request: WorkRequest, entry: InFlightLaunch, attempt: number): Promise<SessionResult> {
     try {
@@ -1678,21 +1678,32 @@ export class SweepEngine {
       // resumes the same attempt free of charge instead of losing the evidence.
       await this.restoreConsumedStop(entry, attempt);
       if (!(error instanceof LaunchPreconditionError)) throw error;
-      const refunded = await this.refundGrant(entry, attempt, entry.recoveryIndex);
+      const grant = entry.recoveryIndex;
+      const refunded = await this.refundGrant(entry, attempt);
+      let note = "no recovery was granted to this launch";
+      if (refunded) note = "the recovery granted to this relaunch is refunded";
+      else if (grant !== null) {
+        // The ledger answered no: say whether the grant is still consumed
+        // instead of claiming a refund that never landed.
+        const stillGranted = (await readRecoveryLedger(entry.dir)).events.some(
+          (event) => event.index === grant && event.attempt === attempt,
+        );
+        note = stillGranted
+          ? "the recovery granted to this relaunch could not be refunded and stays consumed"
+          : "the recovery granted to this relaunch was already refunded";
+      }
       this.log(
         `launch of ${workKeyOf(request.work)} refused before any worker existed (${describeError(error)}) — ` +
-          (refunded ? "the recovery granted to this relaunch is refunded; " : "") +
-          "no attempt was consumed and the work stays reserved",
+          `${note}; no attempt was consumed and the work stays reserved`,
       );
       throw error;
     }
   }
 
-  /** Refund one grant of this admission to the attempt's budget and clear it.
-   *  The ledger event index is the grant's identity, so refunding the same
-   *  grant twice — a retried tick, a restart, a requested stop that already
-   *  refunded it — is a no-op. */
-  private async refundGrant(entry: InFlightLaunch, attempt: number, grant: number | null): Promise<boolean> {
+  /** Refund the grant this admission still holds, if any. The ledger event
+   *  index is its identity, so refunding the same grant twice is a no-op. */
+  private async refundGrant(entry: InFlightLaunch, attempt: number): Promise<boolean> {
+    const grant = entry.recoveryIndex;
     entry.recoveryIndex = null;
     return grant === null ? false : refundRecovery(entry.dir, attempt, grant);
   }

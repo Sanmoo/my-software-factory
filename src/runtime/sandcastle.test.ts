@@ -597,12 +597,11 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
       dockerProvider: () => dummySandbox(),
     });
 
-    const refusal = await failing.launch(request).then(
-      () => null,
-      (error: unknown) => error,
+    await assert.rejects(
+      failing.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError && /docker unavailable/.test(error.message),
     );
-    assert.ok(refusal instanceof LaunchPreconditionError, "the refusal is typed as PROVEN before any worker");
-    assert.match((refusal as Error).message, /docker unavailable/);
     assert.ok(!existsSync(request.workDir), "no footprint: no dir, no logs, no session");
   });
 
@@ -701,6 +700,31 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         error instanceof LaunchPreconditionError && /model credentials for/.test(error.message),
     );
     assert.ok(!existsSync(request.workDir), "the credential refusal leaves no footprint");
+
+    // The exact case of the reported incident: the image carries no readable
+    // inventory at all (the file is missing or cannot be parsed).
+    const unreadableInventory = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: {},
+        dockerSocket: SOCKET,
+        run: async (_command, args) => {
+          if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: "", stderr: "" };
+          if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+          return { stdout: "ok", stderr: "" };
+        },
+      }),
+    );
+    await assert.rejects(
+      unreadableInventory.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /carries no readable agent inventory at \/opt\/msf\/agent-inventory\.json/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the unreadable inventory leaves no footprint");
   });
 
   test("the default preflight checks Docker, the image inventory, the token, the git helper, Docker inside and the model auth", async () => {
