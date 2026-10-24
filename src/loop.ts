@@ -81,6 +81,7 @@ import {
   type RepairCycle,
   type RepairReconciliation,
 } from "./pool/repair.js";
+import { openRepairRound, type RepairRoundContext } from "./pool/repair-round.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
 import {
   confirmStopRequest,
@@ -1558,89 +1559,70 @@ export class SweepEngine {
     const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
 
     // A repair targets the PR's CURRENT base — never the repo default (story 8)
-    // — and is pinned to the head the facts were read on. If the remote moved
-    // since, the evidence is stale: skip the round (the next tick re-derives).
+    // — and opens only on a premise re-read now. The opening owns the single
+    // read of the facts, the head the intervention is pinned to and the
+    // concurrent-change verdict (issue 189); this method only applies them.
     const derivedTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
-    // The launch context of a repair round (issue 112), created once here and
-    // filled with the local work below: the confirmed trigger, the unpublished
-    // attempt it takes over (when resuming) and the lease value — the head
-    // observed before the intervention (for a resumption, the head its fallen
-    // attempt was launched on: equal to the trigger's by construction, since
-    // only the attempt whose evidence still matches the current head is
-    // resumed), never a fresh read, so a collaborator's push to the branch
-    // after the fall is never overwritten by local history (stories 10/17).
-    const repair: RepairLaunchContext | undefined =
-      derivedTrigger === undefined
-        ? undefined
-        : {
-            trigger: derivedTrigger,
-            resuming,
-            localWork: null,
-            pinnedHeadSha: resuming?.observedHeadSha ?? derivedTrigger.facts.headSha,
-          };
+    let repair: RepairRoundContext | undefined;
     let baseBranch = prepared.baseBranch;
-    if (repair !== undefined) {
-      // The facts are re-read before the round spends work (issue 149): the
-      // impediment that opened it may have been resolved meanwhile — by a
-      // human pushing the resolution, by a base advance. Only a confirmed
-      // premise buys a session; an obsolete one returns the round unspent,
-      // and an unconfirmed one waits for the next derivation instead of
-      // paying for stale evidence. The round is announced below, after this
-      // decision: a returned round is never also "reactivated".
-      const reading = readRepairPremise(
-        await pullRequests.readPullRequestRepairFacts(
-          workPullRequest(work, launchable.pr),
-        ),
-      );
-      if (reading.premise !== "persisting") {
+    if (derivedTrigger !== undefined) {
+      // The facts are re-read at the opening point (issue 149): the impediment
+      // that opened the round may have been resolved meanwhile — by a human
+      // pushing the resolution, by a base advance. Only a confirmed premise
+      // buys a session; an obsolete one returns the round unspent, and an
+      // unconfirmed one waits for the next derivation instead of paying for
+      // stale evidence. The round is announced below, after this decision: a
+      // returned round is never also "reactivated".
+      const opening = await openRepairRound({
+        trigger: derivedTrigger,
+        resuming,
+        readPremise: () => pullRequests.readPullRequestRepairFacts(workPullRequest(work, launchable.pr)),
+        observeRemote: () => this.observeRemote(work),
+      });
+      if (opening.kind === "returned") {
         this.log(
-          reading.premise === "obsolete"
-            ? `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
-                "(the premise is obsolete) — no round is spent"
-            : `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
-                "nothing is spent and the next sweep re-derives",
+          `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
+            "(the premise is obsolete) — no round is spent",
         );
         return null;
       }
-      const confirmed = reading.trigger;
-      // A FRESH round follows the facts as they read now: when the head moved
+      if (opening.kind === "held") {
+        this.log(
+          opening.because === "premise-unknown"
+            ? `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
+                "nothing is spent and the next sweep re-derives"
+            : `repair round for ${key} skipped: the remote head could not be read — ` +
+                "its reconciliation stays pending and nothing is launched (the next sweep retries)",
+        );
+        return null;
+      }
+      if (opening.kind === "skipped") {
+        this.log(
+          `repair round for ${key} skipped: the remote head ${opening.observedHeadSha ?? "(absent)"} no longer matches the ` +
+            `observed ${opening.pinnedHeadSha} — nothing is launched`,
+        );
+        if (opening.concurrentChange !== null) {
+          // Somebody moved the branch after the fall: the local work must not
+          // be published over it. The opening settled the attempt as a
+          // concurrent change, and the next derivation asks the human.
+          await this.markConcurrentChange(work, opening.concurrentChange);
+        }
+        return null;
+      }
+      // A fresh round follows the facts as they read now: when the head moved
       // while the impediment persists, the evidence was recalculated, so the
       // round opens on the current head and is charged on the new evidence
       // (issue 149). A resumption keeps its observed head — moving it would
       // publish the fallen attempt's local history over a concurrent one.
-      if (resuming === null) {
-        if (confirmed.facts.headSha !== repair.pinnedHeadSha) {
-          this.log(
-            `repair round for ${key}: the evidence was recalculated on the current head ` +
-              `${shortSha(confirmed.facts.headSha)} — the round opens there`,
-          );
-        }
-        repair.trigger = confirmed;
-        repair.pinnedHeadSha = confirmed.facts.headSha;
-      }
-      baseBranch = confirmed.facts.baseBranch;
-      const observed = await this.observeRemote(work);
-      if (!observed.known) {
+      if (resuming === null && opening.context.trigger.facts.headSha !== derivedTrigger.facts.headSha) {
         this.log(
-          `repair round for ${key} skipped: the remote head could not be read — ` +
-            "its reconciliation stays pending and nothing is launched (the next sweep retries)",
+          `repair round for ${key}: the evidence was recalculated on the current head ` +
+            `${shortSha(opening.context.trigger.facts.headSha)} — the round opens there`,
         );
-        return null;
       }
-      if (observed.headSha !== repair.pinnedHeadSha) {
-        this.log(
-          `repair round for ${key} skipped: the remote head ${observed.headSha ?? "(absent)"} no longer matches the ` +
-            `observed ${repair.pinnedHeadSha} — nothing is launched`,
-        );
-        if (resuming !== null) {
-          // Somebody moved the branch after the fall: the local work must not
-          // be published over it. The attempt is settled as a concurrent
-          // change, and the next derivation asks the human for a reconciliation.
-          await this.markConcurrentChange(work, resuming, observed.headSha);
-        }
-        return null;
-      }
+      repair = opening.context;
+      baseBranch = opening.context.baseBranch;
       this.log(
         `repair round for ${key}: ${repair.trigger.reasons.join(" + ")} reactivated the worker — ` +
           "same branch, same PR, no human comment needed",
@@ -1684,13 +1666,11 @@ export class SweepEngine {
     // round is really going out: existing commits are reused, changes are
     // inspected, an unfinished operation is continued — the resumption never
     // restarts the work blind (issue 112).
-    if (repair !== undefined) {
-      repair.localWork = await this.inspectLocalWork(work);
-    }
+    const localWork = repair === undefined ? null : await this.inspectLocalWork(work);
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair);
+    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair, localWork);
     // Ctrl-C perceived after the reservation but before the worker started:
     // do not start a new worker after this point. The reservation (the claim
     // and the registry dir) stays for the next run's reconciliation; the
@@ -1832,7 +1812,7 @@ export class SweepEngine {
     // Charge only after continuity allowed the launch. A pause before a worker
     // exists is not an unpublished Repair and cannot consume a round or fall.
     if (repair !== undefined) {
-      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
+      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, localWork);
     }
     if (this.stopping) {
       await this.operatorStop.cancelAdmission(entry, facts.attempt);
@@ -2371,22 +2351,15 @@ export class SweepEngine {
     }
   }
 
-  /** Record that the remote moved to a head the attempt did not produce: the
-   *  derivation then blocks the work with the help request (issue 112). */
-  private async markConcurrentChange(
-    work: WorkIdentity,
-    attempt: RepairAttempt,
-    remoteHeadSha: string | null,
-  ): Promise<void> {
+  /** Persist the concurrent-change verdict the opening reached: the derivation
+   *  then blocks the work with the help request (issue 112). */
+  private async markConcurrentChange(work: WorkIdentity, attempt: RepairAttempt): Promise<void> {
     const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
     const cycle = await readRepairCycle(dir);
-    await writeRepairCycle(dir, {
-      ...cycle,
-      attempt: { ...attempt, publication: "concurrent-change", remoteHeadSha },
-    });
+    await writeRepairCycle(dir, { ...cycle, attempt });
     this.log(
       `repair attempt ${attempt.attempt} of ${renderWorkIdentity(work)}: the remote branch ` +
-        `${describeRemoteChange(remoteHeadSha)} while the attempt's observed head was ` +
+        `${describeRemoteChange(attempt.remoteHeadSha)} while the attempt's observed head was ` +
         `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
     );
   }
@@ -2839,17 +2812,6 @@ export async function runForever(
   }
 }
 
-/** The repair context a session is launched with (issue 112): the confirmed
- *  trigger, the unpublished attempt it takes over (when resuming) and the
- *  local work read from the host. */
-interface RepairLaunchContext {
-  trigger: RepairTrigger;
-  resuming: RepairAttempt | null;
-  localWork: LocalWorkFacts | null;
-  /** The remote head the intervention observed — the force-with-lease value. */
-  pinnedHeadSha: string;
-}
-
 /**
  * Gather the launch material of a work from the port + git host (ticket 17):
  * the issue (title/body), human issue replies on a blocked retomada, the open
@@ -2862,7 +2824,8 @@ async function launchMaterial(
   pullRequests: PullRequestTracker,
   git: GitWork,
   launchable: Launchable,
-  repair?: RepairLaunchContext,
+  repair: RepairRoundContext | undefined,
+  localWork: LocalWorkFacts | null,
 ): Promise<WorkerMaterial> {
   const { work, issueReplies } = launchable;
   const issue = await tickets.readTicket(work.ticket);
@@ -2891,7 +2854,7 @@ async function launchMaterial(
       observedHeadSha: repair.pinnedHeadSha,
       baseBranch: repair.trigger.facts.baseBranch,
       checks: repair.trigger.failingChecks,
-      ...(repair.localWork === null ? {} : { localWork: repair.localWork }),
+      ...(localWork === null ? {} : { localWork }),
       ...(repair.resuming === null ? {} : { resuming: repair.resuming.attempt }),
     };
   }
