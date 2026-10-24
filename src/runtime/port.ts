@@ -7,6 +7,7 @@
 import type { IssueComment, RepairReason, RequiredCheckResult } from "../tracker/port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import type { LocalWorkFacts } from "../git/port.js";
+import type { OutcomeClass } from "../state/outcome.js";
 
 /**
  * The repair context of a reactivated session: why the factory
@@ -104,7 +105,9 @@ export interface RetroWorkInput {
   /** The work's artifacts as mounted read-only inside the round's container. */
   evidencePath: string;
   archived: boolean;
-  outcome: "pr-open" | "clean-without-pr" | "blocked-self-report";
+  /** The outcome record's own class — the window admits only finished works,
+   *  and the record is what says a work finished. */
+  outcome: OutcomeClass;
   attempt: number;
   /** ISO 8601 finish time (the outcome record's mtime). */
   completedAt: string;

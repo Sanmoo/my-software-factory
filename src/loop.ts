@@ -145,7 +145,7 @@ import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { collectFinishedWorks } from "./retro/window.js";
-import { RetroBusyError, emptyWindowNotice, planAutomaticRound, runRetroRound } from "./retro/round.js";
+import { RetroBusyError, planAutomaticRound, runRetroRound } from "./retro/round.js";
 import { describeError, formatDuration } from "./format.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -1035,8 +1035,9 @@ export class SweepEngine {
    * The round is fire-and-forget for the sweep — it never consumes a slot and
    * never delays a launch — but a failure is logged, never silent, and the
    * `--once` boundary waits for it (settle). One round at a time: this engine
-   * holds at most one (the promise below) and the workspace lock keeps every
-   * other factory process out; the report's marker keeps the windows apart.
+   * holds at most one (the promise below), the lane's pid-owned in-flight
+   * record keeps every other factory process out, and the report's marker
+   * keeps the windows apart.
    */
   private maybeStartRetro(): void {
     if (!this.deps.config.retro.enabled || this.retroRun !== null || this.stopping) return;
@@ -1063,12 +1064,11 @@ export class SweepEngine {
       return;
     }
     const finished = await collectFinishedWorks(workspace, this.carriedKeys);
+    // No plan means no material: the threshold counts only works no report has
+    // covered yet, so the lane waits quietly instead of announcing an empty
+    // window every sweep.
     const plan = await planAutomaticRound(config, workspace, finished, now);
     if (plan === null) return;
-    if ("empty" in plan) {
-      this.log(emptyWindowNotice(plan.empty));
-      return;
-    }
     await runRetroRound(
       {
         config,
