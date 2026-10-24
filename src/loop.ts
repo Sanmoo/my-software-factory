@@ -1833,8 +1833,7 @@ export class SweepEngine {
       logClaim(this.log, key);
       // The dir is the safety footprint and lands before the claim; the record
       // is the Work's own facts. An unknown or unwritable record is reported and
-      // never blocks the claim — nor is it
-      // overwritten.
+      // never blocks the claim — nor is it overwritten.
       mkdirSync(dir, { recursive: true });
       const url = ticketUrl(work.ticket);
       const presentation = {

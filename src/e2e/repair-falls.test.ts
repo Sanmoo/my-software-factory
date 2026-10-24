@@ -36,8 +36,9 @@ import { readRecoveryLedger } from "../pool/recovery.js";
 const execFile = promisify(execFileCallback);
 
 /**
- * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing must
- * not burn the round, must stay visible, and must be resumed automatically on
+ * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing
+ * must not burn the round, must stay visible, and must be resumed automatically
+ * on
  * the same branch and PR while the remote is still where it was observed. The
  * two ledgers are covered here — the DELIVERED rounds (two before the block)
  * and the consecutive FALLS (two before the block, PR open or not) — plus the
@@ -1361,7 +1362,8 @@ describe("e2e: the resumption over REAL git preserves the work", () => {
     const produced = (await execFile("git", ["rev-parse", workBranchName(100)], { cwd: cloneDir })).stdout.trim();
     assert.notEqual(produced, observed);
 
-    // The durable state of a repair that fell: the round charged, the fall on disk.
+    // The durable state of a repair that fell: the round charged, the fall on
+    // disk.
     writeFileSync(
       join(workDir(layout, REPO, 100), REPAIR_FILENAME),
       `${JSON.stringify({ usedRounds: 1, lastEvidence: `${REPO}#100|${observed}|conflicts|` })}\n`,

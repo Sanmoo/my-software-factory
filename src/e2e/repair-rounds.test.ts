@@ -24,9 +24,9 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of the repair rounds: an open PR with confirmed conflicts or a required
- * check concluded with failure/timeout reactivates the worker WITHOUT a human
- * comment. The same branch and the same PR; conflicts first (rebase against
+ * End-to-end of the repair rounds: an open PR with confirmed conflicts or a
+ * required check concluded with failure/timeout reactivates the worker WITHOUT a
+ * human comment. The same branch and the same PR; conflicts first (rebase against
  * the PR's current base), then the still-relevant check failures. Two
  * automatic rounds at most, then a block that asks for help. Unknown and
  * non-conclusive facts never trigger. The two fake seams + real temp
