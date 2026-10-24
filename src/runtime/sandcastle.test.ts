@@ -137,6 +137,24 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(mounts[3]?.hostPath, SOCKET.hostPath, "the socket rides its own host path — DOCKER_HOST names it");
   });
 
+  test("a Jira API token in the factory environment never reaches the worker container", async () => {
+    const previous = process.env["MSF_JIRA_TOKEN"];
+    process.env["MSF_JIRA_TOKEN"] = "jira-secret-that-must-not-ride-along";
+    try {
+      await runtime.launch(request);
+    } finally {
+      if (previous === undefined) delete process.env["MSF_JIRA_TOKEN"];
+      else process.env["MSF_JIRA_TOKEN"] = previous;
+    }
+    const serialized = JSON.stringify(dockerOptions);
+    assert.equal(serialized.includes("jira-secret-that-must-not-ride-along"), false);
+    assert.equal(
+      Object.keys(dockerOptions?.env ?? {}).some((key) => /jira/i.test(key)),
+      false,
+      "the container env names no Jira credential",
+    );
+  });
+
   test("the container inherits Docker: the socket's group as a supplementary gid and DOCKER_HOST naming the bind (ADR 0003)", async () => {
     await runtime.launch(request);
 
@@ -681,6 +699,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "-a", "-f", "/opt/msf/runtime/stop-request.js",
         "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
         "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
+        "-a", "-f", "/opt/msf/tracker/jira-client-cli.js",
       ],
       [
         "docker",

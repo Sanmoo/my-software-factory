@@ -31,6 +31,16 @@ export function isAgentSpeech(body: string): boolean {
   return body.includes(AGENT_MARKER);
 }
 
+/**
+ * Whether one comment is factory speech. The provider's structured evidence
+ * wins when it carries any (a Jira comment property, for instance): it does not
+ * depend on the author's login or on a marker surviving rich text. Without such
+ * evidence the body marker is the GitHub-era answer.
+ */
+export function commentIsAgentSpeech(comment: Pick<IssueComment, "body" | "agentSpeech">): boolean {
+  return comment.agentSpeech ?? isAgentSpeech(comment.body);
+}
+
 /** The identity ONE continuity pause occurrence carries in every factory
  *  comment about it (issue 174). The request, a re-assertion and a diagnostic
  *  for a changed cause share it, so a human answer stays bound to the request
@@ -100,6 +110,11 @@ export interface IssueComment {
   author: string;
   body: string;
   createdAt: string;
+  /** Structured evidence, when the provider carries it: true/false is the
+   *  provider's fact about factory speech, independent of the author login. */
+  agentSpeech?: boolean;
+  /** The factory operation the structured evidence names, when it names one. */
+  agentCorrelation?: string;
 }
 
 export interface PullRequest {

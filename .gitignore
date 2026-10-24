@@ -11,5 +11,6 @@
 
 /dist/
 /docker/guardrail/
+/docker/jira-client/
 msf.yaml
 /docker/agent-resources.json

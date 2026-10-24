@@ -15,7 +15,7 @@ import type {
   RepairReason,
   RequiredCheckResult,
 } from "../tracker/port.js";
-import { isAgentSpeech, pauseMarkerId } from "../tracker/port.js";
+import { commentIsAgentSpeech, pauseMarkerId } from "../tracker/port.js";
 import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { mapBounded } from "../concurrency.js";
@@ -647,7 +647,7 @@ async function deriveReservedWork(
     const last = lastPrComment(feedback.known ? feedback.value : null);
     // Speech, not login (v0.1): the worker account may be the operator's.
     // A closing comment carries the marker; a comment without it is the human.
-    if (last !== null && !isAgentSpeech(last.body)) {
+    if (last !== null && !commentIsAgentSpeech(last)) {
       return { work, dir, state: "feedback", pr, createdAt: issue.value.createdAt };
     }
     // The worker just opened the PR (or ended the round commenting on it):
@@ -910,9 +910,9 @@ export function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment
 export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueComment[] {
   let lastMarkerIndex = -1;
   for (const [index, comment] of comments.entries()) {
-    if (isAgentSpeech(comment.body)) lastMarkerIndex = index;
+    if (commentIsAgentSpeech(comment)) lastMarkerIndex = index;
   }
-  return comments.slice(lastMarkerIndex + 1).filter((comment) => !isAgentSpeech(comment.body));
+  return comments.slice(lastMarkerIndex + 1).filter((comment) => !commentIsAgentSpeech(comment));
 }
 
 export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
@@ -933,7 +933,7 @@ export function humanCommentsForPause(comments: IssueComment[], pause: PauseReco
   if (pause.id === undefined) return humanCommentsAfterLastMarker(comments);
   const request = comments.findIndex((comment) => pauseMarkerId(comment.body) === pause.id);
   if (request < 0) return [];
-  return comments.slice(request + 1).filter((comment) => !isAgentSpeech(comment.body));
+  return comments.slice(request + 1).filter((comment) => !commentIsAgentSpeech(comment));
 }
 
 /** The fallback-done comment: short, by decision (ticket 04 Q11). */

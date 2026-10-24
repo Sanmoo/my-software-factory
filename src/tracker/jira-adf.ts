@@ -170,3 +170,35 @@ function trimBlankLines(lines: string[]): string[] {
   while (trimmed.length > 0 && trimmed[trimmed.length - 1] === "") trimmed.pop();
   return trimmed;
 }
+
+/**
+ * Plain worker text as an ADF document (issue 131): the factory publishes what
+ * the worker wrote, as paragraphs whose line breaks are hard breaks. Nothing is
+ * parsed as HTML or Markdown, so a `<b>` in the text stays those four
+ * characters instead of becoming a tag Jira would reject or reinterpret.
+ */
+export function textToAdf(text: string): unknown {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const paragraphs: unknown[] = [];
+  let current: string[] = [];
+  const flush = (): void => {
+    if (current.length === 0) return;
+    const content: unknown[] = [];
+    for (const [index, line] of current.entries()) {
+      if (index > 0) content.push({ type: "hardBreak" });
+      content.push({ type: "text", text: line });
+    }
+    paragraphs.push({ type: "paragraph", content });
+    current = [];
+  };
+  for (const line of lines) {
+    if (line === "") flush();
+    else current.push(line);
+  }
+  flush();
+  return {
+    type: "doc",
+    version: 1,
+    content: paragraphs.length === 0 ? [{ type: "paragraph" }] : paragraphs,
+  };
+}

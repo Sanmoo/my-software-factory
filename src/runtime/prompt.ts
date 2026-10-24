@@ -1,4 +1,5 @@
-import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
+import { AGENT_MARKER, commentIsAgentSpeech } from "../tracker/port.js";
+import { JIRA_CLIENT_CONTAINER_FILE } from "../tracker/jira-mediation-protocol.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
@@ -187,7 +188,7 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
       `  - \`${check.name}\` — ${check.conclusion ?? "unknown"}${check.detailsUrl ? ` (${check.detailsUrl})` : ""}`,
   );
   const humanComments = (request.material.pr?.comments ?? []).filter(
-    (comment) => !isAgentSpeech(comment.body),
+    (comment) => !commentIsAgentSpeech(comment),
   );
   const localWork = repair.localWork;
   const resuming = repair.resuming;
@@ -235,6 +236,32 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
     `   Never use plain \`--force\`. If the lease is rejected, the remote changed concurrently: keep your local commits, do NOT retry with a refreshed lease and do NOT overwrite the other work — self-report blocked so a human reconciles both sides.`,
     ``,
   ];
+}
+
+/** The mediated Jira contract, in the worker's words (issue 131): the factory
+ *  holds the credential; the worker asks through a structured request and
+ *  reads an answer that is a fact, never an invitation to guess. */
+function jiraMediationSection(contractPath: string): string {
+  return [
+    `## Jira: the factory performs the API calls`,
+    ``,
+    `This ticket lives in Jira, and the Jira API token is never in this container, this prompt,`,
+    `the launch environment or the work dir. Do not look for it and do not call Jira directly.`,
+    `The factory mediates reads and authorized publications through a request/response channel:`,
+    ``,
+    `- read the ticket's current content and conversation again:`,
+    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} read --contract ${contractPath}\``,
+    `- publish an authorized factory comment (a help request is \`--kind help\`; an update is \`--kind update\`):`,
+    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} publish --kind help --text-file /msf-work/jira-pedido.txt --contract ${contractPath}\``,
+    ``,
+    `The command prints one JSON answer. Its \`status\` is a structured fact: \`ok\`, \`partial\`,`,
+    `\`rejected\`, \`failed\` or \`unknown\`. ONLY \`ok\` on a publish says the comment landed. A`,
+    `\`partial\` or \`unknown\` answer names what is unknown — report it as such, never as`,
+    `authorization, success or state. If a publish is \`unknown\`, retry the same command with`,
+    `the same \`--request-id\` (the id is printed in the answer) so the factory can reconcile it`,
+    `instead of publishing a second copy.`,
+    ``,
+  ].join("\n");
 }
 
 export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions): string {
@@ -295,6 +322,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     ...(ticketLink === undefined ? [] : [`Ticket link: ${ticketLink}`, ``]),
     material.ticket.body,
     ``,
+    ...(material.jira === undefined ? [] : [jiraMediationSection(material.jira.contractPath), ``]),
     ...(ticketReplies.length === 0
       ? []
       : [

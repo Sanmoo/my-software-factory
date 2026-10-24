@@ -8,6 +8,7 @@ import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
 import type { LoadedAgentResources } from "./inventory.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
+import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
 
 /**
  * The worker prompt (ticket 17): the issue, the PR and its comments when a
@@ -70,6 +71,33 @@ describe("worker prompt — the material the session starts from", () => {
       blockedLabel: DEFAULT_LABELS.blocked,
     });
     assert.doesNotMatch(nothingToResume, /This session CONTINUES/);
+  });
+
+  test("a Jira Work learns the factory mediates its reads and publications, and never sees a token (issue 131)", () => {
+    const jiraWork = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      githubRepository("Sanmoo/my-tasks"),
+    );
+    const withJira = baseRequest({
+      work: jiraWork,
+      material: {
+        ticket: { title: "Fix login", body: "The login flow must survive a restart." },
+        diff: "",
+        jira: { contractPath: "/msf-work/mediacao-jira/contrato.json" },
+      },
+    });
+    const prompt = buildWorkerPrompt(withJira, { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.match(prompt, /the factory performs the API calls/);
+    assert.match(prompt, /node \/opt\/msf\/tracker\/jira-client-cli\.js read --contract \/msf-work\/mediacao-jira\/contrato\.json/);
+    assert.match(prompt, /publish --kind help --text-file/);
+    assert.match(prompt, /ONLY `ok` on a publish says the comment landed/);
+    assert.match(prompt, /retry the same command with/);
+    assert.doesNotMatch(prompt, /Jira API token: /, "the prompt never prints a token");
+    assert.doesNotMatch(
+      buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked }),
+      /the factory performs the API calls/,
+      "a GitHub Work is not told about mediated Jira access",
+    );
   });
 
   test("carries the issue title and body", () => {

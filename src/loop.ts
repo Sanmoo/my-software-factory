@@ -4,6 +4,8 @@ import type { Config } from "./config.js";
 import type { IssueComment } from "./tracker/port.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
+import { launchWithJiraMediation } from "./runtime/mediated-launch.js";
+import type { JiraMediationComposition } from "./tracker/jira-mediation.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import {
   helpNotice,
@@ -194,6 +196,12 @@ export interface LoopDeps {
   /** The backoff seam before a recovery relaunch (issue 123): production waits
    *  on a real timer; a test injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
+  /** Factory-mediated Jira access (issue 131): the composition opens a
+   *  handler per Jira launch. Supplying it is what makes a Jira Work
+   *  launchable; absent, a Jira Work is refused instead of launched without
+   *  the interaction the worker needs. `msf run` still refuses Jira execution
+   *  until that slice (issue 132) wires the configured selections here. */
+  jiraMediation?: JiraMediationComposition;
 }
 
 /** The ruler's decided transition, as the sweep reports it (ticket 13). */
@@ -2110,16 +2118,20 @@ export class SweepEngine {
     entry.launched = true;
     let result: SessionResult;
     try {
-      result = await runtime.launch({
-        work,
-        workDir: dir,
-        branch: prepared.branch,
-        repoDir: prepared.repoDir,
-        baseBranch,
-        attempt: facts.attempt,
-        session: { mode: continuity.mode, sessionId: continuity.sessionId },
-        material,
-      });
+      result = await launchWithJiraMediation(
+        runtime,
+        {
+          work,
+          workDir: dir,
+          branch: prepared.branch,
+          repoDir: prepared.repoDir,
+          baseBranch,
+          attempt: facts.attempt,
+          session: { mode: continuity.mode, sessionId: continuity.sessionId },
+          material,
+        },
+        this.deps.jiraMediation,
+      );
     } catch (error) {
       if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
           ownWrittenOutcome(await readOutcomeRecord(dir), facts.attempt) === null &&

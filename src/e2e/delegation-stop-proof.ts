@@ -45,7 +45,7 @@ export async function proveDelegationStop(mode: "requested" | "forced"): Promise
       workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
-      notifications: false, configPath: join(root, "delegation.yaml"),
+      notifications: false, jira: [], configPath: join(root, "delegation.yaml"),
     };
     const runtime = new SandcastleRuntime({
       model: config.workerModel, token: "no-github", image: WORKER_IMAGE,

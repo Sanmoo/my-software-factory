@@ -3,8 +3,8 @@ import type { JiraTransport } from "./jira-adapter.js";
 /**
  * An in-memory Jira Cloud that speaks the REST dialect the real adapter uses
  * over HTTP (issue 128) — the process-boundary double of the adapter's
- * contract: `/rest/api/3/myself`, the token-paginated `/rest/api/3/search/jql`
- * and a single-issue read.
+ * contract: `/rest/api/3/myself`, the token-paginated `/rest/api/3/search/jql`,
+ * a single-issue read and the comment conversation/publication (issue 131).
  *
  * It models what the adapter's decisions depend on: the Basic credential, the
  * native Rank order (independent of creation date and Priority), opaque
@@ -19,6 +19,16 @@ export interface SimJiraAccount {
   displayName: string;
 }
 
+export interface SimJiraComment {
+  id: string;
+  author: SimJiraAccount | null;
+  /** An ADF document, as Jira stores it. */
+  body: unknown;
+  created: string;
+  /** Jira comment properties: the factory's structured speech evidence. */
+  properties?: Array<{ key: string; value: unknown }>;
+}
+
 export interface SimJiraIssue {
   id: string;
   key: string;
@@ -31,6 +41,7 @@ export interface SimJiraIssue {
   issueType: string;
   created: string;
   parentKey?: string;
+  comments?: SimJiraComment[];
 }
 
 export interface SimJiraRequest {
@@ -53,6 +64,8 @@ export interface SimJiraFaults {
   myself?: SimJiraFault;
   search?: SimJiraFault;
   issue?: SimJiraFault;
+  commentRead?: SimJiraFault;
+  commentCreate?: SimJiraFault;
 }
 
 export class JiraSim {
@@ -65,6 +78,7 @@ export class JiraSim {
   pageSize = 100;
   readonly requests: SimJiraRequest[] = [];
   faults: SimJiraFaults = {};
+  private nextCommentId = 50_000;
 
   constructor(options: { site?: string; token?: string; account?: SimJiraAccount } = {}) {
     this.site = options.site ?? "acme.atlassian.net";
@@ -90,9 +104,25 @@ export class JiraSim {
       issueType: input.issueType ?? "Task",
       created: input.created ?? "2026-01-01T00:00:00.000+0000",
       ...(input.parentKey === undefined ? {} : { parentKey: input.parentKey }),
+      comments: input.comments ?? [],
     };
     this.issues.push(issue);
     return issue;
+  }
+
+  /** Seed one comment; `properties` is how the factory's speech is marked. */
+  addComment(key: string, input: Partial<SimJiraComment> & { body: unknown }): SimJiraComment {
+    const issue = this.issues.find((entry) => entry.key === key || entry.id === key);
+    if (issue === undefined) throw new Error(`the sim holds no issue ${key}`);
+    const comment: SimJiraComment = {
+      id: input.id ?? String(this.nextCommentId++),
+      author: input.author === undefined ? this.account : input.author,
+      body: input.body,
+      created: input.created ?? "2026-01-02T00:00:00.000+0000",
+      ...(input.properties === undefined ? {} : { properties: input.properties }),
+    };
+    (issue.comments ??= []).push(comment);
+    return comment;
   }
 
   /** The transport the real adapter runs against. */
@@ -127,7 +157,7 @@ export class JiraSim {
       return answer(401, { errorMessages: ["Unauthorized"] });
     }
 
-    const faulted = this.faultFor(path);
+    const faulted = this.faultFor(path, init.method);
     if (faulted !== undefined) return answer(faulted.status, { errorMessages: faulted.messages });
 
     if (init.method === "GET" && path === "/rest/api/3/myself") {
@@ -136,15 +166,24 @@ export class JiraSim {
     if (init.method === "POST" && path === "/rest/api/3/search/jql") {
       return this.search(init.body ?? "", record);
     }
+    const commentPath = /^\/rest\/api\/3\/issue\/([^/]+)\/comment$/.exec(path);
+    if (commentPath !== null) {
+      const key = decodeURIComponent(commentPath[1]!);
+      if (init.method === "GET") return this.readComments(parsed, key);
+      if (init.method === "POST") return this.createComment(key, init.body ?? "");
+    }
     if (init.method === "GET" && path.startsWith("/rest/api/3/issue/")) {
       return this.readIssue(decodeURIComponent(path.slice("/rest/api/3/issue/".length)));
     }
     return answer(404, { errorMessages: [`the sim has no endpoint ${init.method} ${path}`] });
   }
 
-  private faultFor(path: string): SimJiraFault | undefined {
+  private faultFor(path: string, method: string): SimJiraFault | undefined {
     if (path === "/rest/api/3/myself") return this.faults.myself;
     if (path === "/rest/api/3/search/jql") return this.faults.search;
+    if (/\/comment$/.test(path)) {
+      return method === "POST" ? this.faults.commentCreate : this.faults.commentRead;
+    }
     if (path.startsWith("/rest/api/3/issue/")) return this.faults.issue;
     return undefined;
   }
@@ -175,6 +214,51 @@ export class JiraSim {
       issues: page.map((issue) => this.restIssue(issue)),
       ...(end < this.issues.length ? { nextPageToken: String(end), isLast: false } : { isLast: true }),
     });
+  }
+
+  private readComments(url: URL, idOrKey: string) {
+    const issue = this.issues.find((entry) => entry.id === idOrKey || entry.key === idOrKey);
+    if (issue === undefined) {
+      return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
+    }
+    const comments = issue.comments ?? [];
+    const startAt = Number(url.searchParams.get("startAt") ?? "0");
+    const maxResults = Number(url.searchParams.get("maxResults") ?? "100");
+    const page = comments.slice(startAt, startAt + Math.max(1, Math.min(maxResults, this.pageSize)));
+    return answer(200, {
+      startAt,
+      maxResults: page.length,
+      total: comments.length,
+      comments: page.map(commentRest),
+    });
+  }
+
+  private createComment(idOrKey: string, raw: string) {
+    const issue = this.issues.find((entry) => entry.id === idOrKey || entry.key === idOrKey);
+    if (issue === undefined) {
+      return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
+    }
+    let parsed: { body?: unknown; properties?: unknown };
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      return answer(400, { errorMessages: ["the comment body is not JSON"] });
+    }
+    if (parsed.body === null || typeof parsed.body !== "object" || Array.isArray(parsed.body)) {
+      return answer(400, { errorMessages: ["the comment body is not an ADF document"] });
+    }
+    if (!Array.isArray(parsed.properties)) {
+      return answer(400, { errorMessages: ["the comment carries no properties"] });
+    }
+    const comment: SimJiraComment = {
+      id: String(this.nextCommentId++),
+      author: this.account,
+      body: parsed.body,
+      created: "2026-01-03T00:00:00.000+0000",
+      properties: parsed.properties as Array<{ key: string; value: unknown }>,
+    };
+    (issue.comments ??= []).push(comment);
+    return answer(201, commentRest(comment));
   }
 
   private readIssue(idOrKey: string) {
@@ -209,6 +293,23 @@ export class JiraSim {
       },
     };
   }
+}
+
+function commentRest(comment: SimJiraComment) {
+  return {
+    id: comment.id,
+    author:
+      comment.author === null
+        ? null
+        : {
+            accountId: comment.author.accountId,
+            emailAddress: comment.author.emailAddress,
+            displayName: comment.author.displayName,
+          },
+    body: comment.body,
+    created: comment.created,
+    ...(comment.properties === undefined ? {} : { properties: comment.properties }),
+  };
 }
 
 /** The Atlassian Basic credential: `Basic base64(account:api-token)`. */

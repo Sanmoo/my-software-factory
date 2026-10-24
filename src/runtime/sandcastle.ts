@@ -44,6 +44,7 @@ import { agentFileProblem, modelAuthSources } from "./model-auth.js";
 import { appendAttemptEvent, sandcastleLogName } from "./attempt-logs.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 import { GITHUB_SITE, type WorkIdentity } from "../tracker/identity.js";
+import { JIRA_CLIENT_CONTAINER_FILE } from "../tracker/jira-mediation-protocol.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -981,10 +982,13 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
         "-a", "-f", "/opt/msf/runtime/stop-request.js",
         "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
         "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
+        "-a", "-f", JIRA_CLIENT_CONTAINER_FILE,
       ]);
     } catch {
       throw new Error(
-        `worker image ${deps.image} has no continuity guardrail at ${GUARDRAIL_CONTAINER_FILE} — a resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} has no continuity guardrail at ${GUARDRAIL_CONTAINER_FILE} ` +
+          `or no mediated Jira client at ${JIRA_CLIENT_CONTAINER_FILE} — a resumed session could repeat an ` +
+          `external effect, and a Jira worker could not ask the factory for access. Rebuild it with: npm run build:image`,
       );
     }
 

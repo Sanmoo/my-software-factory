@@ -92,6 +92,7 @@ ENV PATH="/home/agent/.local/share/mise/shims:${PATH}"
 # recovered session. Staged from dist/ by `npm run build:image`; the launch
 # refuses an image without it. Read-only to the worker.
 COPY docker/guardrail /opt/msf/
+COPY docker/jira-client /opt/msf/
 RUN chmod -R a+rX /opt/msf
 
 USER ${AGENT_UID}:${AGENT_GID}
