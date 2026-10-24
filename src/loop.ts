@@ -1898,7 +1898,7 @@ export class SweepEngine {
               "the work stays paused; nothing is relaunched",
           );
           await this.pauseForContinuity(
-            ref,
+            work,
             dir,
             recheck.pause,
             facts.attempt,
@@ -1924,7 +1924,7 @@ export class SweepEngine {
         `continuity of ${key} halted the relaunch (${continuity.pause.reason}) — ` +
           "the work pauses for help; no recovery is spent and no new attempt starts",
       );
-      await this.pauseForContinuity(ref, dir, continuity.pause, facts.attempt);
+      await this.pauseForContinuity(work, dir, continuity.pause, facts.attempt);
       return null;
     }
 

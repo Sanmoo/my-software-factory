@@ -24,7 +24,6 @@ import {
 import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
 import { RECOVERY_FILENAME } from "../pool/recovery.js";
 import { seedSession } from "./session-fixtures.js";
-import { expandedGitWorkOf } from "../git/legacy-bridge.js";
 import { expandedGitWorkOf } from "./legacy-git.js";
 
 /**
