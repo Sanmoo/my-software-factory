@@ -21,6 +21,7 @@ import { readGuardrailState, readPause } from "../runtime/continuity-artifacts.j
 import { appendJournalIntent, appendJournalStart } from "../runtime/continuity-artifacts.js";
 import { readRecoveryLedger } from "../pool/recovery.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
+import { expandedGitWorkOf } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
@@ -106,9 +107,10 @@ describe("e2e: continuity of the interrupted attempt (issue 119)", () => {
     runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open", "pr-open", "pr-open"] });
     return {
       config: cfg,
-      tracker,
+      tickets: tracker,
+      pullRequests: tracker,
       runtime,
-      git,
+      git: expandedGitWorkOf(git),
       workspace: layout,
       log: (line) => logs.push(line),
       notifier,
