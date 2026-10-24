@@ -7,9 +7,10 @@ import { join } from "node:path";
  *
  * Disk names are taken decisions, not code, and stay in PT-BR:
  *   <workspace>/repos/      — single clone per target repo
- *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs (sessao/, log-<n>.jsonl, desfecho.json)
- *   <workspace>/arquivo/    — works moved here on done; nothing is ever deleted
- *   <workspace>/retros/     — the retrospective reports (the marker of the next window)
+ *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs
+ *                             (sessao/, log-<n>.jsonl, desfecho.json)
+ *   <workspace>/arquivo/    — works moved here on done; nothing is deleted
+ *   <workspace>/retros/     — the retrospective reports (the next window's marker)
  */
 
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */

@@ -32,9 +32,10 @@ import {
 } from "./cli-harness.js";
 
 /**
- * End-to-end of the operator's requested stop: the signal closes new admissions at once, the started workers are
- * asked to stop — and end inside the cooperative window — and the run retains
- * its exclusivity until the stop is CONFIRMED. The in-flight worker's attempt
+ * End-to-end of the operator's requested stop: the signal closes new admissions
+ * at once, the started workers are asked to stop — and end inside the
+ * cooperative window — and the run retains its exclusivity until the stop is
+ * CONFIRMED. The in-flight worker's attempt
  * is preserved as the operator's requested stop: the next invocation resumes
  * the same attempt without spending the recovery budget, and no PR is invented.
  *

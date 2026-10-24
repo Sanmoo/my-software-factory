@@ -553,7 +553,7 @@ describe("the 9 operations over gh", () => {
   });
 
   test("9a. readPrFeedback: an approval-only review (body null) is dropped — no crash, the inline comment still counts", async () => {
-    // Spec #7: GitHub returns body: null for approval-only reviews. The
+    // GitHub returns body: null for approval-only reviews. The
     // adapter drops them (no speech signal); the inline comment — the other
     // channel — still counts as feedback. A null body reaching the state
     // derivation crashed isAgentSpeech (body.includes of null).

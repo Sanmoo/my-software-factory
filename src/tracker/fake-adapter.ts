@@ -307,9 +307,8 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
     const issue = this.mustGet(ref);
     const performed: string[] = [];
     this.claimedOrder.push(this.key(ref));
-    // The order is the decision: the padlock lands first, the pool
-    // label leaves last, so an interruption leaves the work claimed with its
-    // reservation.
+    // The port's claim order: the padlock lands first, the pool label leaves
+    // last, so an interruption leaves the work claimed with its reservation.
     this.armed("claim:label");
     issue.labels.add("agent-claimed");
     performed.push(`label+agent-claimed on ${ref.repo}#${ref.number}`);
@@ -328,8 +327,8 @@ export class FakeTrackerAdapter implements TrackerPort, TicketTracker, PullReque
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const issue = this.mustGet(ref);
     const performed: string[] = [];
-    // Mirrored order: the pool label returns first, the padlock
-    // leaves last — an interrupted release stays recoverable.
+    // The mirrored order: the pool label returns first, the padlock leaves
+    // last — an interrupted release stays recoverable.
     if (readyLabel !== undefined && !issue.labels.has(readyLabel)) {
       this.armed("release:relabel");
       issue.labels.add(readyLabel);
