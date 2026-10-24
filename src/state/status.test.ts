@@ -1076,7 +1076,8 @@ describe("status: Jira candidates are read-only and each source stands alone", (
 
     assert.match(
       text,
-      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1 source$/m,
+      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 1 selection$/m,
+      "one configured selection: the header never counts the candidates below it",
     );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1/);
     assert.match(
@@ -1135,6 +1136,11 @@ describe("status: Jira candidates are read-only and each source stands alone", (
     );
 
     const text = renderStatus(view);
+    assert.match(
+      text,
+      /nothing is claimed, commented or launched\): 2 selections$/m,
+      "one site carrying two rules is two selections, never two Sources",
+    );
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/frontend: 1 candidate, 1 held as ambiguous/);
     assert.match(text, /acme\.atlassian\.net → Sanmoo\/backend: 1 candidate, 1 held as ambiguous/);
     assert.match(text, /ambiguous \(more than one destination — held, no destination chosen\): 1/);

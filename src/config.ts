@@ -113,6 +113,9 @@ export interface Labels {
  * token — the token value never enters this file, a log or a message. The JQL
  * is stored with its effective ordering: native Rank ascending, supplied when
  * the operator gave none and refused when they gave a conflicting one.
+ *
+ * One `jira:` entry IS one selection: two rules on one site (one Source in the
+ * glossary's sense) are two entries, sharing that site's account and token.
  */
 export interface JiraSourceConfig {
   /** The Jira Cloud site host (`<tenant>.atlassian.net`). */
@@ -134,7 +137,7 @@ export interface Config {
   workerModel: string;
   /** Target repos whose issues feed the pool. */
   repos: string[];
-  /** Jira Cloud sources, read-only in this slice (issue 128); [] = GitHub-only. */
+  /** Jira Cloud selections, read-only in this slice (issue 128); [] = GitHub-only. */
   jira: JiraSourceConfig[];
   /** The `y` — worker slots in process. */
   concurrency: number;
@@ -233,13 +236,13 @@ function requireString(doc: Record<string, unknown>, key: string): string {
   return value.trim();
 }
 
-/** The Jira sources, strictly shaped: an unknown field (notably a token
+/** The Jira selections, strictly shaped: an unknown field (notably a token
  *  value) is refused instead of silently ignored (issue 128). */
 function optionalJiraSources(doc: Record<string, unknown>): JiraSourceConfig[] {
   const value = doc["jira"];
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
-    throw new ConfigError(`config field "jira" must be a list of Jira sources when given`);
+    throw new ConfigError(`config field "jira" must be a list of Jira selections when given`);
   }
   const sources = value.map((entry, index) => parseJiraSource(entry, index));
   assertOneIdentityPerSite(sources);

@@ -99,9 +99,10 @@ export function jiraSource(site: string): TicketSource {
   return { provider: "jira", site };
 }
 
-/** One selection per configured Jira source: the site, the operator's JQL and
- *  the explicit GitHub destination. Two queries may share a site; each entry
- *  stays its own selection, so no destination is guessed. */
+/** One selection per configured `jira:` entry: the site, the operator's JQL
+ *  and the explicit GitHub destination. Two queries may share a site (one
+ *  Source, one account); each entry stays its own selection, so no destination
+ *  is guessed. */
 export function jiraSelectionOf(source: JiraSourceConfig): TicketSelection {
   return {
     source: jiraSource(source.site),
