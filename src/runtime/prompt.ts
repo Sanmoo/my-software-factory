@@ -447,8 +447,9 @@ export function buildRetroPrompt(request: RetroRequest): string {
     ``,
     ...request.works.map(
       (work) =>
-        `- ${work.key} — ${work.outcome}, attempt ${work.attempt}, finished ${work.completedAt}; ` +
-        `evidence: ${work.evidencePath} (${work.archived ? "archived" : "under trabalhos/"})`,
+        `- ${work.key} (repo ${work.repo}) — ${work.outcome}, attempt ${work.attempt}, ` +
+        `finished ${work.completedAt}; evidence: ${work.evidencePath} ` +
+        `(${work.archived ? "archived" : "under trabalhos/"})`,
     ),
     ``,
     `## The factual summary of the window (from the operational records)`,
