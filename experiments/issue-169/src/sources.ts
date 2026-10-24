@@ -174,6 +174,19 @@ export const SOURCES: readonly SourceNote[] = [
     ],
   },
   {
+    id: "bulk-edit-issues",
+    title: "Bulk edit issues — POST /rest/api/3/bulk/issues/fields",
+    url: "https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-bulk-operations/#api-rest-api-3-bulk-issues-fields-post",
+    establishes:
+      "the bulk edit endpoint requires the global Bulk change permission; it is a different endpoint from the property write",
+    doesNotEstablish: "any permission or condition of the property endpoint",
+    quotes: [
+      "Global bulk change permission.",
+      "Browse project permission in all projects that contain the selected issues.",
+      "Edit issues permission in all projects that contain the selected issues.",
+    ],
+  },
+  {
     id: "rate-limits",
     title: "Rate limiting (Jira Cloud)",
     url: "https://developer.atlassian.com/cloud/jira/platform/rate-limiting/",
