@@ -24,10 +24,10 @@ import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
  * End-to-end of the reconciliation at the sweep seam, with real disk: the
- * tracker's marks and the workspace's reservations disagree, and the sweep says so
- * (unbacked claim, unmarked reservation) once per appearance — without
- * deleting, moving or archiving anything, and without stopping the sweep.
- * The two fake seams + a real temp workspace; deterministic, no network.
+ * tracker's marks and the workspace's reservations disagree, and the sweep says
+ * so (unbacked claim, unmarked reservation) once per appearance — without
+ * deleting, moving or archiving anything, and without stopping the sweep. The
+ * two fake seams + a real temp workspace; deterministic, no network.
  */
 
 const REPO = "Sanmoo/a";

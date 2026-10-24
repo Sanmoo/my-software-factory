@@ -11,17 +11,16 @@ import { DEFAULT_LABELS } from "../config.js";
  * sim (`npm test`); the smoke itself runs it against the real repo
  * (`npm run smoke:github`).
  *
- * op1 is designed around GitHub's eventual consistency (the adapter's
- * `listOpenIssues` doc states why the read is unfiltered): listings can lag a
- * freshly created issue by more than 30 s, while DIRECT GETs
- * (`/repos/{o}/{r}/issues/{n}`, the dependencies read) answer immediately. So
- * the cycle proves eligibility via DIRECT reads right after seeding (ops 1+2 and
- * 1+3) with NO settle wait, and the LISTING's live proof becomes ONE
- * non-blocking open-issues() re-check after the cycle's LAST operation — by then
- * the listing has had minutes to converge. A stale listing is explicitly
- * reported, never a failure: the FACTORY tolerates listing lag by design (the
- * pool is re-derived every tick and self-heals); the smoke must not demand
- * instant listing visibility.
+ * op1 is designed around GitHub's eventual consistency — the adapter's
+ * `listOpenIssues` doc states the read's own reasoning. Listings converge late,
+ * DIRECT GETs (`/repos/{o}/{r}/issues/{n}`, the dependencies read) answer
+ * immediately, so the cycle proves eligibility via DIRECT reads right after
+ * seeding (ops 1+2 and 1+3) with NO settle wait, and the LISTING's live proof
+ * becomes ONE non-blocking open-issues() re-check after the cycle's LAST
+ * operation — by then the listing has had minutes to converge. A stale listing
+ * is explicitly reported, never a failure: the FACTORY tolerates listing lag by
+ * design (the pool is re-derived every tick and self-heals); the smoke must not
+ * demand instant listing visibility.
  */
 
 /** The cycle's adapter-side REST calls on the happy path — sim-verified
