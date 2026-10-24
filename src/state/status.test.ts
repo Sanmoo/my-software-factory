@@ -641,7 +641,7 @@ describe("status — derivation on demand + local registry scan", () => {
     await consumeRecovery(dir, DEFAULT_RECOVERY_BUDGET, 1, now);
     assert.equal(await refundRecovery(dir, 1, 1), true);
 
-    const text = renderStatus(await deriveStatus(tracker, makeConfig(), layout, NO_WORKERS));
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
 
     assert.match(
       text,

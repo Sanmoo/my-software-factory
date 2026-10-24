@@ -82,6 +82,7 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
     return {
       workerGhAccount: "bot-do-samuca",
       workerModel: "opencode-go/glm-5.3-flash",
+      jira: [],
       repos: [REPO],
       concurrency: 1,
       workspace: layout.root,
@@ -161,7 +162,7 @@ describe("e2e: a launch refused before any worker existed refunds its recovery (
 
     // `msf status` derives the same ledger: the budget is the real one after
     // the refund, and the work is still the interrupted attempt.
-    const view = await deriveStatus(tracker, config(), layout, async () => []);
+    const view = await deriveStatus({ github: tracker }, config(), layout, async () => []);
     assert.match(
       renderStatus(view),
       /#1 \(attempt 1: last stop was an interruption — no attempt consumed; 0\/3 recoveries/,
