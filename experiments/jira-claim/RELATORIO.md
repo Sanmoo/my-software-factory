@@ -1,4 +1,4 @@
-# Viabilidade — Claim exclusivo entre fábricas pelo Jira Cloud (#169)
+# Viabilidade — Claim exclusivo entre fábricas pelo Jira Cloud
 
 ## Conclusão
 
@@ -51,7 +51,7 @@ Os demais candidatos são **inadequados mesmo com leituras frescas**:
 
 **Isto é um resultado inconclusivo para produção, não uma autorização.** O
 protocolo escolhido, as premissas que faltam confirmar e os pré-requisitos não
-aprovados voltam ao operador. A issue #170 (`needs-info`) permanece sem
+aprovados voltam ao operador. A tarefa de implementação (`needs-info`) permanece sem
 autorização de implementação; o requisito não foi enfraquecido para “melhor
 esforço”, lease, expiração, particionamento prévio ou alocação manual.
 
@@ -290,7 +290,7 @@ resolve P-CAS; ele herda exatamente a mesma lacuna.
 Terminologia: `Claim` e `Padlock` são os termos do `GLOSSARY.md`. Aqui o
 **Padlock** é o valor da property que autoriza (a marca), e a **apresentação**
 é a atribuição à Acting account e o label que completam o Claim. "Claim
-parcial" e "Claims anteriores" são os termos da spec (#122/#169); o `GLOSSARY`
+parcial" e "Claims anteriores" são os termos da spec; o `GLOSSARY`
 não é alterado porque este protocolo ainda não foi adotado.
 
 - **Ticket identity** — `jira:<site>:<stableId>` (provider + site + id imutável
@@ -569,7 +569,7 @@ operações documentadas examinadas, a garantia **não foi demonstrada**.
 
 ### 7.1 O que o simulador concede — e o que não concede
 
-O harness está em `experiments/issue-169` (comandos no README). Duas `Factory`
+O harness está em `experiments/jira-claim` (comandos no README). Duas `Factory`
 independentes (estado local, `factory id` e Destination próprios, Acting account
 compartilhada) disputam um Ticket; nenhum mapa de estado local é compartilhado
 entre elas, o único meio de coordenação é o `JiraCloud` simulado, e os Workers
@@ -733,22 +733,22 @@ particionamento prévio ou alocação manual.
 5. Existe algum primitivo documentado de escrita condicional (`If-Match`, versão)
    para properties de issue que não esteja no OpenAPI v3?
 
-Sem respostas (ou sem uma garantia equivalente), a implementação de #170 para
+Sem respostas (ou sem uma garantia equivalente), a implementação seguinte para
 Jira não tem base de segurança. Alternativas que introduzam serviço externo,
 app, mudança de workflow ou lease **não** foram adotadas; são decisões do
 operador.
 
-### 8.3 O que fechar #169 não significa
+### 8.3 O que concluir a investigação não significa
 
 Fechar esta investigação **não** aprova o protocolo, **não** escolhe um
-mecanismo e **não** torna a implementação (#170) pronta. As decisões, as
-limitações e os pré-requisitos não aprovados voltam ao operador; #170 permanece
+mecanismo e **não** torna a implementação seguinte pronta. As decisões, as
+limitações e os pré-requisitos não aprovados voltam ao operador; a implementação permanece
 `needs-info` até uma decisão explícita.
 
 ### Evidências recuperáveis
 
-- `experiments/issue-169/RELATORIO.md` — este relatório.
-- `experiments/issue-169/src/` — modelo, protocolo, explorador, cenários e
+- `experiments/jira-claim/RELATORIO.md` — este relatório.
+- `experiments/jira-claim/src/` — modelo, protocolo, explorador, cenários e
   testes (68 testes).
 - `npm test` — identidade, semântica do modelo, matriz exaustiva e cenários.
 - `npm run run` → `runs/evidence.json` — matriz completa, testemunhas de

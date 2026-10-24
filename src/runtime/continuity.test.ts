@@ -25,7 +25,7 @@ import type { GitWork, LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
- * The host-side continuity contract (issue 119): where a launch comes from,
+ * The host-side continuity contract: where a launch comes from,
  * whether an interrupted attempt may be reopened, and what makes the factory
  * pause instead of guessing. Tested at the module's public functions with the
  * REAL artifacts on temp disk and the tracker/git boundaries the loop uses.
@@ -36,7 +36,7 @@ const NUMBER = 7;
 const REF = githubWork(REPO, NUMBER);
 const BRANCH = "agent-issue-7";
 
-/** The pause record a recheck reads its cause from (issue 173). */
+/** The pause record a recheck reads its cause from. */
 function pauseUnderRecheck(reason: PauseReason, attempt: number): PauseRecord {
   return {
     version: 1,
@@ -68,7 +68,7 @@ class FakeGit implements GitWork {
   }
 }
 
-describe("continuity of an interrupted attempt (issue 119)", () => {
+describe("continuity of an interrupted attempt", () => {
   let dir: string;
   let workDir: string;
   let tracker: FakeTrackerAdapter;
@@ -389,7 +389,7 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     if (plan.decision !== "pause") return;
     assert.equal(plan.pause.reason, "tool-evidence-missing");
 
-    // The recheck reads the SAME rule (issue 173): a call that ran and failed is
+    // The recheck reads the SAME rule: a call that ran and failed is
     // still missing its intent, so the pause stands.
     const kept = await recheckPausedEffects(deps, plan.pause);
     assert.equal(kept.resolved, false);

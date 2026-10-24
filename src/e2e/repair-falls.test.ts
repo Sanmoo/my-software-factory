@@ -16,6 +16,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -35,19 +36,19 @@ import { readRecoveryLedger } from "../pool/recovery.js";
 const execFile = promisify(execFileCallback);
 
 /**
- * End-to-end of issue 112: a Repair attempt that ends WITHOUT publishing must
- * not burn the round, must stay visible, and must be resumed automatically on
- * the same branch and PR while the remote is still where it was observed. The
- * two ledgers are covered here — the DELIVERED rounds (two before the block)
- * and the consecutive FALLS (two before the block, PR open or not) — plus the
- * three publication verdicts, the pending reconciliation, the concurrent change
- * and the preserved local work. Fake tracker + fake runtime, real temp
- * workspace, git behind the same fake GitWork port.
+ * End-to-end of the repair fall: a Repair attempt that ends WITHOUT publishing
+ * must not burn the round, must stay visible, and must be resumed automatically
+ * on the same branch and PR while the remote is still where it was observed.
+ * The two ledgers are covered here — the DELIVERED rounds (two before the
+ * block) and the consecutive FALLS (two before the block, PR open or not) —
+ * plus the three publication verdicts, the pending reconciliation, the
+ * concurrent change and the preserved local work. Fake tracker + fake runtime,
+ * real temp workspace, git behind the same fake GitWork port.
  */
 
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
-/** The head the #100 incident observed: the PR's head and the remote's. */
+/** The head the failed repair observed: the PR's head and the remote's. */
 const OBSERVED = "2b45c0421fd9528df1d12032a942b60e1fff6518";
 
 class ScenarioGitWork implements LegacyGitWork {
@@ -90,7 +91,7 @@ class ScenarioGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: a repair attempt that fell before publishing (issue 112)", () => {
+describe("e2e: a repair attempt that fell before publishing", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let logs: string[];
@@ -116,6 +117,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -173,8 +175,9 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     return feedback.value.pr.number;
   }
 
-  /** The durable state of the #100 incident: a charged round, the evidence it
-   *  addressed, and a LATER attempt whose log exists but whose record does not.
+  /** The durable state of a repair that fell before publishing: a charged
+   *  round, the evidence it addressed, and a LATER attempt whose log exists but
+   *  whose record does not.
    *  The record on disk is still attempt 1's. */
   function seedFallenLegacyRound(
     number: number,
@@ -273,12 +276,12 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal((await readRepairCycle(workDir(layout, REPO, 7))).consecutiveFalls, 0);
   });
 
-  test("the #100 incident resumes automatically: the unpublished round returns, the same evidence resumes, nothing is charged twice", async () => {
-    // Attempt 1 opens the PR; both repair attempts die abruptly, like the incident.
+  test("a repair that fell before publishing resumes automatically: the unpublished round returns, the same evidence resumes, nothing is charged twice", async () => {
+    // Attempt 1 opens the PR; both repair attempts die abruptly.
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "abrupt-death", "abrupt-death"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 100);
 
-    // The incident's state on disk: budget charged, evidence consumed, an
+    // The fallen repair's state on disk: budget charged, evidence consumed, an
     // attempt AFTER the record without one of its own, the local work
     // unpublished and the remote still at the observed head.
     seedFallenLegacyRound(100);
@@ -559,7 +562,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     };
     seedFallenLegacyRound(118, cycle, 2);
     // The work recovered by another path: the PR is clean on its head and
-    // every required check is approved — the confirmed recovery of story 25.
+    // every required check is approved — the confirmed recovery.
     tracker.setPrRepairFacts({
       repo: REPO,
       prNumber: pr,
@@ -660,7 +663,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const pr = await seedFirstAttempt(tracker, runtime, deps, 115);
     // The attempt's publication is unknown and the tracker's repair facts are
     // unreadable; a human PR comment is waiting. No worker may start while the
-    // publication is uncertain (issue 112, story 21).
+    // publication is uncertain.
     writeFileSync(
       join(workDir(layout, REPO, 115), REPAIR_FILENAME),
       `${JSON.stringify({
@@ -947,7 +950,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.blocked));
   });
 
-  // ---- issue 149: the impediment the round addressed may vanish mid-round ----
+  // ---- the impediment the round addressed may vanish mid-round ----
 
   test("a round that ends without publishing after the human resolved the conflict returns the round — no block, no help", async () => {
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
@@ -1228,7 +1231,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     const { tracker, runtime, git, deps } = makeFactory(["pr-open", "clean-without-pr"]);
     const pr = await seedFirstAttempt(tracker, runtime, deps, 126);
     // A previous attempt wrote a failure: a second clean end without a PR
-    // would be the 2nd consecutive fall — the help request of the incident.
+    // would be the 2nd consecutive fall — the help request of a blocked work.
     writeFileSync(
       join(workDir(layout, REPO, 126), DESFECHO_FILENAME),
       `${JSON.stringify({ class: "clean-without-pr", attempt: 2 })}\n`,
@@ -1293,7 +1296,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
   });
 });
 
-describe("e2e: the resumption over REAL git preserves the work (issue 112)", () => {
+describe("e2e: the resumption over REAL git preserves the work", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let reposDir: string;
@@ -1323,6 +1326,7 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(root, "msf.yaml"),
@@ -1357,7 +1361,8 @@ describe("e2e: the resumption over REAL git preserves the work (issue 112)", () 
     const produced = (await execFile("git", ["rev-parse", workBranchName(100)], { cwd: cloneDir })).stdout.trim();
     assert.notEqual(produced, observed);
 
-    // The incident's durable state: the round charged, the fall on disk.
+    // The durable state of a repair that fell: the round charged, the fall on
+    // disk.
     writeFileSync(
       join(workDir(layout, REPO, 100), REPAIR_FILENAME),
       `${JSON.stringify({ usedRounds: 1, lastEvidence: `${REPO}#100|${observed}|conflicts|` })}\n`,

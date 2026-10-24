@@ -1,5 +1,5 @@
 /**
- * Continuity of an interrupted attempt (issue 119): which Pi session the next
+ * Continuity of an interrupted attempt: which Pi session the next
  * launch opens, whether it may be reopened at all, and what the operator is
  * told when it may not.
  *
@@ -142,7 +142,7 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
 
 /**
  * Re-read the doubt a persisted pause names — the operator's answer when it
- * answered one, and the normal cycle afterwards (issue 173). An answer is
+ * answered one, and the normal cycle afterwards. An answer is
  * orientation, never confirmation that an effect did not happen: what settles
  * the pause is a fresh read of the real state, and nothing else.
  */

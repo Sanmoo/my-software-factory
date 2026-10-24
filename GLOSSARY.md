@@ -104,7 +104,7 @@ The external service that serves the worker model's inference. Distinct from the
 _Avoid_: Provider, alone, when the ticket provider may be meant.
 
 **Model provider failure**:
-An attempt whose turn ended in the model provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. Within the interruption recovery it is not a failure of the work and never enters the fall ruler; a Repair round ending in it is settled by the repair ruler (issue 112).
+An attempt whose turn ended in the model provider's own error (`stopReason: error` with the provider's `errorMessage` in the session stream), not in an interruption of the agent. Within the interruption recovery it is not a failure of the work and never enters the fall ruler; a Repair round ending in it is settled by the repair ruler.
 _Avoid_: Provider failure, when the ticket provider could be read as the cause.
 
 **Model provider budget**:
@@ -192,7 +192,7 @@ The operator's notice that a live worker needs a decision the factory will not m
 _Avoid_: Help notice, when the work is not blocked.
 
 **Factory notice**:
-The operator's notice about the factory itself, naming no work: Docker has not answered long enough for launches to stop. It is never posted on an issue.
+The operator's notice about the factory itself, naming no work: Docker has not answered long enough for launches to stop, or a retrospective round filed improvement items at a destination. It is never posted on an issue.
 _Avoid_: Work notice, when no work is involved.
 
 **Archived work**:
@@ -251,3 +251,19 @@ _Avoid_: Help request, when the work still waits for the operator on its issue.
 **Improvement item**:
 A candidate change to the factory or a target repo, proposed by a retrospective; it becomes ordinary work only when the operator approves it on the tracker.
 _Avoid_: Work, before that approval.
+
+**Retrospective round**:
+One execution of the retrospective over a window of finished works, from its trigger to its report. It is a factory job on its own lane — never a Work, never a claim, never a worker slot.
+_Avoid_: Work, when the analysis job is meant.
+
+**Retrospective window**:
+The finished works one retrospective round analyzes: those finished after the last window report's boundary that no round has analyzed yet, or the last ten when no window report exists yet.
+_Avoid_: Pool, when the finished works are meant.
+
+**Retrospective report**:
+The dated Markdown artifact a round writes in the workspace; it records every candidate with its outcome, and the last one that covered a window is the marker that defines the next window's boundary.
+_Avoid_: Work artifact, when the round's own report is meant.
+
+**Retrospective result record**:
+The JSON artifact a round writes beside its report: the machine contract with the factory — which improvement items it filed and where, and which candidates it discarded.
+_Avoid_: Outcome record, which is a Work's.

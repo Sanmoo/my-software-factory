@@ -6,7 +6,7 @@ import { describeError } from "../format.js";
 import { parseWorkKey } from "../pool/registry.js";
 
 /**
- * The liveness probe (issue 102, ADR 0002): the workers ARE containers, so
+ * The liveness probe (ADR 0002): the workers ARE containers, so
  * asking Docker is the only way `msf status` can tell a live worker from a
  * registry dir whose attempt died. Every command this module runs only reads.
  * Ending a worker is NOT status work: that write lives in the runtime
@@ -18,7 +18,7 @@ import { parseWorkKey } from "../pool/registry.js";
  */
 
 /** A live worker as the factory sees it: its work, its container and how long
- *  it has run. The container id is the identity (issue 118): two containers of
+ * it has run. The container id is the identity: two containers of
  *  the same work are two workers, never one row. */
 export interface LiveWorker {
   /** "<repo>#<number>" — the same key the registry uses for the work dir. */
@@ -33,13 +33,23 @@ export interface LiveWorker {
 export type LivenessProbe = () => Promise<LiveWorker[]>;
 
 /**
- * The probe's answer (issue 118): the live containers, one entry each, or the
+ * The probe's answer: the live containers, one entry each, or the
  * honest unknown. A failure, a timeout or an invalid answer is NEVER an empty
  * list — the operator's "no worker" and "cannot tell" are different facts.
  */
 export type LivenessObservation =
   | { state: "known"; workers: LiveWorker[] }
   | { state: "unknown"; reason: string };
+
+/**
+ * The works a known answer says a live container carries. An unknown answer
+ * carries none: nothing is excluded on a guess.
+ */
+export function carriedWorkKeys(observation: LivenessObservation): ReadonlySet<string> {
+  return observation.state === "known"
+    ? new Set(observation.workers.map((worker) => worker.key))
+    : new Set<string>();
+}
 
 /** Every probe query ends or fails within this bound; a hung Docker call must
  *  not stall the cycles and the diagnostics forever. */
@@ -99,7 +109,7 @@ export function duplicateWorkers(workers: readonly LiveWorker[]): DuplicateWorke
 }
 
 /**
- * The slots the live workforce occupies (issue 118): every distinct container
+ * The slots the live workforce occupies: every distinct container
  * counts once, and a local launch Docker already shows is not counted again —
  * a worker seen by both is still ONE worker. A local launch Docker does not
  * show yet (the container is starting) occupies its slot until collection.
@@ -163,7 +173,7 @@ export function dockerWorkerProbe(options: DockerProbeOptions): LivenessProbe {
 
 /** The screen's reading of a `docker ps` listing: the containers the mounts
  *  column places under this workspace's works root, and the ones only the
- *  inspect can place (issue 160). */
+ * inspect can place. */
 export interface ScreenedListing {
   candidates: string[];
   /** No mount column rendered, or a truncated one: `docker inspect` decides. */
@@ -171,12 +181,12 @@ export interface ScreenedListing {
 }
 
 /**
- * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"` listing
- * (issue 160). A row whose rendered mounts name a path under the works root is
- * inspected, as is a row whose mounts column rendered nothing usable — a column
- * that never showed the paths cannot show their absence. A row whose rendered
- * mounts place it elsewhere is dropped without an inspect. The column is
- * searched whole, not split on its comma separator, so a source containing a
+ * The screen over a `docker ps --no-trunc --format "{{.ID}} {{.Mounts}}"`
+ * listing. A row whose rendered mounts name a path under the works root is
+ * inspected, as is a row whose mounts column rendered nothing usable — a
+ * column that never showed the paths cannot show their absence. A row whose
+ * rendered mounts place it elsewhere is dropped without an inspect. The column
+ * is searched whole, not split on its comma separator, so a source containing a
  * comma stays visible; Docker marks a truncated column with `…`.
  */
 export function screenWorkerContainers(psListing: string, worksRoot: string): ScreenedListing {
@@ -210,7 +220,7 @@ export function workspaceLivenessProbe(layout: WorkspaceLayout): LivenessProbe {
 /**
  * `docker inspect` over the listed ids. A container that left between the
  * listing and its inspect is simply not running, so its absence is dropped
- * instead of failing the whole probe — the confirmation of a stop (issue #146)
+ * instead of failing the whole probe — the confirmation of a stop
  * reads liveness exactly while the runtime tears the container down. Any other
  * unreadable answer still fails: the factory never guesses that a worker is
  * gone.
@@ -253,7 +263,7 @@ function parseContainerIds(listing: string): string[] {
 }
 
 /**
- * The pure correlation (issue 102): a container is a worker of the work whose
+ * The pure correlation: a container is a worker of the work whose
  * dir it binds — the runtime mounts <works>/<repo>#<n> at /msf-work and its
  * sessao/ dir at the agent's sessions path, so ANY mount resolving under the
  * works root names the work. Mounts outside the works root (the toolchain
@@ -263,7 +273,7 @@ function parseContainerIds(listing: string): string[] {
  * inspect is intersected with it, so an inspect run that outlived its listing
  * cannot resurrect a dead container.
  *
- * One entry PER CONTAINER (issue 118): the container id is the identity, so
+ * One entry PER CONTAINER: the container id is the identity, so
  * two containers carrying the same work stay visible as two workers — the
  * operational counting and the duplicate diagnosis depend on it.
  */
@@ -283,7 +293,7 @@ export function parseWorkerContainers(
     const correlation = correlateWork(container.Mounts ?? [], worksRoot);
     // A container with no work mount is not a worker; a work of ANOTHER
     // workspace is a decided "not ours". An identity that cannot be decided is
-    // UNKNOWN, never "no worker" (issue 118) — it may still be one of ours.
+    // UNKNOWN, never "no worker" — it may still be one of ours.
     if (correlation.kind === "foreign" || correlation.kind === "not-a-worker") continue;
     if (correlation.kind === "inconclusive") {
       throw new Error(
@@ -327,7 +337,7 @@ interface InspectedContainer {
   Mounts?: Array<{ Source?: string }>;
 }
 
-/** The correlation verdict (issue 160): the container binds a work this
+/** The correlation verdict: the container binds a work this
  *  workspace owns, a work of ANOTHER workspace (a sibling factory on the same
  *  host — a decided "not ours"), an identity under our works root that cannot
  *  be decided, or no work at all. Only the first counts; an inconclusive

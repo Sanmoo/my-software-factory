@@ -1,8 +1,8 @@
 {
-  "name": "issue-169-jira-claim-viability",
+  "name": "github-claim-viability",
   "private": true,
   "version": "0.0.0",
-  "description": "Feasibility harness for a Jira Cloud-only exclusive Claim across independent factories (issue #169).",
+  "description": "Feasibility harness for a tracker-only exclusive Claim across independent factories.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

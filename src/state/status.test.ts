@@ -11,6 +11,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -32,7 +33,7 @@ import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
- * `msf status` (ticket 07 Q7, issue 102): derivation on demand through the
+ * `msf status`: derivation on demand through the
  * port — works with the factory stopped — plus the local registry scan and the
  * read-only liveness probe. Running and Orphaned come from Docker + disk
  * together; the overlap (outcome written, worker still alive) is shown as two
@@ -79,6 +80,7 @@ describe("status — derivation on demand + local registry scan", () => {
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -180,7 +182,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, new RegExp(`${REPO}#4 — 2 containers carry this work`), "the human sees the count");
   });
 
-  test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates (issue 160)", async () => {
+  test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedAttempt(4, 1);
     seedAttempt(5, 1);
@@ -373,7 +375,7 @@ describe("status — derivation on demand + local registry scan", () => {
     );
   });
 
-  test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt (issue 175)", async () => {
+  test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(21, 1);
     // The launch planned attempt 2 and continuity refused it before the runtime
@@ -514,7 +516,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /attempt 0/, "a number the record never named is not printed");
   });
 
-  test("a fallen attempt is named even when an older outcome record sits on disk (issue 112)", async () => {
+  test("a fallen attempt is named even when an older outcome record sits on disk", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(20, 1, 2);
     writeFileSync(
@@ -565,7 +567,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       text,
       /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent\)/,
-      "the diagnosis names the attempt's own evidence paths, present or absent (story 32)",
+      "the diagnosis names the attempt's own evidence paths, present or absent",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
@@ -596,7 +598,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
   });
 
-  test("the recovery section says whether the last stop was an interruption or a failure (issue 123)", async () => {
+  test("the recovery section says whether the last stop was an interruption or a failure", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     // #30: interrupted twice — two recoveries consumed, the attempt kept.
     const interrupted = seedAttempt(30, 2);
@@ -646,7 +648,7 @@ describe("status — derivation on demand + local registry scan", () => {
     return new Date(at).toISOString();
   }
 
-  test("the model provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
+  test("the model provider section names the failure and its message, and says retrying — never a block", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(40, 1);
     const at = seedModelProviderEnding(dir, 1);
@@ -669,7 +671,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /blocked/, "a model provider failure is never rendered as a block");
   });
 
-  test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
+  test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(41, 1);
     const at = seedModelProviderEnding(dir, 1, 1_700_000_000_900);
@@ -694,7 +696,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a later plain interruption is not read as 'retrying after the model provider' (issue 144)", async () => {
+  test("a later plain interruption is not read as 'retrying after the model provider'", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const dir = seedAttempt(42, 1);
     const at = seedModelProviderEnding(dir, 1);
@@ -721,7 +723,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /#42 \(attempt 1 was interrupted/);
   });
 
-  test("the requested stop and the unconfirmed stop are named in the recovery section (issue #146)", async () => {
+  test("the requested stop and the unconfirmed stop are named in the recovery section", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     const stopped = seedAttempt(33, 1);
     await recordStopRequest(stopped, 1);
@@ -931,6 +933,7 @@ describe("status — derivation on demand + local registry scan", () => {
       liveness: { state: "known", running: [], duplicates: [], orphaned: [] },
       recoveryBudget: config.recovery,
       modelProviderBudget: config.modelProvider,
+      retro: null,
     };
 
     const text = renderStatus(view);

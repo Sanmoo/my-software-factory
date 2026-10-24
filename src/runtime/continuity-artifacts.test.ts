@@ -22,7 +22,7 @@ import {
 import { githubWork } from "../e2e/work-fixtures.js";
 
 /**
- * The continuity artifacts as files (issue 119): the association a recovery
+ * The continuity artifacts as files: the association a recovery
  * selects from, the journal whose missing result is the interrupted window,
  * and the pause that survives a restart. A record this version cannot read is
  * reported absent, never repaired into an invented fact.
@@ -30,7 +30,7 @@ import { githubWork } from "../e2e/work-fixtures.js";
 
 const REF = githubWork("Sanmoo/my-tasks", 7);
 
-describe("the continuity artifacts (issue 119)", () => {
+describe("the continuity artifacts", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -91,7 +91,7 @@ describe("the continuity artifacts (issue 119)", () => {
     assert.equal(pauseWaits(readable, 3), false, "an older attempt's pause is history");
   });
 
-  test("issue 174 — the pause identity is read back; an old record without one stays readable", () => {
+  test("the pause identity is read back; an old record without one stays readable", () => {
     writePauseFile({ ...validPause(), id: "pause-1", announced: true });
     assert.equal(readPause(dir)?.id, "pause-1", "the occurrence identity survives a restart");
 
@@ -160,8 +160,9 @@ describe("the continuity artifacts (issue 119)", () => {
   });
 
   test("a workspace written before the expansion stays readable as a GitHub Work", () => {
-    // The pre-#127 file named the work as `{repo, number}`. Reading it is a
-    // compatibility contract: the association is not discarded or guessed.
+    // A file written in the earlier shape names the work as `{repo, number}`.
+    // Reading it is a compatibility contract: the association is not discarded
+    // or guessed.
     writeFileSync(
       join(dir, "sessao-vinculos.jsonl"),
       `${JSON.stringify({ version: 1, work: { repo: "Sanmoo/my-tasks", number: 7 }, attempt: 2, round: 1, sessionId: "legacy", at: "" })}\n`,

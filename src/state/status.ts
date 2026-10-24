@@ -8,6 +8,7 @@ import {
 } from "../pool/registry.js";
 import type { TicketTracker } from "../tracker/expanded-port.js";
 import { githubSelections } from "../tracker/identity.js";
+import { readRetroInFlight, readRetroState, type RetroInFlight } from "../retro/marker.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -26,7 +27,7 @@ import {
 /**
  * `msf status`: derivation on demand through the port (it works with the
  * factory stopped — the tracker is the truth) plus the local registry scan
- * (ticket 07 Q7) and the read-only Docker probe (issue 102, ADR 0002). The
+ * and the read-only Docker probe (ADR 0002). The
  * registry knows what was written to disk; only Docker knows what is alive
  * now, so the two together say Running (a live worker carries the work) or
  * Orphaned (no outcome record, no live worker). A work whose outcome is
@@ -35,15 +36,13 @@ import {
  * Docker the liveness is unknown — named, never guessed — and the
  * registry-only view stays complete. No reports are written: the per-work
  * artifacts are the interface — including the interruption-recovery ledger,
- * which says whether the last stop consumed a recovery or a failure (issue
- * 123).
+ * which says whether the last stop consumed a recovery or a failure.
  *
- * Issue 100: the SAME single derivation returns the pool and the
- * reconciliation (unbacked claim, unmarked reservation) from one open-issues
- * read per repo.
+ * The SAME single derivation returns the pool and the reconciliation (unbacked
+ * claim, unmarked reservation) from one open-issues read per repo.
  *
- * Issue 118: the liveness facts are read and interpreted ONCE, by the same
- * functions the operational cycle uses (probeLiveness, duplicateWorkers), so
+ * The liveness facts are read and interpreted ONCE, by the same functions the
+ * operational cycle uses (probeLiveness, duplicateWorkers), so
  * status and the operation never disagree about the same Docker answer.
  */
 
@@ -53,7 +52,7 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
-/** An interrupted attempt as the status names it (issues 112/123): the
+/** An interrupted attempt as the status names it: the
  *  registry's own fact, under the status vocabulary — the attempt with no
  *  record of its own, and the attempt the record on disk belongs to (history,
  *  never its result). */
@@ -66,10 +65,24 @@ export type Liveness =
       state: "known";
       /** One row per container: two workers of one work are two rows. */
       running: RunningWorker[];
-      /** The works carried by more than one container (issue 118). */
+      /** The works carried by more than one container. */
       duplicates: DuplicateWorkers[];
       orphaned: OrphanedAttempt[];
     };
+
+/** The retrospective job as `msf status` names it (ADR 0006): the
+ *  last report written, the boundary it advanced, and the round in flight. */
+export interface RetroStatus {
+  /** The file name of the last report written; null before any. */
+  lastReport: string | null;
+  /** The finish time (epoch ms) of the newest work a window report covered; null
+   *  until a round covers a window — a single-work post-mortem never moves it. */
+  boundaryAt: number | null;
+  /** Items the last report filed as needs-triage. */
+  filed: number;
+  /** The round in flight, or null when the lane is idle. */
+  inFlight: RetroInFlight | null;
+}
 
 export interface StatusView {
   /** The pool of eligibles, derived now — never a cache (status is stateless). */
@@ -84,8 +97,10 @@ export interface StatusView {
   liveness: Liveness;
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
-  /** The configured model provider budget (issue 144). */
+  /** The configured model provider budget. */
   modelProviderBudget: ModelProviderBudget;
+  /** The retrospective job's visible state; null when the job is disabled. */
+  retro: RetroStatus | null;
 }
 
 /**
@@ -120,11 +135,22 @@ export async function deriveStatus(
     liveness: await classifyLiveness(registry, layout, probe),
     recoveryBudget: config.recovery,
     modelProviderBudget: config.modelProvider,
+    retro: config.retro.enabled ? await readRetroStatus(layout) : null,
+  };
+}
+
+async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
+  const [state, inFlight] = await Promise.all([readRetroState(layout), readRetroInFlight(layout)]);
+  return {
+    lastReport: state.lastReport,
+    boundaryAt: state.boundaryAt,
+    filed: state.lastFiled,
+    inFlight,
   };
 }
 
 /**
- * The two states, from the registry and the probe together (issue 102): a work
+ * The two states, from the registry and the probe together: a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
  * when nothing does. A bare reservation is neither — no attempt ended, so it
  * stays its own line. An unreachable probe is unknown, never "none": without
@@ -151,7 +177,7 @@ async function classifyLiveness(
     running,
     duplicates: duplicateWorkers(observation.workers),
     // A work whose attempt waits for the operator is not "orphaned, awaiting
-    // the factory's next reconciliation" (issue 119): it has its own section.
+    // the factory's next reconciliation": it has its own section.
     orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key) && !paused.has(entry.key)),
   };
 }

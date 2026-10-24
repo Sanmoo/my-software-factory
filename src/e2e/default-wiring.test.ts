@@ -19,14 +19,14 @@ import { PR_ASSOCIATIONS_FILENAME, activePullRequest, readPrAssociations } from 
 import { FakeNotifier } from "../notify/fake-notifier.js";
 
 /**
- * End-to-end of ticket 18: the full pipeline through the REAL cli wiring
+ * End-to-end of the default wiring: the full pipeline through the REAL cli
  * path — config file → boot (wireRunDeps) → derive → claim → launch →
  * collect → ruler — over the two fake seams (the in-memory tracker adapter
  * and the scripted runtime, injected ONLY through wireRunDeps' test seams,
  * never through the binary), the REAL local git host against a local bare
  * fixture, a real temp workspace. No network, no container, no GitHub.
  *
- * Also proven here: boot reconciliation (ticket 21/14) — a fresh sweep
+ * Also proven here: boot reconciliation — a fresh sweep
  * after a "restart" re-derives every reserved work from disk + tracker
  * alone, with no in-memory state; and the keyring boot check of the
  * default (real) wiring.
@@ -35,7 +35,7 @@ import { FakeNotifier } from "../notify/fake-notifier.js";
 const REPO = "Sanmoo/my-tasks";
 const NOW = "2026-01-01T00:00:00Z";
 
-describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
+describe("e2e: msf run through the real cli wiring", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let fixture: FixtureRemote;
@@ -118,7 +118,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.ok(feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open");
     assert.equal(feedback.value.pr.headBranch, "agent-issue-1");
 
-    // The artifact contract on REAL disk (ticket 13): the session dir, the
+    // The artifact contract on REAL disk: the session dir, the
     // attempt log and the record the worker wrote — its absence would be an
     // interruption, its presence is the pr-open the ruler collected.
     const work = workDir(layout, REPO, 1);
@@ -128,7 +128,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     assert.deepEqual(record, { class: "pr-open", attempt: 1, pr: { repo: REPO, number: 1, branch: "agent-issue-1" } });
 
     // The launch persists the Work's own facts and the PR association on the
-    // same real path (issue 125): a restart reads them instead of the config.
+    // same real path: a restart reads them instead of the config.
     const reservation = readReservation(work);
     assert.equal(reservation.state, "persisted");
     if (reservation.state === "persisted") {
@@ -195,7 +195,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // The crash footprint (issue 123): a claimed work with an attempt log and
+    // The crash footprint: a claimed work with an attempt log and
     // no record — the factory died on it. NOTHING is in memory: the fresh
     // sweep below is the restarted factory.
     const work = workDir(layout, REPO, 1);
@@ -208,7 +208,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const result = await runOnce(deps);
 
     // The derivation read the crash as an INTERRUPTION and recovered the same
-    // attempt (issue 123): the record that lands is attempt 1's, never a new
+    // attempt: the record that lands is attempt 1's, never a new
     // attempt number, and the work never left the claim.
     assert.equal(result.launched.length, 1);
     assert.equal(result.launched[0]!.request.attempt, 1, "the interrupted attempt keeps its number");
@@ -223,8 +223,8 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     tracker.seedIssue({ repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
 
-    // Two sessions started and died without a record: the old ruler blocked on
-    // the 2nd consecutive drop; the interruption rule never does (issue 123).
+    // Two sessions started and died without a record: a 2nd consecutive drop
+    // would block under the fall ruler; the interruption rule never does.
     const work = workDir(layout, REPO, 1);
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "log-1.jsonl"), `${JSON.stringify({ event: "session-start", attempt: 1 })}\n`, "utf8");
@@ -334,7 +334,7 @@ describe("e2e: msf run through the real cli wiring (ticket 18)", () => {
   test("the default wiring (no seams) demands the keyring credential at boot — clear failure, offline", async () => {
     writeConfig();
     // A config naming an account the machine's gh keyring has no token for:
-    // the boot check of ticket 16, reached through the DEFAULT wiring —
+    // the boot check, reached through the DEFAULT wiring —
     // proving the default path is the real GitHub adapter, not the fake.
     const config = loadConfigFrom(dir);
     const withAbsentAccount = { ...config, workerGhAccount: "msf-no-such-account" };

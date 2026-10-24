@@ -14,6 +14,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -23,10 +24,10 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of issue 107: an open PR with confirmed conflicts or a required
- * check concluded with failure/timeout reactivates the worker WITHOUT a human
- * comment. The same branch and the same PR; conflicts first (rebase against
- * the PR's current base), then the still-relevant check failures. Two
+ * End-to-end of the repair rounds: an open PR with confirmed conflicts or a
+ * required check concluded with failure/timeout reactivates the worker WITHOUT
+ * a human comment. The same branch and the same PR; conflicts first (rebase
+ * against the PR's current base), then the still-relevant check failures. Two
  * automatic rounds at most, then a block that asks for help. Unknown and
  * non-conclusive facts never trigger. The two fake seams + real temp
  * workspace, no network.
@@ -84,7 +85,7 @@ class RepairGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: automatic repair of conflicts and required-check failures (issue 107)", () => {
+describe("e2e: automatic repair of conflicts and required-check failures", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -108,6 +109,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -352,8 +354,8 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     const first = await runOnce(deps);
     assert.equal(first.launched.length, 1, "round 1");
 
-    // Issue 112: an attempt that fell before publishing returns its round and
-    // is taken over with the SAME evidence — the deadlock of issue 100.
+    // An attempt that fell before publishing returns its round and is taken
+    // over with the SAME evidence — never a deadlock.
     const resumed = await runOnce(deps);
     assert.equal(resumed.launched.length, 1, "the unpublished attempt is resumed with the same evidence");
     const afterResume = await readRepairCycle(workDir(layout, REPO, 6));
@@ -605,7 +607,7 @@ describe("e2e: automatic repair of conflicts and required-check failures (issue 
     assert.equal((await runOnce(deps)).launched.length, 1, "a new cycle after recovery");
   });
 
-  test("a mergeable PR with no required checks declared is a confirmed recovery (issue 149)", async () => {
+  test("a mergeable PR with no required checks declared is a confirmed recovery", async () => {
     const config = makeConfig();
     const { tracker, runtime, git, deps } = makeFactory(config);
     const pr = await seedOpenPr(tracker, runtime, deps, 20);

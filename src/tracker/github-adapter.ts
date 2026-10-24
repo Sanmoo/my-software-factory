@@ -53,13 +53,13 @@ import {
 } from "./identity.js";
 
 /**
- * The real tracker adapter: GitHub over the `gh` CLI (ticket 16). The token
+ * The real tracker adapter: GitHub over the `gh` CLI. The token
  * lives in the keyring of the gh CLI (`gh auth token --user <account>` — the
- * keyring is the config's secret-free companion, spec user story 33) and is
+ * keyring is the config's secret-free companion) and is
  * injected as `GH_TOKEN` in the env of every gh/git call only — the active gh
- * account of the machine is never touched (ticket 09). Push is git with the
- * credential helper baked into the clone (the pattern proven in ticket 09:
- * `!gh auth git-credential` + `GH_TOKEN` authenticates clone and push).
+ * account of the machine is never touched. Push is git with the
+ * credential helper baked into the clone (`!gh auth git-credential` +
+ * `GH_TOKEN` authenticates clone and push).
  *
  * REST-only (the machine's shared-IP budget leaves no GraphQL room): every gh
  * call is `gh api` against the REST endpoints — never `gh issue list` (GraphQL
@@ -153,8 +153,8 @@ export const defaultCommandRunner: CommandRunner = (file, args, options) =>
  * 9c. Bake exactly ONE credential helper into a clone's local config. A reused
  * clone accumulates helper entries: clone time bakes two (`--config
  * credential.helper=` plus the gh helper), and earlier works or an odd machine
- * config can leave more behind (ticket 16's smoke: a bare set on the multivar
- * failed with exit 5 — "cannot overwrite multiple values with a single value").
+ * config can leave more behind (a bare set on the multivar fails with exit 5
+ * — "cannot overwrite multiple values with a single value").
  *
  * So the bake unsets EVERY local value of both helper keys first, then sets the
  * single intended values. The unset tolerates exit 5 — the key is simply absent
@@ -183,9 +183,9 @@ export async function bakeCredentialHelper(
   await runner("git", ["config", "--local", CREDENTIAL_URL_HELPER_KEY, GIT_CREDENTIAL_HELPER], { cwd: cloneDir, env });
 }
 
-/** The ambient token env vars that must never shadow the keyring (v1's
- * createGhCliBoundary pattern). One list: the boot check strips them from the
- * `gh` call, and the e2e harness adds gh's config-dir override on top. */
+/** The ambient token env vars that must never shadow the keyring. One list:
+ *  the boot check strips them from the `gh` call, and the e2e harness adds gh's
+ *  config-dir override on top. */
 export const AMBIENT_TOKEN_ENV_VARS = [
   "GH_TOKEN",
   "GH_ENTERPRISE_TOKEN",
@@ -194,7 +194,7 @@ export const AMBIENT_TOKEN_ENV_VARS = [
 ] as const;
 
 /**
- * Boot check (ticket 16): read the bot token from the gh keyring. Fails the
+ * Boot check: read the bot token from the gh keyring. Fails the
  * boot with a clear message when the account has no token. The read strips
  * the ambient token vars from the env so an environment token never shadows
  * the keyring.
@@ -356,12 +356,12 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
   // ---- the 9 operations + rank ----
 
-  /** 1. The neutral read of the repo's open issues (issue 99): one issues
+  /** 1. The neutral read of the repo's open issues: one issues
    *  listing + one open-PRs listing, never a per-issue read.
    *
-   *  The listing is the PLAIN open-issues one, never label-filtered: GitHub's
+   *  The listing is the PLAIN open-issues one, never label-filtered: the
    *  label-filtered listing is search-index-backed and lags minutes behind a
-   *  fresh label, while the plain listing is immediately consistent (ticket 16).
+   *  fresh label, while the plain listing is immediately consistent.
    *
    *  The issue listing cannot tell PR linkage, so OPEN PR bodies are read for
    *  Closes/Fixes/Resolves #N. A human PR whose body carries no linkage keyword
@@ -429,10 +429,8 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
   /** 4. Claim: the padlock (the claim label) lands first, the assignee follows
    *  as decoration — never what holds the work — and the pool label leaves last,
    *  so an interruption leaves the work claimed and recoverable by the next
-   *  derivation's 1st fall (issue 98); the reverse order left it in neither the
-   *  pool nor the reserved set. Only an absent label is tolerated; any other
-   *  failure propagates as a failed launch, the work stays in the pool and the
-   *  next tick retries it. */
+   *  derivation's 1st fall. The port's claim documents what a failed label
+   *  write leaves behind. */
   async claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -475,7 +473,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
   /** 5. Release: swaps claimed→ready back (the ruler's 1st fall — the work
    *  re-enters the pool) or removes only the padlock when no ready label is
-   *  given. Mirrors the claim (issue 98): the pool label comes back first, the
+   *  given. Mirrors the claim's order: the pool label comes back first, the
    *  padlock leaves last. */
   async releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome> {
     const performed: string[] = [];
@@ -516,10 +514,10 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
     return { performed };
   }
 
-  /** 5b. Block: swaps claimed→blocked on the 2nd consecutive fall (ticket 13) —
+  /** 5b. Block: swaps claimed→blocked on the 2nd consecutive fall —
    *  the claim is held until the terminal state, so the assignee stays. Same
-   *  order as the claim (issue 98): the blocked label lands first, the padlock
-   *  leaves last. */
+   *  order as the claim: the blocked label lands first, the padlock leaves
+   *  last. */
   async blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome> {
     const performed: string[] = [];
     const issuePath = `repos/${ref.repo}/issues/${ref.number}`;
@@ -546,7 +544,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
     return { performed };
   }
 
-  /** 5c. Resume (ticket 14): swaps blocked→claimed on the retomada — a human
+  /** 5c. Resume: swaps blocked→claimed on the retomada — a human
    *  answered after the marker, the claim is held again. Same order as the claim:
    *  the padlock returns first, the blocked mark leaves last (tolerated when
    *  absent); the assignee never left. */
@@ -576,7 +574,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
     return { performed };
   }
 
-  /** 9d. Reopen (ticket 14): the rejection's retomada reopens the SAME PR
+  /** 9d. Reopen: the rejection's retomada reopens the SAME PR
    *  linked to the issue, never a new one. No PR linked (yet) is a tolerated
    *  no-op — the derivation only schedules the reopen with a PR in hand. */
   async reopenPr(ref: IssueRef): Promise<WriteOutcome> {
@@ -676,7 +674,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
         // so they are dropped here (an approval is not feedback; the inline
         // comments come from the other channel below). Dropped, a null body
         // can never reach the state derivation, where isAgentSpeech would
-        // crash on it (body.includes of null — spec #7). A review that DID
+        // crash on it (body.includes of null). A review that DID
         // speak keeps its submitted_at; one without it falls back to ""
         // (sorted first — the honest floor, never a lie).
         ...(reviews ?? []).filter(isSpeechReview).map((review) => ({
@@ -826,7 +824,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
     return known(null);
   }
 
-  // ---- expanded ticket/PR contracts (issue 124) ----
+  // ---- expanded ticket/PR contracts ----
 
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
     this.assertGitHubSource(selection.source);
@@ -1054,7 +1052,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
 
 /** A review submission that carries speech — body null/empty is the
  *  approval-only review: no signal, dropped before it can reach the
- *  derivation (a null body would crash isAgentSpeech — spec #7). */
+ *  derivation (a null body would crash isAgentSpeech). */
 function isSpeechReview(review: RestReview): review is RestReview & { body: string } {
   return review.body !== null && review.body !== "";
 }

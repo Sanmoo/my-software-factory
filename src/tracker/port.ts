@@ -8,7 +8,7 @@
  * syntax, completion by closing the issue) in their own group.
  *
  * The port never speaks of `gh`, `git` or any adapter detail; the adapter never
- * speaks of works (trabalhos). Contract from ticket 02 / prior art of v1:
+ * speaks of works (trabalhos). The contract:
  *
  *  - Writes are performed by the adapter only; confirmation is always by
  *    re-reading (ADR 0001). Adapters report the intents they performed, never
@@ -32,7 +32,7 @@ export function isAgentSpeech(body: string): boolean {
 }
 
 /** The identity ONE continuity pause occurrence carries in every factory
- *  comment about it (issue 174). The request, a re-assertion and a diagnostic
+ *  comment about it. The request, a re-assertion and a diagnostic
  *  for a changed cause share it, so a human answer stays bound to the request
  *  it answered instead of to the last thing the factory said. */
 export function pauseMarker(id: string): string {
@@ -151,7 +151,7 @@ export interface RequiredCheckResult {
   detailsUrl?: string;
 }
 
-/** Why a confirmed impediment reactivates the worker (issue 107). */
+/** Why a confirmed impediment reactivates the worker. */
 export type RepairReason = "conflicts" | "required-checks";
 
 /**
@@ -204,7 +204,7 @@ export class PartialWriteError extends Error {
  * `PullRequestTracker`. This shape has no production consumer; the GitHub
  * adapter's contract suite and smoke keep exercising it.
  *
- * The 9 operations + rank (ticket 02, table 1), in port terms:
+ * The 9 operations + rank, in port terms:
  *
  *   1. listOpenIssues   2. readIssue        3. readBlockers
  *   4. claim            5. releaseClaim     6. markDone
@@ -225,21 +225,21 @@ export interface TrackerPort {
   /** 4. Claim: the reservation lands on the tracker BEFORE any launch. The
    *  claim label (the padlock) lands first and the pool label leaves last, so a
    *  neighbouring sweep excludes by the padlock's presence, never by the pool
-   *  label's absence (issue 98); the reverse order once left an interrupted
-   *  claim in neither the pool nor the reserved set. Only an absent label is
-   *  tolerated; any other failure propagates. */
+   *  label's absence; the reverse order would leave an interrupted claim in
+   *  neither the pool nor the reserved set. Only an absent label is tolerated;
+   *  any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the padlock when no ready label is given. Mirrored order (issue 98): the pool label comes back first, the padlock leaves last. */
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the padlock when no ready label is given. Mirrored order: the pool label comes back first, the padlock leaves last. */
   releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall (ticket 13) — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the padlock leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the padlock leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
   blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker, ticket 14). The padlock returns first, the blocked mark leaves last. Same bundled `Labels`. */
+  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker). The padlock returns first, the blocked mark leaves last. Same bundled `Labels`. */
   resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one (ticket 04 Q9). Tolerated when no PR exists. */
+  /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one. Tolerated when no PR exists. */
   reopenPr(ref: IssueRef): Promise<WriteOutcome>;
 
   /** 6. Done: close the issue as completed. */

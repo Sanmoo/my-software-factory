@@ -1,5 +1,5 @@
 /**
- * The continuity artifacts of a work (issue 119): the session <-> attempt
+ * The continuity artifacts of a work: the session <-> attempt
  * association, the external-effect journal the in-container guardrail writes,
  * the verdicts handed back to the next session, and the persisted continuity pause.
  *
@@ -124,7 +124,7 @@ export interface GuardrailState {
   at: string;
 }
 
-/** Why a work waits for the operator instead of being recovered (issue 119).
+/** Why a work waits for the operator instead of being recovered.
  *  The list is the source of both the type and the runtime validation, so a
  *  reason cannot exist in one and be missing from the other. */
 const PAUSE_REASONS = [
@@ -186,7 +186,7 @@ export interface PauseRecord {
   detail: string;
   at: string;
   sessionId?: string;
-  /** The occurrence this record belongs to (issue 174): generated once when
+  /** The occurrence this record belongs to: generated once when
    *  the pause is first persisted and kept through rechecks, re-announcements
    *  and a changed reason. The factory's comments about the occurrence carry
    *  it, so an answer is bound to its request. Absent on records written
@@ -299,7 +299,7 @@ export function readEffectJournal(workDir: string): EffectJournal {
     if (line.trim() === "") continue;
     // Widened to `unknown` so the guard narrows to exactly JournalLine: on the
     // parsed JsonValue the narrowing would be an intersection of unrelated
-    // members, which no longer discriminates on `type`.
+    // members and would not discriminate on `type`.
     const parsed: unknown = parseJsonLine(line);
     if (!isJournalLine(parsed)) {
       journal.intact = false;

@@ -6,6 +6,7 @@ import {
   factoryUnavailableNotice,
   helpNotice,
   interventionNotice,
+  retroItemsNotice,
   reviewNotice,
   type WorkNotification,
 } from "./port.js";
@@ -27,7 +28,7 @@ const jiraWork = workIdentity(
 const review: WorkNotification = reviewNotice(github, 7);
 const help: WorkNotification = helpNotice(github);
 
-describe("notify: the factory's own occurrence (issue 118)", () => {
+describe("notify: the factory's own occurrence", () => {
   test("a Docker-unavailable notice is identified as the factory's, names no work and invents no issue", () => {
     const { title, body } = renderNotification(factoryUnavailableNotice(3 * 60_000));
 
@@ -133,5 +134,19 @@ describe("notify: the Linux desktop backend", () => {
     });
 
     await assert.rejects(() => notifier.notify(help), /command not found/);
+  });
+});
+
+describe("notify: the retrospective's occurrence", () => {
+  test("a retro-items notice points at the triage destination and names the operator's gate", () => {
+    const { title, body } = renderNotification(retroItemsNotice("Sanmoo/my-software-factory", 3));
+
+    assert.match(title, /retro/i);
+    assert.match(title, /3 improvement item\(s\)/);
+    assert.match(body, /needs-triage/);
+    assert.match(body, /Sanmoo\/my-software-factory/);
+    assert.match(body, /only gate/i, "the notice never claims the factory triaged or implemented");
+    assert.ok(body.includes("label%3Aneeds-triage"), "the destination's triage queue is the address");
+    assert.doesNotMatch(`${title}\n${body}`, /my-tasks#/, "the round is not a work — no work is invented");
   });
 });

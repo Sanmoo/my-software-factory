@@ -148,9 +148,8 @@ describe("the 9 operations over gh", () => {
     const gh = ghCall(calls, (c) => c.args[0] === "api");
     const path = gh.args.find((a) => a.startsWith("repos/"));
     assert.ok(path?.includes("state=open"));
-    // the dialect (ticket 16 smoke fix): NO labels query param — GitHub's
-    // label-filtered listing is search-index-backed and lags minutes behind a
-    // fresh label; the neutral read hands every issue to the derivation
+    // the dialect: NO labels query param — the neutral read hands every issue
+    // to the derivation (the adapter's listOpenIssues doc says why)
     assert.ok(!path?.includes("labels="), "the labels query param is never sent");
     assert.ok(!gh.args.includes("issue"), "gh issue list (GraphQL) is never touched");
   });
@@ -306,7 +305,7 @@ describe("the 9 operations over gh", () => {
     assert.ok(posts.some((c) => c.args.some((a) => a.endsWith("/issues/1/assignees"))), "the account is assigned");
   });
 
-  test("4. claim: the claim mark lands before the pool label leaves (issue 98)", async () => {
+  test("4. claim: the claim mark lands before the pool label leaves", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
     await adapter.claim({ repo: "Sanmoo/a", number: 1 }, "bot-do-samuca", "ready-for-agent");
 
@@ -476,7 +475,7 @@ describe("the 9 operations over gh", () => {
   });
 
   test("9a. readPrFeedback: an approval-only review (body null) is dropped — no crash, the inline comment still counts", async () => {
-    // Spec #7: GitHub returns body: null for approval-only reviews. The
+    // GitHub returns body: null for approval-only reviews. The
     // adapter drops them (no speech signal); the inline comment — the other
     // channel — still counts as feedback. A null body reaching the state
     // derivation crashed isAgentSpeech (body.includes of null).

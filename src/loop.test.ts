@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "./tracker/fake-adapter.js";
 import { FakeWorkerRuntime, launchOf } from "./runtime/fake-runtime.js";
-import { DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET } from "./config.js";
+import { DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RETRO } from "./config.js";
 import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
 import { workBranchName, type LocalWorkFacts, type PreparedWork } from "./git/port.js";
@@ -15,10 +15,10 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./e2e/legacy-git.js";
 import { githubWork, launchedNumber } from "./e2e/work-fixtures.js";
 
 /**
- * The loop uses the git host as its launch seam (ticket 15): every launch
+ * The loop uses the git host as its launch seam: every launch
  * prepares the single clone + work branch first, and the runtime request
  * carries where the clone lives and what base the branch was born from —
- * the real runtime (ticket 17) consumes exactly this.
+ * the real runtime consumes exactly this.
  */
 
 class FakeGitWork implements LegacyGitWork {
@@ -85,6 +85,7 @@ describe("loop wiring — the git host feeds every launch", () => {
         recovery: { maxRecoveries: 3, waitsMs: [1, 1, 1] },
         modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
         liveness: { ...DEFAULT_LIVENESS_POLICY },
+        retro: { ...DEFAULT_RETRO },
         notifications: true,
         workerAuthFile: null,
         configPath: join(root, "msf.yaml"),
@@ -115,7 +116,7 @@ describe("loop wiring — the git host feeds every launch", () => {
     }
   });
 
-  test("the launch request carries the worker material — issue, PR conversation, diff (ticket 17)", async () => {
+  test("the launch request carries the worker material — issue, PR conversation, diff", async () => {
     git.diffs.set(7, "diff --git a/x b/x\n+work");
 
     const { launched } = await runOnce(deps);
@@ -130,7 +131,7 @@ describe("loop wiring — the git host feeds every launch", () => {
     assert.equal(request.material.pr, undefined, "no PR exists at the first launch");
   });
 
-  test("a relaunch of a branch not on origin says so — the reuse has nothing to fast-forward (issue 96)", async () => {
+  test("a relaunch of a branch not on origin says so — the reuse has nothing to fast-forward", async () => {
     const logged: string[] = [];
     git.branchReused = true;
     git.branchOnOrigin = false;
@@ -178,7 +179,7 @@ describe("loop wiring — the git host feeds every launch", () => {
     assert.equal(git.cleaned.length, 0);
   });
 
-  test("the wait wakes by event: a worker's end resolves before the tick (ticket 14)", async () => {
+  test("the wait wakes by event: a worker's end resolves before the tick", async () => {
     const engine = new SweepEngine(deps);
     await engine.deriveAndAct();
 

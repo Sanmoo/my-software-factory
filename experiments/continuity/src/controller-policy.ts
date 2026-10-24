@@ -2,17 +2,17 @@
  * The recovery decision, as a pure function so the expected behaviour of every
  * alternative and guardrail is pinned by tests before any process runs.
  *
- * The contract of #111 lives here:
+ * The harness's contract lives here:
  *  - infrastructure interruption does not end or consume an attempt;
  *  - a live worker is recognized, never duplicated;
  *  - with no trustworthy state, ask for help instead of pretending to recover;
  *  - the recovery budget is finite and separate from attempt identity.
  *
- * A is modelled as it exists (the factory relaunches a new attempt with
- * reconstructed context and has no worker-recognition path: see the #89
- * evidence about the status path and the first/second-drop rule), so its
- * expected outcomes here are deliberately worse. That is the baseline being
- * observed, not a defect introduced by the harness.
+ * A is modelled as it exists: the factory relaunches a new attempt with
+ * reconstructed context and has no worker-recognition path (state/status.ts
+ * reads the container listing; the fall ruler frees on the first fall and
+ * blocks on the second), so its expected outcomes here are deliberately worse.
+ * That is the baseline being observed, not a defect introduced by the harness.
  */
 import type { RecoveryDecision } from "./recovery.js";
 import type { OwnerState, WorkerRecord } from "./ownership.js";

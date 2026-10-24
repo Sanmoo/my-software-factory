@@ -1,6 +1,6 @@
 # Worker model is factory configuration
 
-Accepted for [issue #88](https://github.com/Sanmoo/my-software-factory/issues/88).
+Accepted.
 
 The factory's worker model is configured by the required `worker-model` field
 in `msf.yaml`, with a `<provider>/<model-id>` value. The CLI does not accept a

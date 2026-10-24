@@ -17,6 +17,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -27,12 +28,13 @@ import { seedSession } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
 /**
- * End-to-end of issue 144: the recovery of an interrupted attempt must tell a
- * MODEL PROVIDER FAILURE from an interruption of the agent. A model provider
- * error in the attempt's own stream retries on its own budget and backoff; an
- * interruption without it keeps issue 123's recovery untouched; an exhausted
- * model provider budget waits for the operator ("awaiting model provider") as a
- * help request — never a block and never an infinite retry.
+ * End-to-end of the model provider budget: the recovery of an interrupted
+ * attempt must tell a MODEL PROVIDER FAILURE from an interruption of the agent.
+ * A model provider error in the attempt's own stream retries on its own budget
+ * and backoff; an interruption without it keeps the interruption recovery
+ * untouched; an exhausted model provider budget waits for the operator
+ * ("awaiting model provider") as a help request — never a block and never an
+ * infinite retry.
  *
  * The seams are the ticket's: the scriptable fake runtime (a model provider
  * error written into the attempt's stream log, exactly as the real runtime
@@ -52,7 +54,7 @@ class Waits {
   };
 }
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   async prepareWork(ref: IssueRef): Promise<PreparedWork> {
     return {
@@ -79,7 +81,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: a model provider failure is not an interruption of the agent (issue 144)", () => {
+describe("e2e: a model provider failure is not an interruption of the agent", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -103,6 +105,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...modelProvider },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -174,7 +177,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     const wd = workDir(layout, REPO, 1);
     const ledger = modelProviderLedger(wd);
     assert.equal(ledger["consumed"], 2, "two model provider retries were consumed and persisted");
-    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
+    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the interruption recovery budget was never touched");
 
     const log = readFileSync(join(wd, eventLogName(1)), "utf8")
       .split("\n")
@@ -192,7 +195,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.ok(!labels.includes(DEFAULT_LABELS.blocked), "a model provider failure never blocks");
   });
 
-  test("(b) an interruption WITHOUT a model provider error keeps issue 123's recovery unchanged", async () => {
+  test("(b) an interruption WITHOUT a model provider error keeps the interruption recovery unchanged", async () => {
     const config = makeConfig({ maxRetries: 2, waitsMs: [10, 20] });
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -251,7 +254,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     const ledger = modelProviderLedger(wd);
     assert.equal(ledger["consumed"], 1);
     assert.equal((ledger["last"] as Record<string, unknown>)["granted"], false, "the failure is settled as awaiting");
-    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
+    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the interruption recovery budget was never touched");
 
     // A restart keeps awaiting: no new worker, no second comment.
     const restarted = makeFactory(config, tracker, ["pr-open"], { modelProviderErrors: () => MODEL_PROVIDER_MESSAGE });
@@ -349,7 +352,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
         },
       }),
     });
-    // The attempt's own Pi session exists and is associated (issue 119): a
+    // The attempt's own Pi session exists and is associated: a
     // relaunch of the same attempt continues it instead of pausing for help.
     seedSession(wd, { repo: REPO, number: 1 }, 1);
     // A retry was already granted before the factory died (the persisted
@@ -368,7 +371,7 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     assert.deepEqual(waits.observed, [20], "the SECOND wait of the schedule — the first was already spent");
     assert.deepEqual(result.launched.map((launch) => launch.request.attempt), [1], "the same attempt continues");
     assert.equal(modelProviderLedger(wd)["consumed"], 2, "the persisted counter resumed at 2, not at 1");
-    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the recovery budget of issue 123 was never touched");
+    assert.ok(!existsSync(join(wd, RECOVERY_FILENAME)), "the interruption recovery budget was never touched");
   });
 
   test("a work whose record exists is never read as a model provider failure — the record decides", async () => {

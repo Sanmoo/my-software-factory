@@ -78,7 +78,7 @@ export interface GitHubContractHarness {
    *  case. The live smoke harness cannot and omits it; its interruption checks
    *  are skipped. */
   faults?(): GitHubContractFaults;
-  /** Optional read-cost surface (issue 99): whole-repo listings and per-issue
+  /** Optional read-cost surface: whole-repo listings and per-issue
    *  reads served since reset; a harness that cannot count omits it. */
   readCost?(): ReadCost;
 }
@@ -141,11 +141,9 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
     {
       name: "1. listOpenIssues: a JUST-created issue appears on the first call — no settle",
       run: async () => {
-        // The dialect proof (ticket 16 smoke fix): on real GitHub the old
-        // label-filtered listing lagged minutes behind a fresh label (search
-        // index); the unfiltered open-issues listing is immediate. The read
-        // that follows the create must therefore need no bounded wait at all
-        // — one call, the issue is right there.
+        // The dialect proof (the adapter's listOpenIssues doc explains why the
+        // listing is unfiltered): the read after the create needs no bounded
+        // wait — one call, the issue is right there.
         const seeded = await harness.createIssue({ title: `just labeled ${harness.name}`, labels: [ready] });
         const issues = await adapter().listOpenIssues(harness.repo);
         assert.ok(
@@ -157,7 +155,7 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
     {
       name: "1. listOpenIssues: the open-PR linkage is resolved per issue — hasOpenPr, not a filtered listing",
       run: async () => {
-        // The derivation owns ticket 12's rule; the adapter only resolves the
+        // The derivation owns the rule; the adapter only resolves the
         // linkage (structurally in the fake, from the open PRs in the real one).
         const withPr = await harness.createIssue({ title: `has a PR ${harness.name}`, labels: [ready] });
         const withoutPr = await harness.createIssue({ title: `no PR ${harness.name}`, labels: [ready] });
@@ -301,7 +299,7 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
       },
     },
     {
-      name: "5c. resumeClaim: swaps blocked→claimed (the retomada's swap, ticket 14)",
+      name: "5c. resumeClaim: swaps blocked→claimed (the retomada's swap)",
       run: async () => {
         const a = await harness.createIssue({ title: `to resume ${harness.name}` });
         await adapter().claim(a.ref, harness.workerAccount);
@@ -352,7 +350,7 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
     {
       name: "4. claim: a pool-label removal that fails for a REAL reason is never swallowed",
       run: async () => {
-        // The padlock must land BEFORE the pool label leaves (issue 98), so a
+        // The padlock must land BEFORE the pool label leaves, so a
         // failure here leaves the work claimed with its reservation — where the
         // next derivation releases it — instead of invisible.
         const faults = harness.faults?.();
@@ -503,7 +501,7 @@ function githubContractChecks(harness: GitHubContractHarness): { name: string; r
       },
     },
     {
-      name: "9d. reopenPr: the SAME PR back to open (the rejection's retomada, ticket 14)",
+      name: "9d. reopenPr: the SAME PR back to open (the rejection's retomada)",
       run: async () => {
         const issue = await harness.createIssue({ title: `rejected work ${harness.name}` });
         const branch = `agent-issue-${issue.ref.number}`;

@@ -1,6 +1,6 @@
 /**
  * One JSONL line, read the same way by every artifact reader of the
- * continuity modules (issue 119): the session transcript and the effect
+ * continuity modules: the session transcript and the effect
  * journal are both one-JSON-object-per-line files, and both must refuse a
  * broken line out loud instead of dropping it silently.
  */

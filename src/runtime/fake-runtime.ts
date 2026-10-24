@@ -5,15 +5,17 @@ import { AGENT_MARKER } from "../tracker/port.js";
 import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
+import { basename } from "node:path";
+
 import type { LiveWorker } from "../state/liveness.js";
 import { appendAttemptEvent } from "./attempt-logs.js";
 import { SESSIONS_SUBDIR } from "../layout.js";
 import { deferred, type Deferred } from "./deferred.js";
-import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
+import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 
 /**
  * The fake runtime: worker launches that return scriptable outcomes, to
- * exercise the ruler without any container (ticket 13 consumes it).
+ * exercise the ruler without any container.
  *
  * Scripted outcomes, per launch, in order (the last repeats once exhausted):
  *   pr-open             — writes the record (class pr-open) and opens a PR via the tracker
@@ -23,9 +25,9 @@ import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
  *
  * A launch may also be told to die by a model provider outage: the fake records the
  * provider's failing stream line into the attempt's log (the same artifact the
- * real runtime writes), so the factory's own detection reads it (issue 144).
+ * real runtime writes), so the factory's own detection reads it.
  *
- * Issue #146: the runtime also carries the stop contract. A cooperative
+ * The runtime also carries the stop contract. A cooperative
  * request ends a parked launch as an abrupt death with no record — exactly the
  * footprint of a stopped session; a forced stop ends it the same way and says
  * the worker is gone. The options let a test choose a worker that ignores the
@@ -33,7 +35,26 @@ import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
  * factory must survive without lying.
  */
 
+/** The one label a retrospective files under — the operator's triage queue. */
+const NEEDS_TRIAGE_LABEL = "needs-triage";
+
 export type ScriptedOutcome = SessionResult["outcome"];
+
+/**
+ * What one retrospective round's agent is scripted to do: write
+ * the report (or die without it) and file a declared set of items. The fake
+ * writes the same two artifacts the real agent writes, so the factory's
+ * artifact contract — the report as the marker, the result record as the
+ * filing ledger — is what the tests exercise.
+ */
+export interface RetroScript {
+  /** False models a round that ended without its report (an abrupt death). */
+  report?: boolean;
+  /** The items the round filed, by destination. */
+  filed?: Array<{ repo: string; number: number; title?: string }>;
+  /** The candidates the round discarded, with the reason recorded in the report. */
+  discarded?: Array<{ title: string; reason: string }>;
+}
 
 export interface FakeWorkerRuntimeOptions {
   outcomes?: ScriptedOutcome[];
@@ -52,6 +73,10 @@ export interface FakeWorkerRuntimeOptions {
   ignoreStop?: boolean;
   /** The forced stop cannot confirm the end: the worker survives it. */
   forceUnconfirmed?: boolean;
+  /** One scripted retrospective round per launch; the last repeats. */
+  retro?: RetroScript[];
+  /** Deterministic control over a round's duration, like `hold` for workers. */
+  holdRetro?: (request: RetroRequest, index: number) => Promise<void> | void;
 }
 
 /** The session of one launch while it can still be stopped. */
@@ -79,21 +104,93 @@ export function launchOf(
 
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
+  /** Every retrospective launch, in order — the retro launch shape as recorded. */
+  readonly retroLaunched: RetroRequest[] = [];
   /** The works a cooperative stop was requested for, in order. */
   readonly stopRequests: string[] = [];
   /** The works a forced stop was requested for, in order. */
   readonly forcedStops: string[] = [];
-  /** The sessions this fake continued (issue 119) — the launch carried a
+  /** The sessions this fake continued — the launch carried a
    *  resume, so the work's own session was reopened instead of a new one. */
   readonly resumed: WorkRequest[] = [];
   /** Instance-level hold hook — settable by tests after construction. */
   hold?: (request: WorkRequest, index: number) => Promise<void> | void;
+  /** Instance-level round hold hook — settable by tests after construction. */
+  holdRetro?: (request: RetroRequest, index: number) => Promise<void> | void;
   private readonly script: ScriptedOutcome[];
+  private readonly retroScript: RetroScript[];
   private readonly sessions = new Map<string, FakeSession>();
   private cursor = 0;
 
   constructor(private readonly options: FakeWorkerRuntimeOptions = {}) {
     this.script = options.outcomes ?? [];
+    this.retroScript = options.retro ?? [];
+  }
+
+  /** The scripted round writes the two artifacts the agent writes — the report
+   *  and the result record — and files its items as `needs-triage` issues on the
+   *  tracker, exactly as the agent's `gh issue create` does. A round with
+   *  `report: false` leaves neither artifact and files nothing. */
+  async launchRetro(request: RetroRequest): Promise<void> {
+    const index = this.retroLaunched.push(request) - 1;
+    const hold = this.holdRetro ?? this.options.holdRetro;
+    if (hold !== undefined) await hold(request, index);
+    const script = this.retroScriptFor(index);
+    if (script === undefined || script.report === false) return;
+    const filed = script.filed ?? [];
+    const discarded = script.discarded ?? [];
+    writeFileSync(
+      request.reportPath,
+      [
+        `# Retrospective ${request.round} (${request.language})`,
+        "",
+        request.summary,
+        "",
+        "## Candidates",
+        "",
+        "| Candidate | Outcome |",
+        "| --- | --- |",
+        ...filed.map(
+          (item) => `| ${item.title ?? `${item.repo}#${item.number}`} | filed ${item.repo}#${item.number} |`,
+        ),
+        ...discarded.map((item) => `| ${item.title} | discarded: ${item.reason} |`),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    // The items land where the instructions send them: the operator's gate is
+    // the only label the factory adds.
+    const tracker = this.options.tracker;
+    if (tracker !== undefined) {
+      for (const item of filed) {
+        tracker.seedIssue({
+          repo: item.repo,
+          number: item.number,
+          title: item.title ?? `improvement item ${item.number}`,
+          body: `Report: ${basename(request.reportPath)} (retro round ${request.round}).`,
+          labels: [NEEDS_TRIAGE_LABEL],
+        });
+      }
+    }
+    writeFileSync(
+      request.resultPath,
+      `${JSON.stringify(
+        {
+          round: request.round,
+          language: request.language,
+          filed: filed.map((item) => ({ repo: item.repo, number: item.number, title: item.title ?? "" })),
+          discarded,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
+
+  /** The script of one round; the last scripted round repeats. */
+  private retroScriptFor(index: number): RetroScript | undefined {
+    return this.retroScript[Math.min(index, this.retroScript.length - 1)];
   }
 
   async launch(request: WorkRequest): Promise<SessionResult> {
@@ -164,8 +261,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** The attempt begins: the runtime writes the session dir, the attempt's
-   * event log and the Pi session file the moment the session is up (ticket
-   * 13, issue 119). An attempt that dies abruptly leaves exactly this — a
+   * event log and the Pi session file the moment the session is up. An
+   * attempt that dies abruptly leaves exactly this — a
    * start line and no end. */
   private startSession(request: WorkRequest): void {
     mkdirSync(join(request.workDir, SESSIONS_SUBDIR), { recursive: true });
@@ -220,7 +317,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (outcome === "abrupt-death") {
       // A model provider outage leaves the provider's own stream line behind — the
       // real runtime records pi's stdout verbatim, and the factory reads the
-      // turn's ending from it (issue 144). One identity per launch keeps the
+      // turn's ending from it. One identity per launch keeps the
       // fake's failures as distinct as real sessions'.
       const message = this.options.modelProviderErrors?.(request, index) ?? null;
       if (message !== null) {
@@ -246,7 +343,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
     if (outcome === "pr-open") {
       const tracker = this.options.tracker;
       if (!tracker) throw new Error("fake runtime: pr-open needs a tracker to open the PR");
-      // Same branch, same PR (ticket 04 Q10): when the work's PR is already
+      // Same branch, same PR: when the work's PR is already
       // open on this branch, the worker reuses it — a feedback round never
       // opens a second PR.
       const feedback = await tracker.readPullRequestFeedback({ work: request.work, pullRequest: null });
@@ -254,7 +351,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
       const reused = existing !== null && existing.state === "open" && existing.headBranch === request.branch;
       if (reused && existing) {
         pr = { repo: request.work.destination.repo, number: existing.number, branch: request.branch };
-        // The norma (ticket 07 Q3): the worker ends EVERY feedback round by
+        // The norma: the worker ends EVERY feedback round by
         // commenting on the PR what it addressed — the ball goes back to the
         // human, derivable from the PR alone.
         tracker.addPrComment(

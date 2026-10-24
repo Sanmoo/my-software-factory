@@ -18,8 +18,8 @@ import { join } from "node:path";
 import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } from "./cli-harness.js";
 
 /**
- * End-to-end of issue #90 at the CLI boundary: `msf run` is exclusive per REAL
- * config path. Real, concurrent CLI subprocesses against a real temp
+ * End-to-end of the run exclusivity at the CLI boundary: `msf run` is exclusive
+ * per REAL config path. Real, concurrent CLI subprocesses against a real temp
  * filesystem; the tracker boot read is served by a hermetic `gh` shim on PATH
  * (no keyring, no GitHub, no network) whose `env` also isolates the child's
  * HOME. The protected identity is the symlink-resolved path of the config
@@ -35,7 +35,7 @@ import { installGhShim, runCli, spawnCli, waitFor, waitForStdout, type GhShim } 
  * startup — not the behaviour under test — dominates.
  */
 
-describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout: 60_000 }, () => {
+describe("e2e: msf run exclusivity per real config path", { timeout: 60_000 }, () => {
   let dir: string;
   let shim: GhShim;
   let children: ChildProcess[];
@@ -266,7 +266,7 @@ describe("e2e: msf run exclusivity per real config path (issue #90)", { timeout:
     heldB.owner.kill("SIGKILL");
 
     // An independent configuration with its own workspace is likewise not
-    // blocked by the first (the spec's independent-workspace scenario).
+    // blocked by the first.
     writeConfig("c.yaml", join(dir, "ws-c"));
     const heldC = await spawnHeldOwner(["run", "--runtime", "fake", "--config", "c.yaml"]);
     assert.ok(existsSync(heldC.ready), "independent workspaces are not blocked by this rule");

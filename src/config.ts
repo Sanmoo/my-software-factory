@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 
 /**
- * Config of the factory (msf.yaml), verbatim shape from ticket 06:
+ * Config of the factory (msf.yaml):
  *
  *   worker-gh-account: bot-do-samuca
  *   worker-model: provider/model-id
@@ -24,6 +24,9 @@ import { parse } from "yaml";
 export const DEFAULT_CONCURRENCY = 2;
 export const DEFAULT_WORKSPACE = "~/.local/share/msf";
 export const DEFAULT_NOTIFICATIONS = true;
+
+/** The "a/b" shape a model id ("provider/model-id") and a GitHub repo ("owner/name") share. */
+const SLASH_PAIR = /^[^/\s]+\/[^/\s]+$/;
 export const DEFAULT_LABELS: Labels = {
   ready: "ready-for-agent",
   claimed: "agent-claimed",
@@ -31,10 +34,10 @@ export const DEFAULT_LABELS: Labels = {
 };
 
 /**
- * The recovery budget (issue 123): an interruption (an attempt that ended
+ * The recovery budget: an interruption (an attempt that ended
  * with no outcome record) is not a failure, so it never consumes an attempt —
- * it spends this finite, persisted allowance instead. Values fixed by the
- * #111 experiment (3 recoveries, waits 1/4/16 s) and configurable per factory.
+ * it spends this finite, persisted allowance instead. The defaults are 3
+ * recoveries and waits of 1/4/16 s, configurable per factory.
  */
 export interface RecoveryBudget {
   /** Automatic recoveries allowed for one attempt; 0 pauses on the 1st interruption. */
@@ -49,12 +52,12 @@ export const DEFAULT_RECOVERY_BUDGET: RecoveryBudget = {
 };
 
 /**
- * The model provider's failure budget (issue 144): the worker model's provider
+ * The model provider's failure budget: the worker model's provider
  * is the inference service, never the ticket provider (GLOSSARY: Model
  * provider). An attempt whose stream ended in a model provider error
  * (`stopReason: error` + the model provider's `errorMessage`) is not an interruption
  * of the agent, so it retries on this dedicated schedule
- * instead of spending the interruption budget of issue 123. The waits are
+ * instead of spending the interruption budget. The waits are
  * deliberately longer than the recovery backoff: they must cross a short
  * upstream outage, and every retry also carries the session's own internal
  * retries. Exhausting it parks the work "awaiting model provider" and asks
@@ -73,7 +76,7 @@ export const DEFAULT_MODEL_PROVIDER_BUDGET: ModelProviderBudget = {
 };
 
 /**
- * The liveness observation of the factory (issue 118): while Docker does not
+ * The liveness observation of the factory: while Docker does not
  * answer, the factory cannot tell a live worker from a dead one, so it stops
  * launching instead of guessing. The warning threshold is how long the
  * unavailability must last before the operator is told — the diagnosis starts
@@ -86,6 +89,35 @@ export interface LivenessPolicy {
 
 export const DEFAULT_LIVENESS_POLICY: LivenessPolicy = {
   unavailableWarnMs: 60_000,
+};
+
+/**
+ * The retrospective (ADR 0006): a factory job triggered by the
+ * orchestrator once `threshold` works were archived since the last report.
+ * The model is optional and defaults to the worker model; the language governs
+ * the report and every filed item (one language per round), and
+ * `factory-items-destination` is required when enabled — target-repo items go
+ * to the repo concerned, never to a configured destination.
+ */
+export interface RetroConfig {
+  /** The job's switch: when false no round ever starts — automatic or `msf retro`. */
+  enabled: boolean;
+  /** Archived works since the last report that trigger a round. */
+  threshold: number;
+  /** Retrospective model; null inherits the worker model. */
+  model: string | null;
+  /** The round's language (report and filed issues), BCP 47-ish tag; English by default. */
+  language: string;
+  /** The "owner/name" destination for factory-axis items; required when enabled. */
+  factoryItemsDestination: string | null;
+}
+
+export const DEFAULT_RETRO: RetroConfig = {
+  enabled: false,
+  threshold: 5,
+  model: null,
+  language: "en",
+  factoryItemsDestination: null,
 };
 
 export interface Labels {
@@ -113,10 +145,12 @@ export interface Config {
   workerAuthFile: string | null;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;
-  /** The model provider's failure budget: its own retries and backoff (issue 144). */
+  /** The model provider's failure budget: its own retries and backoff. */
   modelProvider: ModelProviderBudget;
-  /** How the operational cycle reads Docker's silence (issue 118). */
+  /** How the operational cycle reads Docker's silence. */
   liveness: LivenessPolicy;
+  /** The retrospective job's trigger, model, language and destinations. */
+  retro: RetroConfig;
   notifications: boolean;
   /** Where the config was loaded from. */
   configPath: string;
@@ -154,7 +188,7 @@ export function loadConfig(filePath: string): Config {
 
   const workerGhAccount = requireString(doc, "worker-gh-account");
   const workerModel = requireString(doc, "worker-model");
-  if (!/^[^/\s]+\/[^/\s]+$/.test(workerModel)) {
+  if (!SLASH_PAIR.test(workerModel)) {
     throw new ConfigError('config field "worker-model" must be "provider/model-id"');
   }
   const repos = requireRepos(doc);
@@ -165,6 +199,7 @@ export function loadConfig(filePath: string): Config {
   const recovery = optionalRecovery(doc);
   const modelProvider = optionalModelProvider(doc);
   const liveness = optionalLiveness(doc);
+  const retro = optionalRetro(doc);
   const notifications = optionalNotifications(doc);
 
   return {
@@ -178,6 +213,7 @@ export function loadConfig(filePath: string): Config {
     recovery,
     modelProvider,
     liveness,
+    retro,
     notifications,
     configPath: absolute,
   };
@@ -324,6 +360,66 @@ function optionalLiveness(doc: Record<string, unknown>): LivenessPolicy {
     );
   }
   return { unavailableWarnMs: (warn as number | undefined) ?? DEFAULT_LIVENESS_POLICY.unavailableWarnMs };
+}
+
+/**
+ * The `retro:` block. Every field defaults except the destination:
+ * enabling the job without `factory-items-destination` is a boot failure, so a
+ * round can never run with nowhere to file its factory-axis items.
+ */
+function optionalRetro(doc: Record<string, unknown>): RetroConfig {
+  const value = doc["retro"];
+  if (value === undefined) return { ...DEFAULT_RETRO };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(`config field "retro" must be a mapping when given`);
+  }
+  const given = value as Record<string, unknown>;
+
+  const enabled = given["enabled"];
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    throw new ConfigError(`config field "retro.enabled" must be a boolean when given`);
+  }
+
+  const threshold = given["threshold"];
+  if (
+    threshold !== undefined &&
+    (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold < 1)
+  ) {
+    throw new ConfigError(`config field "retro.threshold" must be a positive integer when given`);
+  }
+
+  const model = given["model"];
+  if (model !== undefined && (typeof model !== "string" || !SLASH_PAIR.test(model.trim()))) {
+    throw new ConfigError('config field "retro.model" must be "provider/model-id" when given');
+  }
+
+  const language = given["language"];
+  if (language !== undefined && (typeof language !== "string" || language.trim() === "")) {
+    throw new ConfigError(`config field "retro.language" must be a non-empty string when given`);
+  }
+
+  const destination = given["factory-items-destination"];
+  if (
+    destination !== undefined &&
+    (typeof destination !== "string" || !SLASH_PAIR.test(destination.trim()))
+  ) {
+    throw new ConfigError('config field "retro.factory-items-destination" must be "owner/name" when given');
+  }
+
+  const resolvedEnabled = enabled ?? DEFAULT_RETRO.enabled;
+  const resolvedDestination = destination === undefined ? null : (destination as string).trim();
+  if (resolvedEnabled && resolvedDestination === null) {
+    throw new ConfigError(
+      'config field "retro.factory-items-destination" is required when "retro.enabled" is true',
+    );
+  }
+  return {
+    enabled: resolvedEnabled,
+    threshold: (threshold as number | undefined) ?? DEFAULT_RETRO.threshold,
+    model: model === undefined ? null : (model as string).trim(),
+    language: language === undefined ? DEFAULT_RETRO.language : (language as string).trim(),
+    factoryItemsDestination: resolvedDestination,
+  };
 }
 
 function optionalBoolean(doc: Record<string, unknown>, key: string, fallback: boolean): boolean {

@@ -8,7 +8,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import { readWorkEvidence, renderWorkEvidence } from "./evidence.js";
 
 /**
- * The evidence the blocked comment points at (issue 103): three locations of
+ * The evidence the blocked comment points at: three locations of
  * the attempt under the factory workspace, probed on the real filesystem.
  * Each shown path is the probed dir's workspace-relative form, so the comment
  * can only name what it consulted.
@@ -79,7 +79,7 @@ describe("evidence — the three locations of a fell attempt, probed on disk", (
     assert.equal(evidence.sandcastleLog.presence, "absent");
   });
 
-  test("a failed query is 'could not be verified', never absent (issue 103)", async () => {
+  test("a failed query is 'could not be verified', never absent", async () => {
     // A self-referential symlink makes the query fail with ELOOP: the answer
     // is unknown, and unknown is never absence.
     symlinkSync("sessao", join(workDirOf(), "sessao"));

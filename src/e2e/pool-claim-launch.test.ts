@@ -13,6 +13,7 @@ import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -21,22 +22,22 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { launchedNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of ticket 12: pool, claim and launch up to the outcome with PR.
+ * End-to-end of the pool, the claim and launch up to the outcome with PR.
  * The whole sweep runs against the two fake seams (in-memory tracker adapter
  * + scriptable fake runtime) — fast and deterministic, real temp workspace,
- * no network, no container (spec, Testing Decisions).
+ * no network, no container.
  *
- * The five checklist scenarios:
+ * The five cases:
  *   1. 3 eligibles with y=2 — two claims by age; the third enters in the same
  *      cycle the moment a slot frees, with no barrier waiting for the slowest.
  *   2. An eligible with an open blocker stays out of the pool; with all
  *      closed it enters.
  *   3. The claim lands on the tracker before the launch — and the reservation
- *      on disk lands before the claim itself (issue 98) — while the engine's
- *      own in-flight set keeps its launches out of its own re-derivations. A
- *      second, stateless sweep reading a claim with ZERO attempt evidence
- *      cannot see the live launch: it treats the claim as an orphan and falls
- *      it (ticket 18, story 22) — the honest disk truth, never a freeze.
+ *      on disk lands before the claim itself — while the engine's own in-flight
+ *      set keeps its launches out of its own re-derivations. A second,
+ *      stateless sweep reading a claim with ZERO attempt evidence cannot see
+ *      the live launch: it treats the claim as an orphan and falls it — the
+ *      honest disk truth, never a freeze.
  *   4. --once only exits after every launched worker ended, with the final
  *      tracker state correct (claimed with an open PR).
  *   5. A long work never blocks the other slots.
@@ -55,7 +56,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-/** Minimal git-host fake (ticket 15's seam): prepare is bookkeeping only. */
+/** Minimal git-host fake: prepare is bookkeeping only. */
 class FakeGitWork implements LegacyGitWork {
   readonly prepared: IssueRef[] = [];
 
@@ -109,6 +110,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -146,7 +148,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   }
 
-  // ---- checklist 1 + 5: age order, same-cycle replenishment, no barrier ----
+  // ---- case 1 + 5: age order, same-cycle replenishment, no barrier ----
 
   test("3 eligibles with y=2: two claims by age; the third enters the same cycle a slot frees, without waiting for the slowest", async () => {
     const config = makeConfig(2);
@@ -278,7 +280,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   });
 
-  // ---- checklist 2: blockers gate the pool ----
+  // ---- case 2: blockers gate the pool ----
 
   test("an eligible with an open blocker stays out of the pool; with all closed it enters", async () => {
     const config = makeConfig(2);
@@ -303,7 +305,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     assert.ok(free.collected[0]?.prConfirmed);
   });
 
-  // ---- checklist 3: the claim swaps the label before the launch ----
+  // ---- case 3: the claim swaps the label before the launch ----
 
   test("the claim swaps ready→claimed on the tracker before the launch — this sweep's in-flight set keeps its own launch out of its own re-derivations", async () => {
     const config = makeConfig(1);
@@ -332,7 +334,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
 
       // A second, stateless sweep derives the same tracker with an EMPTY
       // in-flight set: the claim has its reservation on disk but ZERO attempt
-      // evidence — an interruption (issue 123), recovered as the SAME attempt
+      // evidence — an interruption, recovered as the SAME attempt
       // with the claim re-asserted. The disk truth is honest: no session ever
       // started, and no attempt was consumed. The claim mark protects the pool
       // within one derivation, never across processes — a freeze would hold
@@ -371,7 +373,7 @@ describe("e2e: pool, claim and launch up to the outcome with PR", () => {
     }
   });
 
-  // ---- checklist 4: --once waits for every launched worker ----
+  // ---- case 4: --once waits for every launched worker ----
 
   test("--once only exits after every launched worker ended, with the final tracker state correct (claimed with PR)", async () => {
     const config = makeConfig(2);

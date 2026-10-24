@@ -16,7 +16,7 @@ import type {
 import { pullRequestIdentity } from "./identity.js";
 
 /**
- * The expanded tracker contracts (issue 124): ticket facts/mutations and
+ * The expanded tracker contracts: ticket facts/mutations and
  * PR/code-host operations are separate ports. The GitHub adapter serves both
  * because GitHub owns both for its issues; a Jira ticket adapter can serve
  * `TicketTracker` without implementing any PR operation.

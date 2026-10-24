@@ -14,6 +14,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -22,11 +23,11 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of issue 100 at the sweep seam, with real disk: the tracker's
- * marks and the workspace's reservations disagree, and the sweep says so
- * (unbacked claim, unmarked reservation) once per appearance — without
- * deleting, moving or archiving anything, and without stopping the sweep.
- * The two fake seams + a real temp workspace; deterministic, no network.
+ * End-to-end of the reconciliation at the sweep seam, with real disk: the
+ * tracker's marks and the workspace's reservations disagree, and the sweep says
+ * so (unbacked claim, unmarked reservation) once per appearance — without
+ * deleting, moving or archiving anything, and without stopping the sweep. The
+ * two fake seams + a real temp workspace; deterministic, no network.
  */
 
 const REPO = "Sanmoo/a";
@@ -58,7 +59,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 100)", () => {
+describe("e2e: the tracker↔workspace leftovers say so, with real disk", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -82,6 +83,7 @@ describe("e2e: the tracker↔workspace leftovers say so, with real disk (issue 1
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),

@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Stage the compiled continuity guardrail into the worker image's build
- * context. Factory-owned code is provisioned at image build time, not at
- * worker startup: the image carries one compiled copy of the code the factory
- * version pins, and `npm run build:image` refuses to stage a missing build
- * instead of shipping an unguarded worker.
+ * context (ADR 0001). Factory-owned code is provisioned at image build time,
+ * not at worker startup: the image carries one compiled copy of the code the
+ * factory version pins, and `npm run build:image` refuses to stage a missing
+ * build instead of shipping an unguarded worker.
  *
  * The staged tree mirrors the compiled layout under dist/ and the image copies
  * it to /opt/msf, so every relative import keeps its build-tree meaning: the

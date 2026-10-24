@@ -6,15 +6,15 @@ import { WORK_OPERATIONS, type LocalWorkFacts, type WorkOperation } from "../git
 import type { RepairReason, RequiredCheckResult } from "../tracker/port.js";
 
 /**
- * The durable repair cycle of a work (issue 107, extended by 112): how many
- * automatic repair rounds were DELIVERED since the last confirmed recovery,
- * which evidence was already consumed, how many repair attempts ended without
- * publishing, and the structured facts of the attempt currently on disk. It
- * lives next to the other artifacts of the work
- * (trabalhos/<repo>#<n>/reparo.json), so a sweep or a factory restart reads
- * the same budget instead of renewing it or repeating a consumed round.
+ * The durable repair cycle of a work: how many automatic repair rounds were
+ * DELIVERED since the last confirmed recovery, which evidence was already
+ * consumed, how many repair attempts ended without publishing, and the
+ * structured facts of the attempt currently on disk. It lives next to the
+ * other artifacts of the work (trabalhos/<repo>#<n>/reparo.json), so a sweep or
+ * a factory restart reads the same budget instead of renewing it or repeating
+ * a consumed round.
  *
- * The two ledgers are independent (issue 112): the ROUND budget counts
+ * The two ledgers are independent: the ROUND budget counts
  * published rounds (a fall before publishing is refunded, never a free retry
  * forever) and the FALL ledger counts consecutive unpublished attempts (two
  * block the work even with the PR open). The attempt facts are what make
@@ -60,7 +60,7 @@ const REPAIR_PUBLICATIONS: readonly RepairPublication[] = [
 ];
 
 /**
- * The renewed reading of the premise that opened a repair round (issue 149),
+ * The renewed reading of the premise that opened a repair round,
  * re-derived from the PR's current facts before the round spends work and
  * before the factory asks for help. `obsolete` means no confirmed impediment
  * remains — the PR is mergeable and the required set is KNOWN (the empty set
@@ -91,7 +91,7 @@ export interface RepairCycle {
   /** The evidence signature of the last launched round, so re-finding the
    *  same failure without new evidence never opens another session. */
   lastEvidence: string | null;
-  /** Repair attempts in a row that ended without publishing (issue 112). */
+  /** Repair attempts in a row that ended without publishing. */
   consecutiveFalls: number;
   /** The current (or last) attempt of the cycle; null for a legacy file. */
   attempt: RepairAttempt | null;
@@ -107,9 +107,9 @@ export const EMPTY_REPAIR_CYCLE: RepairCycle = {
 
 /**
  * Read the cycle; an absent or corrupt file is the honest initial state. A
- * file written before issue 112 carries only usedRounds/lastEvidence: it is
- * read as it stands — no attempt, no falls, and nothing renewed or deleted
- * silently because the older shape lacks the newer facts.
+ * file carrying only usedRounds/lastEvidence is read as it stands — no
+ * attempt, no falls, and nothing renewed or deleted silently because the older
+ * shape lacks the newer facts.
  */
 export async function readRepairCycle(workDir: string): Promise<RepairCycle> {
   try {
@@ -227,9 +227,9 @@ export function repairEvidenceSignature(input: {
 /**
  * The observed head a signature was built on: component 2 of the signature
  * (Work key | headSha | reasons | checks). Legacy reparo.json files carry only
- * the signature, so this is how the incident's state is reconciled without
- * metadata that did not exist when it was written. Null for a signature of an
- * unknown shape — never a guessed SHA.
+ * the signature, so this is how a state written in the older shape is
+ * reconciled without metadata that did not exist when it was written. Null for
+ * a signature of an unknown shape — never a guessed SHA.
  */
 export function observedHeadShaOfSignature(signature: string): string | null {
   const parts = signature.split("|");
@@ -243,7 +243,7 @@ export function observedHeadShaOfSignature(signature: string): string | null {
 export type RemoteObservation = { known: true; headSha: string | null } | { known: false };
 
 /**
- * The attempt a legacy cycle implies (issue 112): a budget that was charged
+ * The attempt a legacy cycle implies: a budget that was charged
  * and a registry attempt AFTER the last recorded outcome means a repair round
  * ran and fell before writing its own record. Its observed head comes from the
  * signature; its local work from the host. Nothing is charged or refunded
@@ -277,22 +277,22 @@ export type RepairReconciliation =
   | { kind: "pending"; reason: string; cycle: RepairCycle }
   | { kind: "published"; cycle: RepairCycle; attempt: RepairAttempt }
   | { kind: "not-published"; cycle: RepairCycle; attempt: RepairAttempt }
-  /** The impediment the round was launched for no longer exists (issue 149):
+  /** The impediment the round was launched for no longer exists:
    *  the round returns, and no fall is counted — there is nothing left to
    *  fix, so the remote is still never overwritten. */
   | { kind: "premise-obsolete"; cycle: RepairCycle; attempt: RepairAttempt }
   | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
 
 /**
- * Decide the publication of the cycle's attempt from structured facts alone
- * (issue 112): the produced commit (the work branch on disk) against the
+ * Decide the publication of the cycle's attempt from structured facts alone:
+ * the produced commit (the work branch on disk) against the
  * remote head, with the head observed before the intervention as the anchor.
  * An unreadable remote, local state or premise is "pending" — never "not
  * published", never "published", and it neither returns budget nor allows a
  * new worker. A published round is charged exactly once (it was charged at
  * launch, so the reconciliation only records the verdict); an attempt that fell
  * without publishing returns its round and counts as one more consecutive fall
- * — unless the premise itself is gone (issue 149): then the round returns with
+ * — unless the premise itself is gone: then the round returns with
  * no fall, and the work is never blamed for a fault that no longer exists.
  */
 export function reconcileRepairAttempt(input: {
@@ -335,8 +335,8 @@ export function reconcileRepairAttempt(input: {
     settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
   /** The round returns: the charge is refunded and the attempt settles as
    *  "nothing of it reached the remote". Counting a fall is the caller's
-   *  business — an attempt that fell counts one, an obsolete premise does not
-   *  (issue 149). */
+   *  business — an attempt that fell counts one, an obsolete premise does
+   *  not. */
   const settledUnpublished = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
     settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
 
@@ -346,7 +346,7 @@ export function reconcileRepairAttempt(input: {
     return { kind: "published", ...settled("published", { ...input.cycle, consecutiveFalls: 0 }) };
   }
 
-  // The premise vanished while the round ran (issue 149): the obstacle it was
+  // The premise vanished while the round ran: the obstacle it was
   // reopened for is gone, so the round returns without counting a fall — the
   // remote (whoever moved it) is still never overwritten. Only a confirmed
   // absence reaches here; an unknown one keeps the verdicts below.
@@ -366,7 +366,7 @@ export function reconcileRepairAttempt(input: {
   // Somebody else moved the remote. The verdict needs the premise: a confirmed
   // impediment keeps the concurrent change a human question, while an
   // unreadable one is HELD — uncertainty is never turned into a help request
-  // for work that may already be delivered (issue 149).
+  // for work that may already be delivered.
   if (input.premise === "unknown") {
     return {
       kind: "pending",

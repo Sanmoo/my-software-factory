@@ -1,8 +1,8 @@
 {
-  "name": "issue-168-tracker-claim-viability",
+  "name": "jira-claim-viability",
   "private": true,
   "version": "0.0.0",
-  "description": "Feasibility harness for a tracker-only exclusive Claim across independent factories (issue #168).",
+  "description": "Feasibility harness for a Jira Cloud-only exclusive Claim across independent factories.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

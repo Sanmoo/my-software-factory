@@ -7,13 +7,13 @@ import { join } from "node:path";
 import { isolatedEnv, runCli } from "./cli-harness.js";
 
 /**
- * Boot behavior of the cli (ticket 16): without the bot token for the account,
+ * Boot behavior of the cli: without the bot token for the account,
  * `msf run` fails at boot with a clear message. The child gets an isolated
  * environment ({@link isolatedEnv}), so the REAL `gh` finds no credential for
  * the ghost account — the failure stays local, with no network and no
- * credential needed, and the run's lock state (issue #90) never lands in the
- * operator's dirs. The runs pass `--runtime fake` (the tests-only flag, ticket 18)
- * so the configured model is irrelevant to this boot check. The live boot
+ * credential needed, and the run's lock state never lands in the
+ * operator's dirs. The runs pass `--runtime fake` (the tests-only flag) so the
+ * configured model is irrelevant to this boot check. The live boot
  * (token present, real derivation) is proven in the credential-gated smoke
  * (`npm run smoke:github`).
  */

@@ -10,7 +10,7 @@ import { PAUSE_FILENAME, clearPause, writePause } from "../runtime/continuity-ar
 import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 
 /**
- * `msf status` at the CLI seam over the REAL adapter (issue 147): the spawned
+ * `msf status` at the CLI seam over the REAL adapter: the spawned
  * command reads the tracker through a hermetic `gh` whose REST answers the
  * suite declares, so the complete report — derivation on demand, registry scan,
  * repository state, caps, reconciliation and archive — is exercised without
@@ -23,11 +23,11 @@ import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from 
  * absence of the service (ADR 0002). The Running/Orphaned split is covered
  * with controlled probes in state/status.test.ts.
  *
- * Issue 175: work #1 carries an ACTIVE continuity pause naming attempt 2 while
- * the ledger evidences only attempt 1 (the launch planned it and continuity
- * refused before the runtime spawned), so the report must name the cause, the
- * work, the session and both attempts. Work #2 carries the `pausa.json.resolved`
- * of a pause that is over: a resolved pause is never an active one.
+ * Work #1 carries an ACTIVE continuity pause naming attempt 2 while the ledger
+ * evidences only attempt 1 (the launch planned it and continuity refused before
+ * the runtime spawned), so the report must name the cause, the work, the session
+ * and both attempts. Work #2 carries the `pausa.json.resolved` of a pause that
+ * is over: a resolved pause is never an active one.
  */
 
 const REPO = "Sanmoo/my-tasks";
@@ -66,7 +66,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
   /** The registry the operator's report describes: two interrupted attempts
    *  (one of them inside a repair cycle), one concluded attempt, one bare
    *  reservation and 20 archived works, plus an active and a resolved
-   *  continuity pause (issue 175). Only what status reads exists. */
+   *  continuity pause. Only what status reads exists. */
   function seedRegistry(): void {
     for (const number of [1, 4]) {
       const work = workDir(layout, REPO, number);
@@ -111,7 +111,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       "utf8",
     );
     // A pause that was resolved keeps its evidence beside the work and is
-    // NEVER an active pause (issue 175).
+    // NEVER an active pause.
     writePause(concluded, {
       version: 1,
       work: githubWork(REPO, 2),

@@ -14,6 +14,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -85,7 +86,7 @@ class CountingTracker extends FakeTrackerAdapter {
   }
 }
 
-describe("e2e: the operational log — initial state, change-only summaries, UTC stamps (issue 91)", () => {
+describe("e2e: the operational log — initial state, change-only summaries, UTC stamps", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -109,6 +110,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -434,6 +436,7 @@ describe("e2e: the operational log — initial state, change-only summaries, UTC
       launch: () => Promise.reject(new Error("boom")),
       requestStop: () => {},
       forceStop: async () => {},
+      launchRetro: () => Promise.reject(new Error("boom")),
     };
     const deps: LoopDeps = {
       config: makeConfig(),

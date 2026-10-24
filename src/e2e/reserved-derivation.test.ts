@@ -18,6 +18,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -28,7 +29,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber, githubWork, launchedNumber } from "./work-fixtures.js";
 
 /**
- * End-to-end of ticket 14: the derivation of the tick now covers the states
+ * End-to-end of the derivation: the tick covers the states
  * of ALL reserved works — the feedback round (human comment on the PR),
  * the retomada (human answer on the issue after the marker), the rejection
  * (PR closed without merge) and done (issue closed — linkage or fallback),
@@ -80,7 +81,7 @@ class RecordingGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
+describe("e2e: the derivation of ALL reserved works", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -104,6 +105,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -143,7 +145,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     return feedback.value.pr && feedback.value.pr.state === "open" ? feedback.value.pr.number : null;
   }
 
-  // ---- checklist 1: human comment on the PR → feedback round, same branch, same PR ----
+  // ---- case 1: human comment on the PR → feedback round, same branch, same
+  // PR ----
 
   test("a new human comment on the PR launches a feedback round on the SAME branch and the SAME PR", async () => {
     const config = makeConfig(2);
@@ -188,7 +191,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.ok(comments.some((comment) => comment.body === "seja mais sucinto"));
   });
 
-  // ---- checklist 2: human comment on a blocked issue after the marker → retomada ----
+  // ---- case 2: human comment on a blocked issue after the marker →
+  // retomada ----
 
   test("a human answer on the issue AFTER the marker resumes the work from the existing branch", async () => {
     const config = makeConfig(2);
@@ -235,7 +239,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(runtime.launched.length, 3);
   });
 
-  test("an interrupted retomada is recovered with the human's answer — the SAME attempt, the same material (issue 123)", async () => {
+  test("an interrupted retomada is recovered with the human's answer — the SAME attempt, the same material", async () => {
     const config = makeConfig(1);
     const { tracker, runtime, deps } = makeFactory(config, [
       "clean-without-pr",
@@ -271,7 +275,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     );
   });
 
-  // ---- checklist 3: PR closed without merge → rejected, blocked with a comment pointing at the PR ----
+  // ---- case 3: PR closed without merge → rejected, blocked with a comment
+  // pointing at the PR ----
 
   test("a PR closed without merge becomes blocked, with a comment pointing at the PR", async () => {
     const config = makeConfig(2);
@@ -305,7 +310,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(third.launched.length, 0);
   });
 
-  // ---- checklist 4: done — issue closed by linkage, and by the fallback ----
+  // ---- case 4: done — issue closed by linkage, and by the fallback ----
 
   test("done by linkage: the human's merge closes the issue — artifacts archived, branches cleaned", async () => {
     const config = makeConfig(2);
@@ -362,7 +367,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.deepEqual(git.cleaned, [{ repo: REPO, number: 5 }], "the git host cleaned the work's branches");
   });
 
-  // ---- checklist 2 (rejection branch): the rejected work's retomada reopens the SAME PR ----
+  // ---- case 2 (rejection branch): the rejected work's retomada reopens the
+  // SAME PR ----
 
   test("a rejected work answered on the issue resumes from the existing branch and reopens the SAME PR", async () => {
     const config = makeConfig(2);
@@ -392,7 +398,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(await openPrOf(tracker, 6), prNumber, "the SAME PR reopened — no PR novo");
   });
 
-  // ---- checklist 5: parked reserved works launch BEFORE new claims, by age ----
+  // ---- case 5: parked reserved works launch BEFORE new claims, by age ----
 
   test("parked reserved works (feedback, retomada) launch before new claims, each group by creation age", async () => {
     const config = makeConfig(2);
@@ -418,7 +424,8 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     assert.equal(launchOf(second.launched, githubWork(REPO, 10))?.request.attempt, 2, "the registry numbered the round");
   });
 
-  // ---- checklist 6: the orphan claim (ticket 18) — a death between the claim and the spawn is an interruption (issue 123) ----
+  // ---- case 6: the orphan claim — a death between the claim and the spawn is
+  // an interruption ----
 
   test("an orphan claim with zero footprint is recovered as attempt 1 — never released, never a fall", async () => {
     const config = makeConfig(2);
@@ -436,7 +443,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     const sweep = await runOnce(deps);
     const interrupted = sweep.reserved.find((decision) => githubTicketNumber(decision.work.ticket) === 7);
     assert.ok(interrupted, "the orphan was derived as a reserved work");
-    assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption (issue 123)");
+    assert.equal(interrupted.state, "interrupted", "the orphan claim is an interruption");
     assert.ok(
       interrupted.state === "interrupted" && interrupted.attempt === 1,
       "zero evidence numbers attempt 1, and the recovery continues it",
@@ -462,7 +469,7 @@ describe("e2e: the derivation of ALL reserved works (ticket 14)", () => {
     });
   }
 
-  // ---- issue 126: the orchestration crosses the expanded contracts ----
+  // ---- the orchestration crosses the expanded contracts ----
 
   test("a reserved Work keeps its own source when the configured selection changes — no implicit tracker migration", async () => {
     const config = { ...makeConfig(1), repos: ["Sanmoo/other"] };

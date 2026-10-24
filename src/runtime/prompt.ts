@@ -2,9 +2,10 @@ import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
+import { RETRO_MOUNT_PATHS } from "../layout.js";
 import { agentLayout, type AgentLayout } from "./agent-paths.js";
 import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
-import type { RepairMaterial, WorkRequest } from "./port.js";
+import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
 
 /**
  * The worker prompt — the only "interface" between the factory and the agent
@@ -63,8 +64,8 @@ const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
  * The record schema the worker must write, rendered as the example the
  * prompt teaches. Field names are the artifact contract with the factory's
  * ruler — kept verbatim with `OutcomeRecord` (state/outcome.ts). The optional
- * `paths` (story 19: "classe, tentativa, PR, caminhos") records the artifact
- * paths of this attempt — the trail the human (and the factory) reads after.
+ * `paths` ("classe, tentativa, PR, caminhos") records the artifact paths of
+ * this attempt — the trail the human (and the factory) reads after.
  */
 function outcomeSchemaExample(request: WorkRequest): string {
   const pr = `,\n     "pr": {"repo": "${request.work.destination.repo}", "number": <the PR number>, "branch": "${request.branch}"}`;
@@ -78,7 +79,7 @@ function outcomeSchemaExample(request: WorkRequest): string {
 }
 
 /**
- * Where the round's review reports live (ticket 85): the Standards and Spec
+ * Where the round's review reports live: the Standards and Spec
  * reports of each attempt, distinguishable across attempts, referenced in
  * the outcome record's "paths". Relative to the work dir.
  */
@@ -164,12 +165,12 @@ function implementationProcedure(request: WorkRequest, layout: AgentLayout): str
 }
 
 /**
- * The repair procedure (issue 107): the factory reactivated the work because
+ * The repair procedure: the factory reactivated the work because
  * the open PR has confirmed impediments on its CURRENT head. Conflicts are
  * resolved first by rebasing onto the PR's current base; the still-relevant
  * check failures are investigated after. The force-with-lease is pinned to
  * the head the factory observed — never plain --force, never a refreshed lease.
- * Issue 112: a resumed round takes over the local work the fallen attempt left
+ * A resumed round takes over the local work the fallen attempt left
  * on the branch — it inspects it instead of redoing it, and its reviews cover
  * the content actually published.
  */
@@ -424,3 +425,51 @@ export const WORKER_OUTCOME_CLASSES: readonly OutcomeClass[] = [
   "blocked-self-report",
   "clean-without-pr",
 ];
+
+/**
+ * The retrospective prompt: the factory-owned instructions, the
+ * window's evidence paths, the factual summary and the two artifact paths the
+ * round must write. It carries no worker obligation — the round is not a Work:
+ * it files nothing into the tracker beyond `needs-triage` issues, writes no
+ * outcome record, and never touches a branch.
+ */
+export function buildRetroPrompt(request: RetroRequest): string {
+  return [
+    `# Retrospective round ${request.round}`,
+    ``,
+    `You are analyzing a window of finished works of the software factory.`,
+    `The analysis instructions below are version ${request.instructionsVersion} of the factory's own set.`,
+    `The round's language: ${request.language}. Acting account: \`${request.account}\`.`,
+    ``,
+    request.instructions,
+    ``,
+    `## The window (${request.works.length} finished work(s))`,
+    ``,
+    ...request.works.map(
+      (work) =>
+        `- ${work.key} (repo ${work.repo}) — ${work.outcome}, attempt ${work.attempt}, ` +
+        `finished ${work.completedAt}; evidence: ${work.evidencePath} ` +
+        `(${work.archived ? "archived" : "under trabalhos/"})`,
+    ),
+    ``,
+    `## The factual summary of the window (from the operational records)`,
+    ``,
+    `\`\`\``,
+    request.summary,
+    `\`\`\``,
+    ``,
+    `## Where this round writes`,
+    ``,
+    `- report: \`${request.reportContainerPath}\``,
+    `- result record (JSON, the machine contract): \`${request.resultContainerPath}\``,
+    `- factory-axis items destination: \`${request.factoryItemsDestination}\``,
+    `- the factory's operational log, when mounted: \`${RETRO_MOUNT_PATHS.operationalLog}\``,
+    ``,
+    `## Completion signal`,
+    ``,
+    `After both artifacts exist, print exactly this line as your final text:`,
+    ``,
+    COMPLETION_SIGNAL,
+    ``,
+  ].join("\n");
+}

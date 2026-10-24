@@ -17,6 +17,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -83,9 +84,13 @@ class PrAndHelpRuntime implements WorkerRuntime {
   forceStop(work: WorkIdentity): Promise<void> {
     return this.inner.forceStop(work);
   }
+
+  launchRetro(request: Parameters<WorkerRuntime["launchRetro"]>[0]) {
+    return this.inner.launchRetro(request);
+  }
 }
 
-describe("e2e: local notices for occurrences that need the human (issue 93)", () => {
+describe("e2e: local notices for occurrences that need the human", () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -109,6 +114,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       notifications,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -253,7 +259,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
 
   test("an interruption is recovered silently; exhausting the recovery budget blocks and asks for help", async () => {
     // A budget of one: the 1st interruption is absorbed without a notice, the
-    // 2nd exhausts the allowance and asks the operator for help (issue 123).
+    // 2nd exhausts the allowance and asks the operator for help.
     const config: Config = { ...makeConfig(1), recovery: { maxRecoveries: 1, waitsMs: [1_000] } };
     const { tracker, notifier, deps } = makeFactory(config, ["abrupt-death"]);
     seedIssue(tracker, { repo: REPO, number: 4, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
@@ -456,7 +462,7 @@ describe("e2e: local notices for occurrences that need the human (issue 93)", ()
     assert.equal(notifier.notifications.length, 2, "one notice per work — never an aggregate");
     const byRef = new Map(
       notifier.notifications
-        .filter((notice) => notice.kind !== "factory-unavailable")
+        .filter((notice) => notice.kind !== "factory-unavailable" && notice.kind !== "retro-items")
         .map((notice) => [renderWorkIdentity(notice.work), notice]),
     );
     assert.equal(byRef.size, 2);

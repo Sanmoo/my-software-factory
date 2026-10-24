@@ -1,6 +1,6 @@
 /**
- * Ownership exclusion, scoped to this harness (the global factory problem is
- * #90 and is out of scope here).
+ * Ownership exclusion, scoped to this harness (the factory's global
+ * concurrency problem is out of scope here).
  *
  * Two independent facts are tracked:
  *   owner.lock   — who is conducting this work (the processing role).

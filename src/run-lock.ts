@@ -6,8 +6,7 @@ import { tryLockExclusive } from "@deepseek-ai/node-addon-system/flock";
 import { describeError } from "./format.js";
 
 /**
- * Local exclusivity of `msf run`, one owner per real configuration path
- * (issue #90).
+ * Local exclusivity of `msf run`: one owner per real configuration path.
  *
  * The protected identity is the canonical (symlink-resolved) real path of the
  * config file — never its content, the name given on the command line or the

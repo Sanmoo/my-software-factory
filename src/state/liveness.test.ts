@@ -17,7 +17,7 @@ import {
 } from "./liveness.js";
 
 /**
- * The liveness parser (issue 102): the interpretation of the Docker outputs is
+ * The liveness parser: the interpretation of the Docker outputs is
  * a PURE function over canned strings — the command shell around it is the
  * only impure part, so the correlation container → work is proven without
  * Docker.
@@ -49,7 +49,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     ]);
   });
 
-  test("two containers of the same work are two workers — the count is never hidden by the work (issue 118)", () => {
+  test("two containers of the same work are two workers — the count is never hidden by the work", () => {
     const ps = "aaa111\nzzz999\n";
     const inspect = JSON.stringify([
       container("aaa111", "Sanmoo/my-tasks#4", "2026-02-01T11:47:00Z"),
@@ -77,7 +77,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
     assert.deepEqual(parseWorkerContainers(ps, JSON.stringify(auxiliary), WORKS, NOW), []);
   });
 
-  test("a work mount under our root that cannot be named is unknown liveness, never 'no worker' (issue 118)", () => {
+  test("a work mount under our root that cannot be named is unknown liveness, never 'no worker'", () => {
     const ps = "ccc333\n";
     const stranger = [
       {
@@ -179,7 +179,7 @@ describe("liveness — the pure parser over the canned docker outputs", () => {
   });
 });
 
-describe("liveness — the shared interpretation (issue 118)", () => {
+describe("liveness — the shared interpretation", () => {
   const workers = (pairs: Array<[string, string]>): Array<{ key: string; containerId: string; ageMs: number }> =>
     pairs.map(([key, containerId]) => ({ key, containerId, ageMs: 60_000 }));
 
@@ -263,7 +263,7 @@ describe("liveness — the shared interpretation (issue 118)", () => {
   });
 });
 
-describe("liveness — the worker identity survives the image reference moving (issue 160)", () => {
+describe("liveness — the worker identity survives the image reference moving", () => {
   const OLD_WORKER = "a".repeat(64);
   const SECOND = "b".repeat(64);
 
@@ -408,7 +408,7 @@ describe("liveness — the worker identity survives the image reference moving (
 });
 
 /**
- * The real path, in the tracker-smoke pattern (issue 102): it runs inside
+ * The real path, in the tracker-smoke pattern: it runs inside
  * `npm test` where Docker and the worker image are there, and SKIPS WITH A
  * REASON where they are not — never a silent pass, never a false positive.
  * The quality gateway sets MSF_REQUIRE_DOCKER=1, turning that skip into a

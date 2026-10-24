@@ -15,6 +15,7 @@ import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   loadConfigFrom,
   type Config,
@@ -29,7 +30,7 @@ import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
 import { appendJournalIntent, readPause } from "../runtime/continuity-artifacts.js";
 
 /**
- * The operator's requested stop and the restart that follows (issue #146), at
+ * The operator's requested stop and the restart that follows, at
  * the sweep's public seams: the signal closes admissions, the in-flight worker
  * is asked to stop (cooperatively, or forced at the deadline/second signal),
  * the end is confirmed, and the next invocation resumes the SAME attempt
@@ -69,8 +70,8 @@ class FakeGitWork implements LegacyGitWork {
 
 /**
  * A tracker whose first PR-feedback read waits for the test: the collection of
- * a finished worker can then be observed INSIDE the stop, the race the issue
- * asks to cover.
+ * a finished worker can then be observed INSIDE the stop — the race a stop
+ * must never lose.
  */
 class GatedTracker extends FakeTrackerAdapter {
   readonly collectionEntered = deferred();
@@ -101,7 +102,7 @@ class GatedTracker extends FakeTrackerAdapter {
   }
 }
 
-describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_000 }, () => {
+describe("e2e: requested stop, restart and resume", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
 
@@ -126,6 +127,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
       workerAuthFile: null,
       recovery,
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
@@ -276,7 +278,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal(
       next.launched[0]?.request.session?.mode,
       "new",
-      "the worker never started, so no session exists to reopen: the SAME attempt creates its first one (issue 119)",
+      "the worker never started, so no session exists to reopen: the SAME attempt creates its first one",
     );
     assert.equal((await ledgerOf()).consumed, 0, "the resume spent no recovery");
     assert.ok(existsSync(join(workDirOf(), "desfecho.json")), "the resumed worker completed normally");
@@ -314,7 +316,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     mkdirSync(workDirOf(), { recursive: true });
     writeFileSync(join(workDirOf(), "log-1.jsonl"), "{}\n", "utf8");
     // The attempt's own Pi session was persisted and associated by the launch
-    // that died (issue 119): the relaunch continues it instead of pausing.
+    // that died: the relaunch continues it instead of pausing.
     seedSession(workDirOf(), { repo: REPO, number: 1 }, 1);
 
     const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
@@ -526,7 +528,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal(held.launched.length, 0, "no duplicate worker is started");
     assert.equal(stuck.launched.length, 1, "the previous worker was not replaced");
     // The hold is said out loud. Which module says it depends on why the work
-    // is still in flight — the survivor recognition (issue 118) when the probe
+    // is still in flight — the survivor recognition when the probe
     // shows the container, the stop reconciliation when it does not — and both
     // name the work the operator has to look at.
     assert.ok(
@@ -596,7 +598,7 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
   test("a requested stop ends the surviving worker of a previous run and records the stop on its attempt", async () => {
     const config = makeConfig();
     const tracker = makeTracker(config);
-    // The previous factory process died leaving its worker running (issue 118):
+    // The previous factory process died leaving its worker running:
     // the container is alive, the work is still claimed and its attempt left
     // its history on disk.
     await tracker.claim({ repo: REPO, number: 1 }, config.workerGhAccount, config.labels.ready);

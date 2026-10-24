@@ -106,10 +106,9 @@ prompt NEVER pre-install a toolchain:
   no download, steady start. The empty `shims/` on a first launch is
   harmless on PATH (nothing resolves there until the first `mise install`).
 
-This is the live-proof lesson the binds fix: the work needed Go and the
-worker burned its run hunting a toolchain (`go: command not found`). With
-the layer in place, one launch installs; the factory's remaining launches
-inherit.
+Without the binds a worker burns its run hunting a toolchain
+(`go: command not found`). With the layer in place, one launch installs and
+the factory's remaining launches inherit.
 
 The orchestrator converges BEFORE the prompt: a second sandbox-ready hook
 runs `mise install -y` (30 min ceiling) against the active configs — the
@@ -256,7 +255,7 @@ carrying attempt evidence are still listed, unclassified, and the rest of the
 report is unchanged. A work carried by more than one container lists each
 container and a **duplicate workers** line — the decision is yours.
 
-## (d) Local desktop notifications (issue 93)
+## (d) Local desktop notifications
 
 `msf run` (continuous and `--once`) shows a Linux desktop notice when a new
 occurrence needs you: an open PR to review, a help request or a block, an
@@ -276,6 +275,21 @@ notice for a help request or a block, an intervention notice for a duplicated
 or silent worker, the factory's Docker warning after the configured threshold,
 silence after a restart — and every work notice carrying the work and its
 address, with no window opened and no focus taken.
+
+## (e) Retrospective
+
+The retrospective is a factory job on its own lane (ADR 0006): enable the
+`retro:` block; manual triggers are in README (Usage) and never wait for the
+threshold. A forced round needs no stopped factory: the lane's marker is its
+exclusivity. A forced round that analyzes works asks Docker first; an empty
+window is answered without it, and an unknown answer is never guessed.
+
+Live proof: let the archived works reach the threshold, run one sweep — the log
+names the round, `<workspace>/retros/<instant>-retro.md` exists, the filed
+issues carry `needs-triage` and reference the report, a retro-items notice
+points at each destination, `msf status` shows the round in flight and then the
+window boundary its report advanced, and the next round's window starts after
+that boundary.
 
 ## What the human does in the proof
 

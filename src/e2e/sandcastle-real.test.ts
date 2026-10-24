@@ -28,8 +28,7 @@ import { githubWork } from "./work-fixtures.js";
  *   npm run proof:real
  *
  * which sets MSF_REAL_PROOF=1. An explicitly enabled run FAILS on missing
- * prerequisites (docker, worker image, model) — a skipped run proves nothing
- * (ticket 85: "a ausência de pré-requisitos não conta como aceitação").
+ * prerequisites (docker, worker image, model) — a skipped run proves nothing.
  *
  * GitHub interactions are REPLACED, not performed: the disposable repo has no
  * remote, the spec forbids `gh` and pushes, no issue/PR is created — GitHub
@@ -92,7 +91,7 @@ function makeDisposableRepo(root: string): { repoDir: string; baseBranch: string
   return { repoDir, baseBranch: "main", branch: "agent-real-proof", roundStartSha: git(repoDir, "rev-parse", "HEAD") };
 }
 
-const SPEC_BODY = `# Prova real (container isolado) — ticket 85
+const SPEC_BODY = `# Prova real (container isolado)
 
 Esta é uma execução de PROVA em um repositório descartável e LOCAL. Não há GitHub: o
 repositório não tem remote.
@@ -118,7 +117,7 @@ e confirme que ele NÃO é carregado.
 Siga o procedimento de implementação do seu prompt (as skills declaradas pela imagem), terminando
 com a revisão de dois eixos e os relatórios gravados no work dir.`;
 
-describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { skip: ENABLED ? false : SKIP_REASON }, () => {
+describe("e2e: the REAL proof of the implement–review flow", { skip: ENABLED ? false : SKIP_REASON }, () => {
   test("a real container loads /implement, implements a local spec, commits locally and runs /code-review with two subagents", { timeout: 4 * 60 * 60 * 1000 }, async () => {
     if (MODEL === "") failIfMissingPrerequisite("MSF_REAL_PROOF_MODEL is unset — pass the model the worker session uses, e.g. MSF_REAL_PROOF_MODEL=provider/model-id");
     if (insideContainer()) {
@@ -162,7 +161,7 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
     const runtime = new SandcastleRuntime({
       model: MODEL,
       // A placeholder: the isolated repo has no remote and the spec forbids
-      // gh — no real GitHub credential rides this proof (story 23).
+      // gh — no real GitHub credential rides this proof.
       token: "msf-real-proof-no-github",
       authEnv: AUTH_ENV,
       agentFiles: AUTH_FILE === undefined ? [] : [{ name: "auth.json", hostPath: AUTH_FILE }],
@@ -182,7 +181,7 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
     const commits = git(repoDir, "log", "--oneline", `${roundStartSha}..${branch}`);
     assert.ok(commits.length > 0, "the round produced local commits on the work branch");
 
-    // 3. TWO DISTINCT subagent executions are in the session log (story 11):
+    // 3. TWO DISTINCT subagent executions are in the session log:
     //    the /code-review axes ran as separate subagent tool calls. The raw
     //    stream embeds the tool events as escaped JSON — parse one level in.
     const logLines = existsSync(join(workDir, "log-1.jsonl"))
@@ -203,7 +202,7 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
       `expected at least two subagent tool calls (Standards + Spec), found ${subagentCalls.length}`,
     );
 
-    // 4. Both axis reports exist on disk, distinct and non-empty (story 19).
+    // 4. Both axis reports exist on disk, distinct and non-empty.
     const standardsReport = join(workDir, reviewReportPath(1, "standards"));
     const specReport = join(workDir, reviewReportPath(1, "spec"));
     assert.ok(existsSync(standardsReport), `the Standards report is missing: ${standardsReport}`);
@@ -211,7 +210,7 @@ describe("e2e: the REAL proof of the implement–review flow (ticket 85)", { ski
     assert.ok(readFileSync(standardsReport, "utf8").trim().length > 0, "the Standards report is empty");
     assert.ok(readFileSync(specReport, "utf8").trim().length > 0, "the Spec report is empty");
 
-    // 5. The outcome record references the reports in "paths" (story 20).
+    // 5. The outcome record references the reports in "paths".
     const record = await readOutcomeRecord(workDir);
     assert.ok(record, "the outcome record exists");
     const paths = (record as { paths?: Record<string, string> }).paths ?? {};

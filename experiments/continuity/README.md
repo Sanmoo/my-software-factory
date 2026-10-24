@@ -1,4 +1,4 @@
-# Experimento #111 — continuidade do worker
+# Experimento — continuidade do worker
 
 Harness isolado e temporário que compara três alternativas de retomada
 (baseline A, sessão nativa do Pi B, pi durable C) sob o mesmo workload, o mesmo
@@ -7,7 +7,7 @@ build nem do caminho de produção da fábrica: `tsconfig.json` da raiz usa
 `rootDir: src` e `npm test` roda `dist/**/*.test.js`, então nada aqui é
 compilado ou executado pela fábrica.
 
-O relatório, os resultados e a conclusão ficam na issue #111.
+O relatório, os resultados e a conclusão do experimento vivem em `runs/`.
 
 ```bash
 npm install

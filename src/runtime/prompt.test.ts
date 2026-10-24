@@ -10,7 +10,7 @@ import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
- * The worker prompt (ticket 17): the issue, the PR and its comments when a
+ * The worker prompt: the issue, the PR and its comments when a
  * round exists, the diff of the work branch — and the worker's THREE
  * obligations (the worker's ruler; the factory's ruler reads only the
  * structured facts these obligations produce).
@@ -30,7 +30,7 @@ const baseRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest => ({
   ...overrides,
 });
 
-// The feedback-round request (ticket 84): the base fixture with an open PR
+// The feedback-round request: the base fixture with an open PR
 // whose conversation the worker must judge, not blindly obey. Derived from
 // `baseRequest` so the issue/diff fixtures stay in one place.
 const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequest =>
@@ -50,7 +50,7 @@ const feedbackRequest = (comments: { author: string; body: string }[]): WorkRequ
   });
 
 describe("worker prompt — the material the session starts from", () => {
-  test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them (issue #146)", () => {
+  test("a resumed attempt says it CONTINUES the native session and reconciles external effects before repeating them", () => {
     const resumed = buildWorkerPrompt(baseRequest(), {
       blockedLabel: DEFAULT_LABELS.blocked,
       continuesSession: true,
@@ -170,7 +170,7 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
     assert.match(prompt, /"pr".*"repo".*"number".*"branch"/s);
   });
 
-  test("obligation 1: the schema example shows the optional `paths` — the record's artifact trail (story 19)", () => {
+  test("obligation 1: the schema example shows the optional `paths` — the record's artifact trail", () => {
     // The record carries classe, tentativa, PR, caminhos — the schema example
     // must teach `paths`, or the worker never learns the field exists.
     assert.match(prompt, /"paths": \{"<artifact name>": "<path, relative to the work dir>"\}/);
@@ -199,11 +199,11 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
   });
 });
 
-describe("worker prompt — the feedback-round policy (ticket 84)", () => {
+describe("worker prompt — the feedback-round policy", () => {
   const promptFor = (comments: { author: string; body: string }[]): string =>
     buildWorkerPrompt(feedbackRequest(comments), { blockedLabel: DEFAULT_LABELS.blocked });
 
-  test("the round no longer commands addressing every comment indiscriminately", () => {
+  test("the round does not command addressing every comment indiscriminately", () => {
     const prompt = promptFor([{ author: "human", body: "Please split the module." }]);
     assert.doesNotMatch(prompt, /address every comment/i);
   });
@@ -316,13 +316,13 @@ describe("worker prompt — the feedback-round policy (ticket 84)", () => {
     assert.match(prompt, /not.{0,80}blocked-self-report/i);
   });
 
-  test("the marker contract survives the policy change (regression)", () => {
+  test("the prompt states the marker contract on the comment it asks for", () => {
     const prompt = promptFor([{ author: "human", body: "Fix the typo." }]);
     assert.match(prompt, new RegExp(`comment MUST start with[\\s\\S]*${AGENT_MARKER}`));
   });
 });
 
-describe("worker prompt — the initial round carries no feedback obligations (ticket 84)", () => {
+describe("worker prompt — the initial round carries no feedback obligations", () => {
   const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
 
   test("with no open PR, the feedback-round policy is absent and the round reply stays scoped to rounds with a PR", () => {
@@ -335,7 +335,7 @@ describe("worker prompt — the initial round carries no feedback obligations (t
     );
   });
 });
-describe("worker prompt — the implementation procedure (ticket 85)", () => {
+describe("worker prompt — the implementation procedure", () => {
   const initial = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
 
   const feedbackRequest = baseRequest({
@@ -357,14 +357,14 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /skills\/code-review\/SKILL\.md/);
   });
 
-  test("a feedback round that changes code carries the SAME cycle (story 2)", () => {
+  test("a feedback round that changes code carries the SAME cycle", () => {
     const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
     assert.match(prompt, /## The implementation procedure — MANDATORY for this session/);
     assert.match(prompt, /skills\/implement\/SKILL\.md/);
     assert.match(prompt, /applicable PR comments/, "the reviewers' spec context names the feedback comments");
   });
 
-  test("a purely explanatory session is exempt from the cycle (story 3)", () => {
+  test("a purely explanatory session is exempt from the cycle", () => {
     assert.match(initial, /purely explanatory answer\) skips it/);
   });
 
@@ -467,14 +467,14 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /Delegation is\s+operator-authorized for this procedure/);
   });
 
-  test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded (stories 4, 5)", () => {
+  test("using a skill means loading the SKILL.md and executing it — no literal `Skill` tool is demanded", () => {
     assert.match(initial, /READ its SKILL\.md and EXECUTE its instructions/);
     assert.match(initial, /no tool named "Skill"/);
     assert.match(initial, /merely mentioning[\s\S]*without loading it is not following it/);
     assert.doesNotMatch(initial, /call the Skill tool/i);
   });
 
-  test("the order is fixed: pin the round's SHA, implement, validate, commit LOCALLY, review, fix, publish last (stories 7, 8)", () => {
+  test("the order is fixed: pin the round's SHA, implement, validate, commit LOCALLY, review, fix, publish last", () => {
     const pin = initial.indexOf("PIN the round");
     const implement = initial.indexOf("IMPLEMENT per /implement");
     const validate = initial.indexOf("VALIDATE:");
@@ -489,7 +489,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /new commits on the branch[\s\S]*re-run the review against the SAME starting SHA/, "fixes are new commits, re-reviewed");
   });
 
-  test("the review runs as TWO SEPARATE subagents, IN PARALLEL — never one agent, never self-review (stories 9-11, 16)", () => {
+  test("the review runs as TWO SEPARATE subagents, IN PARALLEL — never one agent, never self-review", () => {
     assert.match(initial, /TWO SEPARATE subagent runs, issued IN PARALLEL/);
     assert.match(initial, /one for the Standards/);
     assert.match(initial, /one for the Spec axis/);
@@ -500,25 +500,25 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /never your own inline review/);
   });
 
-  test("a missing axis is a mandatory-capability failure: blocked, not silent self-review (story 16)", () => {
+  test("a missing axis is a mandatory-capability failure: blocked, not silent self-review", () => {
     assert.match(initial, /if an axis CANNOT run — a declared skill missing from the image, the subagent tool failing —/);
     assert.match(initial, /mandatory capability being absent: self-report blocked \(obligation 3\)/);
     assert.match(initial, /NEVER[\s\S]*silently replace the subagents with your own review/);
   });
 
-  test("documented-standard violations and missing requirements block completion; smells are judgement calls (stories 13, 14)", () => {
+  test("documented-standard violations and missing requirements block completion; smells are judgement calls", () => {
     assert.match(initial, /violations of documented standards and missing or incorrect\s+requirements block completion/);
     assert.match(initial, /Code smells are judgement calls, not\s+violations/);
     assert.match(initial, /apply them or justify/);
   });
 
-  test("the blocked procedure preserves the local work and any existing PR (stories 17, 18)", () => {
+  test("the blocked procedure preserves the local work and any existing PR", () => {
     assert.match(initial, /keep the local commits and\s+any existing PR/);
     assert.match(initial, /push nothing new, recreate no branch, discard nothing/);
     assert.match(initial, /obligation 3 applies unchanged/);
   });
 
-  test("the two axis reports land in the attempt's artifacts and ride the outcome record's paths (stories 19, 20)", () => {
+  test("the two axis reports land in the attempt's artifacts and ride the outcome record's paths", () => {
     assert.match(initial, new RegExp(reviewReportPath(1, "standards").replace(/\//g, "\\/")));
     assert.match(initial, new RegExp(reviewReportPath(1, "spec").replace(/\//g, "\\/")));
     assert.match(initial, /list\s+both files in the "paths" of the outcome record/);
@@ -531,7 +531,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.match(initial, /success report for an axis that did not run/);
   });
 
-  test("the reviewers receive the spec context: the issue and, in feedback, the applicable comments (story 12)", () => {
+  test("the reviewers receive the spec context: the issue and, in feedback, the applicable comments", () => {
     assert.match(initial, /spec \(the issue and, in a feedback\s+round, the applicable PR comments\)/);
     const prompt = buildWorkerPrompt(feedbackRequest, { blockedLabel: DEFAULT_LABELS.blocked });
     assert.match(prompt, /applicable PR comments/);
@@ -546,7 +546,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
   });
 });
 
-describe("worker prompt — the repair round (issue 107)", () => {
+describe("worker prompt — the repair round", () => {
   const repairRequest = (overrides: Partial<WorkRequest> = {}): WorkRequest =>
     baseRequest({
       baseBranch: "release/next",
@@ -616,7 +616,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /please rename it/);
   });
 
-  test("a resumed round takes over the local work: inspect it, never reset it (issue 112)", () => {
+  test("a resumed round takes over the local work: inspect it, never reset it", () => {
     const prompt = buildWorkerPrompt(
       repairRequest({
         material: {
@@ -650,7 +650,7 @@ describe("worker prompt — the repair round (issue 107)", () => {
     assert.match(prompt, /inspected and finished or aborted deliberately — never restarted blind/);
     assert.match(prompt, /Never reset, checkout or recreate the branch/);
     // The reviews must cover what is actually published; prior evidence is
-    // never presumed valid across a session (issue 112, stories 15-16).
+    // never presumed valid across a session.
     assert.match(prompt, /reuse evidence from attempt 2 ONLY for content that is byte-identical/);
     assert.match(prompt, /the two reviews must run again/);
     assert.match(prompt, /--force-with-lease=agent-issue-42:abc123/, "the lease is still pinned");

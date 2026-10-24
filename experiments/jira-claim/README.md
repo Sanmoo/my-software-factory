@@ -1,4 +1,4 @@
-# Experimento #169 — Claim exclusivo entre fábricas pelo Jira Cloud
+# Experimento — Claim exclusivo entre fábricas pelo Jira Cloud
 
 Harness isolado e determinístico que examina se um protocolo mínimo, usando
 somente Jira Cloud, autoriza no máximo uma fábrica a executar um Worker por
@@ -16,7 +16,7 @@ O resultado, as premissas e a conclusão estão em [RELATORIO.md](RELATORIO.md).
 A conclusão é **não demonstrado sob a documentação**: o único candidato
 plausível (a atualização condicional de uma issue property em lote) só é seguro
 sob uma premissa de atomicidade que a Atlassian **não** documenta. Fechar esta
-investigação não aprova o protocolo nem torna a implementação (#170) pronta.
+investigação não aprova o protocolo nem torna a implementação seguinte pronta.
 
 ```bash
 npm install

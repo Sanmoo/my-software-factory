@@ -34,3 +34,7 @@ Comment only what is essential: the non-obvious *why* and the contracts a reader
 ### Documentation
 
 `README.md` and `docs/RUNBOOK.md` serve the operator and stay extremely succinct: only what the operator needs, each fact in a single place. Implementation detail belongs in the code, and the README never lists the file structure.
+
+### Repository prose
+
+The repository outlives its issues. Never cite an issue or ticket number as provenance — nor a code-host issue URL, a spec story number or a "the #N incident" — in code, comments, test names, ADRs or documentation: an issue is ephemeral, a versioned file is not. Write in the declarative present: state what the code and the process are today, never what changed, when, or how they used to be. The one exception is a migration procedure kept for compatibility, where the old shape has to be named. The tracker's own vocabulary is unaffected: a work key, a `Closes #N` linkage, a `gh issue edit <n>` command and a fixture's ticket number or URL are facts of the domain, not citations. Decisions live in `docs/adr/`, terms in `GLOSSARY.md`.

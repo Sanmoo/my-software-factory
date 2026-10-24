@@ -14,6 +14,7 @@ import { ensureWorkspace, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
+  DEFAULT_RETRO,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
   type Config,
@@ -31,10 +32,10 @@ import {
 } from "./cli-harness.js";
 
 /**
- * End-to-end of the operator's requested stop (issue #146, extending #90's
- * contract): the signal closes new admissions at once, the started workers are
- * asked to stop — and end inside the cooperative window — and the run retains
- * its exclusivity until the stop is CONFIRMED. The in-flight worker's attempt
+ * End-to-end of the operator's requested stop: the signal closes new admissions
+ * at once, the started workers are asked to stop — and end inside the
+ * cooperative window — and the run retains its exclusivity until the stop is
+ * CONFIRMED. The in-flight worker's attempt
  * is preserved as the operator's requested stop: the next invocation resumes
  * the same attempt without spending the recovery budget, and no PR is invented.
  *
@@ -93,10 +94,10 @@ function childWiring(runtimeOptions: string, configPathExpression: string): stri
     `import { FakeWorkerRuntime } from ${moduleUrl("../runtime/fake-runtime.js")};`,
     `import { workBranchName } from ${moduleUrl("../git/port.js")};`,
     `import { expandedGitWorkOf } from ${moduleUrl("./legacy-git.js")};`,
-    `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET } from ${moduleUrl("../config.js")};`,
+    `import { DEFAULT_LABELS, DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET, DEFAULT_RECOVERY_BUDGET, DEFAULT_RETRO } from ${moduleUrl("../config.js")};`,
     `import { ensureWorkspace } from ${moduleUrl("../layout.js")};`,
     "const workspace = ensureWorkspace(workspaceRoot);",
-    "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET }, notifications: false, configPath: " + configPathExpression + " };",
+    "const config = { workerGhAccount: 'bot-do-samuca', workerModel: 'opencode-go/glm-5.3-flash', repos: ['Sanmoo/my-tasks'], concurrency: 1, workspace: workspace.root, labels: { ...DEFAULT_LABELS }, workerAuthFile: null, recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1] }, liveness: { ...DEFAULT_LIVENESS_POLICY }, retro: { ...DEFAULT_RETRO }, modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET }, notifications: false, configPath: " + configPathExpression + " };",
     "const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });",
     "seedIssue(tracker, { repo: 'Sanmoo/my-tasks', number: 1, createdAt: '2026-01-01T00:00:00Z', labels: [DEFAULT_LABELS.ready] });",
     "const git = expandedGitWorkOf({ prepareWork: async (ref) => ({ repoDir: `/clones/${ref.repo}`, branch: workBranchName(ref.number), baseBranch: 'main', branchCreated: true, branchOnOrigin: false }), cleanupDoneWork: async () => {}, observeRemoteHead: async () => null, diffWork: async () => '', inspectLocalWork: async () => ({ headSha: null, commits: 0, uncommitted: false, operationInProgress: null }) });",
@@ -104,7 +105,7 @@ function childWiring(runtimeOptions: string, configPathExpression: string): stri
   ];
 }
 
-describe("e2e: the operator's requested stop — close admissions, stop the workers, resume (issue #146)", { timeout: 60_000 }, () => {
+describe("e2e: the operator's requested stop — close admissions, stop the workers, resume", { timeout: 60_000 }, () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let children: ChildProcess[];
@@ -132,6 +133,7 @@ describe("e2e: the operator's requested stop — close admissions, stop the work
       workerAuthFile: null,
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [1, 1, 1] },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
+      retro: { ...DEFAULT_RETRO },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       notifications: false,
       configPath: join(dir, "msf.yaml"),

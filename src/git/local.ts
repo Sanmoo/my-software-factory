@@ -18,12 +18,12 @@ const execFile = promisify(execFileCallback);
 
 /**
  * The git host side over the real git CLI, exercised with local bare
- * fixtures in tests — no GitHub, no network (ticket 15). The single clone
+ * fixtures in tests — no GitHub, no network. The single clone
  * of a target repo lives at `<reposDir>/<owner>#<name>` and is created on
  * the first work of that repo; every launch is a delta `git fetch`, never a
  * re-clone. The default branch is revealed by the clone itself
  * (`origin/HEAD`), no API call. The credential helper of the `gh` keyring
- * for real remotes is a wiring concern of the GitHub adapter (ticket 16).
+ * for real remotes is a wiring concern of the GitHub adapter.
  */
 
 export class GitError extends Error {
@@ -135,7 +135,7 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
 
     // Asked of the remote, never of the local remote-tracking ref: a branch
     // deleted on the remote (the human's merge, a hand cleanup) must read as
-    // absent, and only the remote knows it (issue 96).
+    // absent, and only the remote knows it.
     const remoteHead = await git(repoDir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
 
     return { repoDir, branch, baseBranch, branchCreated, branchOnOrigin: remoteHead.trim() !== "" };
@@ -182,7 +182,7 @@ export function localGitWork(options: LocalGitWorkOptions): GitWork {
   async function observeRemoteHeadFor(work: WorkIdentity): Promise<string | null> {
     const { repoDir, branch } = targetOf(work);
     if (!existsSync(join(repoDir, ".git"))) return null;
-    // Asked of the remote, never of a stale remote-tracking ref (issue 96).
+    // Asked of the remote, never of a stale remote-tracking ref.
     const out = await git(repoDir, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
     const line = out.trim();
     return line === "" ? null : (line.split(/\s+/)[0] ?? null);

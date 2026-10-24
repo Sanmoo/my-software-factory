@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { COOPERATIVE_STOP_MS, installStopSignals } from "./stop-signals.js";
 
 /**
- * The operator's stop signals (issue #146): the first Ctrl-C or SIGTERM closes
+ * The operator's stop signals: the first Ctrl-C or SIGTERM closes
  * admissions and requests the cooperative stop; the second of either escalates.
  * The guarantee must be identical for both signals — a process manager stops
  * the factory exactly as Ctrl-C does — and the handlers must be detachable so

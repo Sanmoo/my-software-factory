@@ -20,7 +20,7 @@ const ms = (value: number): string => `${(value / 1000).toFixed(1)} s`;
 
 /**
  * The requirement a scenario exercises, and whether the run met it. These are
- * the contract clauses of #111, not preferences: a fail here is a reprovação.
+ * contract clauses, not preferences: a fail here is a reprovação.
  */
 function requirementFor(scenarioId: string, metrics: RunMetrics): { text: string; met: boolean } | undefined {
 	switch (scenarioId) {
@@ -72,7 +72,7 @@ function requirementFor(scenarioId: string, metrics: RunMetrics): { text: string
 	}
 }
 
-/** Safety requirements that decide pass/fail, from #111's acceptance criteria. */
+/** Safety requirements that decide pass/fail, from the harness's acceptance criteria. */
 function safetyOf(metrics: RunMetrics): { ownerExclusion: boolean; effectReconciliation: boolean; sameAttempt: boolean } {
 	return {
 		// No run may ever show two workers conducting the same execution.
@@ -103,7 +103,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	const labels = [...new Set(bundles.map((metrics) => metrics.label))];
 	const mechanisms = [...new Set(bundles.map((metrics) => metrics.mechanism))].sort();
 
-	lines.push("# Experimento #111 — retomada nativa do Pi vs pi durable");
+	lines.push("# Experimento — retomada nativa do Pi vs pi durable");
 	lines.push("");
 	lines.push(`- Commit da fábrica (base): \`${context.factoryCommit}\``);
 	lines.push(`- Repetições por configuração: ${context.repeats}`);
@@ -301,27 +301,27 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- Nada sobre queda elétrica, reinício de host, perda de disco ou migração entre máquinas: o kill foi `SIGKILL` de processo com disco preservado.",
 	);
 	lines.push(
-		"- Nada sobre o isolamento de produção (Sandcastle/container), recursos versionados (#87), delegação/subagentes ou MCP.",
+		"- Nada sobre o isolamento de produção (Sandcastle/container), recursos versionados, delegação/subagentes ou MCP.",
 	);
 	lines.push(
 		"- Nada sobre o ganho real de A com um modelo de verdade, que poderia inferir parte do progresso do diff e da conversa do PR. O mecanismo, porém, não oferece nenhuma garantia de reaproveitamento — só o contexto reconstruído.",
 	);
 	lines.push(
-		"- Concorrência global da fábrica (#90) não foi implementada nem medida; a exclusão exercitada é a do harness.",
+		"- Concorrência global da fábrica não foi implementada nem medida; a exclusão exercitada é a do harness.",
 	);
 	lines.push("");
 	lines.push("### Recomendação");
 	lines.push("");
 	lines.push(
-		"**Avançar com B (retomada nativa de sessão do Pi), acompanhada dos guardrails compartilhados, em uma issue de produto própria.** Em ganho medido e segurança, B e C empatam em todos os cenários desta matriz: mesmo reaproveitamento, mesma tentativa, nenhuma duplicação com guardrails, mesmo comportamento nos guardrails. O critério da #111 é explícito — em ganho e segurança equivalentes, preferir a solução menor — e B é a menor: uma dependência já em uso, nenhum storage novo, nenhuma migração de schema, um caminho de sessão a fixar e a seleção explícita da sessão no lançamento. C acrescenta uma dependência de runtime, um storage a operar e um dono de processo por storage, e seu benefício exclusivo medido (fato de interrupção registrado, sinal de tarefa viva, política de replay por ferramenta) só paga quando existir trabalho durável próprio — delegações/subagentes recuperáveis e efeitos internos ao run, que este experimento explicitamente não exercitou.",
+		"**Avançar com B (retomada nativa de sessão do Pi), acompanhada dos guardrails compartilhados, em uma issue de produto própria.** Em ganho medido e segurança, B e C empatam em todos os cenários desta matriz: mesmo reaproveitamento, mesma tentativa, nenhuma duplicação com guardrails, mesmo comportamento nos guardrails. O critério é explícito — em ganho e segurança equivalentes, preferir a solução menor — e B é a menor: uma dependência já em uso, nenhum storage novo, nenhuma migração de schema, um caminho de sessão a fixar e a seleção explícita da sessão no lançamento. C acrescenta uma dependência de runtime, um storage a operar e um dono de processo por storage, e seu benefício exclusivo medido (fato de interrupção registrado, sinal de tarefa viva, política de replay por ferramenta) só paga quando existir trabalho durável próprio — delegações/subagentes recuperáveis e efeitos internos ao run, que este experimento explicitamente não exercitou.",
 	);
 	lines.push("");
 	lines.push(
-		"Duas condições acompanham a recomendação: (1) os guardrails não são opcionais — sem eles, B e C duplicam efeitos externos (medido em s3) e nenhuma das duas é segura; (2) a exclusão de dono tem de vir do desenho da fábrica (#90), porque nem a sessão nativa nem o durable a fornecem.",
+		"Duas condições acompanham a recomendação: (1) os guardrails não são opcionais — sem eles, B e C duplicam efeitos externos (medido em s3) e nenhuma das duas é segura; (2) a exclusão de dono tem de vir do desenho da fábrica, porque nem a sessão nativa nem o durable a fornecem.",
 	);
 	lines.push("");
 	lines.push(
-		"**Investigar antes de avançar com C** apenas se aparecer um requisito de trabalho durável recuperável (delegação, subagente, checkpoint intra-run). Nesse caso, o experimento a fazer é o de delegação, não este: aqui, C não superou B em nada que o contrato desta issue exija.",
+		"**Investigar antes de avançar com C** apenas se aparecer um requisito de trabalho durável recuperável (delegação, subagente, checkpoint intra-run). Nesse caso, o experimento a fazer é o de delegação, não este: aqui, C não superou B em nada que o contrato deste experimento exija.",
 	);
 
 	lines.push("");
@@ -331,7 +331,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- **Sandcastle/container**: o harness não exercita o isolamento de produção (containers, binds, sandbox, egress). Nenhuma afirmação de compatibilidade com Sandcastle é feita; o que se compara é o mecanismo de retomada.",
 	);
 	lines.push(
-		"- **Recursos versionados da fábrica (#87)**: nem instalados nem lidos; a disponibilidade de extensões/ferramentas após restart não foi exercitada.",
+		"- **Recursos versionados da fábrica**: nem instalados nem lidos; a disponibilidade de extensões/ferramentas após restart não foi exercitada.",
 	);
 	lines.push(
 		"- **Ferramentas e delegação**: o único tool é o do workload. A política de replay por ferramenta existe no durable e não tem equivalente nativo no Pi; delegações/subagentes recuperáveis estão fora do escopo.",
@@ -356,7 +356,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 		"- A baseline A é reproduzida a partir do caminho de lançamento atual (sessão nova sobre `sessao/` preservado, contexto reconstruído, régua de primeira/segunda queda), **sem** Docker/Sandcastle.",
 	);
 	lines.push(
-		"- A exclusão de dono é um protocolo `O_EXCL` + liveness de pid deste harness, não um lock de kernel, e não é a solução global de concorrência da fábrica (#90).",
+		"- A exclusão de dono é um protocolo `O_EXCL` + liveness de pid deste harness, não um lock de kernel, e não é a solução global de concorrência da fábrica.",
 	);
 	lines.push(
 		"- GitHub é simulado por um log append-only inspecionável; nenhuma escrita real de issue, PR ou comentário foi feita.",
@@ -369,7 +369,7 @@ export function renderReport(bundles: readonly RunMetrics[], context: ReportCont
 	lines.push("## Reprodução mínima");
 	lines.push("");
 	lines.push("```bash");
-	lines.push("cd experiments/issue-111");
+	lines.push("cd experiments/continuity");
 	lines.push("npm install");
 	lines.push("npm test                                   # contratos, políticas e métricas");
 	lines.push("node dist/run.js --repeats 3 --root ./runs # matriz completa");

@@ -29,7 +29,7 @@ const derivePool = async (
 ) => (await deriveTrackerState(port, githubSelections(repos), labels)).pool;
 
 /** A tracker whose blocker read costs real time, as the REST one does: the
- *  derivation must not await them one at a time (issue 147). `unreadable`
+ * derivation must not await them one at a time. `unreadable`
  *  answers unknown for a work, pinning that unknown never unblocks. */
 class SlowBlockerTracker extends FakeTrackerAdapter {
   /** The most blocker reads this tracker ever had in flight at once. */
@@ -237,7 +237,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
   });
 });
 
-describe("derive — the tracker↔workspace leftovers, from the same single read (issue 100)", () => {
+describe("derive — the tracker↔workspace leftovers, from the same single read", () => {
   let adapter: FakeTrackerAdapter;
   const REPO = "Sanmoo/a";
   const repos = [REPO];
@@ -360,7 +360,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   });
 });
 
-describe("derive — the reserved states, the tick's full derivation (ticket 14)", () => {
+describe("derive — the reserved states, the tick's full derivation", () => {
   let adapter: FakeTrackerAdapter;
   const REPO = "Sanmoo/a";
   const ref = (number: number) => ({ repo: REPO, number });
@@ -375,6 +375,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     repos: "/ws/repos",
     works: "/ws/trabalhos",
     archive: "/ws/arquivo",
+    retros: "/ws/retros",
   };
 
   beforeEach(() => {
@@ -517,7 +518,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
     assert.equal(derived.state, "idle");
   });
 
-  describe("ticket 05 Q3 / issue 123 — the claimed work the factory did not settle", () => {
+  describe("the claimed work the factory did not settle", () => {
     let root: string;
     let layout: WorkspaceLayout;
 
@@ -601,7 +602,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       });
     }
 
-    test("claimed, no PR, the stream carries a model provider error → model-provider-failure on its own budget (issue 144)", async () => {
+    test("claimed, no PR, the stream carries a model provider error → model-provider-failure on its own budget", async () => {
       seedIssue(adapter, { repo: REPO, number: 26, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(26);
       providerErrorLog(path, 1);
@@ -616,7 +617,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.modelProvider.decision === "retry" && derived.modelProvider.waitMs, 15_000, "the provider's own backoff");
     });
 
-    test("claimed, no PR, the model provider budget exhausted → awaiting model provider; a human answer resumes it (issue 144)", async () => {
+    test("claimed, no PR, the model provider budget exhausted → awaiting model provider; a human answer resumes it", async () => {
       seedIssue(adapter, { repo: REPO, number: 27, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(27);
       providerErrorLog(path, 1, 1_700_000_000_777);
@@ -678,7 +679,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       );
     });
 
-    test("issue 103 — the interrupted attempt's own evidence is shown, never the old record as its outcome", async () => {
+    test("the interrupted attempt's own evidence is shown, never the old record as its outcome", async () => {
       seedIssue(adapter, { repo: REPO, number: 25, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(25);
       writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
@@ -689,7 +690,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.attempt, 2);
     });
 
-    test("issue 103 — an old blocked-self-report is history; the interrupted attempt is recovered, not blocked", async () => {
+    test("an old blocked-self-report is history; the interrupted attempt is recovered, not blocked", async () => {
       seedIssue(adapter, { repo: REPO, number: 91, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(91);
       for (const attempt of [1, 2, 3]) {
@@ -827,7 +828,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       );
     });
 
-    test("issue 146 — a written failure on the current attempt prevails over a stop record left on top of it", async () => {
+    test("a written failure on the current attempt prevails over a stop record left on top of it", async () => {
       seedIssue(adapter, { repo: REPO, number: 35, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(35);
       writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
@@ -852,7 +853,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.attempt, 2);
     });
 
-    test("issue 146 — the operator's requested stop resumes the SAME attempt, even with the budget exhausted", async () => {
+    test("the operator's requested stop resumes the SAME attempt, even with the budget exhausted", async () => {
       seedIssue(adapter, { repo: REPO, number: 31, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(31);
       writeFileSync(join(path, "log-2.jsonl"), '{}\n', "utf8");
@@ -872,7 +873,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.attempt, 2, "the same attempt continues");
     });
 
-    test("issue 146 — an unconfirmed stop holds the work with its reason instead of relaunching it", async () => {
+    test("an unconfirmed stop holds the work with its reason instead of relaunching it", async () => {
       seedIssue(adapter, { repo: REPO, number: 32, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(32);
       writeFileSync(join(path, "log-1.jsonl"), '{}\n', "utf8");
@@ -898,7 +899,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.match(derived.because, /still alive/);
     });
 
-    test("issue 146 — a bare reservation with a requested stop resumes it, spending nothing", async () => {
+    test("a bare reservation with a requested stop resumes it, spending nothing", async () => {
       seedIssue(adapter, { repo: REPO, number: 33, labels: [DEFAULT_LABELS.claimed] });
       const path = workDirFor(33);
       writeFileSync(
@@ -917,7 +918,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
       assert.equal(derived.attempt, 1);
     });
 
-    test("issue 146 — a confirmed Outcome prevails: a pr-open record is never turned into a stop-resume", async () => {
+    test("a confirmed Outcome prevails: a pr-open record is never turned into a stop-resume", async () => {
       seedIssue(adapter, { repo: REPO, number: 34, labels: [DEFAULT_LABELS.claimed] });
       adapter.seedPullRequest({ repo: REPO, number: 34, state: "open" });
       const path = workDirFor(34);
@@ -944,7 +945,7 @@ describe("derive — the reserved states, the tick's full derivation (ticket 14)
   });
 });
 
-describe("issue 174 — a human answer stays bound to the pause it answered", () => {
+describe("a human answer stays bound to the pause it answered", () => {
   let adapter: FakeTrackerAdapter;
   let root: string;
   let layout: WorkspaceLayout;

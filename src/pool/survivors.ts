@@ -3,7 +3,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
 
 /**
- * The survivor ledger and policy of the operational cycle (issue 118): the
+ * The survivor ledger and policy of the operational cycle: the
  * workers a reliable liveness probe shows but THIS process did not launch —
  * the workers that outlived a factory death. Recognition is observation only:
  * nothing is relaunched, attached to, killed or given a new attempt while a
