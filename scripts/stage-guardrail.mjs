@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Stage the compiled continuity guardrail into the worker image's build
@@ -10,83 +10,69 @@ import { fileURLToPath } from "node:url";
  * version pins, and `npm run build:image` refuses to stage a missing build
  * instead of shipping an unguarded worker.
  *
- * The staged tree mirrors the compiled layout under dist/ and the image copies
- * it to /opt/msf, so every relative import keeps its build-tree meaning: the
- * extension's `../effects.js` and continuity-artifacts' `../tracker/identity.js`
- * resolve exactly as they do in dist/. Every relative import of a staged file
- * must itself be staged: a module the extension imports but the image lacks
- * makes Pi refuse the whole extension at session start, which the launch
- * preflight cannot see from the file's mere existence.
+ * What to stage is not a list to maintain (issue 193): it is EXACTLY the
+ * relative-import closure of the compiled extension, computed from dist/. The
+ * staged tree mirrors the compiled layout under dist/ and the image copies it
+ * to /opt/msf, so every relative import keeps its build-tree meaning. A
+ * relative import whose module dist lacks fails the build by that exact name;
+ * a file in the staged tree the extension does not import is reported as dead
+ * and the build fails too. The launch preflight requires the same closure
+ * inside the image, so a stale image is refused by name.
  *
  * Test-only copies are not needed: the same dist files are imported directly
  * by the unit and e2e tests.
  */
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const dist = join(root, "dist");
 const stage = join(root, "docker", "guardrail");
 
-const modules = [
-  "runtime/effects.js",
-  "runtime/call-recovery.js",
-  "runtime/session-log.js",
-  "pool/work-key.js",
-  "runtime/json-line.js",
-  "work-record/continuity.js",
-  "work-record/errors.js",
-  "work-record/fs.js",
-  "work-record/sessions.js",
-  "runtime/continuity-artifacts.js",
-  "runtime/guardrail/extension.js",
-  "runtime/guardrail/delegation.js",
-  "runtime/guardrail/journal-lock.js",
-  "runtime/stop-request.js",
-  "tracker/identity.js",
-];
-const files = modules.map((module) => ({ from: join(root, "dist", module), to: join(stage, module) }));
-
-for (const file of files) {
-  if (!existsSync(file.from)) {
-    process.stderr.write(
-      `stage-guardrail: ${file.from} is missing — run \`npm run build\` first (npm run build:image does it).\n`,
-    );
-    process.exit(1);
-  }
-}
-
-rmSync(stage, { recursive: true, force: true });
-for (const file of files) {
-  mkdirSync(dirname(file.to), { recursive: true });
-  copyFileSync(file.from, file.to);
-}
-
-// The staged tree must be self-contained: follow each relative import.
-const missing = [];
-for (const path of stagedFiles(stage)) {
-  for (const specifier of relativeImports(readFileSync(path, "utf8"))) {
-    const target = resolve(dirname(path), specifier);
-    if (!existsSync(target)) missing.push(`${path.slice(stage.length + 1)} → ${specifier}`);
-  }
-}
-if (missing.length > 0) {
-  process.stderr.write(`stage-guardrail: the staged extension is incomplete — add the module(s) to \`modules\`:\n`);
-  for (const entry of missing) process.stderr.write(`  ${entry}\n`);
+let staging;
+try {
+  staging = await import(pathToFileURL(join(dist, "runtime", "guardrail", "staging.js")).href);
+} catch {
+  process.stderr.write(
+    "stage-guardrail: the compiled staging module is missing — run `npm run build` first (npm run build:image does it).\n",
+  );
   process.exit(1);
 }
 
-process.stdout.write(`stage-guardrail: staged ${files.length} file(s) into docker/guardrail/\n`);
-
-function stagedFiles(dir) {
-  return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
-    .map((entry) => resolve(entry.parentPath ?? entry.path, entry.name));
+const closure = staging.relativeImportClosure(dist, [staging.GUARDRAIL_ENTRY_MODULE]);
+if (closure.missing.length > 0) {
+  process.stderr.write("stage-guardrail: the compiled guardrail names modules dist does not carry:\n");
+  for (const entry of closure.missing) {
+    const importer = entry.from === "." ? "the entry" : `imported by ${entry.from}`;
+    process.stderr.write(`  ${entry.module} (${importer})\n`);
+  }
+  process.exit(1);
 }
 
-/** `from "./x.js"`, `import "./x.js"` and dynamic `import("./x.js")`. */
-function relativeImports(source) {
-  const specifiers = new Set();
-  const patterns = [/from\s+["'](\.\.?\/[^"']+)["']/g, /import\s+["'](\.\.?\/[^"']+)["']/g, /import\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) specifiers.add(match[1]);
-  }
-  return [...specifiers];
+rmSync(stage, { recursive: true, force: true });
+for (const module of closure.modules) {
+  const target = join(stage, module);
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(join(dist, module), target);
+}
+
+const staged = stagedModules(stage);
+const expected = new Set(closure.modules);
+const dead = staged.filter((module) => !expected.has(module));
+const absent = closure.modules.filter((module) => !staged.includes(module));
+if (dead.length > 0 || absent.length > 0) {
+  process.stderr.write("stage-guardrail: the staged tree does not match the guardrail's import closure:\n");
+  for (const module of absent) process.stderr.write(`  missing ${module}\n`);
+  for (const module of dead) process.stderr.write(`  not imported ${module}\n`);
+  process.exit(1);
+}
+
+process.stdout.write(
+  `stage-guardrail: staged the ${closure.modules.length} module(s) the guardrail imports into docker/guardrail/\n`,
+);
+
+function stagedModules(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, resolve(entry.parentPath ?? entry.path, entry.name)).split(sep).join("/"))
+    .sort();
 }

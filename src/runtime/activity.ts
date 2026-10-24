@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { SESSIONS_SUBDIR } from "../layout.js";
-import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "./attempt-logs.js";
+import { EVENT_LOG_PATTERN, SANDCASTLE_LOG_PATTERN } from "../work-record/logs.js";
 
 /**
  * Verifiable activity of a worker session (issue 112): the files the agents

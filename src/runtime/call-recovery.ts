@@ -6,8 +6,8 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import {
   callKey, linkForAttempt, readEffectJournal, readPause, readSessionLinks,
   type EffectJournal, type JournalIntent,
-} from "./continuity-artifacts.js";
-import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "./session-log.js";
+} from "../work-record/continuity.js";
+import { findSessionFile, inspectSessionFile, sessionToolCalls, sessionToolResults } from "../work-record/sessions.js";
 import { parseJsonObject, type JsonValue } from "./json-line.js";
 
 export const CALL_RECOVERY_FILENAME = "recuperacoes.jsonl";
