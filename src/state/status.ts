@@ -340,6 +340,9 @@ type SelectionRead =
   | { reader: JiraSelectionReader; state: "known"; tickets: OpenTicket[] }
   | { reader: JiraSelectionReader; state: "unknown"; reason: string };
 
+type KnownSelectionRead = Extract<SelectionRead, { state: "known" }>;
+export type KnownJiraSiteView = Extract<JiraSiteView, { state: "known" }>;
+
 /**
  * Every configured Jira site, grouped by site and read as ONE ordered set
  * (issue 129). Sites are sorted by name so the report never inherits the order
@@ -375,15 +378,12 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   const known = readings.filter((entry): entry is Extract<SelectionRead, { state: "known" }> => entry.state === "known");
 
   if (known.length === 0) {
-    return {
+    return unknownSite(
       site,
       destinations,
-      state: "unknown",
-      reason: readings[0]?.state === "unknown" ? readings[0].reason : "no selection could be read",
-      selections: readings.map((entry) => selectionViewOf(entry)),
-      candidates: [],
-      ambiguous: [],
-    };
+      readings[0]?.state === "unknown" ? readings[0].reason : "no selection could be read",
+      readings,
+    );
   }
 
   // One selection is already one complete native order. Several need Jira's
@@ -395,15 +395,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   } else {
     const orderedRead = await readSiteOrder(known);
     if (orderedRead.state === "unknown") {
-      return {
-        site,
-        destinations,
-        state: "unknown",
-        reason: orderedRead.reason,
-        selections: readings.map((entry) => selectionViewOf(entry)),
-        candidates: [],
-        ambiguous: [],
-      };
+      return unknownSite(site, destinations, orderedRead.reason, readings);
     }
     ordered = orderedRead.tickets;
   }
@@ -414,17 +406,8 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     .map((entry) => entry.reader.selection.destination);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
   if ([...membership.keys()].some((key) => !orderedKeys.has(key))) {
-    // A selection returned a ticket the site's ordered read omitted: the two
-    // reads disagree, so no reliable site order exists for that ticket.
-    return {
-      site,
-      destinations,
-      state: "unknown",
-      reason: "the site's ordered result omitted a ticket a selection returned",
-      selections: readings.map((entry) => selectionViewOf(entry)),
-      candidates: [],
-      ambiguous: [],
-    };
+    // The two reads disagree, so no reliable site order exists for that ticket.
+    return unknownSite(site, destinations, "the site's ordered result omitted a ticket a selection returned", readings);
   }
 
   const candidates: JiraCandidate[] = [];
@@ -435,9 +418,18 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     const key = ticketIdentityKey(ticket.ticket);
     if (seen.has(key)) continue;
     seen.add(key);
-    const selected = membership.get(key);
-    if (selected === undefined) continue;
-    const destinationsForTicket = distinctDestinations([...selected.destinations.values()]);
+    const membershipOfTicket = membership.get(key);
+    if (membershipOfTicket === undefined) {
+      // The union carried a ticket no readable selection returned: the same
+      // disagreement as the reverse case, never a silently dropped absence.
+      return unknownSite(
+        site,
+        destinations,
+        "the site's ordered result carried a ticket no readable selection returned",
+        readings,
+      );
+    }
+    const destinationsForTicket = distinctDestinations([...membershipOfTicket.values()]);
     if (destinationsForTicket.length > 1) {
       heldKeys.add(key);
       ambiguous.push({
@@ -471,7 +463,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
 
 /** The site's union query, read only after its readable selections are known. */
 async function readSiteOrder(
-  known: readonly Extract<SelectionRead, { state: "known" }>[],
+  known: readonly KnownSelectionRead[],
 ): Promise<{ state: "known"; tickets: OpenTicket[] } | { state: "unknown"; reason: string }> {
   const reader = known[0]?.reader;
   if (reader === undefined) return { state: "unknown", reason: "the site carries no readable selection" };
@@ -485,25 +477,38 @@ async function readSiteOrder(
   }
 }
 
-interface TicketMembership {
-  destinations: Map<string, RepositoryIdentity>;
-}
-
 /** Which readable selections select each ticket, by stable ticket identity. */
-function ticketMemberships(
-  known: readonly Extract<SelectionRead, { state: "known" }>[],
-): Map<string, TicketMembership> {
-  const memberships = new Map<string, TicketMembership>();
+function ticketMemberships(known: readonly KnownSelectionRead[]): Map<string, Map<string, RepositoryIdentity>> {
+  const memberships = new Map<string, Map<string, RepositoryIdentity>>();
   for (const reading of known) {
     for (const ticket of reading.tickets) {
       const key = ticketIdentityKey(ticket.ticket);
-      const entry = memberships.get(key) ?? { destinations: new Map<string, RepositoryIdentity>() };
+      const destinations = memberships.get(key) ?? new Map<string, RepositoryIdentity>();
       const destination = reading.reader.selection.destination;
-      entry.destinations.set(repositoryIdentityKey(destination), destination);
-      memberships.set(key, entry);
+      destinations.set(repositoryIdentityKey(destination), destination);
+      memberships.set(key, destinations);
     }
   }
   return memberships;
+}
+
+/** One site that has no reliable order: its reason and selection reads survive,
+ *  but no candidate is offered from a guessed or concatenated order. */
+function unknownSite(
+  site: string,
+  destinations: RepositoryIdentity[],
+  reason: string,
+  readings: readonly SelectionRead[],
+): JiraSiteView {
+  return {
+    site,
+    destinations,
+    state: "unknown",
+    reason,
+    selections: readings.map((entry) => selectionViewOf(entry)),
+    candidates: [],
+    ambiguous: [],
+  };
 }
 
 /** One selection's report line: how many distinct tickets it selected, and how

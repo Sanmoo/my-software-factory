@@ -478,6 +478,13 @@ describe("config: Jira Cloud selections", () => {
     assert.equal(config.jira[0]?.jql, "project = ABC ORDER BY Rank ASC");
   });
 
+  test("a JQL with no filter before its ordering is a configuration error", () => {
+    for (const jql of ["ORDER BY Rank ASC", "ORDER BY Rank"]) {
+      const path = jiraYaml(oneEntry({ jql }));
+      assert.throws(() => loadConfig(path), /jira\[0\]\.jql.*only an ordering and no selection filter/, jql);
+    }
+  });
+
   test("a conflicting ordering is rejected as a configuration error, naming the field", () => {
     for (const jql of ["project = ABC ORDER BY created ASC", "project = ABC ORDER BY Rank DESC"]) {
       const path = jiraYaml(oneEntry({ jql }));

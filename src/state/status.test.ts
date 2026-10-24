@@ -1361,6 +1361,11 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.ok(frontendFirst >= 0 && frontendFirst < backendFirst, "the declared-later frontend candidate still comes first by Rank");
     assert.match(
       text,
+      /selection \(project = ABC AND labels = backend\) → Sanmoo\/backend: 3 selected, 1 held as ambiguous/,
+      "each readable selector's contribution is visible in the report",
+    );
+    assert.match(
+      text,
       /ambiguous \(more than one destination — held, no destination chosen\): 1[\s\S]*ABC-3 \(jira:acme\.atlassian\.net\) — Touches both layers → Sanmoo\/backend, Sanmoo\/frontend/,
     );
     assert.doesNotMatch(text, /^\s+\d+\. ABC-3 \(jira:[^)]*\) → /m, "the ambiguous ticket is never offered as a candidate");
@@ -1549,6 +1554,44 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       (text.match(/^    1\. ABC-1 /gm) ?? []).length,
       2,
       "each site restarts its own numbering: no global order is implied across sites",
+    );
+  });
+
+  test("a Jira key and a GitHub issue number never stand in for one another at the status seam", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "42", key: "ABC-42", summary: "Jira request" });
+    const github = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    seedIssue(github, { repo: REPO, number: 42, labels: [DEFAULT_LABELS.ready] });
+
+    const view = await deriveStatus(
+      {
+        github,
+        jira: [{ selection: selection("acme.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(sim) }],
+      },
+      { ...statusConfig(), repos: [REPO] },
+      layout,
+      NO_WORKERS,
+    );
+
+    const [jira] = view.jira;
+    if (jira?.state !== "known") assert.fail("the Jira site is readable");
+    assert.equal(view.pool.length, 1);
+    assert.equal(jira.candidates.length, 1);
+    assert.deepEqual(
+      [view.pool[0]?.work.ticket.provider, jira.candidates[0]?.work.ticket.provider],
+      ["github", "jira"],
+      "the readable suffix 42 is presentation; provider identity keeps the Works apart",
+    );
+    assert.deepEqual(
+      [
+        ticketUrl(view.pool[0]!.work.ticket),
+        ticketUrl(jira.candidates[0]!.work.ticket),
+      ],
+      [
+        "https://github.com/Sanmoo/my-tasks/issues/42",
+        "https://acme.atlassian.net/browse/ABC-42",
+      ],
+      "each Work links to its own provider's ticket",
     );
   });
 });

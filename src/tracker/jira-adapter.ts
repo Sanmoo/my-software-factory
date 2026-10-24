@@ -245,12 +245,7 @@ export class JiraTicketAdapter implements SiteTicketTracker {
    * operator's JQL is the whole selection.
    */
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
-    this.assertSource(selection.source);
-    const jql = selection.jql;
-    if (jql === undefined || jql.trim() === "") {
-      throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
-    }
-    const ordering = withNativeRankOrdering(jql);
+    const ordering = withNativeRankOrdering(this.selectionJql(selection));
     if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
     return this.readOrdered(ordering.jql);
   }
@@ -265,15 +260,19 @@ export class JiraTicketAdapter implements SiteTicketTracker {
     if (selections.length === 0) {
       throw new JiraSelectionError(`the Jira site "${this.site}" was asked for no selection`);
     }
-    for (const selection of selections) {
-      this.assertSource(selection.source);
-      if (selection.jql === undefined || selection.jql.trim() === "") {
-        throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
-      }
-    }
-    const ordering = withSiteRankOrdering(selections.map((selection) => selection.jql ?? ""));
+    const ordering = withSiteRankOrdering(selections.map((selection) => this.selectionJql(selection)));
     if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
     return this.readOrdered(ordering.jql);
+  }
+
+  /** The query of one selection after both facts it must carry are checked. */
+  private selectionJql(selection: TicketSelection): string {
+    this.assertSource(selection.source);
+    const jql = selection.jql;
+    if (jql === undefined || jql.trim() === "") {
+      throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
+    }
+    return jql;
   }
 
   private async readOrdered(jql: string): Promise<OpenTicket[]> {

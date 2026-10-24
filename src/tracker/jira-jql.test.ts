@@ -73,6 +73,11 @@ describe("Jira JQL: native Rank ascending", () => {
   test("an empty query is refused instead of ordered", () => {
     assert.match(refused("   "), /empty/);
   });
+
+  test("a query carrying only an ordering has no selection filter and is refused", () => {
+    assert.match(refused("ORDER BY Rank ASC"), /only an ordering and no selection filter/);
+    assert.match(refused("ORDER BY Rank"), /only an ordering and no selection filter/);
+  });
 });
 
 describe("Jira JQL: one native Rank order for a site's selections", () => {
@@ -81,6 +86,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(result, {
       ok: true,
       jql: `(project = ABC AND labels = frontend) OR (project = DEF) ORDER BY ${RANK_ORDER}`,
+      filter: "(project = ABC AND labels = frontend) OR (project = DEF)",
     });
   });
 
@@ -88,6 +94,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(withSiteRankOrdering(["project = ABC"]), {
       ok: true,
       jql: `project = ABC ORDER BY ${RANK_ORDER}`,
+      filter: "project = ABC",
     });
   });
 
@@ -106,6 +113,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(quoted, {
       ok: true,
       jql: `(summary ~ "order by rank desc") OR (project = DEF) ORDER BY ${RANK_ORDER}`,
+      filter: '(summary ~ "order by rank desc") OR (project = DEF)',
     });
   });
 });

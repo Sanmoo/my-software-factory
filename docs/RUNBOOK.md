@@ -275,16 +275,15 @@ reserved work is still named, by its own state, and the rest of the report is
 unchanged. A work carried by more than one container lists each
 container and a **duplicate workers** line — the decision is yours.
 
-**Jira candidates** are read-only: one native Rank order per site, across all
-of that site's selections and destination repositories, naming each ticket's
-site and explicit destination. Sites never form one comparable order. A ticket
-selected twice for the same destination is listed once. A selection that cannot
-be read reads `unknown` with its reason instead of an empty list, and leaves the
-overlap it could have caused `unverified`. A ticket more than one selection
-promises to a **different** destination is held under `ambiguous` with those
-destinations instead of being offered as a candidate for either; the other
-candidates on that site remain usable. Jira candidates carry no claim and no
-reservation, so they never appear in the pool.
+**Jira candidates** are read-only and grouped per site; the selection semantics
+that produce each site's order are in the README. Every candidate names its
+site and explicit destination. A selection that cannot be read reads `unknown`
+with its reason instead of an empty list, and leaves the overlap it could have
+caused `unverified`. A ticket more than one selection promises to a
+**different** destination is held under `ambiguous` with those destinations
+instead of being offered as a candidate for either; the other candidates on
+that site remain usable. Jira candidates carry no claim and no reservation, so
+they never appear in the pool.
 
 ## (d) Local desktop notifications
 
