@@ -187,7 +187,7 @@ describe("config", () => {
 
   // ---- the interruption-recovery budget ----
 
-  test("the recovery budget defaults to the #111 values: 3 recoveries, waits 1/4/16 s", () => {
+  test("the recovery budget defaults to 3 recoveries with waits of 1/4/16 s", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
 
     const config = loadConfig(path);

@@ -36,13 +36,13 @@ import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
 /**
- * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal CLI
- * The run loads msf.yaml from the cwd, reads the bot token from the gh
- * keyring (boot check: no token → clear failure),
- * guarantees the workspace and hands the thin loop its four seams.
+ * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal
+ * CLI. The run loads msf.yaml from the cwd, reads the bot token from the gh
+ * keyring (boot check: no token → clear failure), guarantees the workspace and
+ * hands the thin loop its four seams.
  *
- * Ticket 18: `msf run` (both --once and continuous) is wired with ALL REAL
- * components by default — the real GitHub adapter, the real Sandcastle
+ * `msf run` (both --once and continuous) is wired with ALL REAL components by
+ * default — the real GitHub adapter, the real Sandcastle
  * runtime (configured by worker-model), the real git host. The fake seams exist
  * ONLY for tests: `--runtime fake` keeps the placeholder that never launches,
  * and the fake adapter is injectable ONLY through the exported `wireRunDeps`
@@ -290,11 +290,11 @@ async function executeRun(
     return null;
   }
 
-  // Ticket 14: ending the factory is a human act — Ctrl-C exits cleanly.
-  // Issue #146: the close of admission, the cooperative request and the
-  // confirmation of every worker's end now live in the loop's lifecycle; the
-  // stop line below is still a proof of registration — a SIGINT sent right
-  // after it can never land in the default-disposition window.
+  // Ending the factory is a human act — Ctrl-C exits cleanly. The close of
+  // admission, the cooperative request and the confirmation of every worker's
+  // end live in the loop's lifecycle; the stop line below is still a proof of
+  // registration — a SIGINT sent right after it can never land in the
+  // default-disposition window.
   console.log(utcStamp("msf run: sweeping forever on the fixed tick (Ctrl-C to end)"));
   return runForever(deps, { ...stopOptions });
 }
@@ -312,7 +312,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
     retros: join(config.workspace, WORKSPACE_SUBPATHS.retros),
   };
 
-  // Ticket 18: status reads the REAL tracker — the trail it shows is the
+  // Status reads the REAL tracker — the trail it shows is the
   // work's real trail (issue labels, PR, the works the registry holds on
   // disk). Only the keyring read at boot touches the machine; the reads
   // themselves are the same REST reads the sweep does, and the command

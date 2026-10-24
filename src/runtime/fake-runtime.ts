@@ -25,7 +25,7 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
  * provider's failing stream line into the attempt's log (the same artifact the
  * real runtime writes), so the factory's own detection reads it.
  *
- * Issue #146: the runtime also carries the stop contract. A cooperative
+ * The runtime also carries the stop contract. A cooperative
  * request ends a parked launch as an abrupt death with no record — exactly the
  * footprint of a stopped session; a forced stop ends it the same way and says
  * the worker is gone. The options let a test choose a worker that ignores the

@@ -567,7 +567,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       text,
       /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent\)/,
-      "the diagnosis names the attempt's own evidence paths, present or absent (story 32)",
+      "the diagnosis names the attempt's own evidence paths, present or absent",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });

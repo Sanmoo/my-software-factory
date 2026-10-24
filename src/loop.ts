@@ -159,8 +159,7 @@ import { join } from "node:path";
  * tracker/ + pool/ + git/ + runtime/ — the loop only reads the
  * facts and applies what they decide.
  *
- * Ticket 14: the derivation of the tick covers the states of ALL reserved
- * works (done · done-fallback · rejected · feedback · resumable — state/
+ * The derivation of the tick covers the states of ALL reserved works (done · done-fallback · rejected · feedback · resumable — state/
  * decides, the loop executes the tracker and disk writes), the launches
  * prioritize the parked reserved works before new claims by age, and the
  * continuous run wakes by event (end of worker), not only by the clock.
@@ -1001,8 +1000,8 @@ export class SweepEngine {
       ? parked
       : [...this.survivorRecoveries.splice(0), ...parked].sort(byParkedPriority);
 
-    // The pool AND the reconciliation from ONE open-issues read per repo
-    // : the cached pool of the latest derivation (replenishment
+    // The pool AND the reconciliation from ONE open-issues read per repo:
+    // the cached pool of the latest derivation (replenishment
     // draws from it; a cache drained empty waits for the next tick) and the
     // leftovers the reconciliation reports. No action: the report touches
     // nothing, and the sweep continues normally.
@@ -1820,8 +1819,8 @@ export class SweepEngine {
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
 
-    // The requested stop closes admissions the instant it arrives (issue
-    // #146): a launch that has not written to the tracker yet leaves nothing
+    // The requested stop closes admissions the instant it arrives: a launch
+    // that has not written to the tracker yet leaves nothing
     // behind, and one that already reserved the work merely stops here — the
     // reservation stays for the next run's reconciliation.
     if (this.stopping) {
@@ -1886,8 +1885,8 @@ export class SweepEngine {
     // the default the clone reveals; relaunches reuse the branch untouched.
     const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
 
-    // A repair targets the PR's CURRENT base — never the repo default (story 8)
-    // — and is pinned to the head the facts were read on. If the remote moved
+    // A repair targets the PR's CURRENT base — never the repo default — and is
+    // pinned to the head the facts were read on. If the remote moved
     // since, the evidence is stale: skip the round (the next tick re-derives).
     const derivedTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
@@ -1935,8 +1934,8 @@ export class SweepEngine {
       const confirmed = reading.trigger;
       // A FRESH round follows the facts as they read now: when the head moved
       // while the impediment persists, the evidence was recalculated, so the
-      // round opens on the current head and is charged on the new evidence
-      // . A resumption keeps its observed head — moving it would
+      // round opens on the current head and is charged on the new evidence.
+      // A resumption keeps its observed head — moving it would
       // publish the fallen attempt's local history over a concurrent one.
       if (resuming === null) {
         if (confirmed.facts.headSha !== repair.pinnedHeadSha) {
@@ -1999,8 +1998,7 @@ export class SweepEngine {
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     entry.attempt = facts.attempt;
     if (kind === "resume" && facts.previousFall) {
-      // Ticket 14's decision: the human's answer resets the consecutive
-      // failure count — the blocked valve already did its job and was
+      // The human's answer resets the consecutive failure count — the blocked valve already did its job and was
       // addressed; a new failure starts a fresh count (1st → release again).
       facts.previousFall = false;
     }
@@ -2088,8 +2086,8 @@ export class SweepEngine {
       return null;
     }
 
-    // The recovery is GRANTED and persisted before the wait and the relaunch
-    // : a death during the backoff or the session continues the
+    // The recovery is GRANTED and persisted before the wait and the relaunch:
+    // a death during the backoff or the session continues the
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     //
@@ -2219,8 +2217,8 @@ export class SweepEngine {
   }
 
   /**
-   * Whether the operator's own requested stop owns the end of this attempt
-   * : the persisted stop-requested, or a stop-unconfirmed one whose
+   * Whether the operator's own requested stop owns the end of this attempt:
+   * the persisted stop-requested, or a stop-unconfirmed one whose
    * worker this invocation just confirmed gone (promoted, so the launch
    * consumes it like any other requested stop). A stop of another attempt, or
    * a failure, never answers yes.
@@ -2589,8 +2587,8 @@ export class SweepEngine {
   }
 
   /**
-   * A requested stop whose confirmation failed on a previous invocation
-   * : the work is held until a probe proves the previous worker
+   * A requested stop whose confirmation failed on a previous invocation:
+   * the work is held until a probe proves the previous worker
    * gone, and only then becomes the requested-stop resume it was meant to be. An
    * unreadable probe is uncertainty: the work stays held, the reason said out
    * loud, and no worker is launched on top of it.
@@ -2841,13 +2839,13 @@ export class SweepEngine {
       workspace,
     });
 
-    // A settled attempt makes any continuity pause of its own history (issue
-    // 119): the new record (or block) is the current fact, and a stale pause
+    // A settled attempt makes any continuity pause of its own history: the new
+    // record (or block) is the current fact, and a stale pause
     // must not keep the work out of later rounds. An interruption keeps it.
     if (ruling.decision !== "interrupt") clearPause(dir);
 
-    // A known PR — open, merged or closed — is persisted beside the Work
-    // : the facts survive a restart, and a later attempt appends
+    // A known PR — open, merged or closed — is persisted beside the Work:
+    // the facts survive a restart, and a later attempt appends
     // its own. Persistence never changes the ruling above.
     if (pr !== null) {
       try {
@@ -2860,8 +2858,8 @@ export class SweepEngine {
       }
     }
 
-    // A confirmed Outcome prevails over the interpretation of the stop (issue
-    // #146): the attempt ended with a verdict, so the suspended-stop evidence
+    // A confirmed Outcome prevails over the interpretation of the stop: the
+    // attempt ended with a verdict, so the suspended-stop evidence
     // has done its job and is cleared (a fall replaces it with its own stop).
     if (ruling.decision !== "interrupt") await consumeStopRequest(dir, attempt);
 
@@ -2897,7 +2895,7 @@ export class SweepEngine {
       if (launchable.kind === "repair") {
         this.log(
           `${origin} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
-            "settles its publication before another round ",
+            "settles its publication before another round",
         );
       } else if (this.stopping) {
         // The operator's requested stop: the attempt is left for

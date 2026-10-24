@@ -314,8 +314,8 @@ const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
 
 /**
- * The sandbox's own clock is a LAST RESORT behind the activity watchdog (issue
- * 112): the agent can be silent on stdout for as long as its reviewer subagents
+ * The sandbox's own clock is a LAST RESORT behind the activity watchdog: the
+ * agent can be silent on stdout for as long as its reviewer subagents
  * work, so the effective idle limit is the one measured on verifiable activity.
  * Sandcastle's timer only guards a watchdog that stopped running — an
  * unreadable tree is still observed as "nothing changes" and times out — so it

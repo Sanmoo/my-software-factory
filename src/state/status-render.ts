@@ -17,7 +17,7 @@ import type { DuplicateWorkers } from "./liveness.js";
 import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 
 /**
- * The rendering half of `msf status` : the human view, one line per
+ * The rendering half of `msf status`: the human view, one line per
  * answer in the order a human asks for them, with every list capped and an
  * omission marker past the cap. Pure view → string: no reads, no writes.
  */

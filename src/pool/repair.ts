@@ -283,8 +283,8 @@ export type RepairReconciliation =
   | { kind: "concurrent-change"; cycle: RepairCycle; attempt: RepairAttempt };
 
 /**
- * Decide the publication of the cycle's attempt from structured facts alone
- * : the produced commit (the work branch on disk) against the
+ * Decide the publication of the cycle's attempt from structured facts alone:
+ * the produced commit (the work branch on disk) against the
  * remote head, with the head observed before the intervention as the anchor.
  * An unreadable remote, local state or premise is "pending" — never "not
  * published", never "published", and it neither returns budget nor allows a
@@ -334,8 +334,7 @@ export function reconcileRepairAttempt(input: {
     settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
   /** The round returns: the charge is refunded and the attempt settles as
    *  "nothing of it reached the remote". Counting a fall is the caller's
-   *  business — an attempt that fell counts one, an obsolete premise does not
-   * . */
+   *  business — an attempt that fell counts one, an obsolete premise does not. */
   const settledUnpublished = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
     settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
 

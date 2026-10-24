@@ -335,7 +335,7 @@ export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseRea
   return { premise: "obsolete" };
 }
 
-/** Confirmed recovery (story 22): no conflicts and every required check
+/** Confirmed recovery: no conflicts and every required check
  *  approved — narrower than an obsolete premise, which also holds for pending,
  *  neutral or skipped checks. The required set must be KNOWN: the empty set a
  * repository without CI declares is a confirmation; null
@@ -612,8 +612,8 @@ async function deriveReservedWork(
           resuming: attempt,
         };
       }
-      // Story 19: re-finding the same failure without new evidence is never a
-      // new session; the exhausted cap still blocks.
+      // Re-finding the same failure without new evidence is never a new
+      // session; the exhausted cap still blocks.
       if (cycle.lastEvidence === signature) {
         if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) {
           return repairBlocked(work, dir, pr, trigger, cycle.usedRounds);
@@ -634,7 +634,7 @@ async function deriveReservedWork(
       };
     }
 
-    // Confirmed recovery (story 22): no conflicts and every required check
+    // Confirmed recovery: no conflicts and every required check
     // approved — the only thing besides a human unblock that resets the cap.
     // The gate is "this work has a repair cycle", not "a round is charged":
     // after a fall the charged round was returned, and the fall ledger it left
@@ -656,9 +656,9 @@ async function deriveReservedWork(
 
   // No PR, not blocked: a claimed work without a worker in flight ended
   // without the factory settling it (the collection never happened). The
-  // registry says whether that end was an interruption or a written failure
-  // ; anything else is parked — in flight or waiting for the
-  // human — or a released work, whose state is the pool's business.
+  // registry says whether that end was an interruption or a written failure;
+  // anything else is parked — in flight or waiting for the human — or a
+  // released work, whose state is the pool's business.
   if (issue.value.labels.includes(labels.claimed)) {
     // A pending reconciliation holds the claim even when the PR cannot be
     // read: releasing it would hand the work back to the pool while its
@@ -715,8 +715,8 @@ async function deriveUnreconciledAttempt(
   const ledger = await readAttemptLedger(dir);
   const current = ledger.lastAttempt === 0 ? 1 : ledger.lastAttempt;
 
-  // A confirmed Outcome prevails over the interpretation of the stop (issue
-  // #146): the attempt really ended with a verdict, so a stop record left on
+  // A confirmed Outcome prevails over the interpretation of the stop: the
+  // attempt really ended with a verdict, so a stop record left on
   // top of it (the operator stopped the factory while that verdict was being
   // applied) never turns the attempt into a requested-stop resume.
   const record = await readOutcomeRecord(dir);

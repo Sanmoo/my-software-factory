@@ -299,7 +299,7 @@ export function readEffectJournal(workDir: string): EffectJournal {
     if (line.trim() === "") continue;
     // Widened to `unknown` so the guard narrows to exactly JournalLine: on the
     // parsed JsonValue the narrowing would be an intersection of unrelated
-    // members, which no longer discriminates on `type`.
+    // members and would not discriminate on `type`.
     const parsed: unknown = parseJsonLine(line);
     if (!isJournalLine(parsed)) {
       journal.intact = false;

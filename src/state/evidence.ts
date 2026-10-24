@@ -5,8 +5,8 @@ import { SESSIONS_SUBDIR, type WorkspaceLayout } from "../layout.js";
 import { eventLogName, sandcastleLogName } from "../runtime/attempt-logs.js";
 
 /**
- * The evidence of one fell attempt, pointed at by the blocked comment (issue
- * 103). The three locations live under the factory workspace on the host and
+ * The evidence of one fell attempt, pointed at by the blocked comment. The
+ * three locations live under the factory workspace on the host and
  * are consulted on the filesystem when the comment is prepared — the outcome
  * record's `paths` is never the source, because it may be empty, incomplete
  * or belong to another attempt.

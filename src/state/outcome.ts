@@ -61,8 +61,8 @@ export interface OutcomeRecord {
 export type OutcomeRuling =
   /** The terminal state reached while the claim was held: the human's merge
    * closed the issue ("issue-closed"), or the PR itself was merged while the
-   * attempt ran ("pr-merged" — delivery, whatever the attempt wrote; issue
-   * 149). Archive the artifacts, no release, no fall; a pr-merged ruling also
+   * attempt ran ("pr-merged" — delivery, whatever the attempt wrote). Archive
+   * the artifacts, no release, no fall; a pr-merged ruling also
    * closes the open issue first (the linkage fallback). */
   | { decision: "done"; because: "issue-closed" | "pr-merged" }
   /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
@@ -70,8 +70,8 @@ export type OutcomeRuling =
   | { decision: "reserve"; because: "pr-open" }
   /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
   | { decision: "record-only"; because: "blocked-self-report" }
-  /** The attempt wrote no outcome record: an INTERRUPTION, not a failure
-   * . The loop absorbs it with the recovery budget; the attempt
+  /** The attempt wrote no outcome record: an INTERRUPTION, not a failure.
+   * The loop absorbs it with the recovery budget; the attempt
    * keeps its number and never enters the fall ruler. */
   | { decision: "interrupt"; because: "no-outcome" }
   /** A written failure/abandon without PR, 1st consecutive — release
@@ -121,8 +121,8 @@ export interface OutcomeFacts {
  *   2/3. a written failure/abandon without PR: 1st consecutive → release,
  *      2nd consecutive → blocked + comment.
  *
- * The record is consulted only when it belongs to the collected attempt (issue
- * 103): a crash never inherits the previous attempt's verdict.
+ * The record is consulted only when it belongs to the collected attempt: a
+ * crash never inherits the previous attempt's verdict.
  */
 export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
   if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
@@ -175,8 +175,8 @@ export function isRecordedFailure(record: OutcomeRecord | null): boolean {
 
 /**
  * The attempt's own written outcome, unless it is the blocked self-report the
- * `record-only` ruling handles: the record that lets the fall ruler decide
- * . One rule, shared by collection and by the derivation that
+ * `record-only` ruling handles: the record that lets the fall ruler decide.
+ * One rule, shared by collection and by the derivation that
  * settles an unreconciled attempt.
  */
 export function ownWrittenOutcome(
@@ -238,8 +238,8 @@ export interface InterruptionPausedInput extends AttemptCommentInput {
 }
 
 /**
- * The block comment of an interruption whose recovery budget ran out (issue
- * 123): the attempt was NOT a failure — no attempt was consumed — but the
+ * The block comment of an interruption whose recovery budget ran out: the
+ * attempt was NOT a failure — no attempt was consumed — but the
  * factory will not relaunch it forever. It names the configured value and
  * backoff (the operator can adjust them) and the attempt's own evidence.
  */
