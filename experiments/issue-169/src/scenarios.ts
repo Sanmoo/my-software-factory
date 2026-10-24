@@ -201,6 +201,18 @@ function raceBlindMarks(
   }
 }
 
+/** A blind/async write followed by read-back and launch, for C1 and C3. */
+function candidateWriteThenLaunch(lab: Lab, write: (factory: Factory) => void): void {
+  for (const id of ["A", "B"] as const) {
+    const factory = lab.f(id);
+    factory.observe();
+    write(factory);
+    factory.verifyClaim();
+    factory.presentClaim();
+    factory.launch();
+  }
+}
+
 function startDirect(lab: Lab, id: string): void {
   lab.runtime.start({
     factory: id,
@@ -614,6 +626,35 @@ export function deathAndTimeDoNotAuthorizeTakeover(): SceneFacts {
   });
 }
 
+export function contactLossDoesNotAuthorizeTakeover(): SceneFacts {
+  const ticket = defaultTicket();
+  const lab = new Lab(CAS_PREMISE_MODEL);
+  lab.seed(ticket);
+  lab.factory("A", ticket);
+  lab.factory("B", ticket);
+  acquireCas(lab, "A");
+  // A's factory becomes unreachable. The protocol has no channel to another
+  // factory: B reads the tracker, not A's health, and A's Worker is still alive
+  // (the experiment's witness; B cannot and does not inspect it).
+  const holderWorkers = lab.runtime.aliveCount();
+  lab.tracker.advance(6 * 60 * 60 * 1000);
+  const b = lab.f("B");
+  const observation = b.observe();
+  const attempted = b.submitClaim();
+  return lab.facts({
+    scenario: "contact-loss-does-not-authorize-takeover",
+    note: "the holder is unreachable; its Worker is alive and the Claim remains — no remote supervision, no takeover",
+    outcomes: { B: outcomeText(b.outcome()) },
+    details: {
+      "holder Workers alive (experiment witness)": String(holderWorkers),
+      "B observation": observationText(observation),
+      "B submitted": attempted === null ? "no" : "yes",
+      "B attempts": String(b.attempts()),
+      "elapsed hours": "6",
+    },
+  });
+}
+
 export function localRecoveryKeepsTheAttempt(): SceneFacts {
   const ticket = defaultTicket();
   const lab = new Lab();
@@ -685,11 +726,11 @@ export function partialClaimHoldsWithoutAttempt(): SceneFacts {
   if (pending?.taskId != null) lab.tracker.applyJob(pending.taskId);
   a.completeClaim();
   a.verifyClaim();
-  a.setPresentationFault({ assignee: true });
+  a.setPresentationFailure({ assignee: true });
   const heldLaunch = a.launch();
   const attemptsWhileHeld = a.attempts();
   const bObservation = lab.f("B").observe();
-  a.setPresentationFault(null);
+  a.setPresentationFailure(null);
   const completedLaunch = a.launch();
   return lab.facts({
     scenario: "partial-claim-holds-without-attempt",
@@ -924,34 +965,19 @@ export function candidateBlindSingleProperty(): SceneFacts {
   lab.seed(ticket);
   lab.factory("A", ticket);
   lab.factory("B", ticket);
-  const a = lab.f("A");
-  const b = lab.f("B");
-  a.observe();
-  b.observe();
-  lab.tracker.setPropertyBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimFor(a, "a-1"),
-    factory: a.id,
+  candidateWriteThenLaunch(lab, (factory) => {
+    lab.tracker.setPropertyBlind({
+      site: ticket.site,
+      issueId: Number(ticket.stableId),
+      propertyKey: CLAIM_PROPERTY_KEY,
+      value: claimFor(factory, `${factory.id}-1`),
+      factory: factory.id,
+    });
   });
-  a.verifyClaim();
-  a.presentClaim();
-  a.launch();
-  lab.tracker.setPropertyBlind({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimFor(b, "b-1"),
-    factory: b.id,
-  });
-  b.verifyClaim();
-  b.presentClaim();
-  b.launch();
   return lab.facts({
     scenario: "candidate-blind-single-property",
     note: "single-issue PUT + read-back: both write and each reads its own value before the other's write",
-    outcomes: { A: outcomeText(a.outcome()), B: outcomeText(b.outcome()) },
+    outcomes: { A: outcomeText(lab.f("A").outcome()), B: outcomeText(lab.f("B").outcome()) },
   });
 }
 
@@ -961,38 +987,20 @@ export function candidateBulkList(): SceneFacts {
   lab.seed(ticket);
   lab.factory("A", ticket);
   lab.factory("B", ticket);
-  const a = lab.f("A");
-  const b = lab.f("B");
-  a.observe();
-  b.observe();
-  const first = lab.tracker.submitListSet({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimFor(a, "a-1"),
-    factory: a.id,
+  candidateWriteThenLaunch(lab, (factory) => {
+    const job = lab.tracker.submitListSet({
+      site: ticket.site,
+      issueId: Number(ticket.stableId),
+      propertyKey: CLAIM_PROPERTY_KEY,
+      value: claimFor(factory, `${factory.id}-1`),
+      factory: factory.id,
+    });
+    lab.tracker.applyJob(job.taskId);
   });
-  lab.tracker.applyJob(first.taskId);
-  a.completeClaim();
-  a.verifyClaim();
-  a.presentClaim();
-  a.launch();
-  const second = lab.tracker.submitListSet({
-    site: ticket.site,
-    issueId: Number(ticket.stableId),
-    propertyKey: CLAIM_PROPERTY_KEY,
-    value: claimFor(b, "b-1"),
-    factory: b.id,
-  });
-  lab.tracker.applyJob(second.taskId);
-  b.completeClaim();
-  b.verifyClaim();
-  b.presentClaim();
-  b.launch();
   return lab.facts({
     scenario: "candidate-bulk-list",
     note: "POST /issue/properties (all-or-nothing list, no filter): the transaction is not a test-and-write",
-    outcomes: { A: outcomeText(a.outcome()), B: outcomeText(b.outcome()) },
+    outcomes: { A: outcomeText(lab.f("A").outcome()), B: outcomeText(lab.f("B").outcome()) },
   });
 }
 
@@ -1088,6 +1096,7 @@ export function runScenarios(): SceneFacts[] {
     currentValueTransfer("cas"),
     noLocalReservationProvesNoAbandonment(),
     deathAndTimeDoNotAuthorizeTakeover(),
+    contactLossDoesNotAuthorizeTakeover(),
     localRecoveryKeepsTheAttempt(),
     claimWithoutWorkerIsNotAbandoned(),
     partialClaimHoldsWithoutAttempt(),

@@ -3,6 +3,8 @@ import {
   CLAIM_PROPERTY_KEY,
   githubDestination,
   jiraTicket,
+  parseClaim,
+  ticketIdentityKey,
   type JiraTicket,
 } from "./identity.js";
 import {
@@ -151,24 +153,17 @@ class Sim {
     };
   }
 
-  /** The ticket key the Workers are registered under (identity, not `OPS-1`). */
-  private ticketKey(): string {
-    return `jira:${TICKET.site}:${TICKET.stableId}`;
-  }
-
   winners(): string[] {
     return this.runtime
-      .aliveFor(this.ticketKey())
+      .aliveFor(ticketIdentityKey(TICKET))
       .map((worker) => worker.factory)
-      .sort();
+      .sort((left, right) => left.localeCompare(right));
   }
 
   trace(): Trace {
     const claim = this.tracker.storedProperty(SITE, Number(TICKET.stableId), CLAIM_PROPERTY_KEY);
-    const claimFactory =
-      claim.kind === "present" && typeof claim.value === "object" && claim.value !== null && !Array.isArray(claim.value)
-        ? String((claim.value as Record<string, unknown>)["factory"] ?? "<none>")
-        : null;
+    const parsed = claim.kind === "present" ? parseClaim(claim.value, ticketIdentityKey(TICKET)) : null;
+    const claimFactory = parsed?.kind === "valid" ? parsed.record.factory : null;
     return {
       events: [...this.events],
       winners: this.winners(),
@@ -318,4 +313,3 @@ export function exploreAll(): VariantReport[] {
   return VARIANTS.map((variant) => runVariant(variant));
 }
 
-export { TICKET as EXPLORER_TICKET, SITE as EXPLORER_SITE, ACCOUNT as EXPLORER_ACCOUNT };

@@ -113,31 +113,24 @@ export function parseClaim(value: unknown, expectedTicket: string): ParsedClaim 
   if (value["protocol"] !== CLAIM_PROTOCOL) {
     return { kind: "malformed", reason: `unknown protocol ${String(value["protocol"])}` };
   }
-  const fields = ["factory", "nonce", "ticket", "account", "destination", "createdAt"] as const;
+  const fields = [
+    "factory",
+    "nonce",
+    "ticket",
+    "account",
+    "destination",
+    "createdAt",
+  ] as const satisfies readonly Exclude<keyof ClaimRecord, "protocol">[];
+  const strings = {} as Record<(typeof fields)[number], string>;
   for (const field of fields) {
-    if (!nonEmptyString(value[field])) {
+    const raw = value[field];
+    if (!nonEmptyString(raw)) {
       return { kind: "malformed", reason: `missing or empty "${field}"` };
     }
+    strings[field] = raw;
   }
-  const factory = value["factory"] as string;
-  const nonce = value["nonce"] as string;
-  const ticket = value["ticket"] as string;
-  const account = value["account"] as string;
-  const destination = value["destination"] as string;
-  const createdAt = value["createdAt"] as string;
-  if (ticket !== expectedTicket) {
-    return { kind: "malformed", reason: `the record names ${ticket}, not ${expectedTicket}` };
+  if (strings.ticket !== expectedTicket) {
+    return { kind: "malformed", reason: `the record names ${strings.ticket}, not ${expectedTicket}` };
   }
-  return {
-    kind: "valid",
-    record: {
-      protocol: CLAIM_PROTOCOL,
-      factory,
-      nonce,
-      ticket,
-      account,
-      destination,
-      createdAt,
-    },
-  };
+  return { kind: "valid", record: { protocol: CLAIM_PROTOCOL, ...strings } };
 }

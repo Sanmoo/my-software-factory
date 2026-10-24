@@ -34,20 +34,26 @@ describe("interleaving matrix: documented semantics", () => {
   test("an enqueue-time snapshot is admitted by the documentation and lets both write", () => {
     const variant = report("documented-enqueue-not-isolated");
     assert.equal(variant.runs, 3432);
+    assert.equal(variant.oneWinner, 2912);
     assert.equal(variant.twoWinners, 520);
+    assert.equal(variant.noWinner, 0);
   });
 
   test("EVEN granting serialized writes (P-CAS), an enqueue snapshot approves both", () => {
     const variant = report("premise-enqueue-serialized");
     assert.equal(variant.premise, "premise");
     assert.equal(variant.runs, 924);
+    assert.equal(variant.oneWinner, 864);
     assert.equal(variant.twoWinners, 60);
+    assert.equal(variant.noWinner, 0);
   });
 
   test("the documented stale search does not remove the race", () => {
     const variant = report("documented-stale-search");
     assert.equal(variant.runs, 3432);
+    assert.equal(variant.oneWinner, 3232);
     assert.equal(variant.twoWinners, 200);
+    assert.equal(variant.noWinner, 0);
   });
 
   test("stale verification reads cannot reduce the two-winner count below zero", () => {
@@ -64,9 +70,10 @@ describe("interleaving matrix: the CAS premise", () => {
     test(`${name}: no interleaving authorizes two Workers, and a free Ticket still progresses`, () => {
       const variant = report(name);
       assert.equal(variant.premise, "premise");
+      assert.equal(variant.runs, 924);
       assert.equal(variant.twoWinners, 0);
-      assert.ok(variant.oneWinner > 0, "the premise must not reject every acquisition");
-      assert.equal(variant.oneWinner + variant.twoWinners + variant.noWinner, variant.runs);
+      assert.equal(variant.oneWinner, 924, "the premise must not reject every acquisition");
+      assert.equal(variant.noWinner, 0);
     });
   }
 

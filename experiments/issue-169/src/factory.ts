@@ -76,7 +76,7 @@ export class Factory {
   private readonly observations = new Map<string, Observation>();
   private readonly outcomes = new Map<string, AcquisitionOutcome>();
   private readonly presentationDone = new Set<string>();
-  private presentationFault: { assignee?: boolean; label?: boolean } | null = null;
+  private nextPresentationFailure: { assignee?: boolean; label?: boolean } | null = null;
   private nonceSeq = 0;
 
   constructor(
@@ -314,13 +314,13 @@ export class Factory {
   }
 
   /** Inject a presentation failure (the harness's controlled partial Claim). */
-  setPresentationFault(faults: { assignee?: boolean; label?: boolean } | null): void {
-    this.presentationFault = faults;
+  setPresentationFailure(failures: { assignee?: boolean; label?: boolean } | null): void {
+    this.nextPresentationFailure = failures;
   }
 
   /** Presentation marks: assignment to the acting account and the claimed label. */
   presentClaim(faults?: { assignee?: boolean; label?: boolean }): boolean {
-    const appliedFaults = faults ?? this.presentationFault ?? undefined;
+    const appliedFailures = faults ?? this.nextPresentationFailure ?? undefined;
     const outcome = this.outcomes.get(this.key());
     if (outcome?.kind !== "authorized") return false;
     if (this.presentationDone.has(this.key())) return true;
@@ -330,14 +330,14 @@ export class Factory {
         issueId: this.issueId(),
         accountId: this.accountId,
         factory: this.id,
-        ...(appliedFaults?.assignee === true ? { fault: true } : {}),
+        ...(appliedFailures?.assignee === true ? { fault: true } : {}),
       });
       this.tracker.addLabelBlind({
         site: this.ticket.site,
         issueId: this.issueId(),
         label: this.claimedLabel,
         factory: this.id,
-        ...(appliedFaults?.label === true ? { fault: true } : {}),
+        ...(appliedFailures?.label === true ? { fault: true } : {}),
       });
     } catch {
       return false;

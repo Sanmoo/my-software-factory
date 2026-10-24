@@ -11,6 +11,7 @@ import {
   claimWithoutWorkerIsNotAbandoned,
   contestedSimultaneousCas,
   contestedSimultaneousDocumented,
+  contactLossDoesNotAuthorizeTakeover,
   deathAndTimeDoNotAuthorizeTakeover,
   distinctTicketsRunInParallel,
   existingClaimIsRespected,
@@ -234,6 +235,15 @@ describe("death, silence, time and manual release", () => {
     assert.deepEqual(facts.attemptsByFactory, { A: 1, B: 0 });
   });
 
+  test("a live-but-unreachable holder keeps its Claim: no remote supervision, no takeover", () => {
+    const facts = contactLossDoesNotAuthorizeTakeover();
+    assert.equal(facts.details["holder Workers alive (experiment witness)"], "1");
+    assert.equal(facts.details["B observation"], "claimed");
+    assert.equal(facts.details["B submitted"], "no");
+    assert.equal(facts.details["B attempts"], "0");
+    assert.equal(facts.claims["jira:alpha.atlassian.net:10001"], "A");
+  });
+
   test("local Recovery relaunches the same Attempt and spends no extra recovery as a new Attempt", () => {
     const facts = localRecoveryKeepsTheAttempt();
     assert.equal(facts.details["recovered worker attempt"], "1");
@@ -282,4 +292,11 @@ describe("candidates that are not conditional writes", () => {
       assert.equal(facts.workerCount, 2);
     });
   }
+
+  test("the two write-then-read candidates consume one Attempt each and leave the second writer's Claim", () => {
+    for (const facts of [candidateBlindSingleProperty(), candidateBulkList()]) {
+      assert.deepEqual(facts.attemptsByFactory, { A: 1, B: 1 });
+      assert.equal(facts.claims["jira:alpha.atlassian.net:10001"], "B");
+    }
+  });
 });

@@ -177,7 +177,8 @@ mas **não** neste `PUT` condicional.
 | Propriedades: sem mecanismo para edições concorrentes; “most recently saved” vence | **documentação** |
 | Sem `If-Match`/`ETag` em nenhuma operação v3 | **documentação** (varredura do OpenAPI) |
 | Busca JQL pode omitir atualizações recentes | **documentação** |
-| O filtro é avaliado no **início do job**, não no enqueue | **inferência** — não documentado |
+| O filtro é avaliado no **apply** (e não no enqueue) | **inferência** — uma das duas leituras compatíveis; a documentação não escolhe |
+| O filtro é fixado no **enqueue** | **inferência** — a outra leitura compatível; o harness explora as duas |
 | Jobs concorrentes sobre a mesma issue são isolados/serializados | **inferência** (o `409` dos POSTs sugere, mas não é contrato do PUT nem CAS) |
 | O resultado da task diz quantas/ quais issues foram atualizadas | **não documentado** — o resultado é “specific to the operation”, e a operação não o descreve |
 | `GET` direto da property é read-after-write consistente | **não documentado** |
@@ -285,6 +286,12 @@ resolve P-CAS; ele herda exatamente a mesma lacuna.
 ## 5. Protocolo ponta a ponta (C2)
 
 ### 5.1 Identidades
+
+Terminologia: `Claim` e `Padlock` são os termos do `GLOSSARY.md`. Aqui o
+**Padlock** é o valor da property que autoriza (a marca), e a **apresentação**
+é a atribuição à Acting account e o label que completam o Claim. "Claim
+parcial" e "Claims anteriores" são os termos da spec (#122/#169); o `GLOSSARY`
+não é alterado porque este protocolo ainda não foi adotado.
 
 - **Ticket identity** — `jira:<site>:<stableId>` (provider + site + id imutável
   da issue). A chave legível (`OPS-1`) é apresentação: repete-se entre sites e
@@ -397,9 +404,12 @@ o operador decide.
 - **Recovery local** — a instalação original verifica o próprio Claim e relança
   a **mesma** Attempt (número preservado, nenhuma Attempt nova). Isso não dá
   autoridade a outra fábrica e não é takeover.
-- **Morte, silêncio, passagem do tempo** — não alteram os fatos do tracker e não
-  há lease/expiração/health check remoto. O Claim permanece; outra fábrica o
-  respeita indefinidamente. O tempo não autoriza nada.
+- **Morte, silêncio, passagem do tempo e perda de contato** — não alteram os
+  fatos do tracker e não há lease/expiração/health check remoto. O Claim
+  permanece; outra fábrica o respeita indefinidamente. O protocolo não tem canal
+  para outra instalação e não pergunta pela saúde dela: uma dona inalcançável
+  com Worker vivo continua dona, e uma dona morta também. O tempo não autoriza
+  nada.
 - **Participantes** — a garantia pressupõe que **todas** as fábricas que
   disputam o conjunto obedeçam ao protocolo e tenham `factory id` único.
   Instalações antigas que ignoram a property, edições manuais que violem a
@@ -600,8 +610,8 @@ quebra a exclusividade.
 | `premise-enqueue-serialized` | P-CAS (enqueue) | 924 | 864 | **60** | 0 |
 | `documented-apply-prefix-reads` | documentado | 3.432 | 1.200 | 0 | 2.232 |
 | `documented-stale-search` | documentado | 3.432 | 3.232 | **200** | 0 |
-| `cas-premise` | P-CAS | 924 | 924 | 0 | 0 |
 | `cas-premise-stale-search` | P-CAS | 924 | 924 | 0 | 0 |
+| `cas-premise` | P-CAS | 924 | 924 | 0 | 0 |
 | `cas-premise-prefix-reads` | P-CAS | 924 | 0 | 0 | 924 |
 | `cas-premise-task-counts` | P-CAS | 924 | 924 | 0 | 0 |
 
@@ -652,11 +662,12 @@ A leitura correta da tabela:
 | `currentValue`: duas transferências — P-CAS | 0 | A:0, B:0, C:0 | B (1 job aplicado) |
 | Sem Reservation local | 1 | A:1, B:0 | A (B não escreve) |
 | Morte + 30 dias | 0 vivos | A:1, B:0 | A (sem takeover) |
+| Contato perdido (Worker vivo) | 1 | A:1, B:0 | A (B não supervisiona) |
 | Recovery local | 1 | A:1, B:0 | A (mesmo Attempt; 2 starts) |
 | Claim sem Worker | 1 | A:1, B:0 | A (Reserved without Attempt) |
 | Claim parcial (apresentação falha) | 1 | A:1, B:0 | A (segura sem lançar) |
 | Claim ilegível | 0 | B:0 | ilegível (preservado) |
-| Claim legado (label+atribuição) | 0 | B:0 | ausente (B não escreve) |
+| Claim anterior (label+atribuição) | 0 | B:0 | ausente (B não escreve) |
 | Liberação manual | 1 | A:1, B:1 | B (recusada com Worker vivo/sem confirmação) |
 | Não participante | **2** | A:1 | intruso (fora da garantia) |
 | Busca desatualizada + P-CAS | 1 | A:1, B:0 | A (B não lança) |
@@ -730,7 +741,7 @@ limitações e os pré-requisitos não aprovados voltam ao operador; #170 perman
 
 - `experiments/issue-169/RELATORIO.md` — este relatório.
 - `experiments/issue-169/src/` — modelo, protocolo, explorador, cenários e
-  testes (66 testes).
+  testes (68 testes).
 - `npm test` — identidade, semântica do modelo, matriz exaustiva e cenários.
 - `npm run run` → `runs/evidence.json` — matriz completa, testemunhas de
   interleaving, cenários e as citações das fontes primárias.

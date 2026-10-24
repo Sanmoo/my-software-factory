@@ -37,12 +37,6 @@ export class WorkerRuntime {
     worker.alive = false;
   }
 
-  endAllOf(factory: string): void {
-    for (const worker of this.workers) {
-      if (worker.factory === factory) worker.alive = false;
-    }
-  }
-
   aliveFor(ticket: string): WorkerHandle[] {
     return this.workers.filter((worker) => worker.alive && worker.ticket === ticket);
   }
