@@ -149,8 +149,8 @@ describe("e2e: a Jira Cloud source at the CLI seam (read-only, issue 128)", () =
     assert.equal(result.status, 0, result.stderr);
     assert.match(
       result.stdout,
-      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 2 sources$/m,
-      "the header counts the configured sources it lists below, not the tickets they hold",
+      /jira candidates \(read-only[^)]*native Rank order[^)]*nothing is claimed, commented or launched\): 2 selections$/m,
+      "the header counts the configured selections it lists below, not the tickets they hold",
     );
     assert.match(result.stdout, new RegExp(`${ALPHA} → ${REPO}: 2`));
     assert.match(

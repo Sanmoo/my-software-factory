@@ -37,7 +37,7 @@ repos:
 # liveness:                       # Docker silence suspends launches (issue 118)
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
-# jira:                           # Jira Cloud sources (read-only in this release)
+# jira:                           # Jira Cloud selections (read-only in this release)
 #   - site: acme.atlassian.net    # a Cloud site; one authenticated identity per site
 #     account: bot@acme.example   # the Atlassian login the API token belongs to
 #     token-env: MSF_JIRA_ACME_TOKEN  # the NAME of the local variable holding the token
@@ -50,13 +50,13 @@ repos:
 #     destination: Sanmoo/backend
 ```
 
-A Jira source is selected by its own JQL and always read in native **Rank
-ascending** order; a conflicting `ORDER BY` is a configuration error. The JQL
-is the whole selection. `currentUser()` means the authenticated account named
-by `account` — the API token's owner, not an implicitly different human
-operator. The token is never a YAML value: `token-env` names the local
+Each `jira:` entry selects from its site with its own JQL, always read in
+native **Rank ascending** order; a conflicting `ORDER BY` is a configuration
+error. The JQL is the whole selection. `currentUser()` means the authenticated
+account named by `account` — the API token's owner, not an implicitly different
+human operator. The token is never a YAML value: `token-env` names the local
 environment variable that holds it. One Jira project may feed several
-repositories: one source per selection rule, each with its own JQL and
+repositories: one entry per selection rule, each with its own JQL and
 destination. When readable rules promise one ticket to different destinations,
 `msf status` holds it with the reason instead of a destination; an unreadable
 selection leaves that overlap unverified. This release only reads Jira: `msf

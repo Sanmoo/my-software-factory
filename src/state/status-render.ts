@@ -186,8 +186,8 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
 /** One block per configured selection, in native Rank order, nothing claimed;
  *  an unreadable source says unknown, and a held ticket gets its own section.
- *  The header count is the lines below it — the configured sources — because a
- *  source counts as one line whether it listed nothing or could not be read. */
+ *  The header counts the configured selections, never their candidates: a
+ *  candidate count would make an unreadable selection read as zero. */
 function renderJiraSources(
   sources: readonly JiraSourceView[],
   ambiguous: readonly JiraAmbiguousTicket[],
@@ -196,7 +196,7 @@ function renderJiraSources(
   if (sources.length === 0) return [];
   const lines = [
     `jira candidates (read-only — the JQL selection in native Rank order; nothing is claimed, commented or launched): ` +
-      `${sources.length} source${sources.length === 1 ? "" : "s"}`,
+      plural(sources.length, "selection"),
   ];
   for (const source of sources) {
     const site = source.selection.source.site;
@@ -236,8 +236,13 @@ function describeCandidates(source: KnownJiraSourceView): string {
   if (source.held > 0) notes.push(`${source.held} held as ambiguous`);
   if (source.repeated > 0) notes.push(`${source.repeated} already listed by another rule`);
   if (source.candidates.length === 0 && notes.length === 0) return "none";
-  const candidates = `${source.candidates.length} candidate${source.candidates.length === 1 ? "" : "s"}`;
+  const candidates = plural(source.candidates.length, "candidate");
   return notes.length === 0 ? candidates : `${candidates}, ${notes.join(", ")}`;
+}
+
+/** "1 candidate", "2 candidates" — the counts the operator reads. */
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /** One capped list: the entries, then the omission marker past the cap. */
