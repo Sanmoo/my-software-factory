@@ -327,8 +327,8 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
  * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
  * manual trigger of a retrospective round (issue 141). A full window since the
  * last report ignores the threshold; `<work>` (the work's on-disk key) analyzes
- * exactly that finished work. The round shares the run exclusivity: it never
- * overlaps a run of the same config.
+ * exactly that finished work. The lane's marker is its exclusivity, so the
+ * trigger works while `msf run` is sweeping.
  */
 async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
   const config = loadConfigFrom(process.cwd(), args.configPath);
@@ -348,63 +348,60 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   }
 
   const workspace = ensureWorkspace(config.workspace);
-  const lock = await acquireRunLock(config.configPath);
-  try {
-    // One round at a time (issue 141): the lane's marker names the process that
-    // owns the round in flight, and a live owner is never overridden — the
-    // round that started first keeps it. A record left by a dead owner is
-    // cleared here, so a crash never blocks the lane.
-    const running = await liveRoundInFlight(workspace);
-    if (running !== null) throw new RetroBusyError(running.round);
 
-    // The window is planned BEFORE any credential or runtime is demanded: an
-    // empty window is a notice, and the operator's command must not need the
-    // keyring to say there is nothing to analyze.
-    const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
-    // The window's premise is that no live worker carries its works (issue
-    // 141). An empty workspace needs no premise — there is nothing to analyze
-    // either way — but a window with works cannot be launched on a guess: the
-    // sweep defers for the same reason, and the manual trigger is no exception.
-    if (observation.state !== "known" && finished.length > 0) {
-      throw new Error(
-        `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
-          "worker carries its works, so no round was launched; retry when Docker answers",
-      );
-    }
-    const plan = await planManualRound(config, workspace, finished, {
-      ...(work === undefined ? {} : { work }),
-      ...(args.language === undefined ? {} : { language: args.language }),
-    });
-    if ("empty" in plan) {
-      writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
-      return;
-    }
+  // One round at a time (issue 141), enforced by the lane's marker: it names
+  // the process that owns the round in flight, so the exclusivity holds across
+  // processes — including a `msf run` that is sweeping right now, which is
+  // exactly when the operator forces a round. A record left by a dead owner is
+  // cleared here, so a crash never blocks the lane.
+  const running = await liveRoundInFlight(workspace);
+  if (running !== null) throw new RetroBusyError(running.round);
 
-    const deps = await wireRunDeps(config, workspace);
-    const log = operationalLog(deps.log);
-    const result = await runRetroRound(
-      {
-        config,
-        runtime: deps.runtime,
-        workspace,
-        log,
-        ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
-      },
-      plan,
-    );
-    if (result.reportPath === null) {
-      log(`retro round ${result.round}: no report was written — nothing was marked`);
-      process.exitCode = 1;
-      return;
-    }
-    log(
-      `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
-        `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
-    );
-  } finally {
-    await lock.close();
+  // The window is planned BEFORE any credential, runtime or liveness answer is
+  // demanded: an empty window is a notice, and the operator's command must not
+  // need Docker or the keyring to say there is nothing to analyze.
+  const observation = await probeLiveness(workspaceLivenessProbe(workspace));
+  const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
+  const plan = await planManualRound(config, workspace, finished, {
+    ...(work === undefined ? {} : { work }),
+    ...(args.language === undefined ? {} : { language: args.language }),
+  });
+  if ("empty" in plan) {
+    writeOperationalLog(workspace, utcStamp(emptyWindowNotice(plan.empty)));
+    return;
   }
+
+  // The window's premise is that no live worker carries its works (issue 141).
+  // An unknown liveness cannot confirm it, so no round is launched on a guess:
+  // the sweep defers for the same reason.
+  if (observation.state !== "known") {
+    throw new Error(
+      `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
+        "worker carries its works, so no round was launched; retry when Docker answers",
+    );
+  }
+
+  const deps = await wireRunDeps(config, workspace);
+  const log = operationalLog(deps.log);
+  const result = await runRetroRound(
+    {
+      config,
+      runtime: deps.runtime,
+      workspace,
+      log,
+      ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
+    },
+    plan,
+  );
+  if (result.reportPath === null) {
+    log(`retro round ${result.round}: no report was written — nothing was marked`);
+    process.exitCode = 1;
+    return;
+  }
+  log(
+    `retro round ${result.round} done: ${result.window.length} work(s) analyzed, ` +
+      `${result.filed.length} item(s) filed, ${result.discarded.length} discarded`,
+  );
 }
 
 // The binary runs main(); the module imported (by the tests of the wiring)

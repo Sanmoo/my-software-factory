@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { installGhShim, runCli, type GhShim } from "./cli-harness.js";
+import { acquireRunLock } from "../run-lock.js";
 import { RETRO_IN_FLIGHT_FILENAME, RETRO_STATE_FILENAME } from "../retro/marker.js";
 
 /**
@@ -132,6 +133,33 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     );
   });
 
+  test("nothing new since the last report is a notice, even when Docker does not answer", () => {
+    writeConfig(["retro:", "  enabled: true", "  factory-items-destination: Sanmoo/my-software-factory"]);
+    const archived = join(workspace, "arquivo", `${REPO}#1-2026-02-01`);
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, "log-1.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(archived, "desfecho.json"), JSON.stringify({ class: "pr-open", attempt: 1 }), "utf8");
+    // The last report already covered every finished work: the window is empty
+    // whichever answer Docker gives, so the notice needs no Docker.
+    mkdirSync(join(workspace, "retros"), { recursive: true });
+    writeFileSync(
+      join(workspace, "retros", RETRO_STATE_FILENAME),
+      JSON.stringify({
+        lastReport: "2026-03-01T00-00-00-000Z-retro.md",
+        boundaryAt: 9e15,
+        analyzed: [],
+        lastFiled: 0,
+      }),
+      "utf8",
+    );
+
+    const result = run(["retro"]);
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /nothing new since the last report/);
+    assert.doesNotMatch(result.stderr, /Docker did not answer/);
+  });
+
   test("--language belongs to the retro command only", () => {
     const result = run(["status", "--language", "pt-BR"]);
     assert.equal(result.status, 1);
@@ -158,13 +186,21 @@ describe("e2e: `msf retro` — the manual trigger and the config validation (iss
     );
   });
 
-  test("the manual trigger keeps the run exclusivity and leaves no round file behind", () => {
+  test("a manual round never waits for the factory to stop: the lane's marker is the exclusivity", async () => {
     writeConfig(["retro:", "  enabled: true", "  factory-items-destination: Sanmoo/my-software-factory"]);
     mkdirSync(join(workspace, "retros"), { recursive: true });
+    // This process holds the `msf run` exclusivity, exactly as a sweeping
+    // factory does: the manual trigger must still answer.
+    const lock = await acquireRunLock(join(dir, "msf.yaml"));
+    try {
+      const result = run(["retro"]);
 
-    const result = run(["retro", "--language", "pt-BR"]);
-
-    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+      assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+      assert.match(result.stdout, /no finished work to analyze/);
+      assert.doesNotMatch(result.stderr, /active msf run/);
+    } finally {
+      await lock.close();
+    }
     assert.equal(existsSync(join(workspace, "retros", RETRO_IN_FLIGHT_FILENAME)), false);
   });
 });
