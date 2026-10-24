@@ -22,15 +22,6 @@ export { renderWaits } from "./waits.js";
  * configured allowance, the wait schedule and what each settlement means.
  */
 
-export {
-  RECOVERY_FILENAME,
-  emptyLedger,
-  readRecoveryLedger,
-  type RecoveryEvent,
-  type RecoveryLedger,
-  type RecoveryStop,
-} from "../work-record/recovery.js";
-
 export type RecoveryDecision =
   | { decision: "recover"; waitMs: number; consumed: number }
   | { decision: "pause-help"; consumed: number; reason: string };

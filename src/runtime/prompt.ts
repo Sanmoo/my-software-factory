@@ -1,7 +1,7 @@
 import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
-import { DESFECHO_FILENAME, type OutcomeClass } from "../state/outcome.js";
+import { DESFECHO_FILENAME, type OutcomeClass } from "../work-record/outcome.js";
 import { agentLayout, type AgentLayout } from "./agent-paths.js";
 import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";

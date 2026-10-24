@@ -7,8 +7,8 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
-import { appendAttemptEvent, eventLogName } from "../runtime/attempt-logs.js";
-import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
+import { appendAttemptEvent, eventLogName } from "../work-record/logs.js";
+import { readTurnModelProviderError } from "../work-record/model-provider-error.js";
 import type { WorkRequest } from "../runtime/port.js";
 import type { LocalWorkFacts, PreparedWork } from "../git/port.js";
 import { workBranchName } from "../git/port.js";
@@ -21,8 +21,9 @@ import {
   DEFAULT_RECOVERY_BUDGET,
   type Config,
 } from "../config.js";
-import { settleModelProviderFailure, MODEL_PROVIDER_FILENAME } from "../pool/model-provider.js";
-import { RECOVERY_FILENAME } from "../pool/recovery.js";
+import { MODEL_PROVIDER_FILENAME } from "../work-record/model-provider.js";
+import { settleModelProviderFailure } from "../pool/model-provider.js";
+import { RECOVERY_FILENAME } from "../work-record/recovery.js";
 import { seedSession } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 

@@ -2,14 +2,14 @@ import { userInfo } from "node:os";
 import type { Config } from "./config.js";
 import { workspaceLayout } from "./layout.js";
 import { scanReservations } from "./pool/reservation.js";
-import { readAttemptLedger } from "./pool/registry.js";
+import { readAttemptLedger } from "./work-record/attempts.js";
 import { acquireRunLock, RunLockBusyError } from "./run-lock.js";
 import { probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 import {
   authorizeCallRecovery, CALL_RECOVERY_FILENAME, DUPLICATE_RISK_WARNING,
   readCallRecoveries, recoveryConsumption, reviewCallRecovery,
 } from "./runtime/call-recovery.js";
-import { readEffectJournal } from "./runtime/continuity-artifacts.js";
+import { readEffectJournal } from "./work-record/continuity.js";
 import { drainRecoveryRequests, queueRecovery, recoveryRequestStatus } from "./recovery-requests.js";
 
 export interface RecoveryConsent {

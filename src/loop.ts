@@ -47,8 +47,8 @@ import {
   type ReservedDerivation,
   type ReservedWorkInput,
 } from "./state/derive.js";
+import { readOutcomeRecord, type OutcomeRecord } from "./work-record/outcome.js";
 import {
-  readOutcomeRecord,
   classifyOutcome,
   selfReportedBlocked,
   isRecordedFailure,
@@ -56,26 +56,23 @@ import {
   interruptionPausedCommentBody,
   modelProviderAwaitingCommentBody,
   continuityPausedCommentBody,
-  type OutcomeRecord,
   type OutcomeRuling,
 } from "./state/outcome.js";
-import {
-  readLaunchFacts,
-  archiveDoneWorkFor,
-  readAttemptLedger,
-  readLastAttempt,
-} from "./pool/registry.js";
+import { readAttemptLedger, readLastAttempt } from "./work-record/attempts.js";
+import { readLaunchFacts, archiveDoneWorkFor } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
+  readRepairCycle,
+  writeRepairCycle,
+  type RepairAttempt,
+  type RepairCycle,
+} from "./work-record/repair.js";
+import {
   MAX_REPAIR_FALLS,
   MAX_REPAIR_ROUNDS,
   hasRepairCycle,
   legacyRepairAttempt,
-  readRepairCycle,
-  writeRepairCycle,
   type RemoteObservation,
-  type RepairAttempt,
-  type RepairCycle,
 } from "./pool/repair.js";
 import {
   openRepairRound,
@@ -85,11 +82,11 @@ import {
   type RepairSettlement,
 } from "./pool/repair-round.js";
 import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
+import { readRecoveryLedger } from "./work-record/recovery.js";
 import {
   confirmStopRequest,
   consumeRecovery,
   consumeStopRequest,
-  readRecoveryLedger,
   recordFailure,
   recordInterruptionStop,
   recordStopRequest,
@@ -97,13 +94,13 @@ import {
 } from "./pool/recovery.js";
 import { OperatorStop, reconcileUnconfirmedStops, stopConfirmed, type StopLaunch, type StopReport } from "./pool/stop.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
+import { readModelProviderLedger } from "./work-record/model-provider.js";
 import {
   isModelProviderFailureSettled,
   isModelProviderHelpPending,
   isModelProviderRetryGranted,
   markModelProviderHelpRequested,
   modelProviderDecision,
-  readModelProviderLedger,
   settleModelProviderFailure,
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
@@ -119,7 +116,7 @@ import {
   recheckablePause,
   writePause,
   type PauseRecord,
-} from "./runtime/continuity-artifacts.js";
+} from "./work-record/continuity.js";
 import { Slots } from "./pool/slots.js";
 import {
   freshDuplicates,
@@ -140,9 +137,9 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
+import { appendAttemptEvent, eventLogName } from "./work-record/logs.js";
 import { processRecoveryRequests } from "./recover.js";
-import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
+import { readTurnModelProviderError, type ModelProviderFailure } from "./work-record/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
 import { existsSync, mkdirSync } from "node:fs";

@@ -3,12 +3,11 @@ import type { Known, PrRepairFacts } from "../tracker/port.js";
 import { readRepairPremise, type RepairTrigger } from "../state/derive.js";
 import { ownWrittenOutcome } from "../state/outcome.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
+import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import {
   isSettledPublication,
   reconcileRepairAttempt,
   type RemoteObservation,
-  type RepairAttempt,
-  type RepairCycle,
   type RepairReconciliation,
 } from "./repair.js";
 

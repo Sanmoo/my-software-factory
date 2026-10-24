@@ -16,7 +16,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { eventLogName } from "./attempt-logs.js";
+import { eventLogName } from "./logs.js";
 
 /** The turn's ending, as the attempt's stream records it. */
 export interface ModelProviderFailure {

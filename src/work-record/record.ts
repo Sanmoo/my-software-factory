@@ -1,7 +1,7 @@
 import {
   readTurnModelProviderError,
   type ModelProviderFailure,
-} from "../runtime/model-provider-error.js";
+} from "./model-provider-error.js";
 import { attemptNumbers } from "./attempts.js";
 import {
   appendJournalIntent,

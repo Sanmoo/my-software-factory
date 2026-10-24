@@ -4,15 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
-import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
+import type { ModelProviderFailure } from "../work-record/model-provider-error.js";
+import { MODEL_PROVIDER_FILENAME, readModelProviderLedger, type ModelProviderLedger } from "../work-record/model-provider.js";
 import {
   awaitingModelProvider,
   exhaustedModelProviderReason,
   modelProviderDecision,
-  readModelProviderLedger,
   settleModelProviderFailure,
-  MODEL_PROVIDER_FILENAME,
-  type ModelProviderLedger,
 } from "./model-provider.js";
 
 /**

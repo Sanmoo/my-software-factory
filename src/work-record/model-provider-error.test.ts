@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
-import { appendAttemptEvent } from "./attempt-logs.js";
+import { appendAttemptEvent } from "./logs.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 
 /**

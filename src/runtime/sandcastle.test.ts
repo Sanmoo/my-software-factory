@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { pi, type AgentStreamEvent, type PiOptions, type RunOptions, type RunResult, type SandboxProvider } from "@ai-hero/sandcastle";
 import type { DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
-import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../state/outcome.js";
+import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../work-record/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
 import {
@@ -28,7 +28,7 @@ import {
   workerFlagArgs,
   workerShapedDockerRun,
 } from "./sandcastle.js";
-import { readTurnModelProviderError } from "./model-provider-error.js";
+import { readTurnModelProviderError } from "../work-record/model-provider-error.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
 import { provisionedInventory } from "./agent-inventory-fixture.js";
 import { agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";

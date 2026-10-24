@@ -1,5 +1,5 @@
 import type { LocalWorkFacts } from "../git/port.js";
-import type { RepairPublication } from "../pool/repair.js";
+import type { RepairPublication } from "../work-record/repair.js";
 
 /**
  * The operator's words for a repair cycle (issue 112): what a publication

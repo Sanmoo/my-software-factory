@@ -19,16 +19,6 @@ import type { RepairAttempt, RepairCycle, RepairPublication } from "../work-reco
  * the evidence it addressed, and the commit the attempt produced on disk.
  */
 
-export {
-  EMPTY_REPAIR_CYCLE,
-  REPAIR_FILENAME,
-  readRepairCycle,
-  writeRepairCycle,
-  type RepairAttempt,
-  type RepairCycle,
-  type RepairPublication,
-} from "../work-record/repair.js";
-
 /** The joint cap: conflicts and CI failures share the same two rounds. */
 export const MAX_REPAIR_ROUNDS = 2;
 

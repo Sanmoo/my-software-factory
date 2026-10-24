@@ -28,14 +28,6 @@ import { pauseMarker } from "../tracker/port.js";
  * owns. Zero natural-language parsing in the critical path.
  */
 
-export {
-  DESFECHO_FILENAME,
-  ownOutcomeRecord,
-  readOutcomeRecord,
-  type OutcomeClass,
-  type OutcomeRecord,
-} from "../work-record/outcome.js";
-
 /** The ruled transition of a collection, decided in state/, executed by the loop. */
 export type OutcomeRuling =
   /** The terminal state reached while the claim was held: the human's merge

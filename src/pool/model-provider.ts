@@ -1,5 +1,5 @@
 import type { ModelProviderBudget } from "../config.js";
-import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
+import type { ModelProviderFailure } from "../work-record/model-provider-error.js";
 import {
   readModelProviderLedger,
   writeModelProviderLedger,
@@ -18,15 +18,6 @@ import { renderWaits } from "./waits.js";
  * (issue 187), which keeps the file and its schema. This module keeps the
  * DECISIONS: idempotent settlement, the retry/await verdict and its reason.
  */
-
-export {
-  MODEL_PROVIDER_FILENAME,
-  emptyModelProviderLedger,
-  readModelProviderLedger,
-  type ModelProviderLedger,
-  type ModelProviderRetryEvent,
-  type ModelProviderSettlement,
-} from "../work-record/model-provider.js";
 
 export type ModelProviderDecision =
   | { decision: "retry"; waitMs: number; consumed: number }

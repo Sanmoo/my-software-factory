@@ -19,11 +19,8 @@ import type { RecoveryLedger } from "../work-record/recovery.js";
 import { hasRepairCycle } from "./repair.js";
 import { isModelProviderFailureSettled } from "./model-provider.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import { workKeyOf } from "./work-key.js";
 import { workDirCandidates } from "./reservation.js";
-
-export { readAttemptLedger, readLastAttempt, type AttemptLedger } from "../work-record/attempts.js";
 
 /**
  * The registry (ticket 13): the reader of what survives a process death.
@@ -239,7 +236,8 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const continuityPauses: ContinuityPauseEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
-    const snapshot = await openWorkRecord(dir).read();
+    const record = openWorkRecord(dir);
+    const snapshot = await record.read();
     const lastAttempt = snapshot.attempt ?? 0;
     // The record never stops being history: a work whose record and whose
     // orphaned attempt coexist shows BOTH (issue 112) — the record is not
@@ -277,7 +275,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const modelProviderLedger = snapshot.modelProvider;
     const last = modelProviderLedger.last;
     if (last !== null && snapshot.ownOutcome === null) {
-      const ending = await readTurnModelProviderError(dir, lastAttempt);
+      const ending = await record.readModelProviderFailure(lastAttempt);
       if (ending !== null && isModelProviderFailureSettled(modelProviderLedger, lastAttempt, ending)) {
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
       }

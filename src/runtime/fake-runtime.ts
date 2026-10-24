@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FakeTrackerAdapter } from "../tracker/fake-adapter.js";
 import { AGENT_MARKER } from "../tracker/port.js";
-import { DESFECHO_FILENAME, type OutcomeRecord } from "../state/outcome.js";
+import { DESFECHO_FILENAME, type OutcomeRecord } from "../work-record/outcome.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { LiveWorker } from "../state/liveness.js";

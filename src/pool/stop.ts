@@ -7,10 +7,11 @@ import type { WorkerRuntime } from "../runtime/port.js";
 import type { LivenessObservation } from "../state/liveness.js";
 import { COOPERATIVE_STOP_MS } from "../stop-signals.js";
 import { renderWorkIdentity, type WorkIdentity } from "../tracker/identity.js";
-import { readLastAttempt, readLaunchFacts } from "./registry.js";
+import { readLastAttempt } from "../work-record/attempts.js";
+import { readLaunchFacts } from "./registry.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
 import {
   confirmStopRequest,
-  readRecoveryLedger,
   recordStopRequest,
   recordUnconfirmedStop,
   refundRecovery,
