@@ -48,7 +48,7 @@ export interface WorkerMaterial {
   /** Present only on a repair round (issue 107). */
   repair?: RepairMaterial;
   /** Explicit operator consent, never a result of the interrupted call. */
-  callRetry?: { id: string; command: string; cwd: string; reason: string };
+  callRetry?: { id: string; command: string; cwd: string; reason: string; tool?: string; input?: string; sourceSessionId?: string };
 }
 
 export interface SessionSelection {

@@ -33,6 +33,9 @@ const modules = [
   "runtime/json-line.js",
   "runtime/continuity-artifacts.js",
   "runtime/guardrail/extension.js",
+  "runtime/guardrail/delegation.js",
+  "runtime/guardrail/journal-lock.js",
+  "runtime/stop-request.js",
   "tracker/identity.js",
 ];
 const files = modules.map((module) => ({ from: join(root, "dist", module), to: join(stage, module) }));

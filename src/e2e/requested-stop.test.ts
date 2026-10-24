@@ -25,7 +25,8 @@ import { workKeyOf } from "../pool/work-key.js";
 import { githubWork, launchedNumber } from "./work-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { waitFor } from "./cli-harness.js";
-import { seedSession } from "./session-fixtures.js";
+import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
+import { appendJournalIntent, readPause } from "../runtime/continuity-artifacts.js";
 
 /**
  * The operator's requested stop and the restart that follows (issue #146), at
@@ -164,6 +165,42 @@ describe("e2e: requested stop, restart and resume (issue #146)", { timeout: 60_0
     assert.equal(existsSync(workDirOf()), false, "no reservation was created");
     const issue = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.ready), "the work stays in the pool");
+  });
+
+  test("a forced delegation without terminal evidence still pauses instead of inventing a result", async () => {
+    const config = makeConfig();
+    const tracker = makeTracker(config);
+    const runtime = new FakeWorkerRuntime({ tracker, outcomes: ["pr-open"] });
+    const entered = deferred();
+    runtime.hold = async (request) => {
+      assert.ok(request.session);
+      writeFileSync(join(request.workDir, "log-1.jsonl"), "{}\n", "utf8");
+      const session = seedSession(request.workDir, request.work, request.attempt, {
+        sessionId: request.session.sessionId,
+      });
+      seedSessionToolCall(session, { callId: "review", tool: "subagent", command: "", answered: false });
+      appendJournalIntent(request.workDir, {
+        attempt: request.attempt, sessionId: session.sessionId, callId: "review",
+        tool: "subagent", command: "", safety: "unknown", actions: [],
+        reason: "tool subagent can produce effects outside the session",
+      });
+      entered.resolve();
+      await runtime.whenStopRequested(request.work);
+    };
+    const deps: LoopDeps = { config, tickets: tracker, pullRequests: tracker, runtime, git: expandedGitWorkOf(new FakeGitWork()), workspace: layout, log: () => {} };
+    const stop = new AbortController();
+    const running = runOnce(deps, { signal: stop.signal, cooperativeMs: 2_000 });
+    await entered.promise;
+    stop.abort();
+    const stopped = await running;
+    assert.deepEqual(stopped.stop?.unconfirmed, []);
+    assert.equal((await ledgerOf()).lastStop?.kind, "stop-requested");
+
+    delete runtime.hold;
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 0, "container absence alone does not settle the delegated effects");
+    assert.equal(readPause(workDirOf())?.reason, "effect-unsupported");
+    assert.equal((await ledgerOf()).consumed, 0);
   });
 
   test("repeated requested stops resume the same attempt beyond the recovery budget, spending nothing", async () => {

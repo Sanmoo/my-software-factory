@@ -39,7 +39,7 @@ export interface DeterministicModelOptions {
   attempt: number;
   /** Which proof this model drives; "interruption" (the default) is the kill
    *  test, "refused-call" the journal-gap test. */
-  script?: "interruption" | "refused-call";
+  script?: "interruption" | "refused-call" | "delegation-stop" | "delegation-kill";
   /** Address the sibling container dials (the host's bridge address). */
   address: string;
   /** Where the completion signal / outcome path point inside the container. */
@@ -75,7 +75,10 @@ export async function startDeterministicModel(options: DeterministicModelOptions
   return {
     baseUrl: `http://${options.address}:${port}/v1`,
     requests,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () => new Promise((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    }),
   };
 }
 
@@ -123,7 +126,9 @@ async function handle(
   const resumed = promptText.includes(RESUME_MARKER);
   requests.push({ assistantMessages, commands, resumed });
 
-  const reply = script({ assistantMessages, commands, resumed }, options);
+  const reply = options.script === "delegation-stop" || options.script === "delegation-kill"
+    ? delegationStopScript({ assistantMessages, commands, resumed }, promptText, options)
+    : script({ assistantMessages, commands, resumed }, options);
   if (payload.stream === false) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(completion(payload.model ?? "deterministic", reply)));
@@ -140,7 +145,7 @@ async function handle(
             delta: {
               role: "assistant",
               tool_calls: [
-                { index: 0, id: `call-${assistantMessages + 1}`, type: "function", function: { name: "bash", arguments: JSON.stringify({ command: reply.command }) } },
+                { index: 0, id: `call-${assistantMessages + 1}`, type: "function", function: { name: reply.tool ?? "bash", arguments: JSON.stringify(reply.input ?? { command: reply.command }) } },
               ],
             },
             finish_reason: null,
@@ -180,7 +185,7 @@ async function handle(
   response.end();
 }
 
-type Reply = { kind: "tool"; command: string } | { kind: "text"; text: string };
+type Reply = { kind: "tool"; command: string; tool?: string; input?: Record<string, unknown> } | { kind: "text"; text: string };
 
 /** What the request carries: how far the transcript got, which commands it
  *  already issued, and whether the factory reopened this session. */
@@ -225,13 +230,47 @@ function refusedCallScript(state: ScriptState, options: DeterministicModelOption
   return { kind: "text", text: COMPLETION };
 }
 
+function delegationStopScript(state: ScriptState, prompt: string, options: DeterministicModelOptions): Reply {
+  const child = ["code-reviewer", "spec-reviewer"].find((agent) => prompt.includes(`<active_agent name="${agent}"/>`));
+  if (child !== undefined) {
+    if (state.assistantMessages === 0) {
+      return { kind: "tool", command: options.script === "delegation-kill"
+        ? `git push -u ${options.remoteUrl} ${options.branch} && sleep 120`
+        : `printf started > ${options.workMount}/delegation-started-${child}; sleep 120` };
+    }
+    return { kind: "text", text: "review interrupted" };
+  }
+  if (!state.resumed) {
+    if (state.assistantMessages === 0) {
+      return {
+        kind: "tool", command: "", tool: "subagent",
+        input: options.script === "delegation-stop"
+          ? { workflow: "parallel", async: false, args: { tasks: [
+              { agent: "code-reviewer", task: "Review the disposable fixture", model: "deterministico/roteiro" },
+              { agent: "spec-reviewer", task: "Review the disposable fixture", model: "deterministico/roteiro" },
+            ] } }
+          : { agent: "code-reviewer", task: "Review the disposable fixture", model: "deterministico/roteiro", async: false },
+      };
+    }
+    return { kind: "text", text: COMPLETION };
+  }
+  if (options.script === "delegation-kill" && !state.commands.some((command) => command.includes("git push"))) {
+    return { kind: "tool", command: `git push -u ${options.remoteUrl} ${options.branch}` };
+  }
+  if (!state.commands.some((command) => command.includes(`${options.workMount}/desfecho.json`))) {
+    const record = JSON.stringify({ class: "clean-without-pr", attempt: options.attempt });
+    return { kind: "tool", command: `printf '%s\\n' '${record}' > ${options.workMount}/desfecho.json` };
+  }
+  return { kind: "text", text: COMPLETION };
+}
+
 function completion(model: string, reply: Reply): Record<string, unknown> {
   const message =
     reply.kind === "tool"
       ? {
           role: "assistant",
           content: null,
-          tool_calls: [{ id: "call-1", type: "function", function: { name: "bash", arguments: JSON.stringify({ command: reply.command }) } }],
+          tool_calls: [{ id: "call-1", type: "function", function: { name: reply.tool ?? "bash", arguments: JSON.stringify(reply.input ?? { command: reply.command }) } }],
         }
       : { role: "assistant", content: reply.text };
   return {

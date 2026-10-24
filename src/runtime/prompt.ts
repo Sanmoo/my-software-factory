@@ -133,6 +133,9 @@ function implementationProcedure(request: WorkRequest, layout: AgentLayout): str
     `   The registered reviewer agents are ${Object.values(layout.reviewers).map((agent) => `\`${agent}\``).join(" and ")}.`,
     `   - TWO SEPARATE subagent runs, issued IN PARALLEL (the subagent tool): one for the Standards`,
     `     axis, one for the Spec axis — never one agent doing both, never your own inline review;`,
+    `   - submit both through ONE native subagent call: workflow="parallel", async=false,`,
+    `     args.tasks=[{agent,task}, {agent,task}]. Do not replace it with a workflow script:`,
+    `     the factory can recover this declarative delegation and guard each child's effects;`,
     `   - set the registered agent explicitly: \`${layout.reviewers.standards}\` for Standards and`,
     `     \`${layout.reviewers.spec}\` for Spec; never use the generic \`default\` agent;`,
     `   - each reviewer's context: the diff \`git diff <starting-sha>...HEAD\`, the commit list, the`,
@@ -277,9 +280,14 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
       `## Operator-authorized exact retry ${material.callRetry.id}`,
       `The original call has NO known outcome and may have executed partially. The operator explicitly accepted the risk of duplicate effects. This is NOT evidence that it failed or did nothing.`,
       `Reason: ${material.callRetry.reason}`,
-      `Execute the following EXACT command once through bash before other external effects. Do not rewrite it, wrap it, split it, or change its working directory. The guardrail consumes permission before dispatch; another interruption requires a new operator decision.`,
-      `Original working directory: ${material.callRetry.cwd}`,
-      `--- exact command ---`, material.callRetry.command, `--- end command ---`,
+      ...(material.callRetry.sourceSessionId === undefined ? [] : [`The interrupted call belonged to child session ${material.callRetry.sourceSessionId}. Execute its exact call here on behalf of that child, without inventing its original result or marking its review complete.`]),
+      ...(material.callRetry.tool === undefined
+        ? [`Execute the following EXACT command once through bash before other external effects. Do not rewrite it, wrap it, split it, or change its working directory. The guardrail consumes permission before dispatch; another interruption requires a new operator decision.`,
+          `Original working directory: ${material.callRetry.cwd}`,
+          `--- exact command ---`, material.callRetry.command, `--- end command ---`]
+        : [`Call ${material.callRetry.tool} once with EXACTLY the JSON input below, before other external effects. Do not change the task, model, working directory or options. Permission is consumed before dispatch; another interruption needs a new decision.`,
+          `Original working directory: ${material.callRetry.cwd}`,
+          `--- exact tool input ---`, material.callRetry.input!, `--- end tool input ---`]),
       `Then inspect the actual result and continue the same attempt. All validation and publication obligations still apply.`, ``,
     ]),
     `## The ticket: ${material.ticket.title}`,
@@ -316,7 +324,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
           `## The pull request`,
           ``,
           `PR #${pr.number} is already open for this work (same branch, same PR — never open another).`,
-          ...(material.callRetry !== undefined
+          ...(material.callRetry !== undefined || options.continuesSession === true
             ? [`Continue the original attempt and its existing procedure and publication lease; this is not a new feedback or repair round.`]
             : material.repair === undefined
             ? [

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -10,6 +10,7 @@ import {
   type GuardrailBlock,
   type ToolCallLike,
   type ToolResultLike,
+  type ExtensionContextLike,
 } from "./extension.js";
 import {
   EFFECT_JOURNAL_FILENAME,
@@ -26,7 +27,7 @@ import {
  */
 
 interface Handlers {
-  sessionStart: (event: { type: "session_start"; reason: string }) => void | Promise<void>;
+  sessionStart: (event: { type: "session_start"; reason: string }, ctx?: ExtensionContextLike) => void | Promise<void>;
   toolCall: (event: ToolCallLike) => GuardrailBlock | undefined | Promise<GuardrailBlock | undefined>;
   toolResult: (event: ToolResultLike) => void | Promise<void>;
 }
@@ -62,6 +63,7 @@ describe("the in-container continuity guardrail (issue 119)", () => {
   function writeState(verdicts: Record<string, "realized" | "absent">, sessionId = "session-1"): void {
     const state: GuardrailState = {
       version: 1,
+      generation: "fixture-generation",
       attempt: 3,
       sessionId,
       mode: "resume",
@@ -69,6 +71,7 @@ describe("the in-container continuity guardrail (issue 119)", () => {
       at: "2026-01-01T00:00:00.000Z",
     };
     writeFileSync(join(workMount, GUARDRAIL_STATE_FILENAME), JSON.stringify(state), "utf8");
+    writeFileSync(join(workMount, "parent.jsonl"), JSON.stringify({ type: "session", id: sessionId }) + "\n");
   }
 
   function journalLines(): Array<Record<string, unknown>> {
@@ -90,6 +93,70 @@ describe("the in-container continuity guardrail (issue 119)", () => {
     });
     return handlers;
   }
+
+  test("only declarative image-owned reviewer launches receive a guarded dispatch receipt", async () => {
+    writeState({});
+    const { api, handlers } = fakePi();
+    const registered: string[] = [];
+    installGuardrail(api, { workMount, requireChildren: true, registerChildren: (id) => {
+      registered.push(id); return { dispose() {} };
+    } });
+    await handlers.sessionStart({ type: "session_start", reason: "new" });
+    for (const [index, input] of [
+      { agent: "code-reviewer", task: "review", async: false },
+      { workflow: "parallel", args: { tasks: [{ agent: "spec-reviewer", task: "review" }] }, async: false },
+      { workflow: true, async: false },
+      { agent: "custom-writer", task: "change", async: false },
+      { agent: "code-reviewer", task: "review", async: false, options: { setupHook: "opaque command" } },
+    ].entries()) {
+      await handlers.toolCall({ type: "tool_call", toolCallId: `dispatch-${index}`, toolName: "subagent", input });
+    }
+    assert.deepEqual(registered, ["session-1"]);
+    const intents = journalLines().filter((entry) => entry["type"] === "intent");
+    assert.deepEqual(intents.map((entry) => entry["delegation"]), ["guarded-v1", "guarded-v1", undefined, undefined, undefined]);
+  });
+
+  test("a required child guardrail that cannot register refuses delegation", async () => {
+    writeState({});
+    const { api, handlers } = fakePi();
+    installGuardrail(api, { workMount, requireChildren: true, registerChildren: () => { throw new Error("unavailable"); } });
+    await handlers.sessionStart({ type: "session_start", reason: "new" });
+    assert.ok(await handlers.toolCall({ type: "tool_call", toolCallId: "unguarded", toolName: "subagent", input: { agent: "code-reviewer", task: "review", async: false } }));
+    assert.equal(journalLines().filter((entry) => entry["type"] === "intent").length, 0);
+  });
+
+  test("a child journals its own session identity, bound to the owning Work session", async () => {
+    writeState({});
+    const handlers = install();
+    await handlers.sessionStart({ type: "session_start", reason: "new" }, { sessionManager: { getSessionId: () => "child-session", getHeader: () => ({ parentSession: join(workMount, "parent.jsonl") }) } });
+    await handlers.toolCall({ type: "tool_call", toolCallId: "push", toolName: "bash", input: { command: "git push origin agent-issue-7" } });
+    const lines = journalLines();
+    assert.equal(lines[0]?.["childOf"], "session-1");
+    assert.equal(lines[0]?.["sessionId"], "child-session");
+    assert.equal(lines[1]?.["sessionId"], "child-session");
+  });
+
+  test("an absent verdict authorizes one dispatch across parent and child guardrail instances", async () => {
+    writeState({ "push:agent-issue-7@abc123": "absent" });
+    const file = join(workMount, GUARDRAIL_STATE_FILENAME);
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), generation: "one-reconciliation" }));
+    const parent = install();
+    await parent.sessionStart({ type: "session_start", reason: "resume" });
+    const event: ToolCallLike = { type: "tool_call", toolName: "bash", toolCallId: "push-parent", input: { command: "git push origin agent-issue-7" } };
+    assert.equal(await parent.toolCall(event), undefined);
+    const child = install();
+    await child.sessionStart({ type: "session_start", reason: "new" }, { sessionManager: { getSessionId: () => "child", getHeader: () => ({ parentSession: join(workMount, "parent.jsonl") }) } });
+    assert.ok(await child.toolCall({ ...event, toolCallId: "push-child" }), "the same absence verdict is not a permission per child");
+  });
+
+  test("an unreadable journal refuses effects even while the continuity state is readable", async () => {
+    writeState({});
+    mkdirSync(join(workMount, EFFECT_JOURNAL_FILENAME));
+    const handlers = install();
+    const refused = await handlers.toolCall({ type: "tool_call", toolCallId: "unknown", toolName: "bash", input: { command: "node /tmp/opaque.mjs" } });
+    assert.equal(refused?.block, true);
+    assert.match(refused?.reason ?? "", /journal.*unreadable/);
+  });
 
   test("the session start proves the guardrail was active in that session", async () => {
     writeState({});

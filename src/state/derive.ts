@@ -550,6 +550,18 @@ async function deriveReservedWork(
       return { work, dir, state: "rejected", pr, comment: rejectionComment(pr) };
     }
 
+    const stop = (await readRecoveryLedger(dir)).lastStop;
+    if (stop !== null && (stop.kind === "stop-requested" || stop.kind === "stop-unconfirmed") &&
+        issue.value.labels.includes(labels.claimed) && !inFlight?.has(workKeyOf(work))) {
+      const ledger = await readAttemptLedger(dir);
+      if (stop.attempt >= Math.max(1, ledger.lastAttempt) && stop.attempt <= ledger.lastAttempt + 1 &&
+          ownWrittenOutcome(await readOutcomeRecord(dir), stop.attempt) === null) {
+        return stop.kind === "stop-requested"
+          ? { work, dir, state: "stop-resume", attempt: stop.attempt }
+          : { work, dir, state: "stop-unconfirmed", attempt: stop.attempt, because: stop.because };
+      }
+    }
+
     // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
     // trigger — conflicts with the current base, or required checks concluded
     // with failure/timeout. Unknown mergeability and pending/optional checks

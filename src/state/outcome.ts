@@ -93,6 +93,8 @@ export interface OutcomeFacts {
   /** The port's fact: the PR linked to the issue was merged — delivery, even
    *  when the attempt wrote nothing (issue 149). Never a fall. */
   prMerged: boolean;
+  /** The operator ended this attempt: an already-open PR cannot complete it. */
+  requestedStop?: boolean;
   /** The port's fact: the blocked label is on the issue (the worker's self-report). */
   blockedLabelOnIssue: boolean;
   /** The registry's fact from launch time: the previous attempt on this branch
@@ -128,6 +130,9 @@ export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRulin
   // a delivered work into a release or a 2nd-fall block. The closed issue is
   // still the primary fact; this one closes it (the linkage fallback).
   if (facts.prMerged) return { decision: "done", because: "pr-merged" };
+  if (facts.requestedStop && ownOutcomeRecord(facts.record, facts.attempt) === null) {
+    return { decision: "interrupt", because: "no-outcome" };
+  }
   if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
   if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
 

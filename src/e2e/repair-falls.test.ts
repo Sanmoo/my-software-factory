@@ -27,6 +27,10 @@ import { repoCloneDir } from "../git/port.js";
 import { cleanupFixture, commitFileIn, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
+import { waitFor } from "./cli-harness.js";
+import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
+import { appendJournalIntent } from "../runtime/continuity-artifacts.js";
+import { readRecoveryLedger } from "../pool/recovery.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -200,6 +204,74 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
       requiredChecks: [],
     });
   }
+
+  test("a factory crash after charging Repair but before any runtime footprint returns the round without a fall", async () => {
+    const { tracker, runtime, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 7);
+    await conflictingOn(tracker, pr, OBSERVED);
+    const target = workDir(layout, REPO, 7);
+    writeFileSync(join(target, REPAIR_FILENAME), JSON.stringify({
+      usedRounds: 1, lastEvidence: signatureOf(7, OBSERVED), consecutiveFalls: 0,
+      attempt: { attempt: 2, evidence: signatureOf(7, OBSERVED), observedHeadSha: OBSERVED,
+        remoteHeadSha: null, publication: "unknown", localWork: null },
+    }));
+    await runOnce(deps);
+    assert.equal(runtime.launched.at(-1)?.attempt, 2, "the attempt was planned but never carried out");
+    const cycle = await readRepairCycle(target);
+    assert.equal(cycle.usedRounds, 1, "only the actual launch spends the round");
+    assert.equal(cycle.consecutiveFalls, 0);
+  });
+
+  test("a Repair stopped by continuity before launch spends no round and never becomes a fall", async () => {
+    const { tracker, runtime, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 7);
+    const target = workDir(layout, REPO, 7);
+    const original = runtime.launched[0]!;
+    const session = seedSession(target, original.work, 1, { sessionId: original.session!.sessionId });
+    seedSessionToolCall(session, { callId: "uncertain", command: "node /tmp/unknown.mjs", answered: false });
+    appendJournalIntent(target, {
+      attempt: 1, sessionId: session.sessionId, callId: "uncertain", tool: "bash",
+      command: "node /tmp/unknown.mjs", safety: "unknown", actions: [],
+    });
+    await conflictingOn(tracker, pr, OBSERVED);
+    for (let tick = 0; tick < 3; tick += 1) {
+      assert.equal((await runOnce(deps)).launched.length, 0);
+      const cycle = await readRepairCycle(target);
+      assert.equal(cycle.usedRounds, 0, "the worker never launched");
+      assert.equal(cycle.consecutiveFalls, 0, "continuity is not a Repair fall");
+      assert.equal(cycle.attempt, null);
+    }
+  });
+
+  test("repeated requested stops of Repair resume its same attempt without counting falls", async () => {
+    const { tracker, runtime, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 7);
+    await conflictingOn(tracker, pr, OBSERVED);
+    runtime.hold = async (request) => {
+      assert.ok(request.session);
+      writeFileSync(join(request.workDir, `log-${request.attempt}.jsonl`), "{}\n");
+      if (request.session.mode === "new") {
+        seedSession(request.workDir, request.work, request.attempt, { sessionId: request.session.sessionId });
+      }
+      await runtime.whenStopRequested(request.work);
+    };
+    for (let round = 0; round < 3; round += 1) {
+      const stop = new AbortController();
+      const active = runOnce(deps, { signal: stop.signal });
+      await waitFor("the repair to launch", () => runtime.launched.length === round + 2);
+      stop.abort();
+      await active;
+      const cycle = await readRepairCycle(workDir(layout, REPO, 7));
+      assert.equal(runtime.launched.at(-1)?.attempt, 2, "the SAME interrupted Repair attempt resumes");
+      assert.equal(cycle.consecutiveFalls, 0, "a requested stop is never a Repair fall");
+      assert.equal(cycle.usedRounds, 1, "the same round is charged once");
+      assert.equal((await readRecoveryLedger(workDir(layout, REPO, 7))).consumed, 0);
+    }
+    runtime.launch = async () => { throw new Error("preflight refused the resumed worker"); };
+    await assert.rejects(runOnce(deps), /preflight refused/);
+    assert.equal((await readRecoveryLedger(workDir(layout, REPO, 7))).lastStop?.kind, "stop-requested", "a refused relaunch cannot erase the requested stop");
+    assert.equal((await readRepairCycle(workDir(layout, REPO, 7))).consecutiveFalls, 0);
+  });
 
   test("the #100 incident resumes automatically: the unpublished round returns, the same evidence resumes, nothing is charged twice", async () => {
     // Attempt 1 opens the PR; both repair attempts die abruptly, like the incident.
@@ -623,6 +695,7 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
   test("an unreadable local state is pending, never a concurrent change in disguise", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 114);
+    writeFileSync(join(workDir(layout, REPO, 114), "log-2.jsonl"), '{"event":"session-start","attempt":2}\n');
     // The attempt is in flight from an earlier sweep; the host cannot answer.
     writeFileSync(
       join(workDir(layout, REPO, 114), REPAIR_FILENAME),

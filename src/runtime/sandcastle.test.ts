@@ -678,6 +678,9 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         "-f",
         GUARDRAIL_CONTAINER_FILE,
         "-a", "-f", "/opt/msf/runtime/call-recovery.js",
+        "-a", "-f", "/opt/msf/runtime/stop-request.js",
+        "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
+        "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
       ],
       [
         "docker",

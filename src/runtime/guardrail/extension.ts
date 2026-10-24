@@ -17,9 +17,14 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { parseJsonObject } from "../json-line.js";
+import { watchWorkerStop, workerStopRequested } from "../stop-request.js";
+import { tryJournalLock } from "./journal-lock.js";
+import { childGuardrailRegistrar, guardedDelegation, type RegisterChildGuardrail, type ChildGuardrailRegistration } from "./delegation.js";
 
 import { classifyCommand, withObservedRef, type EffectAction } from "../effects.js";
-import { readCallRecoveries, recoveryConsumption, recoveryForIntent } from "../call-recovery.js";
+import { exactToolInput, readCallRecoveries, recoveryConsumption, recoveryForIntent } from "../call-recovery.js";
 import {
   appendJournalIntent,
   appendJournalResult,
@@ -36,6 +41,7 @@ export type GuardrailSubscription = () => void;
 /** The slice of Pi's extension API the guardrail needs — structural so this
  *  module stays free of the CLI's runtime package. */
 export interface GuardrailApi {
+  on(event: "session_shutdown", handler: () => void): GuardrailSubscription;
   on(
     event: "session_start",
     handler: (event: { type: "session_start"; reason: string }, ctx: ExtensionContextLike) => void | Promise<void>,
@@ -50,8 +56,12 @@ export interface GuardrailApi {
   ): GuardrailSubscription;
 }
 
-/** The context slice the handlers accept and ignore. */
-export type ExtensionContextLike = { signal?: AbortSignal };
+/** The context needed to cancel tools and bind native child sessions. */
+export type ExtensionContextLike = {
+  signal?: AbortSignal;
+  abort?: () => void;
+  sessionManager?: { getSessionId(): string; getHeader?(): { parentSession?: string } | null };
+};
 
 export interface ToolCallLike {
   type: "tool_call";
@@ -77,6 +87,8 @@ export interface GuardrailOptions {
   workMount?: string;
   /** Resolution of the worktree's branch/commit (injectable for tests). */
   observeRef?: (cwd: string) => { branch: string | null; sha: string | null };
+  registerChildren?: RegisterChildGuardrail;
+  requireChildren?: boolean;
 }
 
 const BLOCKED_PREAMBLE = "msf continuity guardrail:";
@@ -93,11 +105,32 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
   // at session start; both are process facts, never persisted.
   let state: GuardrailState | null = null;
   const consumedAbsent = new Set<string>();
+  let stopWatching: (() => void) | undefined;
+  let children: ChildGuardrailRegistration | undefined;
+  let rootSessionId: string | undefined;
+  pi.on("session_shutdown", () => { stopWatching?.(); children?.dispose(); });
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    stopWatching?.();
+    children?.dispose();
+    children = undefined;
     state = readGuardrailState(workMount);
     if (state === null) return;
-    appendJournalStart(workMount, { attempt: state.attempt, sessionId: state.sessionId });
+    rootSessionId = state.sessionId;
+    const actualSession = ctx?.sessionManager?.getSessionId() ?? state.sessionId;
+    if (actualSession !== rootSessionId && parentSessionId(ctx) !== rootSessionId) {
+      state = null;
+      return; // An unexpected root session is not evidence of a delegated child.
+    }
+    state = { ...state, sessionId: actualSession };
+    appendJournalStart(workMount, {
+      attempt: state.attempt, sessionId: state.sessionId,
+      ...(actualSession === rootSessionId ? {} : { childOf: rootSessionId }),
+    });
+    try { if (state.generation !== undefined) children = options.registerChildren?.(actualSession); } catch { /* Delegation fails closed below. */ }
+    if (ctx?.abort !== undefined) {
+      stopWatching = watchWorkerStop(workMount, rootSessionId, () => ctx.abort!());
+    }
   });
 
   pi.on("tool_call", (event) => {
@@ -111,41 +144,62 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     // (the branch is that record) and they are how a worker writes its outcome
     // record, including the blocked self-report this refusal asks for.
     if (state === null) return refuseWithoutState(event, workMount);
-    const retry = guardCallRetry(workMount, state, event);
-    if (retry !== null) return retry;
-    if (event.toolName !== "bash") {
-      // Delegations are not recoverable state (issue 119, out of scope): an
-      // interrupted one is an unknown effect, so a recovery pauses on it.
-      if (event.toolName === "subagent" || event.toolName === "subagents_enable") {
-        journalUnknown(workMount, state, event, `tool ${event.toolName} can produce effects outside the session`);
+    if (workerStopRequested(workMount, rootSessionId ?? state.sessionId)) {
+      return { block: true, reason: `${BLOCKED_PREAMBLE} the operator requested a stop; do not start another tool` };
+    }
+    const release = state.generation === undefined ? () => {} : tryJournalLock(workMount, state.generation);
+    if (release === null) return { block: true, reason: `${BLOCKED_PREAMBLE} another guarded dispatch is in progress; this call did not run` };
+    try {
+      const needsJournal = event.toolName === "subagent" || event.toolName === "subagents_enable" ||
+        (event.toolName === "bash" && classifyCommand(typeof event.input["command"] === "string" ? event.input["command"] : "").safety !== "safe");
+      if (needsJournal && !readEffectJournal(workMount).intact) {
+        return { block: true, reason: `${BLOCKED_PREAMBLE} effect journal is unreadable; no effect may run` };
       }
+      const retry = guardCallRetry(workMount, state, event);
+      if (retry !== null) return retry;
+      if (event.toolName !== "bash") {
+        if (event.toolName === "subagent" || event.toolName === "subagents_enable") {
+          if (options.requireChildren && children === undefined) {
+            return { block: true, reason: `${BLOCKED_PREAMBLE} child guardrail registration is unavailable; no unguarded delegation may run` };
+          }
+          if (event.toolName === "subagent" && children !== undefined && guardedDelegation(event.input)) {
+            appendJournalIntent(workMount, {
+              attempt: state.attempt, sessionId: state.sessionId, callId: event.toolCallId,
+              tool: "subagent", command: "", safety: "unknown", actions: [], delegation: "guarded-v1",
+              ...(state.generation === undefined ? {} : { generation: state.generation }),
+            });
+          } else {
+            journalUnknown(workMount, state, event, `tool ${event.toolName} can produce effects outside the session`);
+          }
+        }
+        return undefined;
+      }
+      const command = typeof event.input["command"] === "string" ? event.input["command"] : "";
+      const safety = classifyCommand(command);
+      if (safety.safety === "safe") return undefined;
+
+      if (safety.safety === "unknown") {
+        journalUnknown(workMount, state, event, safety.reason, command);
+        return undefined;
+      }
+
+      const cwd = typeof event.input["cwd"] === "string" && event.input["cwd"] !== "" ? event.input["cwd"] : process.cwd();
+      const observed = observeRef(cwd);
+      const actions = safety.actions.map((action) => withObservedRef(action, observed));
+
+      const blocked = blockedAction(workMount, state, actions, consumedAbsent);
+      if (blocked !== null) {
+        return {
+          block: true,
+          reason:
+            `${BLOCKED_PREAMBLE} ${blocked.detail} was already ${blocked.why}. Do not repeat it: ` +
+            "continue with the remaining work, or write the outcome record and stop.",
+        };
+      }
+
+      journalIntent(workMount, state, event, "effect", actions, command);
       return undefined;
-    }
-    const command = typeof event.input["command"] === "string" ? event.input["command"] : "";
-    const safety = classifyCommand(command);
-    if (safety.safety === "safe") return undefined;
-
-    if (safety.safety === "unknown") {
-      journalUnknown(workMount, state, event, safety.reason, command);
-      return undefined;
-    }
-
-    const cwd = typeof event.input["cwd"] === "string" && event.input["cwd"] !== "" ? event.input["cwd"] : process.cwd();
-    const observed = observeRef(cwd);
-    const actions = safety.actions.map((action) => withObservedRef(action, observed));
-
-    const blocked = blockedAction(workMount, state, actions, consumedAbsent);
-    if (blocked !== null) {
-      return {
-        block: true,
-        reason:
-          `${BLOCKED_PREAMBLE} ${blocked.detail} was already ${blocked.why}. Do not repeat it: ` +
-          "continue with the remaining work, or write the outcome record and stop.",
-      };
-    }
-
-    journalIntent(workMount, state, event, "effect", actions, command);
-    return undefined;
+    } finally { release(); }
   });
 
   pi.on("tool_result", (event) => {
@@ -153,7 +207,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
     const journal = readEffectJournal(workMount);
     // The call id belongs to the session that issued it; another round's
     // "call-1" is not this one.
-    if (!journal.intents.some((intent) => intent.sessionId === state!.sessionId && intent.callId === event.toolCallId)) return;
+    if (!journal.intents.some((intent) => intent.sessionId === state!.sessionId && intent.callId === event.toolCallId && intent.tool === event.toolName)) return;
     appendJournalResult(workMount, {
       attempt: state.attempt,
       sessionId: state.sessionId,
@@ -172,25 +226,30 @@ function guardCallRetry(workMount: string, state: GuardrailState, event: ToolCal
     if (recoveries.length === 0) return null;
     const journal = readEffectJournal(workMount);
     if (!journal.intact) return block("cannot establish call retry consumption: effect journal is unreadable");
-    const current = recoveries.filter((entry) => entry.sessionId === state.sessionId && entry.attempt === state.attempt);
+    const current = recoveries.filter((entry) => (entry.executorSessionId ?? entry.sessionId) === state.sessionId && entry.attempt === state.attempt);
     for (const entry of current) {
       if (!journal.intents.some((intent) => recoveryForIntent([entry], intent) !== undefined)) return block("retry authorization has no matching original intent");
     }
     const command = typeof event.input["command"] === "string" ? event.input["command"] : "";
     const available = current.find((entry) => recoveryConsumption(journal, entry) === undefined && !journal.results.some((result) => result.sessionId === entry.sessionId && result.callId === entry.callId));
-    if (available !== undefined && event.toolName === "bash" && command === available.command) {
+    const matches = (entry: (typeof current)[number]): boolean => entry.tool === undefined
+      ? event.toolName === "bash" && command === entry.command
+      : event.toolName === entry.tool && exactToolInput(event.input) === entry.input;
+    if (available !== undefined && matches(available)) {
       const cwd = typeof event.input["cwd"] === "string" ? event.input["cwd"] : process.cwd();
       if (cwd !== available.cwd) return block("the exact retry must use its original working directory");
       if (journal.intents.some((intent) => intent.sessionId === state.sessionId && intent.callId === event.toolCallId)) return block("a retry needs a new tool call identity");
       appendJournalIntent(workMount, {
         attempt: state.attempt, sessionId: state.sessionId, callId: event.toolCallId,
-        tool: "bash", command, safety: "unknown", actions: [],
+        tool: event.toolName, command, safety: "unknown", actions: [],
         reason: "operator-authorized exact retry; the original outcome remains unknown",
         retryAuthorization: available.id,
+        ...(available.input === undefined ? {} : { retryInput: available.input }),
+        ...(state.generation === undefined ? {} : { generation: state.generation }),
       });
       return undefined;
     }
-    if (event.toolName === "bash" && current.some((entry) => entry.command === command && recoveryConsumption(journal, entry) !== undefined)) {
+    if (current.some((entry) => matches(entry) && recoveryConsumption(journal, entry) !== undefined)) {
       return block("this exact retry authorization was already consumed; another repetition needs a new operator decision");
     }
     const unsettled = available !== undefined || current.some((entry) => {
@@ -198,7 +257,7 @@ function guardCallRetry(workMount: string, state: GuardrailState, event: ToolCal
       return consumed !== undefined && !journal.results.some((result) => result.sessionId === consumed.sessionId && result.callId === consumed.callId);
     });
     if (unsettled && ((event.toolName === "bash" && classifyCommand(command).safety !== "safe") || event.toolName === "subagent" || event.toolName === "subagents_enable")) {
-      return block("an operator-authorized retry is pending; only that exact bash command may run before other effects. Do not rewrite it or work around this block");
+      return block("an operator-authorized retry is pending; only that exact tool call may run before other effects. Do not rewrite it or work around this block");
     }
     return null;
   } catch {
@@ -255,7 +314,9 @@ function blockedAction(
     if (verdict === "absent") {
       // The host proved the effect did NOT happen: exactly one execution is
       // allowed in this round, and a second identical one is a duplicate.
-      if (!consumedAbsent.has(action.key)) {
+      const alreadyDispatched = state.generation !== undefined && journal.intents.some((intent) =>
+        intent.generation === state.generation && intent.actions.some((prior) => prior.key === action.key));
+      if (!consumedAbsent.has(action.key) && !alreadyDispatched) {
         consumedAbsent.add(action.key);
         continue;
       }
@@ -290,6 +351,7 @@ function journalIntent(
     command,
     safety,
     actions,
+    ...(state.generation === undefined ? {} : { generation: state.generation }),
     ...(reason === undefined ? {} : { reason }),
   });
 }
@@ -323,6 +385,17 @@ function gitValue(cwd: string, args: string[]): string | null {
   }
 }
 
-export default function guardrailExtension(pi: GuardrailApi): void {
-  installGuardrail(pi);
+function parentSessionId(ctx: ExtensionContextLike): string | null {
+  const file = ctx?.sessionManager?.getHeader?.()?.parentSession;
+  if (file === undefined) return null;
+  try {
+    const header = parseJsonObject(readFileSync(file, "utf8").split("\n")[0]!);
+    return header?.["type"] === "session" && typeof header["id"] === "string" ? header["id"] : null;
+  } catch { return null; }
+}
+
+export default async function guardrailExtension(pi: GuardrailApi): Promise<void> {
+  let registerChildren: RegisterChildGuardrail | undefined;
+  try { registerChildren = await childGuardrailRegistrar(); } catch { /* Keep the parent guarded; delegation is refused. */ }
+  installGuardrail(pi, { requireChildren: true, ...(registerChildren === undefined ? {} : { registerChildren }) });
 }

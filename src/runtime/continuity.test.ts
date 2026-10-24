@@ -98,6 +98,46 @@ describe("continuity of an interrupted attempt (issue 119)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test("guarded dispatch does not hide an ambiguous child call or fabricate either result", async () => {
+    const parent = seedSession(workDir, REF, 2);
+    const child = seedSession(join(workDir, "sessao", "child"), REF, 2, { sessionId: "22222222-2222-4222-8222-222222222222" });
+    seedSessionToolCall(parent, { callId: "delegate", tool: "subagent", command: "", answered: false });
+    seedSessionToolCall(child, { callId: "unknown-child", command: "node /tmp/diagnostic.mjs", answered: false });
+    appendJournalStart(workDir, { attempt: 2, sessionId: parent.sessionId });
+    appendJournalIntent(workDir, { attempt: 2, sessionId: parent.sessionId, callId: "delegate", tool: "subagent", command: "", safety: "unknown", actions: [], delegation: "guarded-v1" });
+    appendJournalStart(workDir, { attempt: 2, sessionId: child.sessionId, childOf: parent.sessionId });
+    appendJournalIntent(workDir, { attempt: 2, sessionId: child.sessionId, callId: "unknown-child", tool: "bash", command: "node /tmp/diagnostic.mjs", safety: "unknown", actions: [] });
+    const blocked = await planContinuity(deps, "resume");
+    assert.equal(blocked.decision, "pause");
+    if (blocked.decision !== "pause") return;
+    assert.equal(blocked.pause.reason, "effect-unsupported");
+    assert.equal(blocked.pause.sessionId, child.sessionId);
+    assert.equal(readEffectJournal(workDir).results.length, 0);
+
+    seedExtraToolResult(child, "unknown-child", { durationMs: 100, text: "diagnostic finished" });
+    const settled = await planContinuity(deps, "resume");
+    assert.equal(settled.decision, "launch");
+    if (settled.decision !== "launch") return;
+    assert.equal(settled.sessionId, parent.sessionId, "the owning session continues");
+    assert.deepEqual(readEffectJournal(workDir).results.map((entry) => [entry.sessionId, entry.callId, entry.source]), [[child.sessionId, "unknown-child", "session"]]);
+  });
+
+  test("an inaccessible effect journal is unknown, never an empty journal that licenses a restart", async () => {
+    seedSession(workDir, REF, 2);
+    mkdirSync(join(workDir, "efeitos.jsonl"));
+    const result = await planContinuity(deps, "resume");
+    assert.equal(result.decision, "pause");
+    if (result.decision === "pause") assert.equal(result.pause.reason, "journal-unreadable");
+  });
+
+  test("a delegated session without this Work's parent association cannot release continuity", async () => {
+    seedSession(workDir, REF, 2);
+    appendJournalStart(workDir, { attempt: 2, sessionId: "other-child", childOf: "foreign-parent" });
+    const result = await planContinuity(deps, "resume");
+    assert.equal(result.decision, "pause");
+    if (result.decision === "pause") assert.equal(result.pause.reason, "session-identity");
+  });
+
   /** An interrupted session of the attempt, with its intent on disk. */
   function interruptInsidePush(
     options: { sha?: string; remote?: string | null; journal?: boolean; result?: SeededCallResult } = {},

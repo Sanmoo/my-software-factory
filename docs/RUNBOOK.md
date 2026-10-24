@@ -161,8 +161,8 @@ ends. Comment your feedback on the PR — the next derivation relaunches a
 worker that addresses it on the SAME branch and the SAME PR (as many rounds
 as you want; each round ends with the worker commenting what it addressed).
 
-You end the factory with Ctrl-C or SIGTERM (exit 0); a second signal skips the
-rest of the cooperative window. A stop the factory cannot confirm says so and
+You end the factory with Ctrl-C or SIGTERM (exit 0): Pi first cancels its owned
+tools so their results can persist; a second signal skips the cooperative window. A stop the factory cannot confirm says so and
 exits nonzero, leaving the affected works on record for the next run to check.
 **Requested stop** and **Unconfirmed stop** in GLOSSARY.md are the contract.
 The next `msf run` loads the current `msf.yaml` and the compiled code and
@@ -202,24 +202,23 @@ Continuity logs report a pause once per change (and once after a restart), never
 print the script, and point to pausa.json for the full diagnosis. Rechecks keep
 running on every tick even when the log stays silent.
 
-For an effect-unsupported pause, inspect the exact command and working directory,
-including any effects already produced, then decide whether repeating it is
-acceptable:
+For an effect-unsupported pause, inspect the exact tool input/command and working
+directory, including effects already produced, before accepting repetition:
 
     msf recover '<work-key from msf status>'   # read-only; prints a review token
-    # Stop msf run first; inspect again if the token is stale.
     msf recover '<work-key>' --retry '<review token>' --accept-duplicate-risk --reason '<why repeating is acceptable>'
-    msf run
+    msf recover '<work-key>'                  # request decision and audit history
 
-Pass the same --config to all three when not using msf.yaml. Approval refuses an
-active run, a surviving worker or unknown Docker liveness. It records consent
-only: the next run continues the original attempt and session, and the guardrail
-permits one exact repetition before other external effects. The original outcome
-stays unknown, no result is invented, no budget is reset and validation still
-applies. The audit file records who approved, when, why, and whether permission
-was consumed. A crash after consumption does not restore permission even if the
-command never began; inspect and approve a newly interrupted call separately.
-This is not a guarantee against rewritten commands or effects hidden in scripts.
+Use the same --config throughout. An active run rechecks the queued request on
+its next sweep; do not stop unrelated Works. Without an active run, approval is
+immediate and the next `msf run` consumes it. A queued request is not permission:
+stale evidence, a live worker or unknown liveness prevents approval. Inspect
+again if rejected. The guardrail permits one exact repetition; the original
+outcome stays unknown, no budget is reset and validation still applies. A
+child's command is replayed by its owning Work session, not recorded as a child
+outcome. Consent and consumption remain in `recuperacoes.jsonl`; a crash never
+renews spent permission. This does not prove rewritten commands or mutable
+scripts equivalent. Old unguarded delegations still need this explicit consent.
 
 ## (c) Status — the trail, factory stopped
 

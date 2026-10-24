@@ -12,6 +12,7 @@ import { SESSIONS_SUBDIR, workspaceLayout } from "../layout.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { deferred, type Deferred } from "./deferred.js";
 import { dockerWorkerForceStop } from "./worker-stop.js";
+import { clearWorkerStop, requestWorkerStop } from "./stop-request.js";
 import {
   describeForeignRecord,
   ownOutcomeRecord,
@@ -79,6 +80,8 @@ const execFile = promisify(execFileCallback);
  *  forced stop that ends it even when Sandcastle's unwind lags behind. */
 interface RunningSession {
   work: WorkIdentity;
+  request: WorkRequest;
+  started: boolean;
   stop: AbortController;
   forced: Deferred;
 }
@@ -408,12 +411,13 @@ export class SandcastleRuntime implements WorkerRuntime {
     // The session is registered BEFORE the preconditions (issue #146): a stop
     // arriving during them reaches this launch instead of being lost in the
     // window between the factory's check and the worker's start.
-    const session: RunningSession = { work: request.work, stop: new AbortController(), forced: deferred() };
+    const session: RunningSession = { work: request.work, request, started: false, stop: new AbortController(), forced: deferred() };
     this.sessions.set(key, session);
     try {
       return await this.launchRegistered(request, session);
     } finally {
       this.sessions.delete(key);
+      this.stopRequested.delete(key);
     }
   }
 
@@ -465,11 +469,11 @@ export class SandcastleRuntime implements WorkerRuntime {
         },
       });
 
-      // The verified-activity idle limit (issue 112): the watchdog aborts the
-      // run once nothing verifiable happened for the configured idle time. The
-      // requested stop aborts the same run (issue #146): Sandcastle kills the
-      // agent subprocess and tears the container down before the promise
-      // settles.
+      clearWorkerStop(request.workDir);
+      session.started = true;
+      // A requested stop reaches Pi through the work mount so tool results can
+      // settle before sandbox teardown. Idle expiry and escalation still abort
+      // Sandcastle itself.
       const watch = await this.activityWatch(request);
       const runSignal = AbortSignal.any([watch.signal, stopSignal]);
       let outcome: SessionResult["outcome"];
@@ -503,15 +507,20 @@ export class SandcastleRuntime implements WorkerRuntime {
   }
 
   /**
-   * The cooperative stop (issue #146): Sandcastle aborts the in-flight agent
-   * and tears the sandbox down before the launch promise settles, so the
-   * request never abandons that promise. `forceStop` is the backstop for a
-   * worker that survives it.
+   * The cooperative stop reaches Pi without killing its process: owned tool
+   * calls must settle before Sandcastle removes the container. Direct callers
+   * without a factory session keep the abort-only behavior. `forceStop` remains
+   * the backstop for a worker that cannot cooperate.
    */
   requestStop(work: WorkIdentity): void {
     const key = workKeyOf(work);
     this.stopRequested.add(key);
-    this.sessions.get(key)?.stop.abort();
+    const session = this.sessions.get(key);
+    if (session?.started && session.request.session !== undefined) {
+      requestWorkerStop(session.request.workDir, session.request.session.sessionId);
+    } else {
+      session?.stop.abort();
+    }
   }
 
   /**
@@ -625,6 +634,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           GH_TOKEN: this.token,
           DOCKER_HOST: `unix://${dockerSocket.hostPath}`,
           MSF_WORK_MOUNT: WORK_MOUNT,
+          PI_SUBAGENTS_TEMP_ROOT: `${WORK_MOUNT}/delegations`,
         },
         // The socket's own group, as a supplementary gid: the container user
         // is the host user, not root, and the socket is root-owned 0660.
@@ -968,6 +978,9 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
         "-f",
         GUARDRAIL_CONTAINER_FILE,
         "-a", "-f", "/opt/msf/runtime/call-recovery.js",
+        "-a", "-f", "/opt/msf/runtime/stop-request.js",
+        "-a", "-f", "/opt/msf/runtime/guardrail/delegation.js",
+        "-a", "-f", "/opt/msf/runtime/guardrail/journal-lock.js",
       ]);
     } catch {
       throw new Error(

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { loadConfig } from "../config.js";
 import { ensureWorkspace, workDir } from "../layout.js";
-import { recoverCall } from "../recover.js";
+import { recoverCall, processRecoveryRequests } from "../recover.js";
 import { acquireRunLock } from "../run-lock.js";
 import { runOnce } from "../loop.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
@@ -63,9 +63,47 @@ function guard() {
   installGuardrail(api, { workMount: target });
   return {
     call: (id: string, text = command, cwd = "/fake/worker") => toolCall({ type: "tool_call", toolCallId: id, toolName: "bash", input: { command: text, cwd } }),
+    tool: (id: string, input: Record<string, unknown>) => toolCall({ type: "tool_call", toolCallId: id, toolName: "subagent", input }),
     result: (id: string) => toolResult({ type: "tool_result", toolCallId: id, toolName: "bash", isError: false }),
   };
 }
+
+test("a legacy interrupted subagent has an exact, single-use recovery with its original input", async () => {
+  const input = { agent: "code-reviewer", task: "Review the preserved branch", async: false, cwd: "/fake/worker" };
+  session = seedSession(target, work, 2);
+  seedSessionToolCall(session, { callId: "old", tool: "subagent", command: "", input, answered: false });
+  writeFileSync(join(target, "efeitos.jsonl"), "");
+  appendJournalStart(target, { attempt: 2, sessionId: session.sessionId });
+  appendJournalIntent(target, { attempt: 2, sessionId: session.sessionId, callId: "old", tool: "subagent", command: "", safety: "unknown", actions: [] });
+  assert.match(await recoverCall(config, key), /subagent/);
+  const authorized = authorize();
+  assert.equal(readEffectJournal(target).results.length, 0, "consent is not an outcome");
+  const guarded = guard();
+  assert.ok(await guarded.tool("changed", { ...input, task: "Different work" }));
+  assert.equal(await guarded.tool("retry", { cwd: input.cwd, async: false, task: input.task, agent: input.agent }), undefined);
+  assert.equal(recoveryConsumption(readEffectJournal(target), authorized)?.callId, "retry");
+  assert.ok(await guard().tool("again", input), "another process cannot reuse consent");
+  assert.equal(readEffectJournal(target).results.length, 0);
+});
+
+test("an ambiguous guarded child's command can be retried by its owning session, never as invented child output", async () => {
+  session = seedSession(target, work, 2);
+  seedSessionToolCall(session, { callId: "delegate", command: "", tool: "subagent", input: { agent: "code-reviewer", task: "review", async: false }, answered: false });
+  const child = seedSession(join(target, "sessao", "child"), work, 2, { sessionId: "22222222-2222-4222-8222-222222222222" });
+  seedSessionToolCall(child, { callId: "old", command, answered: false });
+  writeFileSync(join(target, "efeitos.jsonl"), "");
+  appendJournalStart(target, { attempt: 2, sessionId: session.sessionId });
+  appendJournalIntent(target, { attempt: 2, sessionId: session.sessionId, callId: "delegate", tool: "subagent", command: "", safety: "unknown", actions: [], delegation: "guarded-v1" });
+  appendJournalStart(target, { attempt: 2, sessionId: child.sessionId, childOf: session.sessionId });
+  appendJournalIntent(target, { attempt: 2, sessionId: child.sessionId, callId: "old", tool: "bash", command, safety: "unknown", actions: [] });
+  writePause(target, { ...readPause(target)!, sessionId: child.sessionId });
+  const record = authorize();
+  assert.equal(record.sessionId, child.sessionId, "the source of the doubt stays the child");
+  assert.equal(await guard().call("retry-child-command"), undefined);
+  assert.equal(recoveryConsumption(readEffectJournal(target), record)?.sessionId, session.sessionId);
+  assert.equal(readEffectJournal(target).results.length, 0, "neither child's nor parent's original result is fabricated");
+  assert.ok(await guard().call("repeat-child-command"));
+});
 
 test("preview is read-only and approval keeps the original result unknown with an auditable reason", async () => {
   const before = readFileSync(join(target, "efeitos.jsonl"), "utf8");
@@ -84,11 +122,14 @@ test("preview is read-only and approval keeps the original result unknown with a
   assert.equal(readEffectJournal(target).results.length, 0, "consent never invents a terminal result");
 });
 
-test("approval refuses active run, live worker, unknown Docker, stale review, missing consent and invalid selector", async () => {
+test("approval queues for the active run but refuses live worker, unknown Docker, stale review and missing consent", async () => {
   const token = reviewCallRecovery(target, work, 2).review;
   const consent = { retry: token, reason: "inspected", acceptDuplicateRisk: true };
   const lock = await acquireRunLock(config.configPath);
-  try { await assert.rejects(recoverCall(config, key, consent, { probe: async () => [] }), /active msf run/); }
+  try {
+    assert.match(await recoverCall(config, key, consent, { probe: async () => [] }), /queued/);
+    assert.deepEqual(readCallRecoveries(target), [], "a request is not authorization until the owner rechecks it");
+  }
   finally { await lock.close(); }
   await assert.rejects(recoverCall(config, key, consent, { probe: async () => [{ key, ageMs: 1, containerId: "live" }] }), /alive/);
   await assert.rejects(recoverCall(config, key, consent, { probe: async () => { throw new Error("Docker unavailable"); } }), /unknown/);
@@ -98,6 +139,71 @@ test("approval refuses active run, live worker, unknown Docker, stale review, mi
   appendFileSync(session.file, JSON.stringify({ type: "message", id: "more", timestamp: "2026-01-01", message: { role: "user", content: "new evidence" } }) + "\n");
   await assert.rejects(recoverCall(config, key, consent, { probe: async () => [] }), /stale/);
   assert.deepEqual(readCallRecoveries(target), []);
+});
+
+for (const verdict of ["authorized", "stale", "live", "unknown", "in-flight"] as const) {
+  test(`the lock-owning run rechecks a queued recovery: ${verdict}`, async () => {
+    const consent = { retry: reviewCallRecovery(target, work, 2).review, reason: "reviewed risk", acceptDuplicateRisk: true };
+    const lock = await acquireRunLock(config.configPath);
+    try {
+      assert.match(await recoverCall(config, key, consent, { probe: async () => [], actor: "operator" }), /queued/);
+      if (verdict === "stale") appendFileSync(session.file, JSON.stringify({ type: "message", id: "new", message: { role: "user", content: "new evidence" } }) + "\n");
+      const seams = {
+        probe: async () => {
+          if (verdict === "unknown") throw new Error("Docker unavailable");
+          return verdict === "live" ? [{ key, containerId: "surviving", ageMs: 1 }] : [];
+        },
+        inFlight: new Set(verdict === "in-flight" ? [key] : []),
+      };
+      await processRecoveryRequests(config, seams);
+      await processRecoveryRequests(config, seams);
+      assert.equal(readCallRecoveries(target).length, verdict === "authorized" ? 1 : 0);
+      assert.match(await recoverCall(config, key), verdict === "authorized" ? /Request .*authorized/ : /Request .*rejected/);
+      assert.equal(readEffectJournal(target).results.length, 0);
+    } finally { await lock.close(); }
+  });
+}
+
+test("a crash between queued consent and its receipt is idempotent, and another config cannot consume the request", async () => {
+  const consent = { retry: reviewCallRecovery(target, work, 2).review, reason: "reviewed", acceptDuplicateRisk: true };
+  const lock = await acquireRunLock(config.configPath);
+  try {
+    await recoverCall(config, key, consent, { probe: async () => [] });
+    const otherConfig = join(root, "other.yaml");
+    writeFileSync(otherConfig, "different configuration");
+    await processRecoveryRequests({ ...config, configPath: otherConfig }, { probe: async () => [] });
+    assert.equal(readCallRecoveries(target).length, 0);
+    const requestRoot = join(config.workspace, "recovery-requests");
+    const scoped = join(requestRoot, readdirSync(requestRoot)[0]!);
+    const pendingDir = join(scoped, "pending");
+    const pendingFile = join(pendingDir, readdirSync(pendingDir)[0]!);
+    const queued = readFileSync(pendingFile, "utf8");
+    await processRecoveryRequests(config, { probe: async () => [] });
+    assert.equal(readCallRecoveries(target).length, 1, "the owner consumed the queued request exactly once");
+    assert.match(await recoverCall(config, key), /Request .*authorized/);
+    // A crash after consent but before the request's own deletion replays it.
+    writeFileSync(pendingFile, queued);
+    await processRecoveryRequests(config, { probe: async () => [] });
+    assert.equal(readCallRecoveries(target).length, 1, "the persisted requestId prevents a second consent");
+    assert.match(await recoverCall(config, key), /Request .*authorized/);
+  } finally { await lock.close(); }
+});
+
+test("a persisted rejection stays terminal after a crash before pending-request deletion", async () => {
+  const consent = { retry: reviewCallRecovery(target, work, 2).review, reason: "reviewed", acceptDuplicateRisk: true };
+  const lock = await acquireRunLock(config.configPath);
+  try {
+    await recoverCall(config, key, consent, { probe: async () => [] });
+    const requestRoot = join(config.workspace, "recovery-requests");
+    const pending = join(requestRoot, readdirSync(requestRoot)[0]!, "pending");
+    const file = join(pending, readdirSync(pending)[0]!);
+    const request = readFileSync(file, "utf8");
+    await processRecoveryRequests(config, { probe: async () => [{ key, containerId: "alive", ageMs: 1 }] });
+    writeFileSync(file, request);
+    await processRecoveryRequests(config, { probe: async () => [] });
+    assert.equal(readCallRecoveries(target).length, 0, "a rejected request cannot become permission on a later sweep");
+    assert.match(await recoverCall(config, key), /Request .*rejected/);
+  } finally { await lock.close(); }
 });
 
 test("new pause identity, different command and terminal result invalidate the reviewed call", () => {
@@ -200,8 +306,14 @@ test("the provisioned guardrail consumes before the real command and blocks a se
   assert.equal(readEffectJournal(target).results.length, 0, "the process died without a terminal result, not a success invented by recovery");
 });
 
-for (const hostCrashed of [false, true]) test(`sweep resumes original attempt/session${hostCrashed ? " after crash between pause clear and dispatch" : " from a planned newer pause"}`, async () => {
-  authorize();
+for (const mode of ["direct", "crash", "queued"] as const) test(`sweep resumes original attempt/session: ${mode}`, async () => {
+  const hostCrashed = mode === "crash";
+  if (mode === "queued") {
+    const lock = await acquireRunLock(config.configPath);
+    try {
+      await recoverCall(config, key, { retry: reviewCallRecovery(target, work, 2).review, reason: "reviewed", acceptDuplicateRisk: true }, { probe: async () => [] });
+    } finally { await lock.close(); }
+  } else authorize();
   if (hostCrashed) clearPause(target);
   const tracker = new FakeTrackerAdapter({ workerAccount: "bot" });
   seedIssue(tracker, { repo: REPO, number: 7, labels: [config.labels.blocked], createdAt: "2026-01-01T00:00:00Z" });

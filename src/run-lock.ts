@@ -40,6 +40,8 @@ import { describeError } from "./format.js";
  * Scope: this machine's local filesystem. A cross-machine guarantee is not
  * attempted.
  */
+export class RunLockBusyError extends Error {}
+
 export interface RunLock {
   /** Release the exclusivity. Normal completion and error paths must call it;
    * a process death releases it without it. */
@@ -132,8 +134,8 @@ function lockFailure(canonicalConfig: string, via: "config-file" | "marker", err
   }
   const refusing = `configuration ${canonicalConfig} already has an active msf run`;
   const tail = "refusing to start a second one for the same configuration";
-  if (via === "marker") return new Error(`${refusing} — ${tail}`);
-  return new Error(`${refusing} (its file is flock'ed by another process) — ${tail}`);
+  if (via === "marker") return new RunLockBusyError(`${refusing} — ${tail}`);
+  return new RunLockBusyError(`${refusing} (its file is flock'ed by another process) — ${tail}`);
 }
 
 /** Close what was opened, ignoring a close that has nothing left to do. */

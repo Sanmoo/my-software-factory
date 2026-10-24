@@ -19,7 +19,7 @@ import { join } from "node:path";
 
 import type { GitWork } from "../git/port.js";
 import { branchOfWork } from "../git/port.js";
-import { type WorkIdentity } from "../tracker/identity.js";
+import { workIdentityKey, type WorkIdentity } from "../tracker/identity.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { classifyCommand, type EffectAction } from "./effects.js";
@@ -125,6 +125,10 @@ export async function planContinuity(deps: ContinuityDeps, mode: "new" | "resume
           pause: pauseOf(deps, "journal-unreadable", `${facts.detail} — it cannot prove which effects were attempted`, facts.sessionId),
         };
     }
+  }
+
+  if (retry !== undefined && (retry.executorSessionId ?? retry.sessionId) !== facts.sessionId) {
+    return { decision: "pause", pause: pauseOf(deps, "session-identity", "the retry's owning session changed; inspect the call again", retry.sessionId) };
   }
 
   // Every non-safe call the session ran must be accounted for before it is
@@ -388,6 +392,31 @@ function startFirstSession(deps: ContinuityDeps, verdicts: Record<string, Effect
   return { decision: "launch", mode: "new", sessionId, intactEntries: 0 };
 }
 
+function checkDelegatedSessions(deps: ContinuityDeps, journal: EffectJournal): PauseRecord | null {
+  const children = journal.sessions.filter((entry) => entry.childOf !== undefined);
+  if (children.length === 0) return null;
+  const links = readSessionLinks(deps.workDir);
+  if (!links.intact) return pauseOf(deps, "link-missing", "the session-association journal is unreadable");
+  const identity = workIdentityKey(deps.work);
+  for (const child of children) {
+    const bound = links.links.some((link) => link.sessionId === child.childOf &&
+      link.attempt === child.attempt && workIdentityKey(link.work) === identity);
+    if (!bound || children.some((other) => other.sessionId === child.sessionId &&
+      (other.childOf !== child.childOf || other.attempt !== child.attempt))) {
+      return pauseOf(deps, "session-identity", "a delegated session has no unambiguous association with this Work", child.sessionId);
+    }
+    const file = findSessionFile(deps.sessionsDir, child.sessionId);
+    if (file === null) continue; // No transcript yet: the required guardrail still journals before every effect.
+    const inspection = inspectSessionFile(file, child.sessionId);
+    if (inspection.status !== "intact" && inspection.status !== "partial") {
+      return pauseOf(deps, "session-unreadable", "the delegated session cannot be inspected", child.sessionId);
+    }
+    const doubt = missingIntentDoubt(deps, child.sessionId, file, inspection, journal);
+    if (doubt !== null) return doubt;
+  }
+  return null;
+}
+
 type SettledEffects =
   | { settled: true; verdicts: Record<string, EffectVerdict> }
   | { settled: false; pause: PauseRecord };
@@ -404,6 +433,8 @@ async function settleOpenEffects(deps: ContinuityDeps): Promise<SettledEffects> 
   if (!journal.intact) {
     return { settled: false, pause: pauseOf(deps, "journal-unreadable", "the effect journal is incomplete or unparseable") };
   }
+  const childDoubt = checkDelegatedSessions(deps, journal);
+  if (childDoubt !== null) return { settled: false, pause: childDoubt };
   let recoveries: ReturnType<typeof readCallRecoveries>;
   try {
     recoveries = readCallRecoveries(deps.workDir);
@@ -428,6 +459,11 @@ async function settleOpenEffects(deps: ContinuityDeps): Promise<SettledEffects> 
     const evidence: SessionEvidence =
       closed === undefined ? sessionEvidenceFor(deps, intent) : { kind: "none", detail: "the conclusion is recorded" };
     if (intent.actions.length === 0) {
+      if (intent.delegation === "guarded-v1" && evidence.kind !== "result") {
+        // Dispatch itself is not an external effect. Every admitted child's
+        // effects are reconciled separately below; no terminal result is invented.
+        continue;
+      }
       const authorization = recoveryForIntent(recoveries, intent);
       if (authorization !== undefined && evidence.kind !== "result") {
         // Consent accepts uncertainty, never invents the original result.
@@ -548,15 +584,17 @@ function sessionEvidenceFor(deps: ContinuityDeps, intent: JournalIntent): Sessio
   if (!links.intact) return { kind: "none", detail: "the session-association journal is unreadable" };
   const link = linkForAttempt(links.links, deps.work, intent.attempt);
   if (link === null) return { kind: "none", detail: `attempt ${intent.attempt} has no recorded Pi session` };
-  if (link.sessionId !== intent.sessionId) {
+  const child = readEffectJournal(deps.workDir).sessions.some((entry) =>
+    entry.sessionId === intent.sessionId && entry.attempt === intent.attempt && entry.childOf === link.sessionId);
+  if (link.sessionId !== intent.sessionId && !child) {
     return {
       kind: "none",
       detail: `the intent belongs to session ${intent.sessionId}, not to the one attempt ${intent.attempt} is associated with`,
     };
   }
-  const file = findSessionFile(deps.sessionsDir, link.sessionId);
-  if (file === null) return { kind: "none", detail: `the session ${link.sessionId} is not on disk` };
-  const inspection = inspectSessionFile(file, link.sessionId);
+  const file = findSessionFile(deps.sessionsDir, intent.sessionId);
+  if (file === null) return { kind: "none", detail: `the session ${intent.sessionId} is not on disk` };
+  const inspection = inspectSessionFile(file, intent.sessionId);
   if (inspection.status !== "intact") {
     return { kind: "none", detail: `the session history is ${inspection.status}` };
   }
@@ -699,7 +737,7 @@ function guardrailState(
 ): GuardrailState {
   const previous = readGuardrailState(deps.workDir);
   const carried = previous !== null && previous.attempt === deps.attempt ? previous.verdicts : {};
-  return { version: 1, attempt: deps.attempt, sessionId, mode, verdicts: { ...carried, ...verdicts }, at: nowIso(deps) };
+  return { version: 1, generation: randomUUID(), attempt: deps.attempt, sessionId, mode, verdicts: { ...carried, ...verdicts }, at: nowIso(deps) };
 }
 
 function pauseOf(deps: ContinuityDeps, reason: PauseReason, detail: string, sessionId?: string): PauseRecord {

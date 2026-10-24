@@ -112,6 +112,7 @@ import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.
 import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
 import {
   clearPause,
+  readEffectJournal,
   knownAttempt,
   readPause,
   recheckablePause,
@@ -138,7 +139,8 @@ import {
   type LivenessProbe,
 } from "./state/liveness.js";
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
-import { appendAttemptEvent } from "./runtime/attempt-logs.js";
+import { appendAttemptEvent, eventLogName } from "./runtime/attempt-logs.js";
+import { processRecoveryRequests } from "./recover.js";
 import { readTurnModelProviderError, type ModelProviderFailure } from "./runtime/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
@@ -719,6 +721,12 @@ export class SweepEngine {
     // derivation reads the verdict (resume, block, or uncertainty) instead of
     // a charged round that never published. Unknown liveness holds it too
     // (issue 118): a worker may still be writing the branch its verdict reads.
+    if (!suspended && !this.stopping) {
+      await processRecoveryRequests(config, {
+        probe: this.deps.probe ?? (async () => []), inFlight,
+        log: (line) => this.log(line),
+      });
+    }
     if (!suspended) await this.reconcileRepairAttempts(allReserved, inFlight);
 
     // A stop whose confirmation failed on the previous invocation is settled
@@ -1947,12 +1955,6 @@ export class SweepEngine {
     // restarts the work blind (issue 112).
     if (repair !== undefined) {
       repair.localWork = await this.inspectLocalWork(work);
-      // The round is charged BEFORE the session (issue 107) and the attempt's
-      // facts are recorded with it (issue 112): the observed head, the evidence
-      // and the commit the branch already holds. A death mid-round refunds the
-      // round — but only once publication is provably absent (the sweep's
-      // reconciliation), never by presumption.
-      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
     }
     // The launch material (ticket 17): the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
@@ -2005,7 +2007,12 @@ export class SweepEngine {
       }
     }
     if (launchable.callRecovery !== undefined) {
-      material.callRetry = { id: launchable.callRecovery.id, command: launchable.callRecovery.command, cwd: launchable.callRecovery.cwd, reason: launchable.callRecovery.reason };
+      material.callRetry = {
+        id: launchable.callRecovery.id, command: launchable.callRecovery.command,
+        cwd: launchable.callRecovery.cwd, reason: launchable.callRecovery.reason,
+        ...(launchable.callRecovery.tool === undefined ? {} : { tool: launchable.callRecovery.tool, input: launchable.callRecovery.input! }),
+        ...(launchable.callRecovery.executorSessionId === undefined ? {} : { sourceSessionId: launchable.callRecovery.sessionId }),
+      };
     }
     // Every relaunch of the same attempt continues ITS session (ADR 0005):
     // a recovery, a model provider retry and the resume after the operator's
@@ -2087,20 +2094,40 @@ export class SweepEngine {
     // it by a previous requested stop has done its job (or the record is stale on a
     // fresh claim of the same number), so it never excuses a later, unexpected
     // interruption of this attempt.
+    const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
 
     if (launchable.callRecovery !== undefined) clearPause(dir);
+    // Charge only after continuity allowed the launch. A pause before a worker
+    // exists is not an unpublished Repair and cannot consume a round or fall.
+    if (repair !== undefined) {
+      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
+    }
+    if (this.stopping) {
+      await this.settleStoppedAdmission(entry, facts.attempt);
+      return null;
+    }
     entry.launched = true;
-    const result = await runtime.launch({
-      work,
-      workDir: dir,
-      branch: prepared.branch,
-      repoDir: prepared.repoDir,
-      baseBranch,
-      attempt: facts.attempt,
-      session: { mode: continuity.mode, sessionId: continuity.sessionId },
-      material,
-    });
+    let result: SessionResult;
+    try {
+      result = await runtime.launch({
+        work,
+        workDir: dir,
+        branch: prepared.branch,
+        repoDir: prepared.repoDir,
+        baseBranch,
+        attempt: facts.attempt,
+        session: { mode: continuity.mode, sessionId: continuity.sessionId },
+        material,
+      });
+    } catch (error) {
+      if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
+          ownWrittenOutcome(await readOutcomeRecord(dir), facts.attempt) === null &&
+          (await readRecoveryLedger(dir)).lastStop === null) {
+        await recordStopRequest(dir, facts.attempt);
+      }
+      throw error;
+    }
     this.launched.push(result);
 
     return this.collect(launchable, result, facts.attempt, facts.previousFall);
@@ -2445,6 +2472,24 @@ export class SweepEngine {
       if (inFlight.has(key)) continue;
 
       const stored = await readRepairCycle(work.dir);
+      const requestedStop = stored.attempt !== null && await this.operatorStoppedAttempt(work.dir, stored.attempt.attempt);
+      if (stored.attempt !== null && !requestedStop && stored.attempt.publication === "unknown" &&
+          !existsSync(join(work.dir, eventLogName(stored.attempt.attempt)))) {
+        const journal = readEffectJournal(work.dir);
+        const record = await readOutcomeRecord(work.dir);
+        if (journal.intact && !journal.sessions.some((entry) => entry.attempt === stored.attempt!.attempt) &&
+            record?.attempt !== stored.attempt.attempt) {
+          await writeRepairCycle(work.dir, {
+            ...stored, usedRounds: Math.max(0, stored.usedRounds - 1), lastEvidence: null, attempt: null,
+          });
+          this.log(`repair attempt ${stored.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`);
+          continue;
+        }
+      }
+      if (stored.attempt !== null && requestedStop &&
+          ownWrittenOutcome(await readOutcomeRecord(work.dir), stored.attempt.attempt) === null) {
+        continue; // The same Repair is stopped, not finished: no publication verdict or fall yet.
+      }
       if (stored.attempt !== null && isSettledPublication(stored.attempt.publication)) continue;
       // A work that never ran a repair round has nothing to reconcile — no git
       // inspection is paid for it on every sweep.
@@ -2727,6 +2772,7 @@ export class SweepEngine {
       record,
       prOpen: prConfirmed,
       prMerged: pr !== null && pr.merged,
+      requestedStop: this.stopping || await this.operatorStoppedAttempt(dir, attempt),
       blockedLabelOnIssue,
       consecutiveFall,
       attempt,

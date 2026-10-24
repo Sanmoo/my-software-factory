@@ -1,5 +1,9 @@
 # An operator may authorize one exact retry without inventing an outcome
 
+[ADR 0008](0008-stop-and-delegation-continuity.md) extends this decision to
+exact delegation input, guarded child calls and requests processed by the active
+lock-owning run; the bash-only and stopped-run restrictions below are historical.
+
 An interrupted command with no terminal result can leave continuity permanently
 paused even after its worker is gone. The operator may explicitly accept the
 risk of duplicated effects for that exact bash command, working directory,

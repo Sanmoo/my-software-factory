@@ -143,6 +143,7 @@ export function inspectSessionFile(path: string, expectedId: string): SessionIns
 
 /** One bash call the session prefix records, with its recorded result. */
 export interface SessionToolCall {
+  input?: Record<string, JsonValue>;
   callId: string;
   tool: string;
   command: string;
@@ -192,7 +193,8 @@ export function sessionToolCalls(path: string, intactEntries: number): SessionTo
             : "";
         if (callId === null || name === null) continue;
         const cwd = args !== null && typeof args === "object" && !Array.isArray(args) && typeof args?.["cwd"] === "string" ? args["cwd"] : undefined;
-        calls.push({ callId, tool: name, command, ...(cwd === undefined ? {} : { cwd }), answered: false });
+        const input = name !== "bash" && args !== null && typeof args === "object" && !Array.isArray(args) ? args : undefined;
+        calls.push({ callId, tool: name, command, ...(input === undefined ? {} : { input }), ...(cwd === undefined ? {} : { cwd }), answered: false });
       }
     } else if (role === "toolResult" && typeof message["toolCallId"] === "string") {
       answered.add(message["toolCallId"]);

@@ -43,6 +43,8 @@ per-tool replay policy) only pay off once the factory has durable work of its
 own: recoverable delegations/subagents and effects internal to a run, none of
 which the experiment exercised. Revisit C only if such a requirement appears,
 and then the experiment to run is the delegation one, not this one.
+[ADR 0008](0008-stop-and-delegation-continuity.md) records that narrower native
+delegation experiment and the required child guardrail, without adopting durable.
 
 Consequences, stated so nobody rediscovers them as bugs:
 

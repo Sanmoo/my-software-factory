@@ -51,6 +51,8 @@ export interface JournalSessionStart {
   at: string;
   attempt: number;
   sessionId: string;
+  /** An image-required guardrail bound this child's tools to the Work's journal. */
+  childOf?: string;
 }
 
 /** Written BEFORE the action it protects. */
@@ -69,6 +71,10 @@ export interface JournalIntent {
   reason?: string;
   /** Consumes this operator authorization BEFORE the exact retry dispatch. */
   retryAuthorization?: string;
+  retryInput?: string;
+  generation?: string;
+  /** Dispatch has no unguarded child: each child's effects precede execution in this journal. */
+  delegation?: "guarded-v1";
 }
 
 /** Written after the action reported back; its absence is the interrupted window. */
@@ -94,7 +100,7 @@ export interface JournalResult {
 export type JournalLine = JournalSessionStart | JournalIntent | JournalResult;
 
 export interface EffectJournal {
-  /** False when a line did not parse: the journal cannot prove anything. */
+  /** False when bytes cannot be read or a line did not parse: neither proves absence. */
   intact: boolean;
   sessions: JournalSessionStart[];
   intents: JournalIntent[];
@@ -108,6 +114,8 @@ export type EffectVerdict = "realized" | "absent";
 
 export interface GuardrailState {
   version: 1;
+  /** Shared dispatch allowance for the parent and every child of this launch. */
+  generation?: string;
   attempt: number;
   sessionId: string;
   mode: "new" | "resume";
@@ -272,9 +280,13 @@ export function appendJournalResult(workDir: string, entry: Omit<JournalResult, 
  *  counts as an incomplete write: the journal is then NOT intact, because it
  *  may have lost the intent that protects an effect. */
 export function readEffectJournal(workDir: string): EffectJournal {
-  const raw = readIfExists(join(workDir, EFFECT_JOURNAL_FILENAME));
   const journal: EffectJournal = { intact: true, sessions: [], intents: [], results: [], pending: [] };
-  if (raw === null) return journal;
+  let raw: string;
+  try { raw = readFileSync(join(workDir, EFFECT_JOURNAL_FILENAME), "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") journal.intact = false;
+    return journal;
+  }
 
   const lines = raw.split("\n");
   const trailing = lines.pop() ?? "";
@@ -321,7 +333,8 @@ export function readGuardrailState(workDir: string): GuardrailState | null {
   if (raw === null) return null;
   const record = parseJsonObject(raw);
   if (record === null) return null;
-  if (record["version"] !== 1 || typeof record["sessionId"] !== "string" || typeof record["attempt"] !== "number") {
+  if (record["version"] !== 1 || typeof record["sessionId"] !== "string" || typeof record["attempt"] !== "number" ||
+      (record["generation"] !== undefined && (typeof record["generation"] !== "string" || record["generation"] === ""))) {
     return null;
   }
   const verdicts: Record<string, EffectVerdict> = {};
@@ -343,6 +356,7 @@ export function readGuardrailState(workDir: string): GuardrailState | null {
     mode: record["mode"] === "resume" ? "resume" : "new",
     verdicts,
     at: typeof record["at"] === "string" ? record["at"] : "",
+    ...(typeof record["generation"] === "string" ? { generation: record["generation"] } : {}),
   };
 }
 
@@ -506,7 +520,8 @@ function isJournalLine(value: unknown): value is JournalLine {
   const record = value as Record<string, unknown>;
   const type = record["type"];
   if (type === "session-start") {
-    return typeof record["attempt"] === "number" && typeof record["sessionId"] === "string";
+    return typeof record["attempt"] === "number" && typeof record["sessionId"] === "string" &&
+      (record["childOf"] === undefined || (typeof record["childOf"] === "string" && record["childOf"] !== record["sessionId"]));
   }
   if (type === "intent") {
     return (
@@ -516,6 +531,9 @@ function isJournalLine(value: unknown): value is JournalLine {
       typeof record["callId"] === "string" &&
       (record["safety"] === "effect" || record["safety"] === "unknown") &&
       Array.isArray(record["actions"]) &&
+      (record["retryInput"] === undefined || typeof record["retryInput"] === "string") &&
+      (record["generation"] === undefined || (typeof record["generation"] === "string" && record["generation"] !== "")) &&
+      (record["delegation"] === undefined || (record["delegation"] === "guarded-v1" && record["tool"] === "subagent" && record["safety"] === "unknown" && record["actions"].length === 0)) &&
       (record["retryAuthorization"] === undefined || (typeof record["retryAuthorization"] === "string" && record["retryAuthorization"] !== ""))
     );
   }

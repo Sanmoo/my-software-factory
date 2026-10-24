@@ -136,7 +136,13 @@ Reading the real state (the remote branch, the PR, the conversation, the labels)
 _Avoid_: Verification, when no external state is read.
 
 **Retry authorization**:
-The operator's explicit acceptance of duplicate-effect risk for one exact interrupted command whose outcome remains unknown. It permits at most one repetition, preserves the original uncertainty, and is neither Reconciliation nor evidence that an effect was absent.
+The operator's explicit acceptance of duplicate-effect risk for one exact interrupted tool call whose outcome remains unknown. It permits at most one repetition, preserves the original uncertainty, and is neither Reconciliation nor evidence that an effect was absent.
+
+**Recovery request**:
+An operator's request for the active factory to validate a proposed Retry authorization. It is not permission until the factory accepts it against the current evidence and worker liveness.
+
+**Guarded delegation**:
+A delegation whose children's external effects remain subject to the factory's tracking and replay protection. Its dispatch is not a child outcome or proof that those effects succeeded.
 
 **Continuity pause**:
 The persisted hold on a work whose attempt cannot safely continue because its session or an external effect remains unresolved; it survives restarts, marks the ticket blocked and asks for help once. It spends no attempt or recovery and clears when reliable evidence resolves the cause, without requiring another human answer.
@@ -220,7 +226,7 @@ An automatic reactivation of reserved work to address confirmed PR conflicts or 
 What the agents themselves write under the dirs the session binds (the session transcripts, the work artifacts): the only input of the idle limit, so a worker waiting on its reviewer subagents is not idle and an unconditional heartbeat is not work.
 
 **Repair fall**:
-A repair attempt that ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall.
+A repair attempt that ended without publishing (abruptly or by a normal end), whose impediment still exists, and without a concurrent change on the remote: its round is returned to the budget and it counts against a separate limit, so two consecutive falls block the work; the open PR never hides the fall. A Requested stop or a round that never started is not a Repair fall.
 
 **Repair premise**:
 The PR facts that opened a Repair round: the conflict with the base and the required checks that failed. The round re-reads them before spending work and before asking for help; a premise that cannot be re-read is never taken for a confirmed absence.

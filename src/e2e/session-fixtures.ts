@@ -89,7 +89,7 @@ export interface SeededCallResult {
  *  the terminal result Pi persisted for it, as `result` describes it. */
 export function seedSessionToolCall(
   session: SeededSession,
-  call: { callId: string; command: string; answered: boolean; tool?: string; result?: SeededCallResult },
+  call: { callId: string; command: string; answered: boolean; tool?: string; input?: Record<string, unknown>; result?: SeededCallResult },
 ): void {
   const entries: Array<Record<string, unknown>> = [
     {
@@ -100,7 +100,7 @@ export function seedSessionToolCall(
       message: {
         role: "assistant",
         content: [
-          { type: "toolCall", id: call.callId, name: call.tool ?? "bash", arguments: { command: call.command } },
+          { type: "toolCall", id: call.callId, name: call.tool ?? "bash", arguments: call.input ?? { command: call.command } },
         ],
       },
     },
