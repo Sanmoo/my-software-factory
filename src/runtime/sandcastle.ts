@@ -924,6 +924,7 @@ function containerNameOf(work: WorkIdentity, attempt: number): string {
   return `work-${name}-attempt-${attempt}`;
 }
 
+
 export async function workerToken(account: string): Promise<string> {
   const env = { ...process.env };
   delete env.GH_TOKEN;

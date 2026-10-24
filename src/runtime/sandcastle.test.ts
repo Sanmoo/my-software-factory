@@ -22,6 +22,7 @@ import {
   GUARDRAIL_CONTAINER_FILE,
   defaultPreflight,
   dockerSocketFromHost,
+  retroAnchorDir,
   stageAgentFiles,
   unixSocketPath,
   workerFlagArgs,
@@ -46,6 +47,46 @@ import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
  */
 
 const MODEL = "opencode-go/glm-5.3-flash";
+
+describe("the clone a retrospective anchors in (issue 141)", () => {
+  let reposDir: string;
+
+  beforeEach(() => {
+    reposDir = mkdtempSync(join(tmpdir(), "msf-retro-anchor-"));
+  });
+
+  afterEach(() => {
+    rmSync(reposDir, { recursive: true, force: true });
+  });
+
+  test("the window's own clone is used, in the window's order", () => {
+    mkdirSync(join(reposDir, "Sanmoo#other"));
+    mkdirSync(join(reposDir, "Sanmoo#my-tasks"));
+
+    assert.equal(
+      retroAnchorDir(reposDir, ["Sanmoo/other", "Sanmoo/my-tasks"]),
+      join(reposDir, "Sanmoo#other"),
+      "the first repo of the window that has a clone",
+    );
+  });
+
+  test("a destination on another code-host site still finds its clone", () => {
+    mkdirSync(join(reposDir, "sanmoo#my-tasks@app.example.com"));
+
+    assert.equal(
+      retroAnchorDir(reposDir, ["missing/repo", "sanmoo/my-tasks"]),
+      join(reposDir, "sanmoo#my-tasks@app.example.com"),
+      "the clone dir carries the site's suffix; the round never guesses a site",
+    );
+  });
+
+  test("no clone (or no repos dir) means no anchor — the round says why instead of inventing one", () => {
+    mkdirSync(join(reposDir, "Sanmoo#unrelated"));
+
+    assert.equal(retroAnchorDir(reposDir, ["Sanmoo/my-tasks"]), null);
+    assert.equal(retroAnchorDir(join(reposDir, "absent"), ["Sanmoo/my-tasks"]), null);
+  });
+});
 
 /** The daemon socket the launch binds (ADR 0003) — pinned like the token:
  *  the mechanics tests never read the machine's real socket. */

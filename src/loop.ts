@@ -406,7 +406,6 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
   return a.createdAt.localeCompare(b.createdAt) || workKeyOf(a.work).localeCompare(workKeyOf(b.work));
 }
 
-
 /**
  * The pause as it is PERSISTED and announced, now that the factory knows which
  * work and attempt it is pausing, and with its occurrence identity (issue 174).

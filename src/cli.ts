@@ -121,7 +121,6 @@ export async function wireRunDeps(
   };
 }
 
-<<<<<<< HEAD
 /**
  * The production launch composition: config → SandcastleRuntime options.
  * Exported so the wiring itself is testable without a container: the model,
@@ -160,15 +159,7 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
-/**
- * The CLI's operational log: stamped lines also land in the workspace, so a
- * retrospective round reads the factory's own history — mounted read-only —
- * instead of trusting the round's summary alone. A workspace it cannot write
- * never takes the factory down: the console is the primary log.
- */
-=======
 /** The CLI's log: the console plus the workspace record a round reads. */
->>>>>>> a361dd5 (fix(141): the rebase adaptation's review — any source in the window, an unverifiable window waits)
 function writeOperationalLog(workspace: WorkspaceLayout, message: string): void {
   console.log(message);
   appendOperationalLog(workspace.root, message);
@@ -335,9 +326,9 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
 /**
  * `msf retro [<work>] [--language <tag>] [--config <path>]` — the operator's
  * manual trigger of a retrospective round (issue 141). A full window since the
- * last report ignores the threshold; `<work>` (an "<owner>/<name>#<n>" key)
- * analyzes exactly that finished work. The round shares the run exclusivity:
- * it never overlaps a run of the same config.
+ * last report ignores the threshold; `<work>` (the work's on-disk key) analyzes
+ * exactly that finished work. The round shares the run exclusivity: it never
+ * overlaps a run of the same config.
  */
 async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> {
   const config = loadConfigFrom(process.cwd(), args.configPath);
@@ -350,7 +341,10 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
 
   const work = args.work;
   if (work !== undefined && anchorOfKey(work) === null) {
-    throw new Error(`"${work}" is not a work key — use the key msf status shows, e.g. Sanmoo/my-tasks#12`);
+    throw new Error(
+      `"${work}" is not a work key — a work key is the work's on-disk name, e.g. Sanmoo/my-tasks#12 ` +
+        "(an archived work's directory carries its finish date; drop it)",
+    );
   }
 
   const workspace = ensureWorkspace(config.workspace);
@@ -368,6 +362,16 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
     const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
+    // The window's premise is that no live worker carries its works (issue
+    // 141). An empty workspace needs no premise — there is nothing to analyze
+    // either way — but a window with works cannot be launched on a guess: the
+    // sweep defers for the same reason, and the manual trigger is no exception.
+    if (observation.state !== "known" && finished.length > 0) {
+      throw new Error(
+        `Docker did not answer (${observation.reason}) — a retrospective window cannot confirm that no live ` +
+          "worker carries its works, so no round was launched; retry when Docker answers",
+      );
+    }
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),

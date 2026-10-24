@@ -18,12 +18,8 @@ export interface CliArgs {
 const usage =
   "usage: msf run [--once] [--config <path>] [--runtime <name>]\n" +
   "       msf status [--all] [--config <path>]\n" +
-<<<<<<< HEAD
   "       msf recover <work-key> [--config <path>] [--retry <review> --accept-duplicate-risk --reason <text>]\n" +
-  "       msf retro [<owner>/<name>#<number>] [--language <tag>] [--config <path>]";
-=======
   "       msf retro [<work>] [--language <tag>] [--config <path>]";
->>>>>>> a361dd5 (fix(141): the rebase adaptation's review — any source in the window, an unverifiable window waits)
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const [command, ...args] = argv;
