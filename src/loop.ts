@@ -90,10 +90,9 @@ import {
   recordFailure,
   recordInterruptionStop,
   recordStopRequest,
-  recordUnconfirmedStop,
-  refundRecovery,
   type RecoveryDecision,
 } from "./pool/recovery.js";
+import { OperatorStop, stopConfirmed, stopHoldReason, type StopLaunch, type StopReport } from "./pool/stop.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
 import {
   isModelProviderFailureSettled,
@@ -105,7 +104,6 @@ import {
   settleModelProviderFailure,
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
-import { COOPERATIVE_STOP_MS } from "./stop-signals.js";
 import { deferred } from "./runtime/deferred.js";
 import { planContinuity, recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
@@ -253,42 +251,6 @@ export interface StopOptions {
   escalate?: AbortSignal;
   /** How long the cooperative phase lasts; defaults to ten seconds. */
   cooperativeMs?: number;
-}
-
-/**
- * The facts of one requested stop, for the operator and for the exit status:
- * the works the deadline/second signal forced, and the works whose worker the
- * factory could NOT confirm gone (those are held on the next run).
- */
-export interface StopReport {
-  forced: string[];
-  unconfirmed: Array<{ key: string; because: string }>;
-  /** Why the liveness probe could not answer: the factory cannot say that no
-   *  worker survives, and never calls a stop safe on a guess. */
-  unreadBecause: string | null;
-}
-
-/** The one verdict of a stop: safe only when every worker's end was confirmed
- *  and the factory could see the workspace while it concluded. */
-export function stopConfirmed(report: StopReport): boolean {
-  return report.unconfirmed.length === 0 && report.unreadBecause === null;
-}
-
-/** What the engine tracks of one launch while it may still be carrying a worker. */
-interface InFlightLaunch {
-  /** The Work as the reservation names it — its source is never re-derived. */
-  work: WorkIdentity;
-  /** The work's registry dir — where the stop evidence is persisted. */
-  dir: string;
-  /** The attempt the launch is on, known as soon as the registry answers. */
-  attempt: number | null;
-  /** The attempt a recovery continues, known before the registry is read. */
-  attemptHint?: number;
-  /** The worker session really started (the runtime was called). */
-  launched: boolean;
-  /** The ledger event of a recovery granted to this admission, so a return
-   *  removes exactly it: non-null while the grant may still be unused. */
-  recoveryIndex: number | null;
 }
 
 type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
@@ -554,19 +516,14 @@ export class SweepEngine {
   private parkedQueue: Launchable[] = [];
   private readonly pending = new Set<Promise<void>>();
   private stopping = false;
-  /** The requested stop in progress (issue #146); null before any request. */
-  private requestedStopRun: Promise<StopReport> | null = null;
   /** Resolves the moment a requested stop begins — the boundary's wake. */
   private readonly requestedStopBegan = deferred();
   /** The launches that may still be carrying a worker, by work key. */
-  private readonly inFlight = new Map<string, InFlightLaunch>();
+  private readonly inFlight = new Map<string, StopLaunch>();
   /** Waiters of the backoff wait — the requested stop ends the wait at once. */
   private readonly stopWaiters: Array<() => void> = [];
-  /** Waiters of the cooperative phase — the escalation ends it at once. */
-  private readonly escalationWaiters: Array<() => void> = [];
-  /** The second signal arrived: force what the cooperative window left. */
-  private escalated = false;
-  private readonly cooperativeMs: number;
+  /** The operator's requested stop: the whole protocol lives in the module. */
+  private readonly operatorStop: OperatorStop;
   /** The works held by an unconfirmed stop, with the reason last logged. */
   private readonly reportedStopHolds = new Map<string, string>();
   private readonly endedWaiters: Array<{ fire: (event: WakeEvent) => void }> = [];
@@ -619,7 +576,16 @@ export class SweepEngine {
   ) {
     this.slots = new Slots(deps.config.concurrency);
     this.log = operationalLog(deps.log);
-    this.cooperativeMs = stop.cooperativeMs ?? COOPERATIVE_STOP_MS;
+    this.operatorStop = new OperatorStop({
+      workspace: deps.workspace,
+      runtime: deps.runtime,
+      probe: async () => {
+        await this.observeLiveness();
+        return this.liveness;
+      },
+      log: this.log,
+      ...(stop.cooperativeMs === undefined ? {} : { cooperativeMs: stop.cooperativeMs }),
+    });
     // The signals are listened to from the START of the run (issue #146): a
     // stop requested during the derivation, before the first admission, is
     // honoured exactly like one during a worker.
@@ -630,8 +596,8 @@ export class SweepEngine {
     } else {
       stop.signal?.addEventListener("abort", () => void this.beginRequestedStop(), { once: true });
     }
-    if (stop.escalate?.aborted === true) this.escalate();
-    else stop.escalate?.addEventListener("abort", () => this.escalate(), { once: true });
+    if (stop.escalate?.aborted === true) this.operatorStop.escalate();
+    else stop.escalate?.addEventListener("abort", () => this.operatorStop.escalate(), { once: true });
   }
 
   get isStopping(): boolean {
@@ -1405,192 +1371,25 @@ export class SweepEngine {
   }
 
   /**
-   * The cooperative window ends here (issue #146): a second signal forces the
-   * remaining workers NOW, without skipping the confirmation of their end.
-   */
-  private escalate(): void {
-    this.escalated = true;
-    for (const fire of this.escalationWaiters.splice(0)) fire();
-  }
-
-  /**
    * The operator's requested stop: admissions close, the evidence of the stop
-   * is persisted, the workers are asked to end, and the factory waits the
+   * is persisted, the workers are asked to end, and the module waits the
    * cooperative window (or the escalation) before forcing what remains. The
-   * returned report says what was forced and what could not be confirmed.
+   * sweep only supplies the facts of this run and invokes the module.
    */
   beginRequestedStop(): Promise<StopReport> {
-    if (this.requestedStopRun !== null) return this.requestedStopRun;
-    this.stopping = true;
-    // A backoff waiting to relaunch is a pending admission: it ends with the
-    // admission, never after it.
-    for (const fire of this.stopWaiters.splice(0)) fire();
-    this.requestedStopBegan.resolve();
-    this.requestedStopRun = this.runRequestedStop();
-    return this.requestedStopRun;
-  }
-
-  private async runRequestedStop(): Promise<StopReport> {
-    const entries = [...this.inFlight.values()];
-    this.log(
-      `stop requested: no new worker is admitted; asking ${entries.length} in-flight launch(es) to stop ` +
-        `(cooperative window ${formatDuration(this.cooperativeMs)})`,
-    );
-    // The workers a previous factory process left (issue 118) are the
-    // operator's workers too: this process has no session to ask, so they get
-    // the same window to end on their own and are forced with the rest.
-    if (this.survivors.size > 0) {
-      this.log(
-        `the stop also covers ${this.survivors.size} surviving worker(s) of a previous run (${byKey(this.survivors.keys()).join(", ")}) — ` +
-          "they are not this process's sessions, so they are never asked, only waited for and then forced",
-      );
+    if (!this.stopping) {
+      this.stopping = true;
+      // A backoff waiting to relaunch is a pending admission: it ends with the
+      // admission, never after it.
+      for (const fire of this.stopWaiters.splice(0)) fire();
+      this.requestedStopBegan.resolve();
     }
-
-    // The evidence of the requested stop is persisted BEFORE any worker is
-    // asked to end: a factory that dies inside the requested stop still lets the
-    // next invocation resume the attempt without charging it. A recovery
-    // granted but never launched is returned — the stop cancelled it.
-    for (const entry of entries) {
-      const attempt = entry.attempt ?? (await this.plannedAttempt(entry));
-      if (attempt === null) continue;
-      entry.attempt = attempt;
-      if (await this.settleStoppedAdmission(entry, attempt)) {
-        this.log(
-          `the recovery granted to ${renderWorkIdentity(entry.work)} is returned: the requested stop cancelled its relaunch`,
-        );
-      }
-    }
-
-    // The runtime's stop request speaks the Work identity — a ticket from any
-    // source and the destination are addressable without a GitHub issue number.
-    for (const entry of entries) {
-      this.deps.runtime.requestStop(entry.work);
-    }
-
-    // Whatever still carries a work is forced now. The evidence of the stop
-    // lands on a survivor's attempt BEFORE it is ended, exactly as for the
-    // launches below: the next invocation resumes it instead of charging it.
-    await this.awaitCooperativeWindow();
-    const doomed = await this.stopCandidates(entries);
-    const own = new Set(entries.map((entry) => workKeyOf(entry.work)));
-    for (const key of doomed) if (!own.has(key)) await this.recordStopOf(key);
-
-    const forced: string[] = [];
-    if (doomed.length > 0) {
-      this.log(
-        `the cooperative phase is over: forcing the stop of ${doomed.length} worker(s) now — ` +
-          "the end of each one is still confirmed before the factory calls the stop safe",
-      );
-    }
-    await Promise.all(
-      doomed.map(async (key) => {
-        const work = workOfKey(key);
-        if (work === null) return undefined;
-        try {
-          await this.deps.runtime.forceStop(work);
-          forced.push(key);
-          this.log(`forced stop of ${key}: its worker is gone`);
-        } catch (error) {
-          this.log(`forcing ${key} failed: ${describeError(error)}`);
-        }
-        return undefined;
-      }),
-    );
-
-    const { unconfirmed, observation } = await this.confirmStop(entries);
-    const unreadBecause = observation.state === "unknown" ? observation.reason : null;
-    if (unreadBecause !== null) {
-      this.log(
-        `stop NOT confirmed: the worker liveness could not be read (${unreadBecause}) — the factory cannot ` +
-          "say that no worker survives; the next run asks the same question again",
-      );
-    }
-    return { forced, unconfirmed, unreadBecause };
-  }
-
-  /**
-   * Every worker this stop is answerable for (issue #146), with the attempt
-   * already known when the caller has it: the launches this run carried, the
-   * survivors it recognised (issue 118) — which it knows were alive even when
-   * the probe stops answering — and whatever a live container names right now.
-   * An unreadable probe cannot LOSE a known worker, it only fails to add one.
-   */
-  private async stopWorkers(
-    entries: readonly InFlightLaunch[],
-  ): Promise<{ workers: Map<string, number | null>; observation: LivenessObservation }> {
-    const workers = new Map<string, number | null>();
-    for (const entry of entries) {
-      if (entry.launched) workers.set(workKeyOf(entry.work), entry.attempt);
-    }
-    for (const key of this.survivors.keys()) if (!workers.has(key)) workers.set(key, null);
-    await this.observeLiveness();
-    const observation = this.liveness;
-    if (observation.state === "known") {
-      for (const worker of observation.workers) if (!workers.has(worker.key)) workers.set(worker.key, null);
-    }
-    return { workers, observation };
-  }
-
-  /**
-   * The works the stop has to end: every worker the stop knows about — the
-   * survivors of a previous process included, which it can only end, never
-   * ask — minus the launches that really ended. A launch whose end the window
-   * saw is gone, and forcing it again would only race a container that is
-   * already going away; one whose container the probe still names is forced.
-   */
-  private async stopCandidates(entries: readonly InFlightLaunch[]): Promise<string[]> {
-    const { workers, observation } = await this.stopWorkers(entries);
-    const live =
-      observation.state === "known" ? new Set(observation.workers.map((worker) => worker.key)) : EMPTY_KEYS;
-    for (const entry of entries) {
-      const key = workKeyOf(entry.work);
-      if (this.inFlight.has(key) || live.has(key)) continue;
-      workers.delete(key);
-    }
-    return byKey(workers.keys());
-  }
-
-  /** Persist the operator's stop on a work the stop ends: the next
-   *  invocation resumes that attempt rather than charging it a recovery. A work
-   *  with no registry dir has nothing to resume. */
-  private async recordStopOf(key: string): Promise<void> {
-    const attempt = await this.lastAttemptOf(key);
-    if (attempt === null) return;
-    await recordStopRequest(workDirOfKey(this.deps.workspace, key), attempt);
-  }
-
-  /**
-   * The attempt a work is on right now, or null when the registry has no dir
-   * for it. A bare reservation (a claim whose worker never wrote anything) is
-   * on attempt 1 — the number its first launch would carry — so the stop is
-   * recorded for it and its resume is free.
-   */
-  private async lastAttemptOf(key: string): Promise<number | null> {
-    const dir = workDirOfKey(this.deps.workspace, key);
-    if (!existsSync(dir)) return null;
-    return (await readLastAttempt(dir)) ?? 1;
-  }
-
-  /**
-   * Wait out the cooperative phase: until every launch of this engine settled,
-   * the window ran out, or the second signal escalated it — whichever is first.
-   * Callers only need the wait to be over; why it ended is the deadline's or the
-   * escalation's own fact, not a value to branch on.
-   */
-  private async awaitCooperativeWindow(): Promise<void> {
-    const escalation = deferred();
-    if (this.escalated) escalation.resolve();
-    else this.escalationWaiters.push(escalation.resolve);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, this.cooperativeMs);
+    return this.operatorStop.begin({
+      launches: [...this.inFlight.values()],
+      survivors: () => this.survivors.keys(),
+      isInFlight: (key) => this.inFlight.has(key),
+      settled: () => this.waitPending(),
     });
-    try {
-      await Promise.race([this.waitPending(), deadline, escalation.promise]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      dropWaiter(this.escalationWaiters, escalation.resolve);
-    }
   }
 
   /** Wait until no launch of this engine is pending, failures included. */
@@ -1600,83 +1399,15 @@ export class SweepEngine {
     }
   }
 
-  /**
-   * The confirmation the factory never skips (issue #146): no worker of this
-   * workspace may survive — neither the launches this process started nor the
-   * ones it found alive (issue 118). The liveness probe answers, freshly,
-   * because the workers just ended or were forced; an unreadable answer is
-   * uncertainty, never an empty factory. An unconfirmed work is persisted so
-   * the next invocation holds it.
-   */
-  private async confirmStop(
-    entries: readonly InFlightLaunch[],
-  ): Promise<{ unconfirmed: Array<{ key: string; because: string }>; observation: LivenessObservation }> {
-    const { workers: answerable, observation } = await this.stopWorkers(entries);
-
-    const unconfirmed: Array<{ key: string; because: string }> = [];
-    for (const [key, knownAttempt] of answerable) {
-      const because = this.stopHoldReason(observation, key);
-      if (because === null) continue;
-      unconfirmed.push({ key, because });
-      const attempt = knownAttempt ?? (await this.lastAttemptOf(key));
-      if (attempt !== null) {
-        await recordUnconfirmedStop(workDirOfKey(this.deps.workspace, key), attempt, because);
-      }
-      this.log(
-        `cannot confirm the stop of ${key}: ${because} — the work will not relaunch until a worker is known to be gone`,
-      );
-    }
-
-    if (unconfirmed.length > 0) {
-      this.log(
-        `stop NOT confirmed for ${unconfirmed.length} work(s) — the next run holds them until the worker is known gone`,
-      );
-    } else if (observation.state === "known" && answerable.size === 0) {
-      this.log("stop confirmed: no worker had started and none survives");
-    } else if (observation.state === "known") {
-      this.log(`stop confirmed: every worker ended and none survives (${answerable.size} checked)`);
-    }
-    return { unconfirmed, observation };
-  }
-
-  /**
-   * A stop cancelled this admission before any worker existed: the granted
-   * recovery is returned and the requested stop is (re)recorded, so the next
-   * invocation resumes the attempt for free. The grant's own event index makes
-   * it idempotent — the requested stop and the admission may both reach it,
-   * and neither can return an earlier, legitimate recovery. Returns whether a
-   * grant was actually returned.
-   */
-  private async settleStoppedAdmission(entry: InFlightLaunch, attempt: number): Promise<boolean> {
-    const grant = entry.recoveryIndex !== null && !entry.launched ? entry.recoveryIndex : null;
-    entry.recoveryIndex = null;
-    const refunded = grant === null ? false : await refundRecovery(entry.dir, attempt, grant);
-    await recordStopRequest(entry.dir, attempt);
-    return refunded;
-  }
-
-  /** The attempt the pending launch would use, read from the registry. A work
-   *  with no registry dir left no reservation behind: nothing to reconcile, so
-   *  no stop evidence is recorded for it. */
-  private async plannedAttempt(entry: InFlightLaunch): Promise<number | null> {
-    if (!existsSync(entry.dir)) return null;
-    try {
-      const facts = await readLaunchFacts(entry.dir, entry.attemptHint);
-      return facts.attempt;
-    } catch {
-      return null;
-    }
-  }
-
   /** The boundary of `run --once`: the launch settling, or the requested stop
    *  and its confirmation. */
   async settle(): Promise<StopReport | null> {
-    if (this.requestedStopRun !== null) return this.requestedStopRun;
+    if (this.operatorStop.report !== null) return this.operatorStop.report;
     // The boundary waits for the launches — OR for the requested stop, which
     // may legitimately finish without every launch promise settling (an
     // unconfirmed end; the report carries the uncertainty).
     await Promise.race([this.awaitAllLaunched(), this.requestedStopBegan.promise]);
-    return this.requestedStopRun === null ? null : this.requestedStopRun;
+    return this.operatorStop.report;
   }
 
   /** The --once boundary: wait for every launched worker,
@@ -1736,7 +1467,7 @@ export class SweepEngine {
    * the same cycle. The reservation lands BEFORE any launch. */
   private async launchOnce(launchable: Launchable): Promise<Launchable | null> {
     const key = workKeyOf(launchable.work);
-    const entry: InFlightLaunch = {
+    const entry: StopLaunch = {
       work: launchable.work,
       dir: launchable.dir,
       // A recovery continues a known attempt even before the registry answers.
@@ -1755,7 +1486,7 @@ export class SweepEngine {
     }
   }
 
-  private async launchInner(launchable: Launchable, entry: InFlightLaunch): Promise<Launchable | null> {
+  private async launchInner(launchable: Launchable, entry: StopLaunch): Promise<Launchable | null> {
     const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
@@ -2053,7 +1784,7 @@ export class SweepEngine {
       );
       await this.wait(decision.waitMs);
       if (this.stopping) {
-        await this.settleStoppedAdmission(entry, facts.attempt);
+        await this.operatorStop.cancelAdmission(entry, facts.attempt);
         this.log(
           `the recovery of ${key} stopped during the backoff — nothing is launched and the grant is returned ` +
             "with the requested-stop evidence",
@@ -2085,7 +1816,7 @@ export class SweepEngine {
     // bookkeeping (the grant, or the consumption of the requested stop): what
     // it wrote is undone and the requested stop is what the work keeps.
     if (this.stopping) {
-      await this.settleStoppedAdmission(entry, facts.attempt);
+      await this.operatorStop.cancelAdmission(entry, facts.attempt);
       this.log(`the launch of ${key} stopped before the worker started — the requested stop stays on record`);
       return null;
     }
@@ -2104,7 +1835,7 @@ export class SweepEngine {
       await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, repair.localWork);
     }
     if (this.stopping) {
-      await this.settleStoppedAdmission(entry, facts.attempt);
+      await this.operatorStop.cancelAdmission(entry, facts.attempt);
       return null;
     }
     entry.launched = true;
@@ -2145,17 +1876,6 @@ export class SweepEngine {
     } finally {
       dropWaiter(this.stopWaiters, stopped.resolve);
     }
-  }
-
-  /** Why a work's end cannot be confirmed, or null when it is: an unreadable
-   *  probe is uncertainty, never an empty factory. */
-  private stopHoldReason(observation: LivenessObservation, key: string): string | null {
-    if (observation.state === "unknown") {
-      return `the worker liveness could not be read (${observation.reason})`;
-    }
-    return observation.workers.some((worker) => worker.key === key)
-      ? "a worker of this work is still alive"
-      : null;
   }
 
   /**
@@ -2555,7 +2275,7 @@ export class SweepEngine {
 
     for (const entry of held) {
       const key = workKeyOf(entry.work);
-      const because = this.stopHoldReason(this.liveness, key);
+      const because = stopHoldReason(this.liveness, key);
       if (because !== null) {
         this.reportStopHold(key, `${because} — the previous stop (${entry.because}) stays unconfirmed`);
         continue;
