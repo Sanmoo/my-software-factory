@@ -1157,8 +1157,12 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       "only the ticket two destinations promise is held; the other candidates stay usable",
     );
     assert.ok(
-      sim.requests.filter((request) => request.path === "/rest/api/3/search/jql").length > 3,
-      "the site read and the selection reads both followed Jira's page tokens",
+      sim.requests.every(
+        (request) =>
+          (request.method === "GET" && request.path === "/rest/api/3/myself") ||
+          (request.method === "POST" && request.path === "/rest/api/3/search/jql"),
+      ),
+      "status only reads the identity and the search; nothing is claimed or transitioned",
     );
 
     const text = renderStatus(view);
@@ -1261,6 +1265,32 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: unknown \(/);
     assert.match(text, /selection \(project = XYZ\) → Sanmoo\/a: unknown \(/);
     assert.doesNotMatch(text, /^    \d+\. ABC-1 /m, "no candidate is offered while a destination is unknown");
+  });
+
+  test("selections of one site that do not share one tracker never read through a declared-first adapter", async () => {
+    const left = new JiraSim();
+    left.addIssue({ id: "10001", key: "ABC-1", summary: "Left" });
+    const right = new JiraSim();
+    right.addIssue({ id: "10002", key: "ABC-2", summary: "Right" });
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("acme.atlassian.net", "labels = left", "Sanmoo/a"), tickets: jiraAdapter(left) },
+          { selection: selection("acme.atlassian.net", "labels = right", "Sanmoo/b"), tickets: jiraAdapter(right) },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    if (site?.state !== "unknown") assert.fail("the site's identity is not one tracker");
+    assert.match(site.reason, /do not share one tracker/);
+    assert.deepEqual(left.requests, [], "no selection read ran through a guessed adapter");
+    assert.deepEqual(right.requests, [], "no selection read ran through a guessed adapter");
   });
 
   test("a site whose ordered union cannot be read is unknown, never its selections concatenated", async () => {

@@ -123,7 +123,9 @@ export type JiraSiteView =
   | (JiraSiteBase & { state: "known" })
   | (JiraSiteBase & { state: "unknown"; reason: string });
 
-/** One configured Jira selection and the read-only adapter that reads it. */
+/** One configured Jira selection and the read-only adapter that reads it.
+ *  Every selection of one site must carry the same tracker instance: one
+ *  identity, one credential and one site-wide ordered read. */
 export interface JiraSelectionReader {
   selection: TicketSelection;
   tickets: SiteTicketTracker;
@@ -284,9 +286,11 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
 
   const membership = ticketMemberships(known);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
-  if ([...membership.keys()].some((key) => !orderedKeys.has(key))) {
-    // The two reads disagree, so no reliable site order exists for that ticket.
-    return unknownSite(site, destinations, "the site's ordered result omitted a ticket a selection returned", readings);
+  const sameTickets =
+    orderedKeys.size === membership.size && [...membership.keys()].every((key) => orderedKeys.has(key));
+  if (!sameTickets) {
+    // Routing and order came from different reads: no site order can be trusted.
+    return unknownSite(site, destinations, "the site's ordered result and its selections disagree", readings);
   }
 
   const candidates: JiraCandidate[] = [];
@@ -297,18 +301,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     const key = ticketIdentityKey(ticket.ticket);
     if (seen.has(key)) continue;
     seen.add(key);
-    const membershipOfTicket = membership.get(key);
-    if (membershipOfTicket === undefined) {
-      // The union carried a ticket no readable selection returned: the same
-      // disagreement as the reverse case, never a silently dropped absence.
-      return unknownSite(
-        site,
-        destinations,
-        "the site's ordered result carried a ticket no readable selection returned",
-        readings,
-      );
-    }
-    const destinationsForTicket = distinctDestinations([...membershipOfTicket.values()]);
+    const destinationsForTicket = distinctDestinations([...membership.get(key)!.values()]);
     if (destinationsForTicket.length > 1) {
       heldKeys.add(key);
       ambiguous.push({

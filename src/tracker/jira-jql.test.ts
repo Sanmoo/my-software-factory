@@ -86,7 +86,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(result, {
       ok: true,
       jql: `(project = ABC AND labels = frontend) OR (project = DEF) ORDER BY ${RANK_ORDER}`,
-      filter: "(project = ABC AND labels = frontend) OR (project = DEF)",
+      selectionFilter: "(project = ABC AND labels = frontend) OR (project = DEF)",
     });
   });
 
@@ -94,7 +94,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(withSiteRankOrdering(["project = ABC"]), {
       ok: true,
       jql: `project = ABC ORDER BY ${RANK_ORDER}`,
-      filter: "project = ABC",
+      selectionFilter: "project = ABC",
     });
   });
 
@@ -113,7 +113,7 @@ describe("Jira JQL: one native Rank order for a site's selections", () => {
     assert.deepEqual(quoted, {
       ok: true,
       jql: `(summary ~ "order by rank desc") OR (project = DEF) ORDER BY ${RANK_ORDER}`,
-      filter: '(summary ~ "order by rank desc") OR (project = DEF)',
+      selectionFilter: '(summary ~ "order by rank desc") OR (project = DEF)',
     });
   });
 });

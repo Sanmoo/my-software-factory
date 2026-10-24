@@ -13,7 +13,7 @@
 export const RANK_ORDER = "Rank ASC";
 
 export type RankOrdering =
-  | { ok: true; jql: string; filter: string }
+  | { ok: true; jql: string; selectionFilter: string }
   | { ok: false; because: string };
 
 /**
@@ -26,7 +26,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
 
   const masked = maskQuoted(trimmed);
   const clause = topLevelOrderBy(masked);
-  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}`, filter: trimmed };
+  if (clause === null) return { ok: true, jql: `${trimmed} ORDER BY ${RANK_ORDER}`, selectionFilter: trimmed };
 
   const clauses = splitTopLevel(trimmed, masked, clause.bodyStart, ",");
   if (clauses.length !== 1) {
@@ -59,7 +59,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
   if (filter === "") {
     return { ok: false, because: "the JQL carries only an ordering and no selection filter" };
   }
-  return { ok: true, jql: trimmed, filter };
+  return { ok: true, jql: trimmed, selectionFilter: filter };
 }
 
 /**
@@ -77,9 +77,9 @@ export function withSiteRankOrdering(selections: readonly string[]): RankOrderin
   for (const selection of selections) {
     const ordered = withNativeRankOrdering(selection);
     if (!ordered.ok) return ordered;
-    filters.push(`(${ordered.filter})`);
+    filters.push(`(${ordered.selectionFilter})`);
   }
-  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}`, filter: filters.join(" OR ") };
+  return { ok: true, jql: `${filters.join(" OR ")} ORDER BY ${RANK_ORDER}`, selectionFilter: filters.join(" OR ") };
 }
 
 /** The text inside quoted JQL literals, blanked out (indices preserved). */
