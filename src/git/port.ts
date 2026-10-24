@@ -163,7 +163,3 @@ export interface GitWork {
    */
   inspectLocalWorkFor(work: WorkIdentity): Promise<LocalWorkFacts>;
 }
-
-/** The git host side addressed by the explicit Work identity. `ExpandedGitWork`
- *  is the interface's name at the orchestration boundary; there is one shape. */
-export type ExpandedGitWork = GitWork;

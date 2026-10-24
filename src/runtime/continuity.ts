@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ExpandedGitWork } from "../git/port.js";
+import type { GitWork } from "../git/port.js";
 import { branchOfWork } from "../git/port.js";
 import { type WorkIdentity } from "../tracker/identity.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
@@ -47,7 +47,7 @@ export interface ContinuityDeps {
   /** The Work whose attempt is being continued: its ticket source and destination. */
   work: WorkIdentity;
   attempt: number;
-  git: ExpandedGitWork;
+  git: GitWork;
   tickets: TicketTracker;
   pullRequests: PullRequestTracker;
   now?: () => Date;
@@ -360,7 +360,7 @@ async function reconcileLabel(deps: ContinuityDeps, action: EffectAction): Promi
   if (ticket.provider !== "github") {
     return {
       verdict: "unknown",
-      detail: `the the work's source is ${ticket.provider}:${ticket.site}, so a GitHub label read cannot establish this effect`,
+      detail: `the work's source is ${ticket.provider}:${ticket.site}, so a GitHub label read cannot establish this effect`,
     };
   }
   if (action.number !== ticket.number) {
