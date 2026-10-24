@@ -98,8 +98,14 @@ function relativePath(value, where) {
 
 function parsePi(value) {
   const pi = object(value, "pi");
-  exactKeys(pi, ["package", "version"], "pi");
-  return { package: nonEmptyString(pi.package, "pi.package"), version: exactVersion(pi.version, "pi.version") };
+  exactKeys(pi, ["package", "version", "license"], "pi");
+  return {
+    package: nonEmptyString(pi.package, "pi.package"),
+    version: exactVersion(pi.version, "pi.version"),
+    // Pi's installed package manifest must declare exactly this: a licence that
+    // changed upstream under us fails the build instead of shipping silently.
+    license: nonEmptyString(pi.license, "pi.license"),
+  };
 }
 
 function parseSkills(value) {
@@ -226,9 +232,14 @@ export function expectedSkills(declaration) {
       origin: "npm",
       upstreamPath: extension.guidance.path,
       revision: extension.version,
-      imagePath: `extensions/node_modules/${extension.package}/${extension.guidance.path}`,
+      imagePath: `${extensionImagePath(extension.package)}/${extension.guidance.path}`,
     })),
   ];
+}
+
+/** Where an extension's package root lives inside the image's agent dir. */
+function extensionImagePath(packageName) {
+  return `extensions/node_modules/${packageName}`;
 }
 
 /**
@@ -265,6 +276,12 @@ export function compareAgentInventory(declaration, declarationSha256, inventory)
         `skill "${expected.name}" is ${String(found.origin)}@${String(found.revision)} ${String(found.upstreamPath)}, ` +
           `declared ${expected.origin}@${expected.revision} ${expected.upstreamPath}`,
       );
+    } else if (found.path !== expected.imagePath) {
+      // Where the image put it is part of the identity: the launch loads the
+      // declared path, so a file somewhere else is not the declared resource.
+      mismatches.push(
+        `skill "${expected.name}" is at ${String(found.path)} in the image, declared at ${expected.imagePath}`,
+      );
     }
   }
   const expectedNames = new Set(expectedSkills(declaration).map((skill) => skill.name));
@@ -281,6 +298,11 @@ export function compareAgentInventory(declaration, declarationSha256, inventory)
       mismatches.push(
         `extension "${extension.package}" is ${String(found.version)} (${String(found.entry)}), ` +
           `declared ${extension.version} (${extension.entry})`,
+      );
+    } else if (found.path !== extensionImagePath(extension.package)) {
+      mismatches.push(
+        `extension "${extension.package}" is at ${String(found.path)} in the image, ` +
+          `declared at ${extensionImagePath(extension.package)}`,
       );
     }
   }
