@@ -80,8 +80,7 @@ MSF_REAL_PROOF_MODEL=provider/model-id npm run proof:real
 
 This starts the built image with no personal profile and an empty cache,
 loads the declared skills, implements a local spec, and requires two distinct
-reviewer subagents plus the outcome record. It is never part of the automatic
-suite. The GitHub-delivery half of ADR 0001 (an actual PR in an authorized
+reviewer subagents plus the outcome record. The GitHub-delivery half of ADR 0001 (an actual PR in an authorized
 disposable repo) remains an operator-gated run: no credentials or disposable
 repo are assumed here, so it is recorded as outstanding rather than claimed.
 

@@ -224,11 +224,10 @@ async function installExtension(extension, prefix, workDir, run) {
       `extension ${extension.package}@${extension.version} installed as ${String(manifest.name)}@${String(manifest.version)}`,
     );
   }
-  const declaredLicense = licenseId(extension.license);
-  if (manifest.license !== declaredLicense) {
+  if (manifest.license !== extension.license) {
     fail(
       `extension ${extension.package} declares the license ${String(manifest.license)}, ` +
-        `declared ${declaredLicense} — review the attribution before shipping it`,
+        `declared ${extension.license} — review the attribution before shipping it`,
     );
   }
   requireDependencies(manifest, installed);
@@ -408,20 +407,14 @@ function licenseFileName(packageName) {
   return `${packageName.replaceAll("/", "-")}-LICENSE`;
 }
 
-/** The licence a declaration names: its identifier, without the prose. */
-function licenseId(declared) {
-  return declared.trim().split(/[\s(;,/]/)[0] ?? "";
-}
-
-/** A shipped licence must name the declared licence: one that changed upstream
- *  fails the build instead of shipping a wrong attribution. */
+/** A shipped licence must name the declared one — as a whole word, so a
+ *  licence that changed upstream fails the build instead of shipping a wrong
+ *  attribution ("MIT" is not a substring of an Apache text by accident). */
 function requireLicenseFile(file, declared, what) {
-  const id = licenseId(declared);
   const required = requireFile(file, `${what} LICENSE`);
   const text = readFileSync(required, "utf8");
-  if (id === "" || !text.toLowerCase().includes(id.toLowerCase())) {
-    fail(`${what} LICENSE does not name the declared license "${declared}"`);
-  }
+  const named = new RegExp(`\\b${declared.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  if (!named.test(text)) fail(`${what} LICENSE does not name the declared license "${declared}"`);
   return required;
 }
 
@@ -433,7 +426,8 @@ function attribution(declaration, piInstall) {
     "",
     `- Pi: ${declaration.pi.package}@${declaration.pi.version} — ${declaration.pi.license} ` +
       `(${piInstall.licenseFile === null ? "declared by the installed package, which ships no LICENSE file" : "LICENSE under licenses/"})`,
-    `- Skills: ${declaration.skills.repository}@${declaration.skills.revision} — ${declaration.skills.license}`,
+    `- Skills: ${declaration.skills.repository}@${declaration.skills.revision} — ${declaration.skills.license} ` +
+      "(upstream LICENSE under licenses/; content copied unchanged)",
     ...declaration.skills.selected.map((skill) => `  - ${skill.name}: ${skill.path}`),
     ...declaration.extensions.map(
       (extension) =>

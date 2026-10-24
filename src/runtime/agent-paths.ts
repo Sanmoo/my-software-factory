@@ -3,7 +3,11 @@ import type {
   AgentRole,
   SkillRole,
 } from "../../scripts/agent-resources.mjs";
-import { extensionImagePath, skillImagePath } from "../../scripts/agent-resources.mjs";
+import {
+  AGENT_DECLARATION_FILE,
+  extensionImagePath,
+  skillImagePath,
+} from "../../scripts/agent-resources.mjs";
 
 /**
  * Where the image-provisioned agent resources live inside the worker
@@ -46,7 +50,7 @@ function byRole<T extends { role: string }>(
 ): T {
   const found = entries.find((entry) => entry.role === role);
   if (found === undefined) {
-    throw new Error(`agent-resources.yaml declares no ${what} for role "${role}"`);
+    throw new Error(`${AGENT_DECLARATION_FILE} declares no ${what} for role "${role}"`);
   }
   return found;
 }
