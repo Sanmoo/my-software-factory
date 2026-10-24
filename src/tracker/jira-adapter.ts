@@ -245,7 +245,7 @@ export class JiraTicketAdapter implements TicketTracker {
    * operator's JQL is the whole selection.
    */
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
-    this.assertSelection(selection);
+    this.assertSource(selection.source);
     const jql = selection.jql;
     if (jql === undefined || jql.trim() === "") {
       throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
@@ -351,10 +351,6 @@ export class JiraTicketAdapter implements TicketTracker {
   }
 
   // ---- the REST seam ----
-
-  private assertSelection(selection: TicketSelection): void {
-    this.assertSource(selection.source);
-  }
 
   private assertSource(source: TicketSource): void {
     if (source.provider !== "jira" || source.site !== this.site) {

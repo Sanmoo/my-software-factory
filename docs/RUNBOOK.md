@@ -236,8 +236,8 @@ ledger (its retries, the provider's message, and whether the work is
 **awaiting model provider**), the works **continuity paused** (the attempt that
 cannot be continued safely, with its reason, the attempt it waits for — its own
 planned number beside the ledger's last evidenced one when they differ — and
-its session when known), the **repair** cycles, last outcomes, the pool,
-archived dones — and the two reconciliation
+its session when known), the **repair** cycles, last outcomes, the pool, the
+Jira **candidates** (below), archived dones — and the two reconciliation
 leftovers when tracker and workspace disagree:
 
 - an **unbacked claim** carries the copyable `gh issue edit …` that returns a
@@ -255,6 +255,15 @@ two liveness lines read `liveness unknown (docker not reachable)`; the works
 carrying attempt evidence are still listed, unclassified, and the rest of the
 report is unchanged. A work carried by more than one container lists each
 container and a **duplicate workers** line — the decision is yours.
+
+**Jira candidates** are read-only: each `jira:` selection's JQL result in the
+site's native Rank order, naming its site, the ticket and the destination. They
+carry no claim and no reservation, so they never appear in the pool. A
+selection that cannot be read reads `unknown` with its reason instead of an
+empty list, and leaves the overlap it could have caused `unverified`. A ticket
+more than one selection promises to a **different** destination is held under
+`ambiguous` with those destinations instead of being offered as a candidate for
+either.
 
 ## (d) Local desktop notifications (issue 93)
 
