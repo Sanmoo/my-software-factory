@@ -42,8 +42,17 @@ import {
 } from "./state/liveness.js";
 =======
 import { deriveStatus } from "./state/status.js";
+<<<<<<< HEAD
 import { carriedKeys, probeLiveness, workspaceLivenessProbe, type LivenessProbe } from "./state/liveness.js";
 >>>>>>> 2246da9b (fix(141): the review round's fixes — no creep, one window rule, one home per fact)
+=======
+import {
+  carriedWorkKeys,
+  probeLiveness,
+  workspaceLivenessProbe,
+  type LivenessProbe,
+} from "./state/liveness.js";
+>>>>>>> 6baa5aef (fix(141): the final pass — one home for the launch hooks, the flags and the clone path)
 import { renderStatus } from "./state/status-render.js";
 import { acquireRunLock } from "./run-lock.js";
 import { recoverCall } from "./recover.js";
@@ -429,7 +438,7 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
     // empty window is a notice, and the operator's command must not need the
     // keyring to say there is nothing to analyze.
     const observation = await probeLiveness(workspaceLivenessProbe(workspace));
-    const finished = await collectFinishedWorks(workspace, carriedKeys(observation));
+    const finished = await collectFinishedWorks(workspace, carriedWorkKeys(observation));
     const plan = await planManualRound(config, workspace, finished, {
       ...(work === undefined ? {} : { work }),
       ...(args.language === undefined ? {} : { language: args.language }),

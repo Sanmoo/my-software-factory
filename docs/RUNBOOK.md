@@ -307,11 +307,9 @@ address, with no window opened and no focus taken.
 
 ## (e) Retrospective (issue 141)
 
-The retrospective is a factory job on its own lane (ADR 0006): with the
-`retro:` block enabled, the orchestrator starts a round at a sweep once
-`retro.threshold` works were archived since the last report, and the round
-writes its dated report under `<workspace>/retros/`. Manual triggers are in
-README (Usage) and never wait for the threshold.
+The retrospective is a factory job on its own lane (ADR 0006): enable the
+`retro:` block and let the archived works reach the threshold. Manual triggers
+are in README (Usage) and never wait for it.
 
 Live proof: let the archived works reach the threshold, run one sweep — the log
 names the round, `<workspace>/retros/<instant>-retro.md` exists, the filed

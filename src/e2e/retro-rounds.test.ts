@@ -576,7 +576,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     const { runtime, deps, logs } = makeLoggedFactory(config);
     seedArchived(1, at(1));
     const finished = await collectFinishedWorks(layout);
-    const single = await planManualRound(config, layout, finished, { work: { repo: REPO, number: 1 } });
+    const single = await planManualRound(config, layout, finished, { work: `${REPO}#1` });
     assert.ok(!("empty" in single));
     await runRetroRound(
       { config, runtime, workspace: layout, log: () => {}, notifier: new FakeNotifier() },
