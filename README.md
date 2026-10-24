@@ -98,8 +98,9 @@ the gateway.
 
 Deterministic and hermetic: the tracker and the worker runtime are fakes; the
 workspace uses a real temp dir — the disk is never mocked, and the git host
-side is exercised with local bare remotes as fixtures. No GitHub, no
-credentials, no network.
+side is exercised with local bare remotes as fixtures. No GitHub and no
+credentials: the checks that start real containers are the ones named above,
+and the provisioned-image check runs with `--network none`.
 
 ## Real smoke (credential-gated)
 
