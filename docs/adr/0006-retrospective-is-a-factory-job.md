@@ -10,7 +10,9 @@ items at retro.factory-items-destination, target-repo items at the repo
 concerned. The operator stays the only gate between an item and the pool, at
 triage. The job runs outside the worker concurrency slots: a round runs even
 with every slot busy, because lightweight analysis neither queues behind nor
-pauses real work.
+pauses real work. One round runs at a time, enforced by the lane's own marker
+(the report's process record) rather than by the `msf run` lock — the manual
+trigger must work while the factory is sweeping.
 
 ## Considered options
 

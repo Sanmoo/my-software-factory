@@ -282,8 +282,8 @@ address, with no window opened and no focus taken.
 The retrospective is a factory job on its own lane (ADR 0006): enable the
 `retro:` block; manual triggers are in README (Usage) and never wait for the
 threshold. A forced round needs no stopped factory: the lane's marker is its
-exclusivity. A round that analyzes works needs Docker's answer (an empty window
-answers alone, and an unverifiable one is never guessed).
+exclusivity. A forced round that analyzes works asks Docker first; an empty
+window is answered without it, and an unknown answer is never guessed.
 
 Live proof: let the archived works reach the threshold, run one sweep — the log
 names the round, `<workspace>/retros/<instant>-retro.md` exists, the filed

@@ -87,7 +87,13 @@ describe("the clone a retrospective anchors in (issue 141)", () => {
     assert.equal(retroAnchorDir(join(reposDir, "absent"), ["Sanmoo/my-tasks"]), null);
   });
 
-  test("a repos dir the host cannot read is the host's error, never a silent 'no clone'", () => {
+  test("a repos dir the host cannot read is the host's error, never a silent 'no clone'", (t) => {
+    // An owner that can read anything (root, CAP_DAC_OVERRIDE) cannot produce
+    // the denial this test needs: the host's privilege model decides.
+    if (process.getuid?.() === 0) {
+      t.skip("running as root: no directory is unreadable");
+      return;
+    }
     const unreadable = join(reposDir, "unreadable");
     mkdirSync(unreadable);
     chmodSync(unreadable, 0o000);
