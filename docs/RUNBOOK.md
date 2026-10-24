@@ -280,9 +280,10 @@ that produce each site's order are in the README. Every candidate names its
 site and explicit destination. A site with a selection that cannot be read
 reads `unknown` with the reason instead of an empty list or a guessed
 destination; none of that site's candidates is offered until every selection
-can be read. A ticket more than one selection promises to a **different**
+can be read. A ticket several selections promise to the **same** destination
+is listed once; a ticket more than one selection promises to a **different**
 destination is held under `ambiguous` with those destinations instead of being
-offered as a candidate for either; the other candidates on that site remain
+offered as a candidate for either, and the other candidates on that site remain
 usable. Jira candidates carry no claim and no reservation, so they never appear
 in the pool.
 
