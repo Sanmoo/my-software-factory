@@ -28,6 +28,7 @@ import {
 } from "./sandcastle.js";
 import { readTurnModelProviderError } from "./model-provider-error.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
+import { provisionedInventory } from "./agent-inventory-fixture.js";
 import { agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
 import type { WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
@@ -54,46 +55,7 @@ const RESOURCES = loadAgentResources();
 
 /** The inventory a correctly provisioned image records for RESOURCES. */
 function inventoryJson(): string {
-  const { declaration } = RESOURCES;
-  return JSON.stringify({
-    schema: "msf-agent-inventory/v1",
-    declaration: { file: "agent-resources.yaml", sha256: RESOURCES.digest },
-    pi: declaration.pi,
-    skills: [
-      ...declaration.skills.selected.map((skill) => ({
-        name: skill.name,
-        origin: "git",
-        upstreamPath: skill.path,
-        revision: declaration.skills.revision,
-        path: `skills/${skill.name}`,
-        digest: "sha256:x",
-      })),
-      ...declaration.extensions.map((extension) => ({
-        name: extension.guidance.name,
-        origin: "npm",
-        upstreamPath: extension.guidance.path,
-        revision: extension.version,
-        path: `extensions/node_modules/${extension.package}/${extension.guidance.path}`,
-        digest: "sha256:x",
-      })),
-    ],
-    extensions: declaration.extensions.map((extension) => ({
-      package: extension.package,
-      version: extension.version,
-      license: extension.license,
-      path: `extensions/node_modules/${extension.package}`,
-      entry: extension.entry,
-      digest: "sha256:x",
-      dependencies: {},
-      guidance: { name: extension.guidance.name, path: "", digest: "sha256:x" },
-    })),
-    agents: declaration.agents.map((agent) => ({
-      name: agent.name,
-      source: `factory:${agent.path}`,
-      path: `agents/${agent.path.split("/").pop()}`,
-      digest: "sha256:x",
-    })),
-  });
+  return JSON.stringify(provisionedInventory(RESOURCES));
 }
 
 const READY_PROBE = async () => ({ status: 0, stdout: '{"status":"ready","provider":"openai","authType":"api_key"}', stderr: "" });

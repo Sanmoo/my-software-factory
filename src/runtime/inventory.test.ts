@@ -4,14 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 
-import type { AgentResourcesDeclaration } from "../../scripts/agent-resources.mjs";
+import { provisionedInventory } from "./agent-inventory-fixture.js";
 import {
   AGENT_DECLARATION_PATH,
   AgentImageMismatchError,
   IMAGE_INVENTORY_PATH,
   loadAgentResources,
   verifyAgentInventory,
-  type LoadedAgentResources,
 } from "./inventory.js";
 
 /**
@@ -55,56 +54,6 @@ function fixtureFile(dir: string, edits: Array<[string, string]> = []): string {
   const path = join(dir, "agent-resources.yaml");
   writeFileSync(path, edits.reduce((text, [from, to]) => text.replace(from, to), FIXTURE_YAML), "utf8");
   return path;
-}
-
-/** The inventory a correctly provisioned image records for `loaded`. */
-function matchingInventory(loaded: LoadedAgentResources): Record<string, unknown> {
-  const declaration: AgentResourcesDeclaration = loaded.declaration;
-  const extension = declaration.extensions[0]!;
-  const guidancePath = `extensions/node_modules/${extension.package}/${extension.guidance.path}`;
-  return {
-    schema: "msf-agent-inventory/v1",
-    declaration: { file: "agent-resources.yaml", sha256: loaded.digest },
-    pi: declaration.pi,
-    skills: [
-      {
-        name: "implement",
-        origin: "git",
-        upstreamPath: "skills/implement",
-        revision: declaration.skills.revision,
-        path: "skills/implement",
-        digest: "sha256:x",
-      },
-      {
-        name: extension.guidance.name,
-        origin: "npm",
-        upstreamPath: extension.guidance.path,
-        revision: extension.version,
-        path: guidancePath,
-        digest: "sha256:x",
-      },
-    ],
-    extensions: [
-      {
-        package: extension.package,
-        version: extension.version,
-        license: extension.license,
-        path: `extensions/node_modules/${extension.package}`,
-        entry: extension.entry,
-        digest: "sha256:x",
-        dependencies: { acorn: "8.18.0" },
-        guidance: { name: extension.guidance.name, path: guidancePath, digest: "sha256:x" },
-      },
-    ],
-    agents: [
-      {
-        name: "code-reviewer",
-        source: "factory:agents/code-reviewer.md",
-        path: "agents/code-reviewer.md",
-        digest: "sha256:x",
-      },
-    ],
-  };
 }
 
 describe("the factory's agent-resource declaration and image inventory", () => {
@@ -190,10 +139,10 @@ describe("the factory's agent-resource declaration and image inventory", () => {
     try {
       const loaded = loadAgentResources(fixtureFile(dir));
 
-      const inventory = verifyAgentInventory(loaded, JSON.stringify(matchingInventory(loaded)));
+      const inventory = verifyAgentInventory(loaded, JSON.stringify(provisionedInventory(loaded)));
 
       assert.equal(inventory.pi.version, "1.0.0");
-      assert.deepEqual(inventory.extensions[0]?.dependencies, { acorn: "8.18.0" });
+      assert.equal(inventory.skills[0]?.digest, "sha256:fixture", "fields the comparison ignores still pass through");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -203,7 +152,7 @@ describe("the factory's agent-resource declaration and image inventory", () => {
     const dir = mkdtempSync(join(tmpdir(), "msf-inventory-"));
     try {
       const loaded = loadAgentResources(fixtureFile(dir));
-      const stale = structuredClone(matchingInventory(loaded)) as {
+      const stale = structuredClone(provisionedInventory(loaded)) as {
         declaration: { sha256: string };
         pi: { version: string };
         skills: Array<Record<string, unknown>>;
@@ -248,7 +197,7 @@ describe("the factory's agent-resource declaration and image inventory", () => {
         ]),
       );
 
-      assert.throws(() => verifyAgentInventory(edited, JSON.stringify(matchingInventory(built))), (error: unknown) => {
+      assert.throws(() => verifyAgentInventory(edited, JSON.stringify(provisionedInventory(built))), (error: unknown) => {
         assert.ok(error instanceof AgentImageMismatchError);
         assert.match(error.message, /different agent-resources\.yaml/);
         assert.match(error.message, /reviewer agent "spec-reviewer" is missing from the image/);
@@ -263,7 +212,7 @@ describe("the factory's agent-resource declaration and image inventory", () => {
     const dir = mkdtempSync(join(tmpdir(), "msf-inventory-"));
     try {
       const loaded = loadAgentResources(fixtureFile(dir));
-      const misplaced = structuredClone(matchingInventory(loaded)) as {
+      const misplaced = structuredClone(provisionedInventory(loaded)) as {
         skills: Array<{ path: string }>;
         extensions: Array<{ path: string }>;
       };

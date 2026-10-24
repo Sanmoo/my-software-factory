@@ -16,7 +16,9 @@ import { readFileSync, statSync } from "node:fs";
 /**
  * Pi's documented provider variables (docs/providers.md, Pi 1.4.0): the API
  * keys and the provider configuration read alongside them. Only these are
- * forwarded: an unrelated ambient secret never rides the worker container.
+ * forwarded — an ambient variable Pi does not read never rides the worker
+ * container. The list spans providers on purpose: the worker's model is
+ * whichever one msf.yaml names, so the key it needs is not knowable here.
  */
 export const PI_MODEL_AUTH_ENV_VARS: readonly string[] = [
   "ANTHROPIC_API_KEY",
@@ -118,9 +120,13 @@ export function agentFileProblem(what: string, path: string): string | null {
   }
 }
 
-/** The operator-facing directive when neither auth source is present. It names
- *  the documented examples, not the allow-list's first entries. */
+/** The operator-facing directive shared by every credential diagnostic: the
+ *  documented examples, not the allow-list's first entries. */
+export const MODEL_AUTH_SOURCES =
+  "set a Pi-supported provider API key in the factory's environment " +
+  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml";
+
+/** The absence diagnostic: no explicit source at all. */
 export const NO_MODEL_AUTH_MESSAGE =
-  "no model credentials for the worker: set a Pi-supported provider API key in the factory's environment " +
-  "(e.g. OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY) or set worker-auth-file in msf.yaml. " +
+  `no model credentials for the worker: ${MODEL_AUTH_SOURCES}. ` +
   "Credentials are never read from a personal Pi profile.";

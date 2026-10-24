@@ -165,11 +165,11 @@ async function runCommand(run, command, args, options = {}) {
     return await run(command, args, options);
   } catch (error) {
     const detail = error instanceof Error && error.message !== "" ? `: ${error.message.split("\n")[0]}` : "";
-    fail(`${what(command, args)} failed${detail}`);
+    fail(`${describeCommand(command, args)} failed${detail}`);
   }
 }
 
-function what(command, args) {
+function describeCommand(command, args) {
   return `${command} ${args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`;
 }
 
@@ -436,7 +436,9 @@ function attribution(declaration, piInstall) {
     ),
     `- Reviewer agents: factory-owned (${declaration.agents.map((agent) => agent.path).join(", ")})`,
     "",
-    "The available licenses of the declared resources are under `licenses/`.",
+    "The available licenses of the declared resources are under `licenses/`;",
+    "the extension's transitive dependencies are recorded by version in the",
+    "image inventory, and their own licence files stay in their packages.",
     "Upstream skill content is copied unchanged.",
     "",
   ];
@@ -476,7 +478,7 @@ export async function provisionAgentResources(options) {
   }
 
   const piInstall = await installedPi(declaration, run);
-  const installed = { package: piInstall.package, version: piInstall.version };
+  const piRecord = { package: piInstall.package, version: piInstall.version };
 
   const staging = `${resolve(dest)}.staging-${process.pid}`;
   rmSync(staging, { recursive: true, force: true });
@@ -498,8 +500,9 @@ export async function provisionAgentResources(options) {
     // declared repository paths (the inventory records the same paths).
     for (const agent of declaration.agents) {
       const source = requireFile(join(repositoryRoot, agent.path), `reviewer agent "${agent.name}"`);
-      if (frontmatterName(source) !== agent.name) {
-        fail(`reviewer agent ${agent.path} declares name "${frontmatterName(source)}", expected "${agent.name}"`);
+      const declaredName = frontmatterName(source);
+      if (declaredName !== agent.name) {
+        fail(`reviewer agent ${agent.path} declares name "${declaredName}", expected "${agent.name}"`);
       }
       const target = join(staging, agent.path);
       mkdirSync(dirname(target), { recursive: true });
@@ -580,7 +583,7 @@ export async function provisionAgentResources(options) {
     const inventory = {
       schema: AGENT_INVENTORY_SCHEMA,
       declaration: { file: AGENT_DECLARATION_FILE, sha256: declarationDigest(declaration) },
-      pi: installed,
+      pi: piRecord,
       skills,
       extensions: extensionRecords,
       agents,
