@@ -7,7 +7,7 @@ import {
   type ModelProviderRetryEvent,
   type ModelProviderSettlement,
 } from "../work-record/model-provider.js";
-import { renderWaits } from "./recovery.js";
+import { renderWaits } from "./waits.js";
 
 /**
  * The model provider failure budget of a work (issue 144; terms in GLOSSARY):

@@ -8,23 +8,16 @@ import {
   workspaceLayout,
   type WorkspaceLayout,
 } from "../layout.js";
-import {
-  ownOutcomeRecord,
-  readOutcomeRecord,
-  isRecordedFailure,
-  type OutcomeRecord,
-} from "../state/outcome.js";
-import { hasRepairCycle, readRepairCycle, type RepairCycle } from "./repair.js";
-import { readRecoveryLedger, type RecoveryLedger } from "./recovery.js";
-import {
-  isModelProviderFailureSettled,
-  readModelProviderLedger,
-  type ModelProviderLedger,
-  type ModelProviderSettlement,
-} from "./model-provider.js";
-import { pauseWaits, readPause, type PauseRecord } from "../runtime/continuity-artifacts.js";
-import { readWorkEvidence, type WorkEvidence } from "../state/evidence.js";
-import { attemptNumbers } from "../work-record/attempts.js";
+import { isRecordedFailure } from "../state/outcome.js";
+import { openWorkRecord } from "../work-record/record.js";
+import { pauseWaits, readPause, type PauseRecord } from "../work-record/continuity.js";
+import { readWorkEvidence, type WorkEvidence } from "../work-record/evidence.js";
+import type { OutcomeRecord } from "../work-record/outcome.js";
+import type { RepairCycle } from "../work-record/repair.js";
+import type { ModelProviderLedger, ModelProviderSettlement } from "../work-record/model-provider.js";
+import type { RecoveryLedger } from "../work-record/recovery.js";
+import { hasRepairCycle } from "./repair.js";
+import { isModelProviderFailureSettled } from "./model-provider.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import { readTurnModelProviderError } from "../runtime/model-provider-error.js";
 import { workKeyOf } from "./work-key.js";
@@ -40,7 +33,9 @@ export { readAttemptLedger, readLastAttempt, type AttemptLedger } from "../work-
  * INTERRUPTION of the attempt — issue 123), log-<n>.jsonl (the attempt's event
  * log), sessao/ (the session dir) and recuperacao.json (the recovery budget) —
  * and the reconciliation of a restart is nothing but reading them back here
- * (ticket 05 Q3). Names on disk stay PT-BR.
+ * (ticket 05 Q3). The record's parts are read through their owner
+ * (`openWorkRecord`); this module keeps the VIEW built on them. Names on disk
+ * stay PT-BR.
  */
 
 /** The facts a launch derives from the registry before a worker is born. */
@@ -67,7 +62,8 @@ export async function readLaunchFacts(
 ): Promise<LaunchFacts> {
   if (!existsSync(workDir)) return { attempt: continueAttempt ?? 1, previousFall: false };
 
-  const [logs, record] = await Promise.all([attemptNumbers(workDir), readOutcomeRecord(workDir)]);
+  const snapshot = await openWorkRecord(workDir).read();
+  const { outcome: record, attempts: logs } = snapshot;
   // The last RECORDED attempt is the only fall fact: an interrupted attempt
   // writes nothing, so it neither resets nor feeds the consecutive count.
   const previousFall = isRecordedFailure(record);
@@ -102,14 +98,6 @@ export async function readLaunchFacts(
  *  or the session dir. Its absence is the bare reservation. */
 function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
   return logs.length > 0 || existsSync(join(workDir, SESSIONS_SUBDIR));
-}
-
-/** The attempt numbers present in the registry dir, ascending. */
-
-/** The attempt the next launch numbers: the last log or the record's own
- *  number, whichever the disk evidences as later. */
-function lastAttemptOf(logs: readonly number[], record: OutcomeRecord | null): number {
-  return Math.max(logs.at(-1) ?? 0, record?.attempt ?? 0);
 }
 
 // ---- the done archive (ticket 14) ----
@@ -251,25 +239,24 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
   const continuityPauses: ContinuityPauseEntry[] = [];
   for (const dir of await workDirs(works)) {
     const key = relativeKey(works, dir);
-    const record = await readOutcomeRecord(dir);
-    const logs = await attemptNumbers(dir);
-    const lastAttempt = lastAttemptOf(logs, record);
+    const snapshot = await openWorkRecord(dir).read();
+    const lastAttempt = snapshot.attempt ?? 0;
     // The record never stops being history: a work whose record and whose
     // orphaned attempt coexist shows BOTH (issue 112) — the record is not
     // presented as the current attempt's result.
-    if (record !== null) {
-      lastOutcome.push({ key, workDir: dir, record });
+    if (snapshot.outcome !== null) {
+      lastOutcome.push({ key, workDir: dir, record: snapshot.outcome });
       // The same criterion the ruler and the collection apply (issue 143).
-      if (ownOutcomeRecord(record, lastAttempt) === null) {
-        attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: record.attempt });
+      if (snapshot.ownOutcome === null) {
+        attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: snapshot.outcome.attempt });
       }
-    } else if (hasAttemptEvidence(dir, logs)) {
+    } else if (hasAttemptEvidence(dir, snapshot.attempts)) {
       attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: null });
     } else {
       reservedWithoutAttempt.push(key);
     }
 
-    const cycle = await readRepairCycle(dir);
+    const cycle = snapshot.repair;
     if (hasRepairCycle(cycle)) {
       const attempt = cycle.attempt;
       const evidence =
@@ -279,7 +266,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
 
     // A legacy work dir has no recovery ledger and is not shown here: nothing
     // is invented for a work that was never interrupted under this budget.
-    const ledger = await readRecoveryLedger(dir);
+    const ledger = snapshot.recovery;
     if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
 
     // A work that never met a model provider failure has no ledger and is not
@@ -287,9 +274,9 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     // model provider failure, still the current session's ending, is the
     // work's condition: a later outcome, a new attempt, or a later plain
     // interruption settles it (the attempt's log stays as the history).
-    const modelProviderLedger = await readModelProviderLedger(dir);
+    const modelProviderLedger = snapshot.modelProvider;
     const last = modelProviderLedger.last;
-    if (last !== null && ownOutcomeRecord(record, lastAttempt) === null) {
+    if (last !== null && snapshot.ownOutcome === null) {
       const ending = await readTurnModelProviderError(dir, lastAttempt);
       if (ending !== null && isModelProviderFailureSettled(modelProviderLedger, lastAttempt, ending)) {
         modelProvider.push({ key, attempt: lastAttempt, ledger: modelProviderLedger, last });
