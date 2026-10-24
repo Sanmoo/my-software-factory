@@ -7,26 +7,26 @@ import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
 import type { RepairMaterial, WorkRequest } from "./port.js";
 
 /**
- * The worker prompt (ticket 17, policy per ticket 84) — the only "interface"
- * between the factory and the agent inside the container (prototype,
- * runtime/). It carries the whole context of the session (issue, human issue
- * replies on a blocked retomada, PR conversation, diff — never session memory), the
- * worker's THREE obligations and, on feedback rounds, the policy for judging
- * review comments instead of obeying them indiscriminately.
+ * The worker prompt — the only "interface" between the factory and the agent
+ * inside the container (prototype, runtime/). It carries the whole context of
+ * the session (issue, human issue replies on a blocked retomada, PR
+ * conversation, diff — never session memory), the worker's THREE obligations
+ * and, on feedback rounds, the policy for judging review comments instead of
+ * obeying them indiscriminately.
  *
  *   1. always write the structured outcome record before ending;
  *   2. end every feedback round by commenting on the PR what was addressed;
  *   3. self-report blocked (marker + label) and exit when stuck.
  *
  * Every session that changes code (the initial implementation or a feedback
- * round — ticket 85) also follows the implementation procedure: the factory's
- * declared /implement and /code-review skills, provisioned INTO the worker
- * image (issue #159, ADR 0001). The prompt adapts those skills to Pi (there is
- * no tool named "Skill": loading a SKILL.md and executing its instructions IS
- * using the skill) and fixes the one-way order: pin the round's SHA, implement,
- * validate, commit LOCALLY, review via two parallel subagents, fix, and only
- * then publish. The factory never reads this prose back — the review is the
- * worker's obligation, not the factory's inference.
+ * round) also follows the implementation procedure: the factory's declared
+ * /implement and /code-review skills, provisioned INTO the worker image. The
+ * prompt adapts those skills to Pi (there is no tool named "Skill": loading a
+ * SKILL.md and executing its instructions IS using the skill) and fixes the
+ * one-way order: pin the round's SHA, implement, validate, commit LOCALLY,
+ * review via two parallel subagents, fix, and only then publish. The factory
+ * never reads this prose back — the review is the worker's obligation, not
+ * the factory's inference.
  *
  * This is the worker's ruler, in prose for a reader of prose. The factory's
  * ruler (state/outcome.ts) never reads it back: it reads only the structured
@@ -51,8 +51,8 @@ export interface PromptOptions {
   blockedLabel: string;
   /** The runtime found the attempt's native session and reopened it. */
   continuesSession?: boolean;
-  /** The declared agent resources the image carries (issue #159); defaults to
-   * this checkout's `agent-resources.json`, the same declaration the launch
+  /** The declared agent resources the image carries; defaults to this
+   * checkout's `agent-resources.yaml`, the same declaration the launch
    * compares the image against. */
   agentResources?: LoadedAgentResources;
 }
@@ -87,11 +87,11 @@ export function reviewReportPath(attempt: number, axis: "standards" | "spec"): s
 }
 
 /**
- * The implementation procedure (ticket 85): the factory's /implement and
- * /code-review skills, provisioned into the image, adapted to Pi and chained in
- * a fixed one-way order. Mandatory for every code-changing session; exempt
- * for purely explanatory ones. The prose is the worker's ruler — the factory
- * reads only the structured facts (the reports in "paths", the outcome).
+ * The implementation procedure: the factory's /implement and /code-review
+ * skills, provisioned into the image, adapted to Pi and chained in a fixed
+ * one-way order. Mandatory for every code-changing session; exempt for purely
+ * explanatory ones. The prose is the worker's ruler — the factory reads only
+ * the structured facts (the reports in "paths", the outcome).
  */
 function implementationProcedure(request: WorkRequest, layout: AgentLayout): string {
   const attempt = request.attempt;

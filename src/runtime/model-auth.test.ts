@@ -12,9 +12,9 @@ import {
 } from "./model-auth.js";
 
 /**
- * Model credentials are a separate operational secret (issue #159): supported
- * provider env vars or an explicitly supplied auth file. Nothing is read from
- * a personal profile, and a diagnostic never echoes a value.
+ * Model credentials are a separate operational secret: supported provider
+ * env vars or an explicitly supplied auth file. Nothing is read from a
+ * personal profile, and a diagnostic never echoes a value.
  */
 
 describe("model authentication — explicit sources only", () => {

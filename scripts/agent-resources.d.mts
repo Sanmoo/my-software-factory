@@ -49,12 +49,15 @@ export interface AgentInventory {
 export class AgentResourcesError extends Error {}
 
 export const AGENT_RESOURCES_SCHEMA: "msf-agent-resources/v1";
+export const AGENT_DECLARATION_FILE: "agent-resources.yaml";
 export const SKILL_ROLES: readonly SkillRole[];
 export const AGENT_ROLES: readonly AgentRole[];
 export const AGENT_INVENTORY_SCHEMA: "msf-agent-inventory/v1";
 
-export function parseAgentResources(text: string, source?: string): AgentResourcesDeclaration;
+export function normalizeAgentResources(document: unknown, source?: string): AgentResourcesDeclaration;
 export function sha256(input: string | Uint8Array): string;
+export function canonicalDeclaration(declaration: AgentResourcesDeclaration): string;
+export function declarationDigest(declaration: AgentResourcesDeclaration): string;
 export function expectedSkills(declaration: AgentResourcesDeclaration): Array<{
   name: string;
   origin: "git" | "npm";

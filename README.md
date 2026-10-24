@@ -56,7 +56,7 @@ Move any model previously selected on the command line into `worker-model`.
 `npm run build:image` provisions every declared skill, extension and reviewer
 agent into the image. The operator's exact script — build, model credentials,
 clean-host verification and the real proof — lives in the
-[RUNBOOK](docs/RUNBOOK.md) (ticket 18).
+[RUNBOOK](docs/RUNBOOK.md).
 
 ## Design
 
@@ -66,7 +66,7 @@ factory's classification lives in code and reads only structured facts
 check results) — never LLM prose.
 
 The worker's agent environment is factory-owned and needs nothing of Pi on the
-host: only the resources declared in `agent-resources.json` load, target-project
+host: only the resources declared in `agent-resources.yaml` load, target-project
 and host skills/packages are ignored, and model credentials are supplied
 separately (ADR 0001; build and verification in the [RUNBOOK](docs/RUNBOOK.md)).
 

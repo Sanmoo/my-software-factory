@@ -209,8 +209,8 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker (issue 119)", { skip:
         remoteUrl: "/msf-work/fixtures/remotas/Sanmoo#prova-continuidade.git",
       });
       // The deterministic provider is supplied EXPLICITLY into the image's
-      // agent dir (issue #159): no personal Pi profile is snapshotted, so the
-      // fixture hands over exactly the one file the model needs.
+      // agent dir: no personal Pi profile is snapshotted, so the fixture hands
+      // over exactly the one file the model needs.
       const agentConfig = join(root, "agent-config");
       mkdirSync(agentConfig, { recursive: true });
       const modelsFile = join(agentConfig, "models.json");

@@ -8,7 +8,7 @@ import { agentGuidancePath } from "../runtime/agent-paths.js";
 import { workerFlagArgs } from "../runtime/sandcastle.js";
 
 /**
- * The provisioned environment's actual behaviour (issue #159). Arguments
+ * The provisioned environment's actual behaviour. Arguments
  * alone do not prove loading: these tests start the real image, point Pi at a
  * target project carrying UNDECLARED skills, start with an empty HOME and no
  * personal profile, and read what Pi actually loaded from a

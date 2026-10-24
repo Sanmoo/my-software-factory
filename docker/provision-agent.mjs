@@ -15,21 +15,23 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
+  AGENT_DECLARATION_FILE,
   AGENT_INVENTORY_SCHEMA,
   AgentResourcesError,
+  declarationDigest,
   expectedSkills,
-  parseAgentResources,
+  normalizeAgentResources,
   sha256,
 } from "../scripts/agent-resources.mjs";
 
 /**
- * Provision the factory's agent environment INTO the worker image (issue #159,
- * ADR 0001). This runs during `docker build`, never at worker startup:
+ * Provision the factory's agent environment INTO the worker image. This runs
+ * during `docker build`, never at worker startup:
  *
  *   - Pi must already be installed at the declared exact version;
  *   - the selected upstream skills are fetched at the declared immutable
@@ -238,10 +240,10 @@ function resolveDependency(fromDir, name) {
 }
 
 /**
- * Validate the extension's dependency closure at build time (issue #159): a
- * `dependencies` entry that did not install is a broken provisioning, not a
- * runtime surprise for the worker. Peer dependencies are excluded on purpose
- * (`--omit=peer`): Pi supplies them at run time from the image's own install.
+ * Validate the extension's dependency closure at build time: a `dependencies`
+ * entry that did not install is a broken provisioning, not a runtime surprise
+ * for the worker. Peer dependencies are excluded on purpose (`--omit=peer`):
+ * Pi supplies them at run time from the image's own install.
  */
 function requireDependencies(manifest, installed) {
   const declared = manifest.dependencies ?? {};
@@ -381,7 +383,7 @@ async function installedPi(declaration, run) {
     fail(`pi --version reports ${reported}, declared ${declaration.pi.version}`);
   }
   // The package is the license's source of truth; copy the file when it ships
-  // one (Pi 1.3.0 declares MIT in its manifest and ships no LICENSE).
+  // one (Pi declares MIT in its manifest and ships no LICENSE).
   const shippedLicense = join(packageDir, "LICENSE");
   return {
     package: manifest.name,
@@ -436,15 +438,18 @@ export async function provisionAgentResources(options) {
     workDir = mkdtempSync(join(tmpdir(), "msf-provision-")),
   } = options;
 
-  let rawDeclaration;
+  // The canonical form `npm run build:image` staged: already parsed from the
+  // committed YAML, validated again here so the image never provisions an
+  // unchecked set.
+  let document;
   try {
-    rawDeclaration = readFileSync(declarationPath, "utf8");
+    document = JSON.parse(readFileSync(declarationPath, "utf8"));
   } catch {
-    fail(`agent-resource declaration is unreadable: ${declarationPath}`);
+    fail(`agent-resource declaration is unreadable or not JSON: ${declarationPath}`);
   }
   let declaration;
   try {
-    declaration = parseAgentResources(rawDeclaration, declarationPath);
+    declaration = normalizeAgentResources(document, declarationPath);
   } catch (error) {
     if (error instanceof AgentResourcesError) fail(error.message);
     throw error;
@@ -547,7 +552,7 @@ export async function provisionAgentResources(options) {
 
     const inventory = {
       schema: AGENT_INVENTORY_SCHEMA,
-      declaration: { file: basename(declarationPath), sha256: sha256(rawDeclaration) },
+      declaration: { file: AGENT_DECLARATION_FILE, sha256: declarationDigest(declaration) },
       pi: installed,
       skills,
       extensions: extensionRecords,

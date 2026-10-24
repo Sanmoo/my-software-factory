@@ -63,11 +63,10 @@ export interface WireRunOptions {
 }
 
 /**
- * The wiring of `msf run` (ticket 18): config → boot → the thin loop's four
- * seams. Default path: real GitHub adapter (token from the gh keyring — the
- * boot check of ticket 16), real Sandcastle runtime (image-provisioned agent
- * resources plus explicitly supplied model credentials — issue #159), real
- * git host.
+ * The wiring of `msf run`: config → boot → the thin loop's four seams.
+ * Default path: real GitHub adapter (token from the gh keyring), real
+ * Sandcastle runtime (image-provisioned agent resources plus explicitly
+ * supplied model credentials), real git host.
  */
 export async function wireRunDeps(
   config: Config,
@@ -112,10 +111,10 @@ export async function wireRunDeps(
 }
 
 /**
- * The production launch composition (issue #159): config → SandcastleRuntime
- * options. Exported so the wiring itself is testable without a container: the
- * model, the worker token, the workspace, the explicitly supplied auth file,
- * and only Pi-supported provider keys from the environment.
+ * The production launch composition: config → SandcastleRuntime options.
+ * Exported so the wiring itself is testable without a container: the model,
+ * the worker token, the workspace, the explicitly supplied auth file, and
+ * only Pi-supported provider keys from the environment.
  */
 export function sandcastleRuntimeOptions(
   config: Config,
@@ -127,7 +126,7 @@ export function sandcastleRuntimeOptions(
     model: config.workerModel,
     token,
     // The toolchain convergence layer binds <workspace>/toolchains/... into
-    // the container (ticket 18): installed once, reused by every launch.
+    // the container: installed once, reused by every launch.
     workspace: workspace.root,
     // Model authentication is separate from agent resources: the supported
     // provider env vars present here, or the explicitly supplied auth file —

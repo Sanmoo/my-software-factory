@@ -44,19 +44,19 @@ workspace: ~/.local/share/msf
 EOF
 ```
 
-## The worker's agent environment (issue #159, ADR 0001)
+## The worker's agent environment
 
-`agent-resources.json` is the single declaration: Pi's exact version, the
+`agent-resources.yaml` is the single declaration: Pi's exact version, the
 upstream skills repository with an immutable commit, the selected skills, the
 delegation extension at an exact version with its operating guidance, and the
 factory's reviewer agents. `npm run build:image` fetches and verifies all of
 it, records the result in `/opt/msf/agent-inventory.json`, and only then moves
 the image tag — a failed build leaves the previous valid image in place.
 
-- **Update a resource**: change `agent-resources.json` in a reviewed commit,
+- **Update a resource**: change `agent-resources.yaml` in a reviewed commit,
   then `npm run build:image`. Never edit files inside a running image. The
-  continuity guardrail (issue 119) is factory code staged from this checkout's
-  `dist/`, not a declared external resource; the same build pins it.
+  continuity guardrail is factory code staged from this checkout's `dist/`,
+  not a declared external resource; the same build pins it.
 - **Upgrading from the profile snapshot**: `profile-allowed-roots` and
   `profile-skip-dangling-links` no longer exist — delete them from `msf.yaml`.
 - **Diagnose**: `docker run --rm --network none --entrypoint cat msf-v2-worker:local /opt/msf/agent-inventory.json`

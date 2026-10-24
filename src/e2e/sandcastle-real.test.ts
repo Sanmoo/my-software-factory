@@ -14,8 +14,8 @@ import type { WorkRequest } from "../runtime/port.js";
 import { githubWork } from "./work-fixtures.js";
 
 /**
- * The REAL proof (ticket 85, extended by issue #159): an explicitly enabled,
- * credit-consuming run of the full worker flow in a real container — the
+ * The REAL proof: an explicitly enabled, credit-consuming run of the full
+ * worker flow in a real container — the
  * image-provisioned Pi, skills, delegation extension and reviewer agents, a
  * real authenticated model, an EMPTY runtime cache and NO personal Pi profile
  * — against a DISPOSABLE local git repository. It walks the worker's own path:

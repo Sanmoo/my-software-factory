@@ -1,29 +1,24 @@
 import { createHash } from "node:crypto";
 
 /**
- * The factory-owned agent-resource declaration (issue #159, ADR 0001).
- *
- * One file declares everything the worker image provisions: Pi at an exact
- * version, the selected upstream skills at an immutable revision, the
- * delegation extension at an exact version with its operating guidance, and
- * the factory-owned reviewer agent definitions. The provisioning script and
- * the runtime preflight share these validators so a declaration typo fails
- * the image build AND a stale image fails the launch — never a silent
- * substitution.
+ * The factory's agent-resource declaration: the set the worker image
+ * provisions and the launch loads. Validation, canonical form and digests
+ * live here with no I/O and no dependencies, so the image build and the
+ * runtime preflight share one interpretation; unknown keys are rejected, so a
+ * typo fails the build instead of silently changing the effective set.
  */
 
 export const AGENT_RESOURCES_SCHEMA = "msf-agent-resources/v1";
 export const AGENT_INVENTORY_SCHEMA = "msf-agent-inventory/v1";
+/** The committed declaration's file name, recorded in the image inventory. */
+export const AGENT_DECLARATION_FILE = "agent-resources.yaml";
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
 const IMMUTABLE_REVISION = /^[0-9a-f]{40}$/;
 const RESOURCE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/**
- * The roles the factory's implementation procedure composes (issue #159): the
- * declaration names WHICH skill/agent fills each role, so the prompt derives
- * its names and paths from this file instead of keeping a second list.
- */
+/** The procedure roles the declaration must fill, one skill and one reviewer
+ *  agent each: the worker prompt and launch flags derive their names here. */
 export const SKILL_ROLES = ["implement", "tdd", "review", "design", "pr"];
 export const AGENT_ROLES = ["standards", "spec"];
 
@@ -82,7 +77,7 @@ function resourceName(value, where) {
   return name;
 }
 
-/** A repository-relative POSIX path that can never escape the checkout. */
+/** A POSIX path relative to its root, which can never escape it. */
 function relativePath(value, where) {
   const path = nonEmptyString(value, where);
   if (
@@ -91,7 +86,7 @@ function relativePath(value, where) {
     /[\s'"]/.test(path) ||
     path.split("/").some((part) => part === ".." || part === "")
   ) {
-    fail(`${where} must be a normalized repository-relative path without quotes or spaces, got "${path}"`);
+    fail(`${where} must be a normalized relative path without quotes or spaces, got "${path}"`);
   }
   return path;
 }
@@ -102,8 +97,8 @@ function parsePi(value) {
   return {
     package: nonEmptyString(pi.package, "pi.package"),
     version: exactVersion(pi.version, "pi.version"),
-    // Pi's installed package manifest must declare exactly this: a licence that
-    // changed upstream under us fails the build instead of shipping silently.
+    // The installed package manifest must declare exactly this licence: one
+    // that changed upstream fails the build instead of shipping unnoticed.
     license: nonEmptyString(pi.license, "pi.license"),
   };
 }
@@ -184,18 +179,9 @@ function parseAgents(value) {
   });
 }
 
-/**
- * Parse and validate a declaration. Unknown keys are rejected on purpose:
- * a typo must fail the build, never silently change the effective set.
- */
-export function parseAgentResources(text, source = "agent-resources.json") {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    fail(`${source} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const doc = object(parsed, source);
+/** Validate a parsed declaration document and return its normalized form. */
+export function normalizeAgentResources(document, source = AGENT_DECLARATION_FILE) {
+  const doc = object(document, source);
   exactKeys(doc, ["schema", "pi", "skills", "extensions", "agents"], source);
   if (doc.schema !== AGENT_RESOURCES_SCHEMA) {
     fail(`${source}.schema must be "${AGENT_RESOURCES_SCHEMA}", got "${String(doc.schema)}"`);
@@ -213,11 +199,21 @@ export function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/**
- * The skills the image must carry, in the exact order the launch loads them:
- * the selected upstream skills first, then each extension's operating guidance.
- * Paths are relative to the agent directory inside the worker image.
- */
+/** The declaration's canonical text: key order and formatting are fixed by the
+ *  normalized form, so the same declaration always yields the same bytes. */
+export function canonicalDeclaration(declaration) {
+  return `${JSON.stringify(declaration, null, 2)}\n`;
+}
+
+/** The declaration's identity: its canonical digest, recorded by the image and
+ *  recomputed by the checkout that launches against it. */
+export function declarationDigest(declaration) {
+  return sha256(canonicalDeclaration(declaration));
+}
+
+/** The skills the image must carry, in the order the launch loads them: the
+ *  selected upstream skills, then each extension's operating guidance. Paths
+ *  are relative to the agent directory inside the worker image. */
 export function expectedSkills(declaration) {
   return [
     ...declaration.skills.selected.map((skill) => ({
@@ -243,10 +239,10 @@ function extensionImagePath(packageName) {
 }
 
 /**
- * Compare the inventory recorded by the image with the MSF declaration of the
- * checkout that is about to launch. Returns human-readable mismatches; empty
- * means the image really is the declared set. Field comparison (not the Docker
- * tag) is the proof: a stale or hand-built image fails here.
+ * Compare the inventory an image recorded with the declaration of the
+ * checkout about to launch. Returns human-readable mismatches; empty means the
+ * image really is the declared set. The comparison is by content identity —
+ * versions, revisions and paths — never by the mutable Docker tag.
  */
 export function compareAgentInventory(declaration, declarationSha256, inventory) {
   const mismatches = [];
@@ -256,7 +252,7 @@ export function compareAgentInventory(declaration, declarationSha256, inventory)
   }
   const recordedDeclaration = object(record.declaration, "image inventory.declaration");
   if (recordedDeclaration.sha256 !== declarationSha256) {
-    mismatches.push("the image was provisioned from a different agent-resources.json than this checkout");
+    mismatches.push(`the image was provisioned from a different ${AGENT_DECLARATION_FILE} than this checkout`);
   }
 
   const pi = object(record.pi, "image inventory.pi");
@@ -277,8 +273,8 @@ export function compareAgentInventory(declaration, declarationSha256, inventory)
           `declared ${expected.origin}@${expected.revision} ${expected.upstreamPath}`,
       );
     } else if (found.path !== expected.imagePath) {
-      // Where the image put it is part of the identity: the launch loads the
-      // declared path, so a file somewhere else is not the declared resource.
+      // A resource somewhere else in the image is not the declared one: the
+      // launch loads the declared path.
       mismatches.push(
         `skill "${expected.name}" is at ${String(found.path)} in the image, declared at ${expected.imagePath}`,
       );

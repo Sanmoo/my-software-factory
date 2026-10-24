@@ -109,8 +109,7 @@ export interface Config {
   labels: Labels;
   /** An explicitly supplied Pi authentication file (auth.json). Its contents
    * are never baked into the image and never read from a personal profile;
-   * model credentials may instead come from Pi's supported provider env vars
-   * (issue #159). */
+   * model credentials may instead come from Pi's supported provider env vars. */
   workerAuthFile: string | null;
   /** The interruption-recovery budget: finite and separate from the attempts. */
   recovery: RecoveryBudget;

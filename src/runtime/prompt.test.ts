@@ -378,13 +378,12 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
     assert.doesNotMatch(initial, /~\/\.pi\/agent\/skills/);
   });
 
-  test("every skill path, the guidance path and the reviewer names come from the declaration — no second list (issue #159)", () => {
+  test("every skill path, the guidance path and the reviewer names come from the declaration — no second list", () => {
     const synthetic: LoadedAgentResources = {
-      raw: "",
-      sha256: "",
+      digest: "",
       declaration: {
         schema: "msf-agent-resources/v1",
-        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.0.0", license: "MIT" },
         skills: {
           repository: "https://example.invalid/skills.git",
           revision: "a".repeat(40),
@@ -430,11 +429,10 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
 
   test("a declaration that cannot compose the procedure fails the prompt instead of pointing at absent paths", () => {
     const incomplete: LoadedAgentResources = {
-      raw: "",
-      sha256: "",
+      digest: "",
       declaration: {
         schema: "msf-agent-resources/v1",
-        pi: { package: "@earendil-works/pi-coding-agent", version: "1.3.0", license: "MIT" },
+        pi: { package: "@earendil-works/pi-coding-agent", version: "1.0.0", license: "MIT" },
         skills: {
           repository: "https://example.invalid/skills.git",
           revision: "a".repeat(40),
@@ -444,7 +442,7 @@ describe("worker prompt — the implementation procedure (ticket 85)", () => {
         extensions: [
           {
             package: "pi-subagents",
-            version: "0.79.1",
+            version: "0.1.0",
             license: "MIT",
             entry: "index.js",
             guidance: { name: "pi-subagents", path: "skills/pi-subagents" },

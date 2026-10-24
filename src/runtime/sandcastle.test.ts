@@ -57,7 +57,7 @@ function inventoryJson(): string {
   const { declaration } = RESOURCES;
   return JSON.stringify({
     schema: "msf-agent-inventory/v1",
-    declaration: { file: "agent-resources.json", sha256: RESOURCES.sha256 },
+    declaration: { file: "agent-resources.yaml", sha256: RESOURCES.digest },
     pi: declaration.pi,
     skills: [
       ...declaration.skills.selected.map((skill) => ({
@@ -948,7 +948,7 @@ describe("sandcastle runtime — the artifact contract on real disk (ticket 13's
         return { stdout: "29.7.2", stderr: "" };
       },
     });
-    await assert.rejects(failing, /does not match this checkout's agent-resources\.json/);
+    await assert.rejects(failing, /does not match this checkout's agent-resources\.yaml/);
     await assert.rejects(failing, /Pi is @earendil-works\/pi-coding-agent@1\.2\.0/);
     await assert.rejects(failing, /npm run build:image/);
     assert.ok(
