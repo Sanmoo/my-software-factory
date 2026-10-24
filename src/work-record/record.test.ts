@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { githubWork } from "../e2e/work-fixtures.js";
+import { appendAttemptEvent } from "./logs.js";
 import {
   EMPTY_REPAIR_CYCLE,
   PAUSE_FILENAME,
@@ -92,6 +93,23 @@ describe("the Work record — one owner for the whole on-disk record", () => {
 
     writeFileSync(join(dir, "reparo.json"), '{"usedRounds":"many"}', "utf8");
     assert.deepEqual((await record().read()).repair, { ...EMPTY_REPAIR_CYCLE }, "an unreadable cycle is the honest initial one");
+  });
+
+  test("the attempt's model provider failure is read through the record, attempt by attempt", async () => {
+    const at = Date.parse(AT);
+    appendAttemptEvent(dir, 2, {
+      event: "agent-raw",
+      line: JSON.stringify({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage: "429: upstream unavailable", timestamp: at },
+      }),
+    });
+
+    assert.deepEqual(await record().readModelProviderFailure(2), {
+      message: "429: upstream unavailable",
+      identity: AT,
+    });
+    assert.equal(await record().readModelProviderFailure(1), null, "another attempt's absent stream is no failure");
   });
 
   test("every part written through the interface is read back through it", async () => {

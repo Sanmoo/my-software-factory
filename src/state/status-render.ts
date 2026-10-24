@@ -10,8 +10,8 @@ import { renderWaits, type RecoveryLedger } from "../pool/recovery.js";
 import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
 import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
-import { knownAttempt } from "../runtime/continuity-artifacts.js";
-import type { WorkEvidence } from "./evidence.js";
+import { knownAttempt } from "../work-record/continuity.js";
+import type { WorkEvidence } from "../work-record/evidence.js";
 import type {
   AmbiguousJiraTicket,
   JiraSelectionView,

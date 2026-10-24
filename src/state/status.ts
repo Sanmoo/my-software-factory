@@ -1,11 +1,11 @@
 import type { Config, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import { workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import {
-  readLastAttempt,
   scanRegistry,
   type AttemptWithoutOwnOutcome,
   type RegistryView,
 } from "../pool/registry.js";
+import { openWorkRecord } from "../work-record/record.js";
 import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
 import {
   githubSelections,
@@ -327,6 +327,11 @@ function unknownSelectionConflicts(
   );
 }
 
+/** The attempt the Work record numbers on disk, or null when nothing does. */
+async function recordAttempt(workDir: string): Promise<number | null> {
+  return (await openWorkRecord(workDir).read()).attempt;
+}
+
 /**
  * The two states, from the registry and the probe together (issue 102): a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
@@ -345,7 +350,7 @@ async function classifyLiveness(
   const running = await Promise.all(
     observation.workers.map(async (worker) => ({
       ...worker,
-      attempt: await readLastAttempt(workDirOfKey(layout, worker.key)),
+      attempt: await recordAttempt(workDirOfKey(layout, worker.key)),
     })),
   );
   const carried = new Set(running.map((worker) => worker.key));

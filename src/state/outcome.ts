@@ -3,7 +3,7 @@ import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { RepairAttempt } from "../work-record/repair.js";
 import { exhaustedReason } from "../pool/recovery.js";
 import { exhaustedModelProviderReason } from "../pool/model-provider.js";
-import type { ModelProviderFailure } from "../runtime/model-provider-error.js";
+import type { ModelProviderFailure } from "../work-record/record.js";
 import { describePublication, describeRemoteChange, renderLocalWork } from "./repair-view.js";
 import { readWorkEvidence, renderWorkEvidence } from "../work-record/evidence.js";
 import type { PauseReason } from "../work-record/continuity.js";
