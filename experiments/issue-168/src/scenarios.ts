@@ -14,7 +14,7 @@ import { FIXTURE_TICKET, githubTicket } from "./explorer.js";
 import { SimTracker, type CommentIdOrder, type ReadView, type SeedIssue } from "./tracker.js";
 import { WorkerRegistry } from "./workers.js";
 
-export class ScenarioError extends Error {
+class ScenarioError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ScenarioError";
@@ -27,11 +27,11 @@ export interface ScenarioResult {
   readonly observations: Readonly<Record<string, unknown>>;
 }
 
-export function check(condition: boolean, message: string): asserts condition {
+function check(condition: boolean, message: string): asserts condition {
   if (!condition) throw new ScenarioError(message);
 }
 
-export function equal<T>(actual: T, expected: T, what: string): void {
+function equal<T>(actual: T, expected: T, what: string): void {
   if (actual !== expected) {
     throw new ScenarioError(`${what}: expected ${String(expected)}, got ${String(actual)}`);
   }
@@ -41,7 +41,7 @@ const FRESH: ReadView = { kind: "all" };
 
 /** The three writes C5 performs for one claim (padlock, assignment, record),
  *  by applied position. */
-function claimWrites(start: number): ReadView {
+function hideClaimWrites(start: number): ReadView {
   return { kind: "omit", indices: [start, start + 1, start + 2] };
 }
 
@@ -425,7 +425,7 @@ export function staleObservation(): ScenarioResult {
   const w = world(claimSequence);
   observeFree(w.a, w);
   w.a.write(w.tracker, w.ticket); // A's claim is applied here...
-  const observationB = w.b.observe(w.tracker, w.ticket, claimWrites(0));
+  const observationB = w.b.observe(w.tracker, w.ticket, hideClaimWrites(0));
   w.b.write(w.tracker, w.ticket);
   const decisionB = w.b.verify(w.tracker, w.ticket, FRESH);
   const workerB = w.b.launch(w.workers, w.ticket);
@@ -479,8 +479,8 @@ export function staleReadTwoWinners(): ScenarioResult {
   observeFree(w.b, w);
   w.a.write(w.tracker, w.ticket); // history 0 padlock, 1 assignment, 2 record
   w.b.write(w.tracker, w.ticket); // history 3 padlock, 4 assignment, 5 record
-  const decisionA = w.a.verify(w.tracker, w.ticket, claimWrites(3));
-  const decisionB = w.b.verify(w.tracker, w.ticket, claimWrites(0));
+  const decisionA = w.a.verify(w.tracker, w.ticket, hideClaimWrites(3));
+  const decisionB = w.b.verify(w.tracker, w.ticket, hideClaimWrites(0));
   w.a.launch(w.workers, w.ticket);
   w.b.launch(w.workers, w.ticket);
   return {
@@ -598,6 +598,7 @@ export function manualRelease(): ScenarioResult {
   releaseClaim(w.tracker, w.workers, w.ticket, confirmation, "acting-account");
   const releasedComments = w.tracker.snapshot().comments.length;
   const releasedPadlock = w.tracker.snapshot().labels.includes(PADLOCK_LABEL);
+  const releasedAssignee = w.tracker.snapshot().assignees.includes("acting-account");
 
   observeFree(w.b, w);
   w.b.write(w.tracker, w.ticket);
@@ -612,6 +613,7 @@ export function manualRelease(): ScenarioResult {
       claimWhileAlive,
       released: releasedComments,
       padlockAfter: releasedPadlock,
+      assigneeAfter: releasedAssignee,
       workerB: workerB?.id ?? null,
       live: w.workers.liveFor(w.ticket).length,
       firstWorkerEnded: worker.ended,
@@ -686,6 +688,39 @@ export function legacyClaim(): ScenarioResult {
   };
 }
 
+/** The operator's release refuses a marker it cannot read: no cleanup by guess. */
+export function releaseRefusesMalformed(): ScenarioResult {
+  const ticket = FIXTURE_TICKET;
+  const tracker = new SimTracker(ticket, {
+    labels: [PADLOCK_LABEL],
+    comments: [
+      {
+        id: 7,
+        author: "unknown-factory",
+        body: "<!-- msf:claim -->\nfactory: unknown-factory\n",
+      },
+    ],
+  });
+  const workers = new WorkerRegistry();
+  const confirmation = confirmStop(workers, ticket);
+  let refused = false;
+  try {
+    releaseClaim(tracker, workers, ticket, confirmation, "acting-account");
+  } catch (error) {
+    refused = error instanceof OperatorReleaseRefused;
+  }
+  const snapshot = tracker.snapshot();
+  return {
+    name: "release-refuses-malformed",
+    expectation: "a malformed claim marker is refused, never deleted by guess",
+    observations: {
+      refused,
+      claims: snapshot.comments.length,
+      padlock: snapshot.labels.includes(PADLOCK_LABEL),
+    },
+  };
+}
+
 export function claimForAnotherTicket(): ScenarioResult {
   const ticket = FIXTURE_TICKET;
   const tracker = new SimTracker(ticket, {
@@ -738,5 +773,6 @@ export const SCENARIOS: readonly { readonly name: string; readonly run: Scenario
   { name: "manual-release-precondition", run: manualRelease },
   { name: "local-recovery", run: localRecovery },
   { name: "legacy-claim", run: legacyClaim },
+  { name: "release-refuses-malformed", run: releaseRefusesMalformed },
   { name: "claim-for-another-ticket", run: claimForAnotherTicket },
 ];
