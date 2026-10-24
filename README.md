@@ -57,10 +57,9 @@ by `account` — the API token's owner, not an implicitly different human
 operator. The token is never a YAML value: `token-env` names the local
 environment variable that holds it. One Jira project may feed several
 repositories: one source per selection rule, each with its own JQL and
-destination. A ticket readable rules promise to different destinations is
-ambiguous: `msf status` holds it with the reason instead of a destination,
-and says when an unreadable selection leaves the overlap unverified. This
-release only reads Jira: `msf status` lists the candidates (no claim, comment
+destination. When readable rules promise one ticket to different destinations,
+`msf status` holds it with the reason instead of a destination; an unreadable
+selection leaves that overlap unverified. This release only reads Jira: `msf status` lists the candidates (no claim, comment
 or launch), and `msf run` refuses a Jira configuration before any claim. A
 Jira-only factory writes `repos: []`.
 
