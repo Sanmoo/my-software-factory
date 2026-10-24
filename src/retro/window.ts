@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { relative, sep } from "node:path";
 
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeClass } from "../state/outcome.js";
@@ -12,6 +12,7 @@ import {
   RETRO_MOUNT_PATHS,
   type WorkspaceLayout,
 } from "../layout.js";
+import { OPERATIONAL_LOG_FILENAME } from "../log.js";
 
 /**
  * The retrospective window (issue 141): the finished works a round analyzes —
@@ -145,10 +146,14 @@ async function completedAtOf(dir: string): Promise<number> {
 
 /**
  * The factual summary the synthesis opens with (issue 141): counts from the
- * window's records and ledgers, never impressions. The agent verifies it
+ * window's records and ledgers plus what the factory's own operational log
+ * says about these works — numbers, never impressions. The agent verifies it
  * against the evidence and corrects it in the report if they disagree.
  */
-export async function renderWindowSummary(works: readonly FinishedWork[]): Promise<string> {
+export async function renderWindowSummary(
+  layout: WorkspaceLayout,
+  works: readonly FinishedWork[],
+): Promise<string> {
   const outcomes = new Map<OutcomeClass, number>();
   const repos = new Set<string>();
   let attempts = 0;
@@ -172,19 +177,37 @@ export async function renderWindowSummary(works: readonly FinishedWork[]): Promi
   }
 
   const count = (outcome: OutcomeClass): number => outcomes.get(outcome) ?? 0;
-  const lines = [
+  return [
     `Window: ${works.length} finished work(s) from ${repos.size} repo(s) — ` +
       `delivered ${count("pr-open")}, clean-without-pr ${count("clean-without-pr")}, ` +
       `blocked ${count("blocked-self-report")}.`,
     `Operational facts: ${attempts} attempt(s) across the window; ${repairRounds} automatic repair round(s) ` +
       `(${repairFalls} ended without publishing); ${recoveries} interruption recoveries; ` +
       `${modelProviderRetries} model provider retries.`,
-    `Works (oldest first):`,
-    ...works.map(
-      (work) =>
-        `- ${work.key} — ${work.outcome}, attempt ${work.attempt}, finished ` +
-        `${new Date(work.completedAt).toISOString()}, evidence ${work.evidencePath}`,
-    ),
-  ];
-  return lines.join("\n");
+    await operationalLogFacts(layout, works),
+  ].join("\n");
+}
+
+/** How often the factory's own log spoke of these works — the factory-axis
+ *  anchor, read from the persisted operational log when it exists. */
+async function operationalLogFacts(
+  layout: WorkspaceLayout,
+  works: readonly FinishedWork[],
+): Promise<string> {
+  let raw: string;
+  try {
+    // The tail is enough for the anchor and bounds the read of a long-lived log.
+    raw = (await readFile(`${layout.root}/${OPERATIONAL_LOG_FILENAME}`, "utf8")).slice(-1_000_000);
+  } catch {
+    return "Operational log: absent — the window's records are the only evidence of this round.";
+  }
+  const lines = raw.split("\n").filter((line) => line.trim() !== "");
+  const keys = works.map((work) => work.key);
+  const mentions = lines.filter((line) => keys.some((key) => line.includes(key)));
+  const last = mentions.at(-1);
+  return (
+    `Operational log: ${mentions.length} line(s) mention the window's works of ${lines.length} recorded ` +
+    `line(s)` +
+    (last === undefined ? "." : `; the last one: "${last.slice(0, 300)}".`)
+  );
 }

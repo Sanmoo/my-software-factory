@@ -310,6 +310,70 @@ describe("e2e: the retrospective round — threshold, marker, window and filing 
     assert.equal(blocked?.outcome, "blocked-self-report");
   });
 
+  test("the summary anchors factory-axis findings in the operational log, not only in the records", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps } = makeFactory(config);
+    seedArchived(1, at(1));
+    writeFileSync(
+      join(layout.root, "operacional.log"),
+      [
+        "[2026-02-01T10:00:00Z] derived Sanmoo/my-tasks#1: issue closed — done; archiving artifacts",
+        "[2026-02-01T10:05:00Z] derived Sanmoo/my-tasks#1: repair round skipped: remote head unreadable",
+        "[2026-02-01T10:06:00Z] derived pool: 0 eligible work(s), 0 reserved work(s)",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await runOnce(deps);
+
+    const summary = runtime.retroLaunched[0]!.summary;
+    assert.match(summary, /Operational log: 2 line\(s\) mention the window's works/);
+    assert.match(summary, /repair round skipped/, "the last operational line about the work is quoted");
+  });
+
+  test("a single-work round before the first report does not steal the first round's last-10 window", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps } = makeFactory(config);
+    for (let day = 1; day <= 12; day += 1) seedArchived(day, at(day));
+
+    const finished = await collectFinishedWorks(layout);
+    const single = await planManualRound(config, layout, finished, { work: `${REPO}#12` });
+    assert.ok(!("empty" in single));
+    await runRetroRound(
+      { config, runtime, workspace: layout, log: () => {}, notifier: new FakeNotifier() },
+      single as RetroPlan,
+    );
+    assert.equal((await readRetroState(layout)).boundaryAt, null, "no full window was ever analyzed");
+
+    await runOnce(deps);
+    assert.equal(
+      runtime.retroLaunched.at(-1)!.works.length,
+      10,
+      "the first full round still covers the last ten works — the single-work report did not move the boundary",
+    );
+  });
+
+  test("a lost state index never makes the factory skip work: it degrades to the first-round rule", async () => {
+    const config = makeConfig({ threshold: 2 });
+    const { runtime, deps } = makeFactory(config);
+    seedArchived(1, at(1));
+    seedArchived(2, at(2));
+    await runOnce(deps);
+    rmSync(join(layout.retros, "estado.json"), { force: true });
+    seedArchived(3, at(3));
+    seedArchived(4, at(4));
+
+    await runOnce(deps);
+
+    const state = await readRetroState(layout);
+    assert.notEqual(state.lastReport, null, "the reports on disk still mark the last round");
+    assert.deepEqual(
+      runtime.retroLaunched.at(-1)!.works.map((work) => work.key),
+      [`${REPO}#1`, `${REPO}#2`, `${REPO}#3`, `${REPO}#4`],
+      "the boundary degrades to the first-round rule (the last ten finished works) — re-analysis, never a skip",
+    );
+  });
+
   test("the round runs on its own lane — a full worker slot never delays it", async () => {
     const config = makeConfig({ threshold: 1 }, 1);
     let releaseWorker: () => void = () => {};

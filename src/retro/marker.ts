@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WorkspaceLayout } from "../layout.js";
-import { reportFileName } from "./window.js";
+import { reportFileName, RETRO_REPORT_SUFFIX } from "./window.js";
 
 /**
  * The retrospective marker (issue 141): the report artifacts in the retros
@@ -67,7 +67,23 @@ export async function readRetroState(layout: WorkspaceLayout): Promise<RetroStat
       lastFiled: Math.max(0, Math.floor(lastFiled)),
     };
   } catch {
-    return { ...EMPTY_RETRO_STATE };
+    // A lost index never makes the factory skip work it does not know about:
+    // the reports are still on disk, so the boundary degrades to the first
+    // round's rule (the last ten finished works) and re-analysis is possible —
+    // an overlap, never a silent skip.
+    return { ...EMPTY_RETRO_STATE, lastReport: await latestReport(layout) };
+  }
+}
+
+/** The newest report file name, or null when the retros dir has none. */
+async function latestReport(layout: WorkspaceLayout): Promise<string | null> {
+  try {
+    const reports = (await readdir(layout.retros))
+      .filter((name) => name.endsWith(RETRO_REPORT_SUFFIX))
+      .sort();
+    return reports.at(-1) ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -76,7 +92,6 @@ export async function writeRetroState(layout: WorkspaceLayout, state: RetroState
   await writeFile(join(layout.retros, RETRO_STATE_FILENAME), `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-/** The round in flight, or null when none is recorded. */
 export async function readRetroInFlight(layout: WorkspaceLayout): Promise<RetroInFlight | null> {
   try {
     const raw = await readFile(join(layout.retros, RETRO_IN_FLIGHT_FILENAME), "utf8");

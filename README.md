@@ -90,8 +90,7 @@ clean-host verification and the real proof — lives in the
 
 The retrospective files `needs-triage` issues and never labels anything
 `ready-for-agent`: the operator's triage is the only gate between an
-improvement item and the pool. Its report lands in `<workspace>/retros/` and is
-the marker of the next window.
+improvement item and the pool.
 
 ## Design
 

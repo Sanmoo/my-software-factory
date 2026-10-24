@@ -225,7 +225,7 @@ The operator's notice that a live worker needs a decision the factory will not m
 _Avoid_: Help notice, when the work is not blocked.
 
 **Factory notice**:
-The operator's notice about the factory itself, naming no work: Docker has not answered long enough for launches to stop. It is never posted on an issue.
+The operator's notice about the factory itself, naming no work: Docker has not answered long enough for launches to stop, or a retrospective round filed improvement items at a destination. It is never posted on an issue.
 _Avoid_: Work notice, when no work is involved.
 
 **Archived work**:
@@ -284,3 +284,15 @@ _Avoid_: Help request, when the work still waits for the operator on its issue.
 **Improvement item**:
 A candidate change to the factory or a target repo, proposed by a retrospective; it becomes ordinary work only when the operator approves it on the tracker.
 _Avoid_: Work, before that approval.
+
+**Retrospective round**:
+One execution of the retrospective over a window of finished works, from its trigger to its report. It is a factory job on its own lane — never a Work, never a claim, never a worker slot.
+_Avoid_: Work, when the analysis job is meant.
+
+**Retrospective window**:
+The finished works one retrospective round analyzes: those finished after the last report's boundary, or the last ten when there is no report yet.
+_Avoid_: Pool, when the finished works are meant.
+
+**Retrospective report**:
+The dated Markdown artifact a round writes in the workspace; its existence is the marker that defines the next window's boundary, and it records every candidate with its outcome.
+_Avoid_: Work artifact, when the round's own report is meant.
