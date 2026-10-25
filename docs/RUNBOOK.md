@@ -242,20 +242,29 @@ leftovers when tracker and workspace disagree:
 
 The **reserved work** block is the Work state itself — the same states the
 operation acts on, so the report cannot describe a world the factory is not
-acting on. Every reserved work gets one line, its state plus the facts that
-state carries, grouped by what happens next: **the factory proceeds by itself**
-(a done to archive, a feedback round, a repair round, an interruption on its
-recovery budget, a model provider retry with the provider's message and whether
-it is **awaiting model provider**, a requested stop to resume); **waiting for
-the operator** (a **continuity pause** with its reason, the attempt it waits
-for — its own planned number beside the ledger's last evidenced one when they
-differ — and its session when known; an unconfirmed stop; a repair that
-exhausted its rounds; a ticket that could not be read); **nothing to decide**
-(**parked**, or a ticket closed as not-planned). A repair cycle's own facts
-(rounds, falls, the unpublished attempt's publication and local work, the
-evidence paths) hang off that work's line. A reserved dir whose key names no
-GitHub work — a Jira reservation — is listed as not read, with the identity its
-record carries, and no state is invented for it.
+acting on. Each reserved work gets one line, its state plus the facts that state
+carries, grouped by what happens next:
+
+- **the factory proceeds by itself**: a done to archive, a done-fallback that
+  closes the issue first, a **rejected** PR closed without merge (blocked), a
+  fall to release or block, a feedback or repair round, a resumable answer, an
+  interruption on its recovery budget, a model provider retry with the
+  provider's message, a requested stop to resume;
+- **waiting for the operator**: a **continuity pause** with its reason and the
+  attempt it waits for (its own planned number beside the ledger's last
+  evidenced one when they differ) and its session when known; an unconfirmed
+  stop; a repair that exhausted its rounds; an interruption whose recovery
+  budget is spent; a ticket that could not be read;
+- **nothing to decide**: **parked**, or a ticket closed as not-planned.
+
+A repair cycle's own facts (rounds, falls, the unpublished attempt's publication
+and local work, the evidence paths) hang off that work's line. A reserved dir
+whose key names no GitHub work — a Jira reservation — is listed as not read, with
+the identity its record carries, and no state is invented for it.
+
+Two works are named elsewhere instead: the one a live worker carries (under
+**running**) and the one whose attempt ended with no outcome and no worker alive
+(under **orphaned**).
 
 Each entry names the work by its ticket source and the destination repository;
 a GitHub Issues work keeps the `owner/repo#n` spelling. The report never

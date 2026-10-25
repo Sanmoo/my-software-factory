@@ -700,7 +700,35 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("many reservations cost a bounded burst, not one per reservation (issue 147)", async () => {
+  test("an interruption whose recovery budget is spent waits for the operator, not for the factory", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 40);
+    claimIssue(tracker, 41);
+    const now = () => new Date("2026-01-01T00:00:00Z");
+    // A reservation whose interrupted attempt left only its recovery ledger:
+    // the reading is `interrupted`, and the reserved block is where it is named.
+    const recovering = workDir(layout, REPO, 40);
+    mkdirSync(recovering, { recursive: true });
+    await consumeRecovery(recovering, DEFAULT_RECOVERY_BUDGET, 1, now);
+    const exhausted = workDir(layout, REPO, 41);
+    mkdirSync(exhausted, { recursive: true });
+    for (let spent = 0; spent < DEFAULT_RECOVERY_BUDGET.maxRecoveries; spent += 1) {
+      await consumeRecovery(exhausted, DEFAULT_RECOVERY_BUDGET, 1, now);
+    }
+
+    const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
+
+    const factoryGroup = /the factory proceeds by itself: 1\n\s+Sanmoo\/my-tasks#40 — interrupted/;
+    const operatorGroup = /waiting for the operator: 1\n\s+Sanmoo\/my-tasks#41 — interrupted/;
+    assert.match(text, factoryGroup, "a recoverable interruption is the factory's own business");
+    assert.match(text, operatorGroup, "an exhausted one is grouped where it waits: the tick blocks and asks");
+    assert.ok(
+      text.indexOf("#40 — interrupted") < text.indexOf("waiting for the operator"),
+      "and the two are not rendered in the same group",
+    );
+  });
+
+    test("many reservations cost a bounded burst, not one per reservation (issue 147)", async () => {
     const tracker = new SlowTicketTracker(100);
     const numbers = Array.from({ length: 12 }, (_, index) => 100 + index);
     for (const number of numbers) {

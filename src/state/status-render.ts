@@ -82,6 +82,17 @@ const RESERVED_GROUPS = {
   "not-planned": "quiet",
 } satisfies Record<WorkStateReading["state"], ReservedGroup>;
 
+/**
+ * What will happen to this reserved Work next — the state's group, with one
+ * correction: an `interrupted` attempt whose recovery budget is EXHAUSTED is not
+ * something the factory proceeds with. The tick blocks and asks the operator for
+ * help (issue 123), so the work is grouped where it waits.
+ */
+function reservedGroup(reading: WorkStateReading): ReservedGroup {
+  if (reading.state === "interrupted" && reading.recovery.decision === "pause-help") return "operator";
+  return RESERVED_GROUPS[reading.state];
+}
+
 export interface RenderOptions {
   /** `msf status --all`: lift every list cap. */
   all?: boolean;
@@ -311,7 +322,7 @@ function renderReserved(view: StatusView, cap: number, named: ReadonlySet<string
   const lines = [`${RESERVED_HEADER}: ${total}`];
   for (const group of RESERVED_GROUP_ORDER) {
     const entries = readings
-      .filter((entry) => RESERVED_GROUPS[entry.reading.state] === group)
+      .filter((entry) => reservedGroup(entry.reading) === group)
       .sort((left, right) => left.key.localeCompare(right.key));
     if (entries.length === 0) continue;
     lines.push(`  ${RESERVED_GROUP_TITLES[group]}: ${entries.length}`);
