@@ -97,6 +97,10 @@ One logical try by a worker to carry out a work, counted per work. It survives i
 **Outcome**:
 The verdict of how an attempt ended.
 
+**Work state**:
+The answer to "what happened to this Work, and what may the factory do now?": the Work's one current state, in one vocabulary. The factory reads it at two moments — before a launch and after an Attempt ends — and both reads return states of the same vocabulary, carrying the payload the action needs. It is neither the Outcome (the verdict of one attempt's end) nor the Reservation (the registry's facts); the policy over the facts that produce it has one owner.
+_Avoid_: Outcome, when the Work's current state is meant; Reservation, when the state is meant, since the registry names only its own facts.
+
 **Interruption**:
 An attempt that ended without an outcome record: a SIGKILLed worker, a dead factory process, a dead container. It is not a failure: it consumes no attempt and never enters the fall ruler.
 
