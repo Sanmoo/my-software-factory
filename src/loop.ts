@@ -1,7 +1,7 @@
 import type { Config } from "./config.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
-import type { GitWork, LocalWorkFacts } from "./git/port.js";
+import type { GitWork } from "./git/port.js";
 import { helpNotice, type Notifier } from "./notify/port.js";
 import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
@@ -37,25 +37,7 @@ import {
 import { readOutcomeRecord } from "./work-record/outcome.js";
 import { interruptionPausedCommentBody } from "./state/outcome.js";
 import { readAttemptLedger } from "./work-record/attempts.js";
-import {
-  EMPTY_REPAIR_CYCLE,
-  readRepairCycle,
-  writeRepairCycle,
-  type RepairCycle,
-} from "./work-record/repair.js";
-import {
-  MAX_REPAIR_FALLS,
-  MAX_REPAIR_ROUNDS,
-  hasRepairCycle,
-  legacyRepairAttempt,
-  type RemoteObservation,
-} from "./pool/repair.js";
-import {
-  settleRepairRound,
-  type RepairRoundStart,
-  type RepairSettlement,
-} from "./pool/repair-round.js";
-import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-view.js";
+import { EMPTY_REPAIR_CYCLE, writeRepairCycle } from "./work-record/repair.js";
 import { readRecoveryLedger } from "./work-record/recovery.js";
 import {
   confirmStopRequest,
@@ -73,20 +55,18 @@ import { workKeyOf } from "./pool/work-key.js";
 import { deferred } from "./runtime/deferred.js";
 import { recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
-import { readEffectJournal } from "./work-record/continuity.js";
 import { openNonFailures, type NonFailures } from "./non-failures/non-failures.js";
 import { Slots } from "./pool/slots.js";
 import { openSurvivors, type Survivors } from "./survivors/survivors.js";
+import { openRepairReconciler, type RepairReconciler } from "./repair/reconcile.js";
 import {
   capacityExcess,
   occupiedSlots,
   type LivenessProbe,
 } from "./state/liveness.js";
-import { eventLogName } from "./work-record/logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import { operationalLog } from "./log.js";
 import { describeError } from "./format.js";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -108,13 +88,19 @@ import { join } from "node:path";
  *   Work, and every occurrence of that observation said once);
  * - non-failures/ owns the two endings that are not a failure (the Continuity
  *   pause and the model provider failure);
+ * - repair/ owns the Repair reconciliation: every repair attempt that wrote its
+ *   facts on disk and no live worker carries is settled before the derivation
+ *   reads the cycle, and the local-work/remote reads a round's material needs
+ *   are its own;
  * - tracker/ + pool/ + git/ + runtime/ are the IO (ticket 07).
  *
- * What is left here is the cycle's own: the slot of each admission (released
- * even when a collection fails), the capacity read before admitting, the
- * derivation of the pool and the decision of what to launch, in which order,
- * and the wait for the next event. Each verdict the state decides is executed
- * by the module that owns it; the loop only reads the facts and asks.
+ * What is left here is the cycle's own: the tick, the slot of each admission
+ * (released even when a collection fails), the capacity read before admitting,
+ * the derivation of the pool and the decision of what to launch in which order,
+ * the requested-stop boundary (the hold of an unconfirmed stop and the
+ * admission a stop interrupts), and the wait for the next event. Each verdict
+ * the state decides is executed by the module that owns it; the loop only reads
+ * the facts and asks.
  */
 
 export const TICK_MS = 60_000;
@@ -319,6 +305,9 @@ export class SweepEngine {
   /** The collection (ticket #208): an Attempt's end and the verdict applied,
    *  with every tracker and disk verb it triggers. The engine only asks. */
   private readonly collect: Collect;
+  /** The Repair reconciliation (ticket #207): every repair attempt on disk that
+   *  no live worker carries, settled before the derivation reads the cycle. */
+  private readonly repair: RepairReconciler;
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -383,6 +372,15 @@ export class SweepEngine {
         },
         workerMayBeAlive: (work) => this.workerMayBeAlive(work),
       },
+    });
+    // The Repair reconciliation (ticket #207): the settlement of an attempt that
+    // wrote its facts and no worker carries, before the derivation reads it.
+    // The requested-stop boundary is the cycle's, so it comes back as a port.
+    this.repair = openRepairReconciler({
+      git: deps.git,
+      pullRequests: deps.pullRequests,
+      log: this.log,
+      cycle: { operatorStopped: (dir, attempt) => this.operatorStoppedAttempt(dir, attempt) },
     });
     this.operatorStop = new OperatorStop({
       workspace: deps.workspace,
@@ -511,7 +509,7 @@ export class SweepEngine {
         log: (line) => this.log(line),
       });
     }
-    if (!suspended) await this.reconcileRepairAttempts(allReserved, inFlight);
+    if (!suspended) await this.repair.reconcile(allReserved, inFlight);
 
     // A stop whose confirmation failed on the previous invocation is settled
     // BEFORE the derivation (issue #146): the work only resumes once the
@@ -1128,8 +1126,8 @@ export class SweepEngine {
       },
       settleModelProviderFailure: (work, dir, attempt, failure) =>
         this.nonFailures.settleModelProvider(work, dir, attempt, failure),
-      inspectLocalWork: (work) => this.inspectLocalWork(work),
-      observeRemote: (work) => this.observeRemote(work),
+      inspectLocalWork: (work) => this.repair.inspectLocalWork(work),
+      observeRemote: (work) => this.repair.observeRemote(work),
     };
   }
 
@@ -1228,74 +1226,6 @@ export class SweepEngine {
 
 
   /**
-   * The repair reconciliation of the tick (issue 112): every repair attempt
-   * that wrote its facts on disk and is not carried by a live worker is
-   * settled BEFORE the derivation reads the cycle. The verdict lives in the
-   * Repair round module (pool/repair-round.ts); this method supplies its
-   * observations, persists the cycle through the record and says the verdict
-   * in the operator's log. The settlement is idempotent — a settled attempt is
-   * never charged, refunded or counted again — and an unreadable remote leaves
-   * the attempt pending: no worker and no budget return until a later sweep
-   * gets an answer.
-   */
-  private async reconcileRepairAttempts(
-    works: readonly WorkRef[],
-    inFlight: ReadonlySet<string>,
-  ): Promise<void> {
-    for (const work of works) {
-      const key = workKeyOf(work.work);
-      // A live worker owns its attempt: settling it mid-flight would read a
-      // half-written branch as a verdict.
-      if (inFlight.has(key)) continue;
-
-      const stored = await readRepairCycle(work.dir);
-      const recorded = stored.attempt;
-      let cycle: RepairCycle;
-      let operatorStopped = false;
-      let observeRoundStart: () => Promise<RepairRoundStart>;
-      let inspectLocalWork: () => Promise<LocalWorkFacts | null>;
-      if (recorded !== null) {
-        operatorStopped = await this.operatorStoppedAttempt(work.dir, recorded.attempt);
-        cycle = stored;
-        observeRoundStart = () => this.observeRepairRoundStart(work.dir, recorded.attempt);
-        inspectLocalWork = () => this.inspectLocalWork(work.work);
-      } else {
-        // A work that never ran a repair round has nothing to reconcile — no
-        // registry read or git inspection is paid for it on every sweep.
-        if (!hasRepairCycle(stored)) continue;
-        // A legacy cycle with no attempt on disk: only the registry gap can
-        // establish the attempt, and its local work is read once, by adoption.
-        const adopted = await this.adoptLegacyCycle(work, stored);
-        const adoptedAttempt = adopted?.attempt ?? null;
-        if (adopted === null || adoptedAttempt === null) continue;
-        cycle = adopted;
-        // The adoption's registry gap says an attempt ran; the settlement
-        // re-reads that from the attempt's own artifacts (issue 181), so a
-        // legacy cycle the artifacts do not back never blocks the work.
-        observeRoundStart = () => this.observeRepairRoundStart(work.dir, adoptedAttempt.attempt);
-        inspectLocalWork = async () => adoptedAttempt.localWork;
-      }
-
-      const decision = await settleRepairRound({
-        cycle,
-        operatorStopped,
-        observeRoundStart,
-        readOutcomeRecord: () => readOutcomeRecord(work.dir),
-        observeRemote: () => this.observeRemote(work.work),
-        inspectLocalWork,
-        // The premise is part of the verdict (issue 149): a remote the attempt
-        // did not produce is a concurrent change ONLY while the impediment the
-        // round addressed still exists — a human's own resolution is never
-        // taken for a reason to ask for help. Read once per settlement.
-        readPremise: () => this.deps.pullRequests.readPullRequestRepairFacts(workPullRequest(work.work)),
-      });
-      if (decision.kind === "none") continue;
-      await writeRepairCycle(work.dir, decision.cycle);
-      this.logSettlement(key, decision);
-    }
-  }
-
-  /**
    * A requested stop whose confirmation failed on a previous invocation
    * (issue #146): the stop module re-derives the hold over the same rule it
    * applied — the persisted `lastStop` and the latest liveness observation —
@@ -1340,104 +1270,6 @@ export class SweepEngine {
       `derived ${key}: NOT relaunching — ${because}. The work stays held until the previous worker is ` +
         "known to be gone (see `msf status`); a human may need to stop it",
     );
-  }
-
-  /** The cycle a legacy reparo.json implies (issue 112): the budget was charged
-   *  and the registry shows an attempt after the last recorded outcome — the
-   *  attempt whose observed head only the evidence signature names. */
-  private async adoptLegacyCycle(work: WorkRef, cycle: RepairCycle): Promise<RepairCycle | null> {
-    const ledger = await readAttemptLedger(work.dir);
-    const candidate = legacyRepairAttempt({
-      cycle,
-      lastAttempt: ledger.lastAttempt,
-      recordedAttempt: ledger.recordedAttempt,
-    });
-    if (candidate === null) return null;
-    const localWork = await this.inspectLocalWork(work.work);
-    return { ...cycle, attempt: { ...candidate, localWork } };
-  }
-
-  /** The settlement verdict, said once in the operator's log. */
-  private logSettlement(
-    key: string,
-    decision: Exclude<RepairSettlement, { kind: "none" }>,
-  ): void {
-    if (decision.kind === "returned-unstarted") {
-      this.log(
-        `repair attempt ${decision.attempt.attempt} of ${key} never reached the runtime — round returned, no fall`,
-      );
-      return;
-    }
-    const attempt = decision.cycle.attempt;
-    if (attempt === null) return;
-    switch (decision.kind) {
-      case "pending":
-        this.log(
-          `repair attempt ${attempt.attempt} of ${key}: reconciliation pending (${decision.reason}) — ` +
-            "no worker and no budget return while publication is uncertain",
-        );
-        return;
-      case "published":
-        this.log(
-          `repair attempt ${attempt.attempt} of ${key} confirmed published at ${shortSha(attempt.observedHeadSha)} → ` +
-            `${attempt.remoteHeadSha === null ? "the remote" : shortSha(attempt.remoteHeadSha)} — the round stays charged ` +
-            `(${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS})`,
-        );
-        return;
-      case "not-published":
-        this.log(
-          `repair attempt ${attempt.attempt} of ${key} ended without publishing — the round returns ` +
-            `(${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS}), ${decision.cycle.consecutiveFalls}/${MAX_REPAIR_FALLS} consecutive falls; ` +
-            `local work preserved: ${renderLocalWork(attempt.localWork)}`,
-        );
-        return;
-      case "premise-obsolete":
-        this.log(
-          `repair attempt ${attempt.attempt} of ${key}: the impediment it was launched for no longer exists ` +
-            `(the premise is obsolete) — the round returns (${decision.cycle.usedRounds}/${MAX_REPAIR_ROUNDS}) ` +
-            `with no fall counted; local work preserved: ${renderLocalWork(attempt.localWork)}`,
-        );
-        return;
-      case "concurrent-change":
-        this.log(
-          `repair attempt ${attempt.attempt} of ${key}: the remote branch ` +
-            `${describeRemoteChange(attempt.remoteHeadSha)} — a concurrent change the attempt did not produce; ` +
-            `local work preserved (${renderLocalWork(attempt.localWork)}), a human is asked`,
-        );
-        return;
-    }
-  }
-
-  /** The local work of a work, or null when git cannot answer — never "nothing there". */
-  private async inspectLocalWork(work: WorkIdentity): Promise<LocalWorkFacts | null> {
-    try {
-      return await this.deps.git.inspectLocalWorkFor(work);
-    } catch {
-      return null;
-    }
-  }
-
-  /** Whether a round with a recorded attempt ever reached the runtime: its own
-   *  event log is the cheap proof; when it is absent, the guardrail journal is
-   *  the remaining direct fact (an unreadable one proves nothing either way). */
-  private async observeRepairRoundStart(dir: string, attempt: number): Promise<RepairRoundStart> {
-    if (existsSync(join(dir, eventLogName(attempt)))) return { reached: true };
-    const journal = readEffectJournal(dir);
-    return {
-      reached: false,
-      journalIntact: journal.intact,
-      journaledAttempts: journal.sessions.map((session) => session.attempt),
-    };
-  }
-
-  /** The remote head now, or the honest uncertainty (an unreadable remote is
-   *  not an empty branch). */
-  private async observeRemote(work: WorkIdentity): Promise<RemoteObservation> {
-    try {
-      return { known: true, headSha: await this.deps.git.observeRemoteHeadFor(work) };
-    } catch {
-      return { known: false };
-    }
   }
 
   /** The engine's side of an exhausted model provider budget: keep the claim and
