@@ -228,8 +228,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
     try {
       if (rejection !== null) {
-        // Any other rejection happened AFTER the session started: the footprint
-        // is on disk and a stop can still reach this launch.
+        // Any other rejection is not a refusal: the worker's footprint exists
+        // and a stop can still reach this launch.
         this.startSession(request);
         await this.holdFor(request, index);
         throw rejection;

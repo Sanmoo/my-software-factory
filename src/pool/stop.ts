@@ -90,8 +90,8 @@ export interface StopLaunch {
  * that owns its writes: the caller words the outcome and never re-derives it.
  * `none-held` = the admission named no grant; `refunded` = the budget got it
  * back; `gone-from-ledger` = the ledger no longer holds that event, so nothing
- * was consumed by this relaunch; `still-consumed` = the ledger kept it (it
- * names another attempt), so the grant stays spent.
+ * was consumed by this relaunch; `still-consumed` = the ledger kept the grant
+ * (its count moved to another attempt), so this relaunch spends it.
  */
 export type GrantReturn = "none-held" | "refunded" | "gone-from-ledger" | "still-consumed";
 
@@ -99,7 +99,7 @@ export type GrantReturn = "none-held" | "refunded" | "gone-from-ledger" | "still
  * Return the recovery grant an admission still holds, if any: the grant's own
  * ledger event index is its identity, so refunding it twice is impossible and
  * an earlier, legitimate recovery can never be returned. The admission stops
- * naming the grant once the ledger answered — a write that threw keeps it
+ * naming the grant once the refund write answered — a write that threw keeps it
  * named, so a later caller can still retry the return. The caller decides WHEN
  * a grant may be released — a requested stop that cancelled the admission, or
  * the runtime's own proof that no worker existed (issue 178).
@@ -309,10 +309,9 @@ export class OperatorStop {
     // A stop refunds only a grant no worker may already be carrying. An
     // admission the runtime was already called for keeps the grant named, so a
     // Launch refusal arriving afterwards still returns it (issue 178).
-    const refunded =
-      launch.launched ? "still-consumed" : await refundHeldGrant(launch, attempt);
+    const refunded = !launch.launched && (await refundHeldGrant(launch, attempt)) === "refunded";
     await recordStopRequest(launch.dir, attempt, this.now);
-    return refunded === "refunded";
+    return refunded;
   }
 
   private async runStop(
