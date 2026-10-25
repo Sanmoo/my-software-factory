@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type { Config } from "./config.js";
-import type { IssueComment } from "./tracker/port.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
-import type { SessionResult, WorkerMaterial, WorkerRuntime } from "./runtime/port.js";
+import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
 import {
   helpNotice,
@@ -20,20 +19,13 @@ import {
   githubSelections,
   renderWorkIdentity,
   sourceKey,
-  ticketUrl,
   type WorkIdentity,
 } from "./tracker/identity.js";
-import {
-  reservationRecordOf,
-  reserveWork,
-  scanReservations,
-  type IdentifiedReservation,
-} from "./pool/reservation.js";
+import { scanReservations, type IdentifiedReservation } from "./pool/reservation.js";
 import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
   humanCommentsForPause,
-  repairSignature,
   workPullRequest,
   renderUnbackedClaim,
   renderUnmarkedReservation,
@@ -41,8 +33,8 @@ import {
   unmarkedReservationKey,
   type Reconciliation,
   type PoolEntry,
-  type RepairTrigger,
 } from "./state/derive.js";
+import { openLaunch, type Launch, type LaunchCycle, type Launchable } from "./launch/launch.js";
 import {
   STATE_DECLARATIONS,
   consentAppliesTo as stateConsentAppliesTo,
@@ -61,12 +53,11 @@ import {
   continuityPausedCommentBody,
 } from "./state/outcome.js";
 import { readAttemptLedger, readLastAttempt } from "./work-record/attempts.js";
-import { readLaunchFacts, archiveDoneWorkFor } from "./pool/registry.js";
+import { archiveDoneWorkFor } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
   readRepairCycle,
   writeRepairCycle,
-  type RepairAttempt,
   type RepairCycle,
 } from "./work-record/repair.js";
 import {
@@ -77,9 +68,7 @@ import {
   type RemoteObservation,
 } from "./pool/repair.js";
 import {
-  openRepairRound,
   settleRepairRound,
-  type RepairRoundContext,
   type RepairRoundStart,
   type RepairSettlement,
 } from "./pool/repair-round.js";
@@ -87,12 +76,9 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { readRecoveryLedger } from "./work-record/recovery.js";
 import {
   confirmStopRequest,
-  consumeRecovery,
   consumeStopRequest,
   recordFailure,
   recordInterruptionStop,
-  recordStopRequest,
-  resetFallCount,
   type RecoveryDecision,
 } from "./pool/recovery.js";
 import {
@@ -100,7 +86,6 @@ import {
   operatorStopClaim,
   reconcileUnconfirmedStops,
   stopConfirmed,
-  type StopLaunch,
   type StopReport,
 } from "./pool/stop.js";
 import { workKeyOf, workOfKey } from "./pool/work-key.js";
@@ -115,7 +100,7 @@ import {
   type ModelProviderDecision,
 } from "./pool/model-provider.js";
 import { deferred } from "./runtime/deferred.js";
-import { planContinuity, recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
+import { recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
 import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
 import {
@@ -149,10 +134,10 @@ import {
 import { DEFAULT_IDLE_LIMIT_MS } from "./runtime/activity.js";
 import { appendAttemptEvent, eventLogName } from "./work-record/logs.js";
 import { processRecoveryRequests } from "./recover.js";
-import { readTurnModelProviderError, type ModelProviderFailure } from "./work-record/model-provider-error.js";
+import type { ModelProviderFailure } from "./work-record/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError, formatDuration } from "./format.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -173,9 +158,6 @@ import { join } from "node:path";
  */
 
 export const TICK_MS = 60_000;
-
-/** The production backoff timer; tests inject {@link LoopDeps.wait}. */
-const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface LoopDeps {
   config: Config;
@@ -476,13 +458,6 @@ function reassertedPause(pause: PauseRecord & { id: string }, previous: PauseRec
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
-/** Remove a settled waiter from the array it parked in: the arrays live as
- *  long as the run, and a stop may be waited out many times. */
-function dropWaiter(waiters: Array<() => void>, waiter: () => void): void {
-  const index = waiters.indexOf(waiter);
-  if (index >= 0) waiters.splice(index, 1);
-}
-
 /**
  * The first observation renders the whole composition; later ones only what
  * changed. A swap with equal counts still names both works involved.
@@ -518,36 +493,6 @@ function renderPoolSummary(
  *  repair — or the continuation of an attempt that ended without its own
  *  outcome: the recovery of an interruption (issue 123) or the retry of a
  *  model provider failure (issue 144). */
-type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
-
-interface Launchable {
-  /** The Work as the reservation remembers it — never re-derived from config. */
-  work: WorkIdentity;
-  /** The Work's registry dir (its identity anchor). */
-  dir: string;
-  kind: LaunchKind;
-  /** The ticket's title when the pool supplied it — presentation of the reservation. */
-  title?: string;
-  /** ISO 8601 — age-based priority inside each group; null for a recovery or a
-   *  model provider retry, which wait for nothing human and are launched before
-   *  the parked rounds. */
-  createdAt: string | null;
-  /** The work's linked PR when the derivation saw one (the retomada reopens a closed one). */
-  pr: PullRequestRecord | null;
-  /** Human issue replies after the last agent marker, only for a retomada. */
-  issueReplies?: IssueComment[];
-  /** The confirmed impediments, only for a repair round. */
-  repair?: RepairTrigger;
-  /** The unpublished attempt this repair takes over (issue 112), when resuming. */
-  resuming?: RepairAttempt | null;
-  /** The attempt a recovery or a model provider retry continues — the SAME
-   *  number (issues 123, 144). */
-  attempt?: number;
-  /** The attempt was ended by the operator's requested stop (issue #146): it
-   *  resumes now, spending no recovery. */
-  requestedStop?: boolean;
-  callRecovery?: CallRecovery;
-}
 
 /**
  * One sweep engine, four phases (ticket 07): derivation (+ the reserved
@@ -569,10 +514,8 @@ export class SweepEngine {
   private stopping = false;
   /** Resolves the moment a requested stop begins — the boundary's wake. */
   private readonly requestedStopBegan = deferred();
-  /** The launches that may still be carrying a worker, by work key. */
-  private readonly inFlight = new Map<string, StopLaunch>();
-  /** Waiters of the backoff wait — the requested stop ends the wait at once. */
-  private readonly stopWaiters: Array<() => void> = [];
+  /** The launch island: the pipeline from claim to the collected end. */
+  private readonly launch: Launch;
   /** The operator's requested stop: the whole protocol lives in the module. */
   private readonly operatorStop: OperatorStop;
   /** The works held by an unconfirmed stop, with the reason last logged. */
@@ -613,12 +556,6 @@ export class SweepEngine {
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
-  // Prepare (clone/fetch/branch) touches the shared clone of a repo — two
-  // first-launches of the same repo must not race inside it (ticket 12
-  // introduced the parallelism; the serialization stays local to prepares,
-  // the launches themselves run concurrently).
-  private readonly preparing = new Map<string, Promise<void>>();
-
   private readonly log: (message: string) => void;
 
   constructor(
@@ -636,6 +573,17 @@ export class SweepEngine {
       },
       log: this.log,
       ...(stop.cooperativeMs === undefined ? {} : { cooperativeMs: stop.cooperativeMs }),
+    });
+    this.launch = openLaunch({
+      config: deps.config,
+      tickets: deps.tickets,
+      pullRequests: deps.pullRequests,
+      runtime: deps.runtime,
+      git: deps.git,
+      workspace: deps.workspace,
+      log: this.log,
+      ...(deps.wait === undefined ? {} : { wait: deps.wait }),
+      cycle: this.launchCycle(),
     });
     // The signals are listened to from the START of the run (issue #146): a
     // stop requested during the derivation, before the first admission, is
@@ -1464,14 +1412,13 @@ export class SweepEngine {
     if (!this.stopping) {
       this.stopping = true;
       // A backoff waiting to relaunch is a pending admission: it ends with the
-      // admission, never after it.
-      for (const fire of this.stopWaiters.splice(0)) fire();
+      // admission, never after it — the launch reads {@link LaunchCycle.stopped}.
       this.requestedStopBegan.resolve();
     }
     return this.operatorStop.begin({
-      launches: [...this.inFlight.values()],
+      launches: this.launch.admissions(),
       survivors: () => this.survivors.keys(),
-      isInFlight: (key) => this.inFlight.has(key),
+      isInFlight: (key) => this.launch.carries(key),
       settled: () => this.waitPending(),
     });
   }
@@ -1536,7 +1483,7 @@ export class SweepEngine {
       // An interruption inside the session returns the SAME attempt as a
       // recovery to launch next, in the same held slot (issue 123).
       let next: Launchable | null = launchable;
-      while (next !== null) next = await this.launchOnce(next);
+      while (next !== null) next = await this.launch.attempt(next);
     } finally {
       // The work stays reconcilable by the next derivation even when the
       // collection's transition fails: its claim is already on the tracker.
@@ -1547,401 +1494,45 @@ export class SweepEngine {
     }
   }
 
-  /** Claim (or resume), prepare, launch and collect one work; replenish in
-   * the same cycle. The reservation lands BEFORE any launch. */
-  private async launchOnce(launchable: Launchable): Promise<Launchable | null> {
-    const key = workKeyOf(launchable.work);
-    const entry: StopLaunch = {
-      work: launchable.work,
-      dir: launchable.dir,
-      // A recovery continues a known attempt even before the registry answers.
-      attempt: launchable.kind === "recover" ? (launchable.attempt ?? null) : null,
-      ...(launchable.kind === "recover" && launchable.attempt !== undefined
-        ? { attemptHint: launchable.attempt }
-        : {}),
-      launched: false,
-      recoveryIndex: null,
+  /**
+   * The engine's side of an admission (epic #198, ticket #205): the duties the
+   * launch module asks the cycle to perform at the moments the domain decides
+   * them. The pipeline decides WHEN; what each one writes stays here, so the
+   * requested stop, the operational log, the report and the verdict application
+   * keep their single owner.
+   */
+  private launchCycle(): LaunchCycle {
+    return {
+      stopping: () => this.stopping,
+      stopped: this.requestedStopBegan.promise,
+      announce: (work, resulting) => this.announce(work, resulting),
+      cancelAdmission: (entry, attempt) => this.operatorStop.cancelAdmission(entry, attempt),
+      launched: (result) => {
+        this.launched.push(result);
+      },
+      // The collection of the attempt's end: the Work state's second reading
+      // and the verdict it asks for — the report is what this sweep collected.
+      collect: async (launchable, result, attempt) => {
+        const outcome = await this.applyEnd(launchable, {
+          dir: result.request.workDir,
+          attempt,
+          origin: "collected",
+        });
+        this.collected.push({
+          work: launchable.work,
+          result,
+          prConfirmed: outcome.prConfirmed,
+          ruling: outcome.ruling,
+        });
+        return outcome.next;
+      },
+      pauseInterrupted: (work, dir, attempt, decision) => this.pauseInterrupted(work, dir, attempt, decision),
+      pauseForContinuity: (work, dir, pause, attempt) => this.pauseForContinuity(work, dir, pause, attempt),
+      settleModelProviderFailure: (work, dir, attempt, failure) =>
+        this.applyModelProviderFailure(work, dir, attempt, failure),
+      inspectLocalWork: (work) => this.inspectLocalWork(work),
+      observeRemote: (work) => this.observeRemote(work),
     };
-    this.inFlight.set(key, entry);
-    try {
-      return await this.launchInner(launchable, entry);
-    } finally {
-      this.inFlight.delete(key);
-    }
-  }
-
-  private async launchInner(launchable: Launchable, entry: StopLaunch): Promise<Launchable | null> {
-    const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
-    const { work, kind, dir } = launchable;
-    const key = workKeyOf(work);
-
-    // The requested stop closes admissions the instant it arrives (issue
-    // #146): a launch that has not written to the tracker yet leaves nothing
-    // behind, and one that already reserved the work merely stops here — the
-    // reservation stays for the next run's reconciliation.
-    if (this.stopping) {
-      this.log(`the launch of ${key} stopped before the claim — nothing was reserved`);
-      return null;
-    }
-
-    if (kind === "claim") {
-      logClaim(this.log, key);
-      // The dir is the safety footprint of issue 98 and lands before the claim;
-      // the record is the Work's own facts (issue 125). An unknown or
-      // unwritable record is reported and never blocks the claim — nor is it
-      // overwritten.
-      mkdirSync(dir, { recursive: true });
-      const url = ticketUrl(work.ticket);
-      const presentation = {
-        ...(launchable.title === undefined ? {} : { title: launchable.title }),
-        ...(url === undefined ? {} : { url }),
-      };
-      try {
-        const reservation = reserveWork(workspace, reservationRecordOf(work, presentation));
-        if (reservation.reservation.state === "unreadable") {
-          this.log(
-            `reservation of ${key} is unreadable (${reservation.reservation.reason}) — ` +
-              "keeping it and launching on the dir key",
-          );
-        }
-      } catch (error) {
-        this.log(`reservation of ${key} could not be persisted (${describeError(error)}) — launching on the dir key`);
-      }
-      await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
-    } else if (kind === "resume") {
-      this.log(`resuming ${key}: a human answered after the marker — blocked→claimed on the tracker`);
-      await tickets.resumeTicketClaim(work.ticket, config.labels);
-      // The rejection's retomada: the SAME PR is reopened, never a new one.
-      if (launchable.pr !== null && launchable.pr.state === "closed") {
-        await pullRequests.reopenPullRequest({ work, pullRequest: launchable.pr.identity });
-      }
-    } else if (kind === "recover" || kind === "model-provider-retry") {
-      this.log(
-        kind === "model-provider-retry"
-          ? `model provider retry for ${key}: attempt ${launchable.attempt} ended by a model provider failure — ` +
-              "the same attempt continues (no new attempt, branch preserved)"
-          : launchable.requestedStop === true
-            ? `resuming ${key}: the operator's requested stop ended attempt ${launchable.attempt} — ` +
-                "the same attempt resumes (no new attempt, no recovery spent, branch preserved)"
-            : `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
-                "the same attempt continues (no new attempt, branch preserved)",
-      );
-      // The claim swap itself may have been interrupted (issue 98) — or the
-      // outage of issue 144 killed it: re-asserting the idempotent claim heals
-      // it without releasing the work to the pool.
-      if (launchable.callRecovery !== undefined) await tickets.resumeTicketClaim(work.ticket, config.labels);
-      await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
-    } else if (kind === "feedback") {
-      this.log(`feedback round for ${key}: the claim is already held — same branch, same PR`);
-    }
-    // Every launch kind holds the claim, so the work is reserved from here.
-    this.announce(work, "reserved");
-
-    // Git host (ticket 15): clone once + delta fetch + work branch born from
-    // the default the clone reveals; relaunches reuse the branch untouched.
-    const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
-
-    // A repair targets the PR's CURRENT base — never the repo default (story 8)
-    // — and opens only on a premise re-read now. The opening owns the single
-    // read of the facts, the head the intervention is pinned to and the
-    // concurrent-change verdict (issue 189); this method only applies them.
-    const derivedTrigger = launchable.repair;
-    const resuming = launchable.resuming ?? null;
-    let repair: RepairRoundContext | undefined;
-    let baseBranch = prepared.baseBranch;
-    if (derivedTrigger !== undefined) {
-      // The facts are re-read at the opening point (issue 149): the impediment
-      // that opened the round may have been resolved meanwhile — by a human
-      // pushing the resolution, by a base advance. Only a confirmed premise
-      // buys a session; an obsolete one returns the round unspent, and an
-      // unconfirmed one waits for the next derivation instead of paying for
-      // stale evidence. The round is announced below, after this decision: a
-      // returned round is never also "reactivated".
-      const opening = await openRepairRound({
-        trigger: derivedTrigger,
-        resuming,
-        readPremise: () => pullRequests.readPullRequestRepairFacts(workPullRequest(work, launchable.pr)),
-        observeRemote: () => this.observeRemote(work),
-      });
-      if (opening.kind === "returned") {
-        this.log(
-          `repair round for ${key} not opened: the impediment that opened it no longer exists ` +
-            "(the premise is obsolete) — no round is spent",
-        );
-        return null;
-      }
-      if (opening.kind === "held") {
-        this.log(
-          opening.because === "premise-unknown"
-            ? `repair round for ${key} not opened: the PR's facts could not confirm the impediment — ` +
-                "nothing is spent and the next sweep re-derives"
-            : `repair round for ${key} skipped: the remote head could not be read — ` +
-                "its reconciliation stays pending and nothing is launched (the next sweep retries)",
-        );
-        return null;
-      }
-      if (opening.kind === "skipped") {
-        this.log(
-          `repair round for ${key} skipped: the remote head ${opening.observedHeadSha ?? "(absent)"} no longer matches the ` +
-            `observed ${opening.pinnedHeadSha} — nothing is launched`,
-        );
-        if (opening.concurrentChange !== null) {
-          // Somebody moved the branch after the fall: the local work must not
-          // be published over it. The opening settled the attempt as a
-          // concurrent change, and the next derivation asks the human.
-          await this.markConcurrentChange(work, opening.concurrentChange);
-        }
-        return null;
-      }
-      // A fresh round follows the facts as they read now: when the head moved
-      // while the impediment persists, the evidence was recalculated, so the
-      // round opens on the current head and is charged on the new evidence
-      // (issue 149). A resumption keeps its observed head — moving it would
-      // publish the fallen attempt's local history over a concurrent one.
-      if (resuming === null && opening.context.trigger.facts.headSha !== derivedTrigger.facts.headSha) {
-        this.log(
-          `repair round for ${key}: the evidence was recalculated on the current head ` +
-            `${shortSha(opening.context.trigger.facts.headSha)} — the round opens there`,
-        );
-      }
-      repair = opening.context;
-      baseBranch = opening.context.baseBranch;
-      this.log(
-        `repair round for ${key}: ${repair.trigger.reasons.join(" + ")} reactivated the worker — ` +
-          "same branch, same PR, no human comment needed",
-      );
-    }
-
-    this.log(
-      `launching worker for ${key} (branch ${prepared.branch}, ` +
-        `${prepared.branchCreated ? "created" : "reused"} from base ${baseBranch})`,
-    );
-    // A work branch reaches the remote only when the worker publishes it
-    // (push + PR): a relaunch of a work that fell before publishing reuses a
-    // branch the remote never saw, so the reuse has nothing to fast-forward.
-    // Said once per launch, next to the launch it explains (issue 96) — the
-    // runtime's reuse fetch then reads as expected instead of a broken remote.
-    if (!prepared.branchCreated && !prepared.branchOnOrigin) {
-      this.log(
-        `branch ${prepared.branch} is not on origin yet (the worker pushes it when it opens the PR) — ` +
-          `the relaunch has nothing to fast-forward`,
-      );
-    }
-
-    // The registry numbers the attempt and remembers the previous WRITTEN
-    // failure — both are disk facts of this work, not process state (ticket
-    // 13; an interruption never counts as a fall, issue 123).
-    const continuesAttempt = kind === "recover" || kind === "model-provider-retry";
-    const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
-    entry.attempt = facts.attempt;
-    if (kind === "resume" && facts.previousFall) {
-      // Ticket 14's decision: the human's answer resets the consecutive
-      // failure count — the blocked valve already did its job and was
-      // addressed; a new failure starts a fresh count (1st → release again).
-      // The count is the Work's own fact (the recovery ledger), so the restart
-      // is WRITTEN there: an in-memory flag would be lost by the next sweep —
-      // or a restart — and the collection would see a 2nd fall nobody ruled.
-      await resetFallCount(dir);
-    }
-    if (kind === "resume") {
-      // A human answer that unblocks the work also renews the automatic
-      // repair budget (issue 107 story 23); new commits never do.
-      await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
-    }
-    // The local work the round takes over, read from real git only once the
-    // round is really going out: existing commits are reused, changes are
-    // inspected, an unfinished operation is continued — the resumption never
-    // restarts the work blind (issue 112).
-    const localWork = repair === undefined ? null : await this.inspectLocalWork(work);
-    // The launch material (ticket 17): the issue, the open PR with its
-    // conversation (a feedback round), the diff of the branch — every
-    // session starts from the whole context through the port + git host.
-    const material = await launchMaterial(tickets, pullRequests, git, launchable, repair, localWork);
-    // Ctrl-C perceived after the reservation but before the worker started:
-    // do not start a new worker after this point. The reservation (the claim
-    // and the registry dir) stays for the next run's reconciliation; the
-    // caller releases the slot.
-    if (this.stopping) {
-      this.log(`the launch of ${key} stopped before the worker started — the reservation stays for reconciliation`);
-      return null;
-    }
-
-    // Continuity (issue 119): which Pi session this launch opens, and whether
-    // it may open it at all. A human's answer to a paused work is orientation,
-    // not proof about the world: the facts are read again before acting, and
-    // an effect that is still ambiguous keeps the work paused.
-    const continuityDeps = {
-      workDir: dir,
-      sessionsDir: join(dir, SESSIONS_SUBDIR),
-      work,
-      attempt: facts.attempt,
-      git,
-      tickets,
-      pullRequests,
-    };
-    if (kind === "resume") {
-      const pause = readPause(dir);
-      if (pause !== null) {
-        const recheck = await recheckPausedEffects(
-          {
-            ...continuityDeps,
-            attempt: knownAttempt(pause.attempt) ?? facts.attempt,
-          },
-          pause,
-        );
-        if (!recheck.resolved && recheck.pause !== null) {
-          // No new information and no changed cause: the answer does not
-          // authorize a replay and the same question is not asked again. The
-          // pause keeps its identity and its binding to the answer (issue 174);
-          // a real cause change posts exactly one diagnostic.
-          await this.pauseForContinuity(work, dir, recheck.pause, facts.attempt);
-          return null;
-        }
-        // The fresh read settled it: the answer becomes the updated context
-        // of a NEW round (the material above already carries it).
-        clearPause(dir);
-        this.log(`the continuity pause of ${key} is resolved by a fresh read of the real state — starting a new round`);
-      }
-    }
-    if (launchable.callRecovery !== undefined) {
-      material.callRetry = {
-        id: launchable.callRecovery.id, command: launchable.callRecovery.command,
-        cwd: launchable.callRecovery.cwd, reason: launchable.callRecovery.reason,
-        ...(launchable.callRecovery.tool === undefined ? {} : { tool: launchable.callRecovery.tool, input: launchable.callRecovery.input! }),
-        ...(launchable.callRecovery.executorSessionId === undefined ? {} : { sourceSessionId: launchable.callRecovery.sessionId }),
-      };
-    }
-    // Every relaunch of the same attempt continues ITS session (ADR 0005):
-    // a recovery, a model provider retry and the resume after the operator's
-    // requested stop. A claim, a feedback or orientation round and a repair
-    // round are new executions.
-    const continuity = await planContinuity(continuityDeps, continuesAttempt ? "resume" : "new");
-    if (continuity.decision === "pause") {
-      this.log(
-        `continuity of ${key} halted the relaunch (${continuity.pause.reason}) — ` +
-          "the work pauses for help; no recovery is spent and no new attempt starts",
-      );
-      await this.pauseForContinuity(work, dir, continuity.pause, facts.attempt);
-      return null;
-    }
-
-    // The recovery is GRANTED and persisted before the wait and the relaunch
-    // (issue 123): a death during the backoff or the session continues the
-    // count instead of renewing the allowance. An exhausted budget pauses the
-    // work and asks the operator for help — never another blind relaunch.
-    //
-    // The resume after the operator's requested stop (issue #146) spends
-    // nothing and waits nothing: it continues the SAME attempt.
-    if (kind === "recover" && launchable.requestedStop !== true) {
-      const decision = await consumeRecovery(dir, config.recovery, facts.attempt);
-      if (decision.decision === "recover") entry.recoveryIndex = decision.consumed - 1;
-      if (decision.decision === "pause-help") {
-        this.log(`recovery of ${key} paused: ${decision.reason} — the work is blocked and asks for help`);
-        await this.pauseInterrupted(work, dir, facts.attempt, decision);
-        return null;
-      }
-      this.log(
-        `recovery ${decision.consumed}/${config.recovery.maxRecoveries} for ${key} — ` +
-          `attempt ${facts.attempt} keeps its number, ` +
-          (continuity.mode === "resume"
-            ? `session ${continuity.sessionId} is reopened with ${continuity.intactEntries} confirmed entries of its history`
-            : `session ${continuity.sessionId} starts fresh (no session had been created yet)`) +
-          `; waiting ${decision.waitMs}ms before the relaunch`,
-      );
-      await this.wait(decision.waitMs);
-      if (this.stopping) {
-        await this.operatorStop.cancelAdmission(entry, facts.attempt);
-        this.log(
-          `the recovery of ${key} stopped during the backoff — nothing is launched and the grant is returned ` +
-            "with the requested-stop evidence",
-        );
-        return null;
-      }
-    }
-    // The model provider retry is settled and persisted before the wait (issue 144):
-    // a death during the backoff continues the model provider count instead of
-    // renewing it, and the recovery budget of issue 123 is never touched.
-    if (kind === "model-provider-retry") {
-      const failure = await readTurnModelProviderError(dir, facts.attempt);
-      if (failure === null) {
-        this.log(
-          `model provider retry for ${key} skipped: the attempt's stream no longer shows a provider error — nothing is launched`,
-        );
-        return null;
-      }
-      const decision = await this.applyModelProviderFailure(work, dir, facts.attempt, failure);
-      if (decision.decision === "awaiting-model-provider") return null;
-      await this.wait(decision.waitMs);
-      if (this.stopping) {
-        this.log(`the model provider retry of ${key} stopped during the backoff — the grant stays consumed, nothing is launched`);
-        return null;
-      }
-    }
-
-    // The stop may have landed while this admission persisted its own
-    // bookkeeping (the grant, or the consumption of the requested stop): what
-    // it wrote is undone and the requested stop is what the work keeps.
-    if (this.stopping) {
-      await this.operatorStop.cancelAdmission(entry, facts.attempt);
-      this.log(`the launch of ${key} stopped before the worker started — the requested stop stays on record`);
-      return null;
-    }
-
-    // A launch means this attempt is being carried NOW: a stop record left on
-    // it by a previous requested stop has done its job (or the record is stale on a
-    // fresh claim of the same number), so it never excuses a later, unexpected
-    // interruption of this attempt.
-    const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
-    await consumeStopRequest(dir, facts.attempt);
-
-    if (launchable.callRecovery !== undefined) clearPause(dir);
-    // Charge only after continuity allowed the launch. A pause before a worker
-    // exists is not an unpublished Repair and cannot consume a round or fall.
-    if (repair !== undefined) {
-      await this.recordRepairRound(dir, work, repair.trigger, facts.attempt, localWork);
-    }
-    if (this.stopping) {
-      await this.operatorStop.cancelAdmission(entry, facts.attempt);
-      return null;
-    }
-    entry.launched = true;
-    let result: SessionResult;
-    try {
-      result = await runtime.launch({
-        work,
-        workDir: dir,
-        branch: prepared.branch,
-        repoDir: prepared.repoDir,
-        baseBranch,
-        attempt: facts.attempt,
-        session: { mode: continuity.mode, sessionId: continuity.sessionId },
-        material,
-      });
-    } catch (error) {
-      if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
-          ownWrittenOutcome(await readOutcomeRecord(dir), facts.attempt) === null &&
-          (await readRecoveryLedger(dir)).lastStop === null) {
-        await recordStopRequest(dir, facts.attempt);
-      }
-      throw error;
-    }
-    this.launched.push(result);
-
-    return this.collect(launchable, result, facts.attempt);
-  }
-
-  /** The backoff before a recovery relaunch (the injected seam or a real timer).
-   *  The requested stop ends the wait at once: a pending admission never delays
-   *  the requested stop. */
-  private async wait(ms: number): Promise<void> {
-    if (ms <= 0 || this.stopping) return;
-    const stopped = deferred();
-    this.stopWaiters.push(stopped.resolve);
-    try {
-      await Promise.race([(this.deps.wait ?? sleepMs)(ms), stopped.promise]);
-    } finally {
-      dropWaiter(this.stopWaiters, stopped.resolve);
-    }
   }
 
   /**
@@ -2428,19 +2019,6 @@ export class SweepEngine {
     }
   }
 
-  /** Persist the concurrent-change verdict the opening reached: the derivation
-   *  then blocks the work with the help request (issue 112). */
-  private async markConcurrentChange(work: WorkIdentity, attempt: RepairAttempt): Promise<void> {
-    const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
-    const cycle = await readRepairCycle(dir);
-    await writeRepairCycle(dir, { ...cycle, attempt });
-    this.log(
-      `repair attempt ${attempt.attempt} of ${renderWorkIdentity(work)}: the remote branch ` +
-        `${describeRemoteChange(attempt.remoteHeadSha)} while the attempt's observed head was ` +
-        `${shortSha(attempt.observedHeadSha)} — local work preserved, nothing is published`,
-    );
-  }
-
   /** The local work of a work, or null when git cannot answer — never "nothing there". */
   private async inspectLocalWork(work: WorkIdentity): Promise<LocalWorkFacts | null> {
     try {
@@ -2471,60 +2049,6 @@ export class SweepEngine {
     } catch {
       return { known: false };
     }
-  }
-
-  /** Charge one automatic repair round as its session starts — only after the
-   *  continuity decision allowed the launch (issue 181): the budget, the
-   *  consumed evidence and the attempt's own facts persist on disk, so a
-   *  restart neither renews the cap nor repeats the same round, and a death is
-   *  attributable once the remote answers (issue 112). */
-  private async recordRepairRound(
-    dir: string,
-    work: WorkIdentity,
-    trigger: RepairTrigger,
-    attempt: number,
-    localWork: LocalWorkFacts | null,
-  ): Promise<void> {
-    const cycle = await readRepairCycle(dir);
-    const signature = repairSignature(work, trigger);
-    await writeRepairCycle(dir, {
-      usedRounds: cycle.usedRounds + 1,
-      lastEvidence: signature,
-      consecutiveFalls: cycle.consecutiveFalls,
-      attempt: {
-        evidence: signature,
-        attempt,
-        observedHeadSha: trigger.facts.headSha,
-        remoteHeadSha: null,
-        publication: "unknown",
-        localWork,
-      },
-    });
-  }
-
-  /**
-   * Collection at the act: the Work state's second reading applied to the worker
-   * this process launched. The result is what the launch returned; what the end
-   * MEANS — the state and its payload — is read from the module, never assembled
-   * here.
-   */
-  private async collect(
-    launchable: Launchable,
-    result: SessionResult,
-    attempt: number,
-  ): Promise<Launchable | null> {
-    const outcome = await this.applyEnd(launchable, {
-      dir: result.request.workDir,
-      attempt,
-      origin: "collected",
-    });
-    this.collected.push({
-      work: launchable.work,
-      result,
-      prConfirmed: outcome.prConfirmed,
-      ruling: outcome.ruling,
-    });
-    return outcome.next;
   }
 
   /**
@@ -2833,6 +2357,14 @@ export class SweepEngine {
     await this.finishWork(work);
   }
 
+  /** A collected work never stays launchable in this process's memory — nor
+   *  does a survivor's pending recovery for it. */
+  private discardFromCacheAndParked(key: string): void {
+    this.cache = this.cache.filter((entry) => workKeyOf(entry.work) !== key);
+    this.parkedQueue = this.parkedQueue.filter((entry) => workKeyOf(entry.work) !== key);
+    this.survivorRecoveries = this.survivorRecoveries.filter((entry) => workKeyOf(entry.work) !== key);
+  }
+
   /** Best-effort delivery of one occurrence notice; a failure only logs. A
    *  delivery failure never turns unknown safety into permission to launch. */
   private async deliverNotice(notification: Notification): Promise<void> {
@@ -2848,33 +2380,9 @@ export class SweepEngine {
       );
     }
   }
-
-  /** A collected work never stays launchable in this process's memory — nor
-   *  does a survivor's pending recovery for it. */
-  private discardFromCacheAndParked(key: string): void {
-    this.cache = this.cache.filter((entry) => workKeyOf(entry.work) !== key);
-    this.parkedQueue = this.parkedQueue.filter((entry) => workKeyOf(entry.work) !== key);
-    this.survivorRecoveries = this.survivorRecoveries.filter((entry) => workKeyOf(entry.work) !== key);
-  }
-
-  private serializePrepare<T>(repo: string, prepare: () => Promise<T>): Promise<T> {
-    const tail = this.preparing.get(repo) ?? Promise.resolve();
-    const run = tail.then(prepare, prepare);
-    this.preparing.set(
-      repo,
-      run.then(
-        () => {},
-        () => {},
-      ),
-    );
-    return run;
-  }
 }
 
 type WakeEvent = "worker-end" | "tick" | "abort";
-
-const logClaim = (log: (message: string) => void, key: string): void =>
-  log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
 
 /**
  * One sweep with the --once boundary (ticket 07 Q6): derive the pool AND the
@@ -2974,53 +2482,4 @@ export async function runForever(
       for (const run of engine.fillSlots()) logLaunchFailure(log, run);
     }
   }
-}
-
-/**
- * Gather the launch material of a work from the port + git host (ticket 17):
- * the issue (title/body), human issue replies on a blocked retomada, the open
- * PR's conversation on a feedback round, the repair context above, and the
- * diff. Unknown reads degrade to empty — the prompt still carries whatever is
- * known, never a lie.
- */
-async function launchMaterial(
-  tickets: TicketTracker,
-  pullRequests: PullRequestTracker,
-  git: GitWork,
-  launchable: Launchable,
-  repair: RepairRoundContext | undefined,
-  localWork: LocalWorkFacts | null,
-): Promise<WorkerMaterial> {
-  const { work, issueReplies } = launchable;
-  const issue = await tickets.readTicket(work.ticket);
-  const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work, launchable.pr));
-  const diff = await git.diffWorkFor(work);
-
-  const pr =
-    feedback.known && feedback.value.pr !== null && feedback.value.pr.state === "open"
-      ? {
-          number: feedback.value.pr.number,
-          comments: [...feedback.value.comments, ...feedback.value.reviews].sort(
-            (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
-          ),
-        }
-      : undefined;
-
-  const material: WorkerMaterial = {
-    ticket: issue.known ? { title: issue.value.title, body: issue.value.body } : { title: "", body: "" },
-    diff,
-  };
-  if (pr !== undefined) material.pr = pr;
-  if (issueReplies !== undefined) material.ticketReplies = issueReplies;
-  if (repair !== undefined) {
-    material.repair = {
-      reasons: repair.trigger.reasons,
-      observedHeadSha: repair.pinnedHeadSha,
-      baseBranch: repair.trigger.facts.baseBranch,
-      checks: repair.trigger.failingChecks,
-      ...(localWork === null ? {} : { localWork }),
-      ...(repair.resuming === null ? {} : { resuming: repair.resuming.attempt }),
-    };
-  }
-  return material;
 }
