@@ -4,7 +4,6 @@ import { consumeStopRequest, confirmStopRequest } from "../pool/recovery.js";
 import { operatorStopClaim } from "../pool/stop.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { PullRequestRecord } from "../tracker/expanded-port.js";
-import type { WorkIdentity } from "../tracker/identity.js";
 import { clearPause } from "../work-record/continuity.js";
 import type { ModelProviderFailure } from "../work-record/model-provider-error.js";
 import { readOutcomeRecord } from "../work-record/outcome.js";
