@@ -461,15 +461,11 @@ export class SandcastleRuntime implements WorkerRuntime {
     }
   }
 
-  /** The supplied agent files staged for the read-only mount, if any. */
-  private stageAgentFiles(): string | undefined {
-    return this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles);
-  }
-
   private async launchRegistered(request: WorkRequest, session: RunningSession): Promise<SessionResult> {
     const stopSignal = session.stop.signal;
     // Preconditions BEFORE any footprint: infra and config failures are not
-    // work falls, and their refusal proves no worker existed.
+    // work falls, and their refusal is the Launch refusal that proves no
+    // worker existed.
     await launchPrecondition(() => this.preflight());
 
     // Stopped while the preconditions ran: no footprint, no worker. The
@@ -489,7 +485,9 @@ export class SandcastleRuntime implements WorkerRuntime {
     // the read-only mount — never written to the image, never read from a
     // personal profile. Staged BEFORE the footprint so a vanished file is a
     // factory failure, not a half-written attempt. The dir dies with the launch.
-    const agentFilesDir = await launchPrecondition(() => this.stageAgentFiles());
+    const agentFilesDir = await launchPrecondition(() =>
+      this.agentFiles.length === 0 ? undefined : stageAgentFiles(this.agentFiles),
+    );
     try {
       // The footprint comes first: sessao/ and the attempt's log
       // exist before any outcome can exist. An abrupt death leaves exactly

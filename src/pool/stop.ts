@@ -34,8 +34,10 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  * applied: one reading of the persisted facts, not two. The sweep supplies only
  * the facts of the run — its in-flight launches, its survivors, the reserved
  * works to reconcile and the latest liveness observation — and calls the
- * interface; the recovery ledger remains `pool/recovery.ts`'s writer,
- * sequenced from here.
+ * interface; the recovery ledger remains `pool/recovery.ts`'s writer, and this
+ * module owns when a grant is released: the stop that cancelled its relaunch,
+ * and (issue 178) a Launch refusal, whose proof that no worker existed the
+ * sweep hands here from the launch boundary instead of re-deriving.
  */
 
 /** One work whose stop the factory could not confirm: the registry key and
@@ -87,14 +89,17 @@ export interface StopLaunch {
  * Return the recovery grant an admission still holds, if any: the grant's own
  * ledger event index is its identity, so refunding it twice is impossible and
  * an earlier, legitimate recovery can never be returned. The admission stops
- * naming the grant the moment it is released. The caller decides WHEN a grant
- * may be released — a requested stop that cancelled the admission, or the
- * runtime's own proof that no worker existed (issue 178).
+ * naming the grant once the ledger answered — a write that threw keeps it
+ * named, so a later caller can still retry the return. The caller decides WHEN
+ * a grant may be released — a requested stop that cancelled the admission, or
+ * the runtime's own proof that no worker existed (issue 178).
  */
 export async function refundHeldGrant(launch: StopLaunch, attempt: number): Promise<boolean> {
   const grant = launch.recoveryIndex;
+  if (grant === null) return false;
+  const refunded = await refundRecovery(launch.dir, attempt, grant);
   launch.recoveryIndex = null;
-  return grant === null ? false : refundRecovery(launch.dir, attempt, grant);
+  return refunded;
 }
 
 /** The facts of the run the stop is executed against. */
