@@ -89,6 +89,11 @@ export interface NonFailureDeps {
   workspace: WorkspaceLayout;
   log: (message: string) => void;
   /**
+   * The moment a settlement is written with. Injected so a test reaches the
+   * persisted facts without waiting; production takes the real clock.
+   */
+  now?: () => Date;
+  /**
    * Re-read the doubt a pause names — the attempt's own session, its effect
    * journal and the real state (`runtime/continuity.ts`). Injected: the read
    * stays behind this seam and the module decides what the evidence MEANS. A

@@ -111,6 +111,8 @@ function world(
     options.evidence ?? { resolved: false, pause: null };
   const log: string[] = [];
   const asks: Ask[] = [];
+  // The cycle's clock, injected: the settlement is written with it.
+  const clock = () => new Date("2026-01-01T00:00:00Z");
   let reasserted = 0;
   let unblocked = 0;
   const rechecks: PauseRecord[] = [];
@@ -121,6 +123,7 @@ function world(
     pullRequests: tracker,
     workspace,
     log: (line) => log.push(line),
+    now: clock,
     recheckEvidence: async (_work, _dir, _attempt, pause) => {
       rechecks.push(pause);
       return typeof evidence === "function" ? evidence(pause) : evidence;
@@ -192,6 +195,9 @@ function world(
     close: () => rmSync(root, { recursive: true, force: true }),
   } as World;
 }
+
+/** The moment the injected clock reads. */
+const clockTime = (): string => "2026-01-01T00:00:00.000Z";
 
 /** The factory's comments about the Work (every one carries the agent marker). */
 const agentAsks = (bodies: readonly string[]): string[] =>
@@ -374,6 +380,11 @@ describe("the model provider failure — its own budget, its own backoff", () =>
     const ledger = await readModelProviderLedger(w.dir);
     assert.equal(ledger.consumed, 2, "the count is persisted on the Work's record");
     assert.deepEqual(ledger.events.map((event) => event.waitMs), [15_000, 30_000]);
+    assert.deepEqual(
+      ledger.events.map((event) => event.at),
+      [clockTime(), clockTime()],
+      "each retry is written with the cycle's clock, not the machine's",
+    );
 
     const events = readFileSync(join(w.dir, eventLogName(1)), "utf8")
       .split("\n")

@@ -72,7 +72,7 @@ async function settleProvider(
 
   await recordEvents(deps, dir, attempt, failure, ledger, decision);
 
-  const settlement = await settleModelProviderFailure(dir, budget, attempt, failure);
+  const settlement = await settleModelProviderFailure(dir, budget, attempt, failure, deps.now);
   if (settlement.decision === "awaiting-model-provider") {
     // The help request is retryable, not tied to the settlement that raised it: a
     // death between the ledger and the comment leaves it unrequested, and the
