@@ -155,9 +155,9 @@ export function ticketIdentityKey(ticket: TicketIdentity): string {
 }
 
 export function repositoryIdentityKey(repository: RepositoryIdentity): string {
-  // A GitHub repository name is case-insensitive: "Sanmoo/App" and
-  // "sanmoo/app" are one destination. The identity keeps the spelling the
-  // operator wrote — the key only decides sameness.
+  // The whole key folds case: a GitHub repository name is case-insensitive, so
+  // "Sanmoo/App" and "sanmoo/app" are one destination. The identity keeps the
+  // spelling the operator wrote — the key only decides sameness.
   return `${repository.provider}:${repository.site}:${repository.repo}`.toLowerCase();
 }
 

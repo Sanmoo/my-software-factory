@@ -258,20 +258,18 @@ function renderAmbiguous(entry: AmbiguousJiraTicket, index: number): string {
 }
 
 /** Each selection's contribution when a site has several. A single selection is
- *  the site line itself; an unknown selection is always named, because it may
- *  hide a destination. */
+ *  the site line itself, so it is never repeated; a selection that cannot be
+ *  read on a site with several is always named, because it may hide a
+ *  destination. */
 function renderSelections(lines: string[], selections: readonly JiraSelectionView[]): void {
-  const several = selections.length > 1;
+  if (selections.length === 1) return;
   for (const view of selections) {
     const destination = renderRepositoryIdentity(view.selection.destination);
     const query = view.selection.jql ?? "no JQL";
     if (view.state === "unknown") {
-      if (!view.reasonShownAtSite) {
-        lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
-      }
+      lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
       continue;
     }
-    if (!several) continue;
     const held = view.held === 0 ? "" : `, ${view.held} held as ambiguous`;
     lines.push(`    selection (${query}) → ${destination}: ${view.selected} selected${held}`);
   }

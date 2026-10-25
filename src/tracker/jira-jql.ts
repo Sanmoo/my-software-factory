@@ -70,8 +70,9 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
  * the site-wide order. A single selection keeps its exact query.
  */
 export function withSiteRankOrdering(selections: readonly string[]): RankOrdering {
-  if (selections.length === 0) return { ok: false, because: "the site carries no selection" };
-  if (selections.length === 1) return withNativeRankOrdering(selections[0] ?? "");
+  const [only, ...others] = selections;
+  if (only === undefined) return { ok: false, because: "the site carries no selection" };
+  if (others.length === 0) return withNativeRankOrdering(only);
 
   const filters: string[] = [];
   for (const selection of selections) {
