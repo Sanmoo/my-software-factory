@@ -211,7 +211,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   async launch(request: WorkRequest): Promise<SessionResult> {
     const index = this.launched.push(request) - 1;
     const rejection = this.options.rejectLaunch?.(request, index) ?? null;
-    // No session before a proven refusal; the hold still applies.
+    // A Launch refusal proves no worker existed: no session to reach and no
+    // footprint — only the hold applies, so a test can park the refusal.
     if (rejection instanceof LaunchPreconditionError) {
       await this.holdFor(request, index);
       throw rejection;
@@ -227,6 +228,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
     try {
       if (rejection !== null) {
+        // Any other rejection happened AFTER the session started: the footprint
+        // is on disk and a stop can still reach this launch.
         this.startSession(request);
         await this.holdFor(request, index);
         throw rejection;
