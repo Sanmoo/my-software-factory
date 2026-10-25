@@ -1,6 +1,6 @@
 import type { LocalWorkFacts } from "../git/port.js";
 import type { Known, PrRepairFacts } from "../tracker/port.js";
-import { readRepairPremise, type RepairTrigger } from "../state/derive.js";
+import { readRepairPremise, type RepairTrigger } from "./repair-trigger.js";
 import { ownWrittenOutcome } from "../state/outcome.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";

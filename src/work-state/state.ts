@@ -2,7 +2,12 @@ import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { WorkspaceLayout } from "../layout.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import type { IssueComment, PrRepairFacts, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import type { IssueComment } from "../tracker/port.js";
+/** The repair trigger has ONE owner (pool/repair-trigger.ts): the state carries
+ *  it as the payload a repair action needs, so the copy the derivation applies
+ *  and the copy the launch hashes into durable evidence cannot drift. */
+import type { RepairTrigger } from "../pool/repair-trigger.js";
+export type { RepairTrigger };
 import type { ModelProviderDecision } from "../pool/model-provider.js";
 import type { RecoveryDecision } from "../pool/recovery.js";
 import type { PauseRecord } from "../work-record/continuity.js";
@@ -52,19 +57,6 @@ export interface EndedAttempt extends WorkRef {
   /** The requested stop is in progress in THIS process: the attempt's relaunch
    *  is the next run's business, and the stop spends no recovery anywhere. */
   stopping: boolean;
-}
-
-/**
- * The confirmed impediments of an open PR, read from structured facts alone
- * (ticket 107's repair trigger). The definition stays with the Repair premise
- * that reads it (`state/derive.ts`, `pool/repair-round.ts`); the state carries
- * it as the payload a repair action needs, so the two cannot drift.
- */
-export interface RepairTrigger {
-  reasons: RepairReason[];
-  facts: PrRepairFacts;
-  /** The required checks that concluded with failure or timeout on this head. */
-  failingChecks: RequiredCheckResult[];
 }
 
 /**

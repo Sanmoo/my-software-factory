@@ -7,17 +7,10 @@ import type {
   TicketTracker,
   WorkPullRequest,
 } from "../tracker/expanded-port.js";
-import type {
-  IssueComment,
-  Known,
-  PrRepairFacts,
-  RepairReason,
-  RequiredCheckResult,
-} from "../tracker/port.js";
+import type { IssueComment } from "../tracker/port.js";
 import { isAgentSpeech, pauseMarkerId } from "../tracker/port.js";
 import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { mapBounded } from "../concurrency.js";
-import { repairEvidenceSignature } from "../pool/repair.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 
@@ -253,61 +246,8 @@ async function hasNoOpenBlocker(tickets: TicketTracker, ticket: OpenTicket["tick
 }
 
 // ---- the reserved states — the tick's full derivation (ticket 14) ----
-
-/** A confirmed impediment of an open PR, read from structured facts alone. */
-export interface RepairTrigger {
-  reasons: RepairReason[];
-  facts: PrRepairFacts;
-  /** The required checks that concluded with failure or timeout on this head. */
-  failingChecks: RequiredCheckResult[];
-}
-
-/** A check only reacts when it concluded, and failed or timed out — never
- *  pending, cancelled, skipped, neutral or an optional one. */
-function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
-  return check.status === "completed" && (check.conclusion === "failure" || check.conclusion === "timed_out");
-}
-
-/** The trigger of an open PR, or null when nothing is confirmed. */
-function repairTrigger(facts: PrRepairFacts): RepairTrigger | null {
-  const reasons: RepairReason[] = [];
-  if (facts.mergeState === "conflicting") reasons.push("conflicts");
-  const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
-  if (failingChecks.length > 0) reasons.push("required-checks");
-  if (reasons.length === 0) return null;
-  return { reasons, facts, failingChecks };
-}
-
-/** The consumed-evidence signature of a trigger — one authority for the
- *  derivation and the launch's durable record. */
-export function repairSignature(work: WorkIdentity, trigger: RepairTrigger): string {
-  return repairEvidenceSignature({
-    workKey: workKeyOf(work),
-    headSha: trigger.facts.headSha,
-    reasons: trigger.reasons,
-    failingChecks: trigger.failingChecks,
-  });
-}
-
-/** A premise reading: `persisting` always carries the trigger it presents. */
-export type RepairPremiseReading =
-  | { premise: "persisting"; trigger: RepairTrigger }
-  | { premise: "obsolete" }
-  | { premise: "unknown" };
-
-/** The premise of a repair round read from the PR's current facts (issue 149):
- *  a confirmed trigger persists; only a mergeable PR with a known required set
- *  is obsolete (an unknown mergeability, or an undetermined required set,
- *  proves nothing); an unreadable read is unknown, never an invented clean
- *  bill. The vocabulary lives in pool/repair.ts. */
-export function readRepairPremise(facts: Known<PrRepairFacts>): RepairPremiseReading {
-  if (!facts.known) return { premise: "unknown" };
-  const trigger = repairTrigger(facts.value);
-  if (trigger !== null) return { premise: "persisting", trigger };
-  if (facts.value.mergeState !== "mergeable") return { premise: "unknown" };
-  if (facts.value.requiredChecks === null) return { premise: "unknown" };
-  return { premise: "obsolete" };
-}
+// The repair trigger and the premise it reads have one owner (pool/repair-trigger.ts):
+// the Work state, the derivation and the launch's durable signature all ask it.
 
 /** The PR read target of a Work: the PR the caller already saw, else null —
  *  which lets the code host answer from its own linkage. The persisted

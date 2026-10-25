@@ -1,6 +1,6 @@
 import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { ExpandedPrFeedback, PullRequestRecord, TicketSnapshot } from "../tracker/expanded-port.js";
-import type { IssueComment } from "../tracker/port.js";
+import type { IssueComment, PrRepairFacts } from "../tracker/port.js";
 import { isAgentSpeech } from "../tracker/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { operatorStopClaim } from "../pool/stop.js";
@@ -12,11 +12,10 @@ import { ownWrittenOutcome, selfReportedBlocked } from "../state/outcome.js";
 import type { WorkRecordSnapshot } from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
-import type { PrRepairFacts, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import { confirmedRepairTrigger, repairSignature } from "../pool/repair-trigger.js";
 import {
   humanCommentsAfterLastMarker,
   humanCommentsForPause,
-  repairSignature,
 } from "../state/derive.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
 import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
@@ -153,7 +152,7 @@ async function withPullRequest(
   // and the Block above already won over all of it.
   const repairFacts = await facts.repairFacts();
   const repair = repairFacts.reading === "known" ? repairFacts.value : null;
-  const trigger = repair === null ? null : confirmedTrigger(repair);
+  const trigger = repair === null ? null : confirmedRepairTrigger(repair);
   const cycle = snapshot.repair;
   const attempt = cycle.attempt;
 
@@ -311,22 +310,8 @@ async function unreconciledFailure(
 }
 
 // ---- the repair pieces: the trigger, the two blocks, the recovery ----
-
-/** A check only reacts when it concluded, and failed or timed out — never
- *  pending, cancelled, skipped, neutral or an optional one. */
-function isFailingRequiredCheck(check: RequiredCheckResult): boolean {
-  return check.status === "completed" && (check.conclusion === "failure" || check.conclusion === "timed_out");
-}
-
-/** The trigger of an open PR, or null when nothing is confirmed. */
-function confirmedTrigger(facts: PrRepairFacts): RepairTrigger | null {
-  const reasons: RepairReason[] = [];
-  if (facts.mergeState === "conflicting") reasons.push("conflicts");
-  const failingChecks = (facts.requiredChecks ?? []).filter(isFailingRequiredCheck);
-  if (failingChecks.length > 0) reasons.push("required-checks");
-  if (reasons.length === 0) return null;
-  return { reasons, facts, failingChecks };
-}
+// The trigger itself has one owner (pool/repair-trigger.ts): the same predicate
+// and the same signature the derivation and the launch's durable record use.
 
 /** Confirmed recovery (story 22): no conflicts and every required check
  *  approved — narrower than an obsolete premise, which also holds for pending,

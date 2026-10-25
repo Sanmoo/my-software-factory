@@ -7,7 +7,7 @@ import type { RecoveryDecision } from "../pool/recovery.js";
 import type { StopLaunch } from "../pool/stop.js";
 import type { CallRecovery } from "../runtime/call-recovery.js";
 import type { SessionResult, WorkerRuntime } from "../runtime/port.js";
-import type { RepairTrigger } from "../state/derive.js";
+import type { RepairTrigger } from "../pool/repair-trigger.js";
 import type { PullRequestTracker, PullRequestRecord, TicketTracker } from "../tracker/expanded-port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import type { IssueComment } from "../tracker/port.js";
