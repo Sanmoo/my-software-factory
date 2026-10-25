@@ -114,6 +114,10 @@ class Ledger implements Survivors {
     return this.liveWorkers?.some((worker) => worker.key === key) ?? false;
   }
 
+  survivorKeys(): ReadonlySet<string> {
+    return new Set(this.survivors.keys());
+  }
+
   async reconcile(reservations: ReadonlyMap<string, ReservedWork>): Promise<ReadonlySet<string>> {
     const settled = new Set<string>();
     // Unknown liveness recognises nothing and settles nothing: a survivor whose

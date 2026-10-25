@@ -42,8 +42,9 @@ export interface Carrier {
   ageMs: number;
   /**
    * This process's own admission, a survivor it recognised, or neither — a live
-   * container whose reservation names no Work this composition can address
-   * (held, and reported once: the facts stay for the human).
+   * container this process did not launch and the ledger did not adopt: its
+   * reservation names no Work this composition can serve (held, and said once),
+   * and it occupies a slot nothing is launched over.
    */
   role: "launch" | "survivor" | "held";
 }
@@ -116,6 +117,10 @@ export interface Survivors {
   /** Whether a worker carries this Work right now (the launch and the
    *  continuity decisions ask exactly this). */
   carries(key: string): boolean;
+  /** The works a RECOGNISED survivor carries — the executions a previous
+   *  process launched and this one adopted (the stop's view of what it must
+   *  never orphan). A container this process launched is not here. */
+  survivorKeys(): ReadonlySet<string>;
   /**
    * Recognise the workers a reliable probe shows and this process did not
    * launch, watch the activity of each, announce the duplicates, and settle the
