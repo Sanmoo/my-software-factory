@@ -176,6 +176,31 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.equal(view.registry.lastOutcome[0]?.record.class, "pr-open");
   });
 
+  test("a Work in two registry lists is ONE reserved Work — the grouped block counts it once", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 2);
+    // The overlap issue 112 preserves in the registry: a recorded outcome of
+    // attempt 1 while attempt 2 sits on disk with no outcome of its own. Both
+    // lists carry the key; the reserved block is one line per Work.
+    seedAttempt(2, 1, 2);
+    writeFileSync(
+      join(workDir(layout, REPO, 2), DESFECHO_FILENAME),
+      JSON.stringify({ class: "pr-open", attempt: 1 }),
+      "utf8",
+    );
+
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
+    assert.deepEqual(
+      view.registry.attemptsWithoutOwnOutcome.map((entry) => entry.key),
+      [`${REPO}#2`],
+      "the registry keeps both facts",
+    );
+    assert.deepEqual(view.registry.lastOutcome.map((entry) => entry.key), [`${REPO}#2`]);
+    const keys = view.reserved.map((entry) => entry.key);
+    assert.deepEqual(keys, [...new Set(keys)], "no Work is read twice: the state is per Work");
+    assert.deepEqual(keys, [`${REPO}#2`], "and the Work is still read — deduped, not dropped");
+  });
+
   test("a live worker makes its work Running — the registry alone cannot say so — with its age and attempt", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedAttempt(4, 1, 2);

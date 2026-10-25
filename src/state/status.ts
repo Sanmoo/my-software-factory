@@ -202,11 +202,17 @@ export async function deriveStatus(
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
   // The same list answers the pool's "is this issue already reserved" and the
-  // Work state's "what is this Work's state now" — one read of the disk.
+  // Work state's "what is this Work's state now" — one read of the disk, and
+  // one entry per Work: the registry keeps a Work whose record exists and whose
+  // attempt has no outcome of its own in TWO lists (issue 112, the overlap the
+  // registry view still shows), while the Work state, and the block that counts
+  // it, are per Work.
   const reservedKeys = [
-    ...registry.attemptsWithoutOwnOutcome.map((entry) => entry.key),
-    ...registry.reservedWithoutAttempt,
-    ...registry.lastOutcome.map((entry) => entry.key),
+    ...new Set([
+      ...registry.attemptsWithoutOwnOutcome.map((entry) => entry.key),
+      ...registry.reservedWithoutAttempt,
+      ...registry.lastOutcome.map((entry) => entry.key),
+    ]),
   ];
   const reservations = new Set<string>(reservedKeys);
   const selections = githubSelections(config.repos);
