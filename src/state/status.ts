@@ -515,11 +515,6 @@ function distinctDestinations(destinations: readonly RepositoryIdentity[]): Repo
     .map(([, destination]) => destination);
 }
 
-/** The attempt the Work record numbers on disk, or null when nothing does. */
-async function recordAttempt(workDir: string): Promise<number | null> {
-  return readLastAttempt(workDir);
-}
-
 /**
  * The two states, from the registry and the probe together: a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
@@ -538,7 +533,7 @@ async function classifyLiveness(
   const running = await Promise.all(
     observation.workers.map(async (worker) => ({
       ...worker,
-      attempt: await recordAttempt(workDirOfKey(layout, worker.key)),
+      attempt: await readLastAttempt(workDirOfKey(layout, worker.key)),
     })),
   );
   const carried = new Set(running.map((worker) => worker.key));
