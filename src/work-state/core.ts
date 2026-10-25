@@ -19,7 +19,7 @@ import {
   repairSignature,
 } from "../state/derive.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
-import type { RepairTrigger, WorkRef, WorkStateReading, ClosedPrCollectionAction } from "./state.js";
+import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 
 /**
  * The decision core: the ladder from the facts to the Work state, and nothing
@@ -469,11 +469,11 @@ const NO_REPLIES: IssueComment[] = [];
  * moment, and the questions it asks — the record the attempt wrote, the stop
  * that may own its end, the PR the factory sees now.
  *
- * The rulings are the ones `classifyOutcome` makes at collection today, in the
- * same priority order; the loop executes them in this vocabulary (#202). The
- * one fact the two readings answer differently — a PR closed without merge —
- * carries today's collection action in a transitional payload (#203), so that
- * this ticket changes no verdict.
+ * The rulings are the ones `classifyOutcome` makes at collection, in the same
+ * priority order; the loop executes them in this vocabulary (#202). A PR closed
+ * without merge is the one fact the two readings used to answer differently:
+ * both answer `rejected` now, and both mean the Block the state declares — the
+ * epic's (#198) one behaviour delta.
  */
 export async function deriveAfterAttempt(
   ref: WorkRef,
@@ -542,11 +542,10 @@ export async function deriveAfterAttempt(
     return { work: ref.work, dir: ref.dir, state: "parked", because: "blocked-self-report", helpRequested: true, pr };
   }
 
-  // A PR closed without merge is the fact the collection vocabulary had no word
-  // for (epic #198): the Work state has one — the same `rejected` the read
-  // before a launch gives it. #203 is the ticket that makes it the Block the
-  // state names; until then the reading carries the action today's collection
-  // takes for the same fact, so the loop changes nothing but its words.
+  // A PR closed without merge is a Block in this reading too, and the SAME
+  // Block the read before a launch declares (epic #198's one behaviour delta):
+  // the work never returns to the pool carrying a closed PR — the attempt is
+  // liquidated as one outcome, not also as a fall.
   if (pr !== null && pr.state === "closed" && !pr.merged) {
     return {
       work: ref.work,
@@ -554,7 +553,6 @@ export async function deriveAfterAttempt(
       state: "rejected",
       pr,
       comment: rejectionComment(pr),
-      collectionAction: await collectionActionOf(ref, end.attempt, facts, record, own),
     };
   }
 
@@ -589,25 +587,6 @@ export async function deriveAfterAttempt(
  */
 async function previousAttemptFell(facts: AttemptEndFacts, attempt: number): Promise<boolean> {
   return (await facts.lastFallAttempt()) === attempt - 1;
-}
-
-/**
- * TEMPORARY (#203): the action today's collection reading takes for a PR closed
- * without merge — the fact the collection ruler never had a word for, so it read
- * it as "no PR at all". With no outcome record of its own the attempt was an
- * interruption; a written failure followed the fall ruler. #203 replaces all of
- * this with the Block the state already names.
- */
-async function collectionActionOf(
-  ref: WorkRef,
-  attempt: number,
-  facts: AttemptEndFacts,
-  record: OutcomeRecord | null,
-  own: OutcomeRecord | null,
-): Promise<ClosedPrCollectionAction> {
-  if (own === null) return { action: "interrupt" };
-  if (!(await previousAttemptFell(facts, attempt))) return { action: "release" };
-  return { action: "block", comment: await facts.fallenAttemptComment(record, attempt) };
 }
 
 /**

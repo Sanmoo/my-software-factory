@@ -346,14 +346,10 @@ export function projectCollectedRuling(reading: WorkStateReading): AppliedRuling
       // No attempt was consumed and the fall ruler never applies (issue 123):
       // the end is an interruption, whatever ended the turn or who ordered it.
       return { decision: "interrupt", because: "no-outcome" };
-    case "rejected": {
-      // The transitional payload (#203): today's collection reads a PR closed
-      // without merge as "no PR at all", so it keeps its own verdict for it.
-      const action = reading.collectionAction?.action ?? "block";
-      if (action === "interrupt") return { decision: "interrupt", because: "no-outcome" };
-      if (action === "release") return { decision: "release", because: "fall-first" };
-      return { decision: "block", because: "fall-second" };
-    }
+    case "rejected":
+      // A PR closed without merge is the Block the state declares (epic #198's
+      // one delta): the report names the fact itself, never a fall.
+      return { decision: "block", because: "pr-closed-unmerged" };
     // The states the read AFTER an attempt never answers — they belong to the
     // read before a launch. Named so the projection is total over the one
     // vocabulary; the collection's own "no verdict was written" is what an end
@@ -392,14 +388,11 @@ function wroteNoVerdict(reading: WorkStateReading): boolean {
     case "model-provider-failure":
     case "stop-resume":
       return true;
-    case "rejected":
-      // The transitional payload (#203): with no record of its own, today's
-      // collection reads a closed PR as an interruption.
-      return reading.collectionAction?.action === "interrupt";
     case "done":
     case "done-fallback":
     case "parked":
     case "fall":
+    case "rejected": // a rejection WROTE a verdict: a closed PR is a Block, never an interruption
     case "feedback":
     case "repair":
     case "repair-recovered":
@@ -2511,8 +2504,8 @@ export class SweepEngine {
   /**
    * Collection at the act: the Work state's second reading applied to the worker
    * this process launched. The result is what the launch returned; what the end
-   * MEANS — the state, its payload, and today's collection verdict for a PR
-   * closed without merge (#203) — is read from the module, never assembled here.
+   * MEANS — the state and its payload — is read from the module, never assembled
+   * here.
    */
   private async collect(
     launchable: Launchable,
@@ -2694,45 +2687,18 @@ export class SweepEngine {
         break;
       }
       case "rejected": {
-        // A PR closed without merge, SEEN AT COLLECTION. The state names the
-        // fact; the transitional payload (#203) names what today's collection
-        // does with it, because today it reads the closed PR as "no PR at all".
-        // This arm replays exactly that and is deleted whole — payload and all —
-        // when #203 makes the fact the Block the state already declares.
-        const collection = reading.collectionAction;
+        // A PR closed without merge, SEEN AT COLLECTION (epic #198's one
+        // delta): the Block the state already declares — the ticket is blocked
+        // with the comment pointing at the PR and the claim is HELD, so the
+        // work never returns to the pool carrying a closed PR. The attempt is
+        // liquidated as ONE outcome: a closed PR is not a written failure, so
+        // no fall is recorded and no recovery is spent.
+        this.log(
+          `${origin} ${key}: the PR was closed without merging (PR #${reading.pr.number}) — ` +
+            "blocked with a comment pointing at the PR; the work stays reserved",
+        );
+        await this.applyBlockWithComment(work, reading.comment);
         resulting = STATE_DECLARATIONS[reading.state].announces;
-        if (collection?.action === "interrupt") {
-          if (launchable.kind === "repair") {
-            this.logRepairEnded(origin, key);
-          } else {
-            // The attempt's own stream decides what ended its turn (issue 144):
-            // the one fact of this replay the state has no other word for.
-            const failure = await readTurnModelProviderError(dir, attempt);
-            if (failure === null) {
-              this.log(
-                `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
-                  "number and the recovery budget answers it",
-              );
-            }
-            next = this.continuation(launchable, attempt, failure, pr);
-          }
-        } else if (collection?.action === "release") {
-          await this.settleFailure(dir, attempt, record);
-          this.log(
-            `${origin} ${key}: fall without PR — release (claimed→ready back; ` +
-              "the branch stays, the next sweep picks it up)",
-          );
-          await this.applyRelease(work);
-          resulting = "eligible";
-          occurrence = true;
-        } else {
-          const comment = collection?.action === "block" ? collection.comment : reading.comment;
-          await this.settleFailure(dir, attempt, record);
-          this.log(
-            `${origin} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
-          );
-          await this.applyBlockWithComment(work, comment);
-        }
         break;
       }
       // The states only the read BEFORE a launch answers: an attempt that ended

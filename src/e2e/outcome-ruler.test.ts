@@ -21,6 +21,7 @@ import {
 } from "../config.js";
 import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { readLaunchFacts, scanRegistry } from "../pool/registry.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
 import { installGhShim, runCli } from "./cli-harness.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 
@@ -459,6 +460,61 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     assert.ok(comments.known && comments.value.length === 0, "the factory adds no comment — the worker posted the marker");
     const record = JSON.parse(readFileSync(join(workDir(layout, REPO, 1), DESFECHO_FILENAME), "utf8"));
     assert.equal(record.class, "blocked-self-report");
+  });
+
+  // ---- epic #198's ONE delta: a PR closed without merge, SEEN AT COLLECTION → Block ----
+
+  test("#203 — a PR closed without merge at collection blocks the work, pointing at the PR, never releasing it", async () => {
+    const config = makeConfig(1);
+    const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
+    seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+
+    const { deps, runtime, tracker: t } = makeFactory(config, tracker, ["pr-open"]);
+    const log: string[] = [];
+    deps.log = (line) => log.push(line);
+    // The worker opens its PR and the human closes it WITHOUT merging before the
+    // factory collects the attempt: the fact is a COLLECTION fact, not a
+    // derivation one. The doubles stay the two fakes of this suite.
+    const launch = runtime.launch.bind(runtime);
+    runtime.launch = async (request) => {
+      const result = await launch(request);
+      tracker.closePr({ repo: REPO, prNumber: 1 }, { merged: false });
+      return result;
+    };
+
+    const result = await runOnce(deps);
+
+    // The state's Block, executed (epic #198's delta): blocked with the PR pointed at.
+    assert.equal(result.launched.length, 1);
+    const ruling = result.collected[0]?.ruling;
+    assert.ok(ruling);
+    assert.equal(ruling.decision, "block", "a PR closed without merge is the Block the state declares");
+    assert.equal(ruling.because, "pr-closed-unmerged", "the report names the fact — not a fall");
+
+    assert.deepEqual(await labelsOf(t, 1), [DEFAULT_LABELS.blocked], "blocked — and NOT back in the pool");
+    const comment = await lastCommentOf(t, 1);
+    assert.match(comment, /PR #1\b/, "the comment points at the PR the human closed");
+    assert.match(comment, /closed without merging/i, "the glossary's words, never the code's");
+
+    // The operator log says WHY in the glossary's words, with the PR named.
+    const said = log.find((line) => line.includes(`collected ${REPO}#1:`));
+    assert.ok(said, "the collection logged the verdict it applied");
+    assert.match(said, /closed without merging/);
+    assert.match(said, /PR #1\b/);
+    assert.ok(!/rejected|fall/.test(said), "no code words: neither the state's name nor the fall ruler's");
+
+    // ONE outcome, not two: a closed PR is not a written failure, so the
+    // consecutive-fall ledger never moves and no recovery is spent either.
+    const facts = await readLaunchFacts(workDir(layout, REPO, 1));
+    assert.equal(facts.previousFall, false, "the closed PR is not a fall — the next attempt starts a fresh count");
+    const ledger = await readRecoveryLedger(workDir(layout, REPO, 1));
+    assert.equal(ledger.lastFallAttempt, null, "no fall was recorded for the rejection");
+    assert.equal(ledger.consumed, 0, "and no recovery was spent on it");
+
+    // No second launch for that work, now or on the next sweep.
+    assert.equal(runtime.launched.length, 1, "a rejection is not relaunched — the attempt was settled once");
+    const second = await runOnce(deps);
+    assert.equal(second.launched.length, 0, "the blocked work stays the human's — the next sweep launches nothing");
   });
 
   // ---- the registry survives the factory's exit ----

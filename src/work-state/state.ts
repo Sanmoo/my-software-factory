@@ -78,26 +78,6 @@ export interface RepairTrigger {
 type PrSeen = { pr?: PullRequestRecord | null };
 
 /**
- * TEMPORARY (#203): what today's collection reading does with a PR closed
- * without merge. The Work state already names the fact (`rejected`), but the
- * ticket that makes it a Block is #203; until then the collection reading also
- * names the action the collection has always taken for that very fact — not a
- * second vocabulary, this ticket's promise to change nothing — and the engine
- * executes exactly that. Deleted by #203 together with the arm it feeds. The
- * read before a launch never carries it: there the state alone decides (block
- * with the comment pointing at the PR).
- */
-export type ClosedPrCollectionAction =
-  /** No outcome record of its own: an interruption — the same attempt is
-   *  recovered within its budget. */
-  | { action: "interrupt" }
-  /** A written failure/abandon: the 1st consecutive fall releases. */
-  | { action: "release" }
-  /** A written failure/abandon, 2nd consecutive: blocked with the attempt's
-   *  diagnosis on the issue. */
-  | { action: "block"; comment: string };
-
-/**
  * The Work state itself: the state string with the payload its action needs.
  * `fall` is two members under one state — the written failure releases or
  * blocks — so the action discriminates on `decision`.
@@ -110,14 +90,10 @@ export type WorkStateReading = WorkRef &
      *  done must always be reflected on the tracker (ticket 04 Q11). */
     | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
     /** PR closed without merge: block with a comment pointing at the PR. The
-     *  collection reading also carries the transitional action of #203 — see
-     *  {@link ClosedPrCollectionAction}. */
-    | {
-        state: "rejected";
-        pr: PullRequestRecord;
-        comment: string;
-        collectionAction?: ClosedPrCollectionAction;
-      }
+     *  same state from both readings — before a launch and after an Attempt
+     *  (epic #198's one behaviour delta) — so the work never returns to the
+     *  pool carrying a closed PR. */
+    | { state: "rejected"; pr: PullRequestRecord; comment: string }
     /** New human comment on the PR: a feedback round on the same branch and PR. */
     | { state: "feedback"; pr: PullRequestRecord; createdAt: string }
     /** A confirmed impediment of the open PR reactivates the worker in one
