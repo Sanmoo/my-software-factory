@@ -12,115 +12,26 @@ import { ownOutcomeRecord, type OutcomeRecord } from "../work-record/outcome.js"
 import { pauseMarker } from "../tracker/port.js";
 
 /**
- * The factory's ruler (state/outcome.ts) — classification of outcomes and
- * tracker transitions (tickets 04/05; fleshed out by tickets 12-14). The
- * RECORD it reads (desfecho.json, its schema and the "is this record this
- * attempt's?" criterion) is owned by the Work record (issue 187,
- * `src/work-record/`); this module owns only the POLICY applied to it.
+ * The Work record's two small rules and the operator's texts (tickets 04/05;
+ * fleshed out by tickets 12-14). The RECORD (desfecho.json, its schema and the
+ * "is this record this attempt's?" criterion) is owned by the Work record
+ * (issue 187, `src/work-record/`); the VOCABULARY of what a collection decides
+ * is owned by the Work state (ADR-0010, `src/work-state/`).
  *
- * The two-rulers contract: the worker's ruler (its obligations) lives in the
- * prompt; the factory's ruler (this module) NEVER reads what the agent wrote
- * in natural language. It reads only structured, verifiable facts:
- *   - does desfecho.json exist? what is its `class` field?
- *   - is there an open PR on the issue? (port)
- *   - labels? author of the last comment? (port)
- * The contract between the two sides is the artifact schema the Work record
- * owns. Zero natural-language parsing in the critical path.
- */
-
-/** The ruled transition of a collection, decided in state/, executed by the loop. */
-export type OutcomeRuling =
-  /** The terminal state reached while the claim was held: the human's merge
-   * closed the issue ("issue-closed"), or the PR itself was merged while the
-   * attempt ran ("pr-merged" — delivery, whatever the attempt wrote; issue
-   * 149). Archive the artifacts, no release, no fall; a pr-merged ruling also
-   * closes the open issue first (the linkage fallback). */
-  | { decision: "done"; because: "issue-closed" | "pr-merged" }
-  /** Classes 1 and 5: PR open (by record or by pre-existence) — stays
-   * reserved awaiting the human; a fall is never recorded, the claim is held. */
-  | { decision: "reserve"; because: "pr-open" }
-  /** Class 6: blocked self-report — the worker already posted the marker + label; the factory only records it. */
-  | { decision: "record-only"; because: "blocked-self-report" }
-  /** The attempt wrote no outcome record: an INTERRUPTION, not a failure
-   * (issue 123). The loop absorbs it with the recovery budget; the attempt
-   * keeps its number and never enters the fall ruler. */
-  | { decision: "interrupt"; because: "no-outcome" }
-  /** A written failure/abandon without PR, 1st consecutive — release
-   * (claimed→ready; the branch stays). */
-  | { decision: "release"; because: "fall-first" }
-  /** A written failure/abandon without PR, 2nd consecutive — blocked + comment
-   *  carrying this attempt's outcome and its evidence. */
-  | { decision: "block"; because: "fall-second"; comment: string };
-
-/** The structured facts the ruler reads — no prose, ever (the two-rulers
- *  contract). The block branch also probes the attempt's evidence locations
- *  read-only; a failed query degrades to "could not be verified", never to a
- *  different decision. */
-export interface OutcomeFacts {
-  /** desfecho.json as read from disk; it may belong to an EARLIER attempt. */
-  record: OutcomeRecord | null;
-  /** The port's fact: an open PR linked to the issue (recorded now or pre-existing). */
-  prOpen: boolean;
-  /** The port's fact: the PR linked to the issue was merged — delivery, even
-   *  when the attempt wrote nothing (issue 149). Never a fall. */
-  prMerged: boolean;
-  /** The operator ended this attempt: an already-open PR cannot complete it. */
-  requestedStop?: boolean;
-  /** The port's fact: the blocked label is on the issue (the worker's self-report). */
-  blockedLabelOnIssue: boolean;
-  /** The registry's fact from launch time: the previous attempt on this branch
-   *  also ended in a written failure. Interruptions never set it (issue 123). */
-  consecutiveFall: boolean;
-  /** The attempt being collected (the registry's launch fact) — names the fall in the
-   *  blocked comment, and owns the record: a record of another attempt is absent here. */
-  attempt: number;
-  /** The port's fact: the issue itself is closed — the terminal state was reached while this claim was held (ticket 14). */
-  issueClosed: boolean;
-  /** The attempt's dir as the runtime/registry used it — the same dir the evidence probes. */
-  workDir: string;
-  /** The workspace the dir lives in — the base of the shown evidence paths. */
-  workspace: WorkspaceLayout;
-}
-
-/**
- * The factory's ruler (ticket 13; amended by issue 123), applied at collection
- * (loop) on structured facts alone. Priority is the vocabulary of the classes:
- *   1/5. PR open → reserve, no fall recorded (pre-existing PR included);
- *   6. blocked self-report → only recorded (the worker posted marker + label);
- *   4. no own record → INTERRUPTION: the recovery budget absorbs it and the
- *      same attempt is relaunched — never the fall ruler (issue 123);
- *   2/3. a written failure/abandon without PR: 1st consecutive → release,
- *      2nd consecutive → blocked + comment.
+ * What is left here is neither a ruler nor a policy module: the two predicates
+ * the fall ruler and the derivation ask of a record (`isRecordedFailure`,
+ * `ownWrittenOutcome`, `selfReportedBlocked`) and the comments the factory
+ * writes for the operator — blocked, interruption paused, model provider
+ * awaited, continuity paused, repair fall. The old second vocabulary
+ * (`classifyOutcome`/`OutcomeRuling`) is deleted: ADR-0010's "the outcome ruler
+ * is no longer a policy module of its own".
  *
- * The record is consulted only when it belongs to the collected attempt (issue
- * 103): a crash never inherits the previous attempt's verdict.
+ * The two-rulers contract survives: the worker's ruler (its obligations) lives
+ * in the prompt; the factory NEVER reads what the agent wrote in natural
+ * language. It reads only structured, verifiable facts — does desfecho.json
+ * exist, what is its `class`, is a PR open or merged, which labels the issue
+ * carries. Zero natural-language parsing in the critical path.
  */
-export async function classifyOutcome(facts: OutcomeFacts): Promise<OutcomeRuling> {
-  if (facts.issueClosed) return { decision: "done", because: "issue-closed" };
-  // A merged PR is delivery (issue 149): the attempt's own record never turns
-  // a delivered work into a release or a 2nd-fall block. The closed issue is
-  // still the primary fact; this one closes it (the linkage fallback).
-  if (facts.prMerged) return { decision: "done", because: "pr-merged" };
-  if (facts.requestedStop && ownOutcomeRecord(facts.record, facts.attempt) === null) {
-    return { decision: "interrupt", because: "no-outcome" };
-  }
-  if (facts.prOpen) return { decision: "reserve", because: "pr-open" };
-  if (isBlockedSelfReport(facts)) return { decision: "record-only", because: "blocked-self-report" };
-
-  if (ownOutcomeRecord(facts.record, facts.attempt) === null) {
-    return { decision: "interrupt", because: "no-outcome" };
-  }
-
-  // A written failure/abandon without PR — the fall ruler applies.
-  if (facts.consecutiveFall) {
-    return {
-      decision: "block",
-      because: "fall-second",
-      comment: await blockedCommentBody(facts),
-    };
-  }
-  return { decision: "release", because: "fall-first" };
-}
 
 /**
  * The written failure the ruler counts for CONSECUTIVENESS at launch: a clean
@@ -151,17 +62,14 @@ export function selfReportedBlocked(record: OutcomeRecord | null, attempt: numbe
   return ownOutcomeRecord(record, attempt)?.class === "blocked-self-report";
 }
 
-/** A self-report is the current attempt's record class, or the label — both structured facts. */
-function isBlockedSelfReport(facts: OutcomeFacts): boolean {
-  return facts.blockedLabelOnIssue || selfReportedBlocked(facts.record, facts.attempt);
+/** What a comment about one attempt needs: the attempt, its raw record
+ *  (possibly another attempt's) and the attempt's evidence. */
+export interface AttemptCommentInput {
+  attempt: number;
+  record: OutcomeRecord | null;
+  workDir: string;
+  workspace: WorkspaceLayout;
 }
-
-/** What a comment about one attempt needs from the ruler's facts — the
- *  attempt, its raw record (possibly another attempt's) and its evidence. */
-type AttemptCommentInput = Pick<
-  OutcomeFacts,
-  "attempt" | "record" | "workDir" | "workspace"
->;
 
 /**
  * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell

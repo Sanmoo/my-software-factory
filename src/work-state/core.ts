@@ -469,8 +469,9 @@ const NO_REPLIES: IssueComment[] = [];
  * moment, and the questions it asks — the record the attempt wrote, the stop
  * that may own its end, the PR the factory sees now.
  *
- * The rulings are the ones `classifyOutcome` makes at collection, in the same
- * priority order; the loop executes them in this vocabulary (#202). A PR closed
+ * The rulings are the ones the collection has always made, in the same priority
+ * order — they were the deleted outcome ruler's, and this module is now their
+ * one owner (ADR-0010); the loop executes them in this vocabulary (#202). A PR closed
  * without merge is the one fact the two readings used to answer differently:
  * both answer `rejected` now, and both mean the Block the state declares — the
  * epic's (#198) one behaviour delta.

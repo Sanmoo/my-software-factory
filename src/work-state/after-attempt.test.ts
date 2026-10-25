@@ -48,7 +48,7 @@ class SilentPullRequestTracker extends FakeTrackerAdapter {
  * consecutiveness of the fall all stay behind the seam (a fake tracker and a
  * real work dir).
  *
- * The rulings pinned here are the ones `classifyOutcome` makes today — plus the
+ * The rulings pinned here are the ones the collection has always made — plus the
  * one fact that had no word in the collection vocabulary at all: a PR closed
  * without merge is `rejected`, and the collection blocks with it (epic #198's
  * one behaviour delta).
