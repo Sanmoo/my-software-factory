@@ -94,6 +94,20 @@ export interface SessionResult {
 }
 
 /**
+ * A launch this runtime refused before any worker existed: a precondition of
+ * the environment (Docker, the image and its inventory, the git credential
+ * helper, the model credential) rejected it before the attempt's footprint was
+ * written, so no worker ran — the **Launch refusal** of GLOSSARY.md. Any other
+ * failure may have left a worker behind and is never this type.
+ */
+export class LaunchPreconditionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "LaunchPreconditionError";
+  }
+}
+
+/**
  * One work of a retrospective window, as the round's agent reads it: where the
  * evidence lives inside the container, what the work ended as and when — never
  * the work's issue body or diff, which the round does not change.

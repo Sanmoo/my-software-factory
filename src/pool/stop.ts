@@ -83,6 +83,20 @@ export interface StopLaunch {
   recoveryIndex: number | null;
 }
 
+/**
+ * Return the recovery grant an admission still holds, if any: the grant's own
+ * ledger event index is its identity, so refunding it twice is impossible and
+ * an earlier, legitimate recovery can never be returned. The admission stops
+ * naming the grant the moment it is released. The caller decides WHEN a grant
+ * may be released — a requested stop that cancelled the admission, or the
+ * runtime's own proof that no worker existed (issue 178).
+ */
+export async function refundHeldGrant(launch: StopLaunch, attempt: number): Promise<boolean> {
+  const grant = launch.recoveryIndex;
+  launch.recoveryIndex = null;
+  return grant === null ? false : refundRecovery(launch.dir, attempt, grant);
+}
+
 /** The facts of the run the stop is executed against. */
 export interface StopInput {
   /** The launches that may still be carrying a worker, snapshotted as the stop begins. */
@@ -273,9 +287,10 @@ export class OperatorStop {
    * grant was actually returned.
    */
   async cancelAdmission(launch: StopLaunch, attempt: number): Promise<boolean> {
-    const grant = launch.recoveryIndex !== null && !launch.launched ? launch.recoveryIndex : null;
-    launch.recoveryIndex = null;
-    const refunded = grant === null ? false : await refundRecovery(launch.dir, attempt, grant);
+    // A stop refunds only a grant no worker may already be carrying; the grant
+    // stays named, so the runtime that then proves no worker existed (issue
+    // 178) still returns it through the launch's own refusal.
+    const refunded = launch.launched ? false : await refundHeldGrant(launch, attempt);
     await recordStopRequest(launch.dir, attempt, this.now);
     return refunded;
   }

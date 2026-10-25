@@ -33,7 +33,7 @@ import { readTurnModelProviderError } from "../work-record/model-provider-error.
 import { IMAGE_INVENTORY_PATH, loadAgentResources } from "./inventory.js";
 import { provisionedInventory } from "./agent-inventory-fixture.js";
 import { agentExtensionEntry, agentGuidancePath, agentSkillPath } from "./agent-paths.js";
-import type { WorkRequest } from "./port.js";
+import { LaunchPreconditionError, type WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
@@ -518,7 +518,9 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
 
     const result = await dying.launch(request);
 
-    assert.equal(result.outcome, "abrupt-death");
+    // A failure after the footprint is NOT a pre-worker refusal: it resolves
+    // as the session's own abrupt death, so the factory never refunds it.
+    assert.equal(result.outcome, "abrupt-death", "a post-footprint failure is the session's end, not a refusal");
     assert.equal(seen.sessao, true, "the session dir exists at launch time");
     assert.ok(seen.startLine?.includes("session-start"), "the log started before the outcome");
     assert.ok(!existsSync(join(request.workDir, DESFECHO_FILENAME)), "no record — the ruler reads the absence");
@@ -659,7 +661,11 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
       dockerProvider: () => dummySandbox(),
     });
 
-    await assert.rejects(failing.launch(request), /docker unavailable/);
+    await assert.rejects(
+      failing.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError && /docker unavailable/.test(error.message),
+    );
     assert.ok(!existsSync(request.workDir), "no footprint: no dir, no logs, no session");
   });
 
@@ -680,8 +686,137 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
       dockerProvider: () => dummySandbox(),
     });
 
-    await assert.rejects(failing.launch(request), /socket \/var\/run\/docker\.sock is missing/);
+    await assert.rejects(
+      failing.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /socket \/var\/run\/docker\.sock is missing/.test(error.message),
+    );
     assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
+  });
+
+  test("the issue's own refusals — a stale image inventory, an unresolved credential and a half-staged guardrail — are typed as proven-before-worker", async () => {
+    const stale = JSON.parse(inventoryJson()) as { pi: { version: string } };
+    stale.pi.version = "1.2.0";
+    const runtimeWith = (preflight: () => Promise<void>) =>
+      new SandcastleRuntime({
+        model: MODEL,
+        token: "present",
+        agentResources: RESOURCES,
+        authEnv: {},
+        workspace: root,
+        dockerSocket,
+        preflight,
+        runSandcastle: async () => {
+          throw new Error("run must never be reached");
+        },
+        dockerProvider: () => dummySandbox(),
+      });
+    const run = async (_command: string, args: string[]) => {
+      if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: JSON.stringify(stale), stderr: "" };
+      if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+      return { stdout: "ok", stderr: "" };
+    };
+    const staleInventory = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: {},
+        dockerSocket: SOCKET,
+        run,
+      }),
+    );
+
+    await assert.rejects(
+      staleInventory.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /does not match this checkout's agent-resources\.yaml/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the stale inventory leaves no footprint");
+
+    const unresolvedCredential = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: { OPENAI_API_KEY: "probe-sentinel" },
+        dockerSocket: SOCKET,
+        authProbe: async () => ({
+          status: 1,
+          stdout: '{"status":"not_ready","provider":"openai","reason":"credentials_not_configured"}',
+          stderr: "",
+        }),
+        run: async (_command, args) => {
+          if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+          if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+          return { stdout: "ok", stderr: "" };
+        },
+      }),
+    );
+
+    await assert.rejects(
+      unresolvedCredential.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError && /model credentials for/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the credential refusal leaves no footprint");
+
+    // The exact case of the reported incident: the image carries no readable
+    // inventory at all (the file is missing or cannot be parsed).
+    const unreadableInventory = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: {},
+        dockerSocket: SOCKET,
+        run: async (_command, args) => {
+          if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: "", stderr: "" };
+          if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+          return { stdout: "ok", stderr: "" };
+        },
+      }),
+    );
+    await assert.rejects(
+      unreadableInventory.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /carries no readable agent inventory at \/opt\/msf\/agent-inventory\.json/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the unreadable inventory leaves no footprint");
+
+    // The image is stale in its guardrail: one of the modules the session loads
+    // is absent. Also a precondition, also before the footprint.
+    const halfStagedGuardrail = runtimeWith(
+      defaultPreflight({
+        token: "present",
+        image: WORKER_IMAGE,
+        model: MODEL,
+        agentResources: RESOURCES,
+        authEnv: {},
+        dockerSocket: SOCKET,
+        run: async (_command, args) => {
+          if (args.includes(IMAGE_INVENTORY_PATH)) return { stdout: inventoryJson(), stderr: "" };
+          if (args.includes("git")) return { stdout: "!gh auth git-credential", stderr: "" };
+          if (args.some((arg) => arg.includes("test -f /opt/msf/runtime/guardrail/extension.js"))) {
+            return { stdout: "/opt/msf/runtime/guardrail/journal-lock.js\n", stderr: "" };
+          }
+          return { stdout: "ok", stderr: "" };
+        },
+      }),
+    );
+    await assert.rejects(
+      halfStagedGuardrail.launch(request),
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError &&
+        /carries no continuity guardrail — missing \/opt\/msf\/runtime\/guardrail\/journal-lock\.js/.test(error.message),
+    );
+    assert.ok(!existsSync(request.workDir), "the half-staged guardrail leaves no footprint");
   });
 
   test("the default preflight checks Docker, the image inventory, the token, the git helper, Docker inside and the model auth", async () => {

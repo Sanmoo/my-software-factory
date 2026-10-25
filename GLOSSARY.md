@@ -119,8 +119,11 @@ An attempt that ended without an outcome record: a SIGKILLed worker, a dead fact
 **Recovery**:
 The automatic relaunch of an interrupted attempt, after the configured backoff, with the SAME attempt number and the branch preserved.
 
+**Launch refusal**:
+The runtime refusing a launch before any worker existed: a precondition of the environment — Docker, the image and its inventory, the git credential helper, the model credential — rejected it before the attempt's footprint was written. Only the refusal that proves itself (see `LaunchPreconditionError`) is one: a failure after the footprint may have left a worker behind.
+
 **Recovery budget**:
-The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count.
+The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count. A recovery granted to a relaunch that ended in a Launch refusal is refunded to the budget; an ambiguous failure may have left a worker behind and keeps it consumed.
 
 **Requested stop**:
 The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. The cooperative window bounds that request phase — ten seconds for the whole run, never per worker — and a second signal escalates it, forcing what remains at once; neither shortcut skips the confirmation of the workers' end. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
