@@ -22,7 +22,7 @@ const REPO = "Sanmoo/a";
 const work = { ticket: githubTicket(REPO, 7), destination: githubRepository(REPO) };
 const dir = `/ws/trabalhos/${REPO}#7`;
 
-/** A PR closed without merge — the fact the transitional payload (#203) names. */
+/** A PR closed without merge — the fact epic #198's one delta turns into a Block. */
 const pr: PullRequestRecord = {
   number: 12,
   state: "closed",
@@ -74,28 +74,16 @@ test("the collection report names what the state already decided — one word pe
   }
 });
 
-test("#203's transitional payload: today's collection verdict for a PR closed without merge (D7)", () => {
-  const closed = (action: "interrupt" | "release" | "block"): WorkStateReading =>
-    reading({
-      state: "rejected",
-      pr,
-      comment: "work rejected: PR #12 was closed without merging",
-      collectionAction: action === "block" ? { action, comment: "the attempt's diagnosis" } : { action },
-    });
-
-  // The reading that comes from the launch moment carries no payload: there the
-  // state's own verdict stands (the Block #203 wires), and the collection never
-  // sees it anyway.
-  const launchMoment: WorkStateReading = reading({
+test("a PR closed without merge is the Block the state declares — from both readings (D7, epic #198's delta)", () => {
+  const rejection: WorkStateReading = reading({
     state: "rejected",
     pr,
     comment: "work rejected: PR #12 was closed without merging",
   });
 
-  assert.deepEqual(projectCollectedRuling(closed("interrupt")), { decision: "interrupt", because: "no-outcome" });
-  assert.deepEqual(projectCollectedRuling(closed("release")), { decision: "release", because: "fall-first" });
-  assert.deepEqual(projectCollectedRuling(closed("block")), { decision: "block", because: "fall-second" });
-  assert.deepEqual(projectCollectedRuling(launchMoment), { decision: "block", because: "fall-second" });
+  // The collection reports the Block the state already names; the `because`
+  // names the FACT, never a fall the rejection did not write.
+  assert.deepEqual(projectCollectedRuling(rejection), { decision: "block", because: "pr-closed-unmerged" });
 });
 
 test("the projection is total over the one vocabulary — no state is left unprojected", () => {

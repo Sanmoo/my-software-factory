@@ -50,7 +50,8 @@ class SilentPullRequestTracker extends FakeTrackerAdapter {
  *
  * The rulings pinned here are the ones `classifyOutcome` makes today — plus the
  * one fact that had no word in the collection vocabulary at all: a PR closed
- * without merge is `rejected`, and nobody executes it yet (#203).
+ * without merge is `rejected`, and the collection blocks with it (epic #198's
+ * one behaviour delta).
  */
 describe("work state — the read after an attempt", () => {
   let adapter: FakeTrackerAdapter;
@@ -191,12 +192,12 @@ describe("work state — the read after an attempt", () => {
   test("a PR closed without merge is rejected — the fact the collection vocabulary had no word for", async () => {
     seedIssue(adapter, { repo: REPO, number: 4, labels: [DEFAULT_LABELS.claimed] });
     adapter.seedPullRequest({ repo: REPO, number: 4, state: "closed", merged: false });
-    // The attempt wrote nothing at all: today this End is an interruption, and
-    // the work goes back to the pool as if nothing had happened.
+    // The attempt wrote nothing at all: the closed PR is the fact, and it is a
+    // Block — never an interruption, never a release back to the pool.
 
     const reading = await read(4, 1);
 
-    assert.equal(reading.state, "rejected", "a closed PR is a rejection in this reading too — nobody executes it yet");
+    assert.equal(reading.state, "rejected", "a closed PR is the same rejection this reading always named");
     if (reading.state !== "rejected") assert.fail("expected a rejection");
     assert.equal(reading.pr.number, 4, "the payload carries the PR the block points at");
     assert.match(reading.comment, /PR #4\b/);
