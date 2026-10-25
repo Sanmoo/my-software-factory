@@ -1622,6 +1622,92 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
   });
 
+  test("two spellings of one destination are one destination, so the ticket is deduplicated", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One Work", labels: ["a", "b"] });
+    sim.select = selectBy({
+      "labels = a": (issue) => issue.labels.includes("a"),
+      "labels = b": (issue) => issue.labels.includes("b"),
+    });
+    const adapter = jiraAdapter(sim);
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          // GitHub repository names are case-insensitive: the same repository,
+          // so the repetition is the same Work and not a conflict.
+          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    if (site?.state !== "known") assert.fail("the site is readable");
+    assert.deepEqual(site.candidates.map((candidate) => candidate.work.ticket.key), ["ABC-1"]);
+    assert.deepEqual(site.ambiguous, [], "one repository is not two destinations");
+    assert.equal(site.destinations.length, 1, "the destination is listed once");
+
+    const reversed = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+    const [sameSite] = reversed.jira;
+    if (sameSite?.state !== "known") assert.fail("the site is readable in either declaration order");
+    assert.deepEqual(
+      sameSite.destinations,
+      site.destinations,
+      "the spelling shown never depends on which selection was declared first",
+    );
+  });
+
+  test("a site whose ordered union names a ticket no selection selected is unknown, never that extra candidate", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend", labels: ["frontend"] });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend", labels: ["backend"] });
+    sim.addIssue({ id: "10003", key: "ABC-3", summary: "Nobody's selection", labels: ["other"] });
+    // The per-selection reads answer exactly, the site-wide union answers wider:
+    // routing and order would come from different reads.
+    sim.select = selectBy({
+      "labels = frontend": (issue) => issue.labels.includes("frontend"),
+      "labels = backend": (issue) => issue.labels.includes("backend"),
+    });
+    const adapter = jiraAdapter(sim);
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    if (site?.state !== "unknown") assert.fail("the disagreement leaves the site's order unknown");
+    assert.match(site.reason, /ordered result and its selections disagree/);
+    assert.deepEqual(site.candidates, [], "no candidate is offered from reads that disagree");
+    assert.deepEqual(site.ambiguous, []);
+    const text = renderStatus(view);
+    assert.doesNotMatch(text, /^    \d+\. ABC-/m, "no candidate line is invented from the wider read");
+  });
+
   test("a Jira key and a GitHub issue number never stand in for one another at the status seam", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "42", key: "ABC-42", summary: "Jira request" });
