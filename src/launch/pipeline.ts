@@ -9,7 +9,7 @@ import { consumeRecovery, consumeStopRequest, recordStopRequest, resetFallCount 
 import { openRepairRound, type RepairRoundContext } from "../pool/repair-round.js";
 import { reservationRecordOf, reserveWork } from "../pool/reservation.js";
 import { EMPTY_REPAIR_CYCLE, readRepairCycle, writeRepairCycle, type RepairAttempt } from "../work-record/repair.js";
-import { readRecoveryLedger } from "../work-record/recovery.js";
+import { readRecoveryLedger, type RecoveryStop } from "../work-record/recovery.js";
 import { readTurnModelProviderError } from "../work-record/model-provider-error.js";
 import { readOutcomeRecord } from "../work-record/outcome.js";
 import { ownWrittenOutcome } from "../state/outcome.js";
@@ -20,8 +20,8 @@ import { repairSignature, type RepairTrigger } from "../pool/repair-trigger.js";
 import { workPullRequest } from "../state/derive.js";
 import { renderWorkIdentity, ticketUrl, type WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
-import type { StopLaunch } from "../pool/stop.js";
-import type { SessionResult, WorkerMaterial } from "../runtime/port.js";
+import { refundHeldGrant, type StopLaunch } from "../pool/stop.js";
+import { LaunchPreconditionError, type SessionResult, type WorkerMaterial, type WorkRequest } from "../runtime/port.js";
 import type { GitWork } from "../git/port.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import type { Launch, LaunchDeps, Launchable } from "./launch.js";
@@ -31,6 +31,16 @@ const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeo
 
 const logClaim = (log: (message: string) => void, key: string): void =>
   log(`claiming ${key} (ready → claimed on the tracker, before any launch)`);
+
+/** What the pipeline tracks of one launch while it may still be carrying a
+ *  worker: the stop module's own admission facts, plus the requested stop this
+ *  launch consumed — the pipeline's bookkeeping, not the stop protocol's. */
+interface InFlightLaunch extends StopLaunch {
+  /** The requested stop this admission consumed before launching (issue #146),
+   *  re-recorded when the launch never carried the attempt out; null when the
+   *  launch consumed none. */
+  consumedStop: RecoveryStop | null;
+}
 
 /** One admission at a time is the caller's business (it holds the slot); this
  *  module keeps only what the pipeline itself owns: the per-repository prepare
@@ -42,7 +52,7 @@ class LaunchPipeline implements Launch {
   // the launches themselves run concurrently).
   private readonly preparing = new Map<string, Promise<void>>();
   /** The admissions that may still be carrying a worker, by work key. */
-  private readonly inFlight = new Map<string, StopLaunch>();
+  private readonly inFlight = new Map<string, InFlightLaunch>();
 
   constructor(private readonly deps: LaunchDeps) {}
 
@@ -64,7 +74,7 @@ class LaunchPipeline implements Launch {
 
   async attempt(launchable: Launchable): Promise<Launchable | null> {
     const key = workKeyOf(launchable.work);
-    const entry: StopLaunch = {
+    const entry: InFlightLaunch = {
       work: launchable.work,
       dir: launchable.dir,
       // A recovery continues a known attempt even before the registry answers.
@@ -74,6 +84,7 @@ class LaunchPipeline implements Launch {
         : {}),
       launched: false,
       recoveryIndex: null,
+      consumedStop: null,
     };
     this.inFlight.set(key, entry);
     try {
@@ -83,8 +94,8 @@ class LaunchPipeline implements Launch {
     }
   }
 
-  private async launchInner(launchable: Launchable, entry: StopLaunch): Promise<Launchable | null> {
-    const { config, tickets, pullRequests, runtime, git, workspace } = this.deps;
+  private async launchInner(launchable: Launchable, entry: InFlightLaunch): Promise<Launchable | null> {
+    const { config, tickets, pullRequests, git, workspace } = this.deps;
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
 
@@ -407,6 +418,7 @@ class LaunchPipeline implements Launch {
     // interruption of this attempt.
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
     await consumeStopRequest(dir, facts.attempt);
+    entry.consumedStop = stopBeforeLaunch;
 
     if (launchable.callRecovery !== undefined) clearPause(dir);
     // Charge only after continuity allowed the launch. A pause before a worker
@@ -419,9 +431,8 @@ class LaunchPipeline implements Launch {
       return null;
     }
     entry.launched = true;
-    let result: SessionResult;
-    try {
-      result = await runtime.launch({
+    const result = await this.launchWorker(
+      {
         work,
         workDir: dir,
         branch: prepared.branch,
@@ -430,18 +441,102 @@ class LaunchPipeline implements Launch {
         attempt: facts.attempt,
         session: { mode: continuity.mode, sessionId: continuity.sessionId },
         material,
-      });
-    } catch (error) {
-      if (stopBeforeLaunch?.kind === "stop-requested" && stopBeforeLaunch.attempt === facts.attempt &&
-          ownWrittenOutcome(await readOutcomeRecord(dir), facts.attempt) === null &&
-          (await readRecoveryLedger(dir)).lastStop === null) {
-        await recordStopRequest(dir, facts.attempt);
-      }
-      throw error;
-    }
+      },
+      entry,
+      facts.attempt,
+    );
     this.cycle.launched(result);
 
     return this.cycle.collect(launchable, result, facts.attempt);
+  }
+
+  /**
+   * The launch boundary: the worker's result, or a failure the pipeline
+   * settles before rethrowing it. A Launch refusal (issue 178) — the runtime
+   * proving no worker existed — refunds the admission's grant; a requested stop
+   * this launch consumed keeps its record either way; any other failure may
+   * have left a worker behind and keeps the grant consumed.
+   */
+  private async launchWorker(
+    request: WorkRequest,
+    entry: InFlightLaunch,
+    attempt: number,
+  ): Promise<SessionResult> {
+    try {
+      return await this.deps.runtime.launch(request);
+    } catch (error) {
+      if (error instanceof LaunchPreconditionError) await this.refundRefusedLaunch(entry, attempt, error);
+      // The refund lands first: a failed stop-record write must never cost the
+      // attempt the recovery the environment's refusal proved it never used.
+      await this.rerecordConsumedStop(entry, attempt);
+      throw error;
+    }
+  }
+
+  /**
+   * Refund the grant a refused launch held, and say in the log what really
+   * landed. The environment's own reason always reaches the operator: a
+   * ledger write that fails is named, never allowed to replace it.
+   */
+  private async refundRefusedLaunch(
+    entry: InFlightLaunch,
+    attempt: number,
+    error: LaunchPreconditionError,
+  ): Promise<void> {
+    // Every note ends by telling the operator what the budget now holds: an
+    // intact budget consumed no attempt, while a grant that stayed consumed
+    // still belongs to this work and only its relaunch is pending.
+    const intact = "no attempt was consumed and the work stays reserved";
+    const consumed = (because: string): string =>
+      `the recovery granted to this relaunch could not be refunded (${because}) and stays consumed; ` +
+      "the work stays reserved";
+    let note: string;
+    try {
+      switch (await refundHeldGrant(entry, attempt)) {
+        case "refunded":
+          note = `the recovery granted to this relaunch is refunded; ${intact}`;
+          break;
+        case "gone-from-ledger":
+          note = `the recovery granted to this relaunch is no longer in the ledger; ${intact}`;
+          break;
+        case "still-consumed":
+          note = consumed("the ledger did not return it");
+          break;
+        case "none-held":
+          note = `no recovery was granted to this launch; ${intact}`;
+          break;
+      }
+    } catch (refundError) {
+      note = consumed(describeError(refundError));
+    }
+    this.log(
+      `the launch of ${workKeyOf(entry.work)} was refused before any worker existed ` +
+        `(Launch refusal: ${describeError(error)}) — ${note}`,
+    );
+  }
+
+  /**
+   * Re-record the requested stop a launch consumed when the launch never
+   * carried the attempt out (issue #146). The guards read the state as it is
+   * now — a requested stop of this attempt, no outcome written, nothing else
+   * claiming it — so a worker that may still exist keeps its own record.
+   */
+  private async rerecordConsumedStop(entry: InFlightLaunch, attempt: number): Promise<void> {
+    const stop = entry.consumedStop;
+    entry.consumedStop = null;
+    if (stop?.kind !== "stop-requested" || stop.attempt !== attempt) return;
+    try {
+      if (ownWrittenOutcome(await readOutcomeRecord(entry.dir), attempt) !== null) return;
+      if ((await readRecoveryLedger(entry.dir)).lastStop !== null) return;
+      await recordStopRequest(entry.dir, attempt);
+    } catch (error) {
+      // The launch's own failure is what the operator must read; a stop record
+      // that could not be re-written is said here, never in place of it.
+      this.log(
+        `the requested stop of ${workKeyOf(entry.work)} could not be re-recorded after a failed launch ` +
+          `(${describeError(error)}) — the next invocation charges the attempt for that interruption`,
+      );
+    }
   }
 
   /** The backoff before a recovery relaunch (the injected seam or a real timer).
