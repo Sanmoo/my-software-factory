@@ -1,14 +1,8 @@
 import type { Config } from "./config.js";
-import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
+import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
 import type { GitWork, LocalWorkFacts } from "./git/port.js";
-import {
-  helpNotice,
-  reviewNotice,
-  describeNotification,
-  type Notification,
-  type Notifier,
-} from "./notify/port.js";
+import { helpNotice, type Notifier } from "./notify/port.js";
 import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
 import {
   composedTicketSources,
@@ -18,7 +12,6 @@ import {
   type WorkIdentity,
 } from "./tracker/identity.js";
 import { scanReservations, type IdentifiedReservation } from "./pool/reservation.js";
-import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
   workPullRequest,
@@ -30,6 +23,8 @@ import {
   type PoolEntry,
 } from "./state/derive.js";
 import { openLaunch, type Launch, type LaunchCycle, type Launchable } from "./launch/launch.js";
+import { openCollect, type Collect } from "./collect/collect.js";
+import type { AppliedRuling } from "./collect/ruling.js";
 import {
   STATE_DECLARATIONS,
   consentAppliesTo as stateConsentAppliesTo,
@@ -39,14 +34,9 @@ import {
   type WorkState,
   type WorkStateReading,
 } from "./work-state/state.js";
-import { readOutcomeRecord, type OutcomeRecord } from "./work-record/outcome.js";
-import {
-  isRecordedFailure,
-  ownWrittenOutcome,
-  interruptionPausedCommentBody,
-} from "./state/outcome.js";
+import { readOutcomeRecord } from "./work-record/outcome.js";
+import { interruptionPausedCommentBody } from "./state/outcome.js";
 import { readAttemptLedger } from "./work-record/attempts.js";
-import { archiveDoneWorkFor } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
   readRepairCycle,
@@ -69,8 +59,6 @@ import { describeRemoteChange, renderLocalWork, shortSha } from "./state/repair-
 import { readRecoveryLedger } from "./work-record/recovery.js";
 import {
   confirmStopRequest,
-  consumeStopRequest,
-  recordFailure,
   recordInterruptionStop,
   type RecoveryDecision,
 } from "./pool/recovery.js";
@@ -85,7 +73,7 @@ import { workKeyOf } from "./pool/work-key.js";
 import { deferred } from "./runtime/deferred.js";
 import { recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
-import { clearPause, readEffectJournal } from "./work-record/continuity.js";
+import { readEffectJournal } from "./work-record/continuity.js";
 import { openNonFailures, type NonFailures } from "./non-failures/non-failures.js";
 import { Slots } from "./pool/slots.js";
 import { openSurvivors, type Survivors } from "./survivors/survivors.js";
@@ -96,33 +84,37 @@ import {
 } from "./state/liveness.js";
 import { eventLogName } from "./work-record/logs.js";
 import { processRecoveryRequests } from "./recover.js";
-import type { ModelProviderFailure } from "./work-record/model-provider-error.js";
 import { operationalLog } from "./log.js";
 import { describeError } from "./format.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * The loop is the general workflow and is thin: the only module that knows
- * the process is a loop — owner of time (the fixed 60 s tick), of the --once
- * boundary and of waking by event (end of worker vs tick). It interlaces the
- * four phases deciding nothing of the domain: the Work state lives in
- * work-state/ (one vocabulary, read before a launch and after an attempt), the
- * launch pipeline in launch/ (the claim, the prepare, the runtime launch and
- * the collected end of every kind of launch), liveness and the survivor ledger
- * in survivors/ (which worker carries each Work, and every occurrence of that
- * observation said once), the two endings that are not a failure in
- * non-failures/ (the Continuity pause and the model provider failure — whether a
- * pause is settled by reliable evidence, the asking-once rule, the provider
- * failure's own budget), and IO in tracker/ + pool/ + git/ + runtime/
- * (ticket 07) — the loop only reads the facts and applies what they decide
- * (issue 118).
+ * The loop is the CYCLE (epic #198, tickets #205–#208): tick, capacity and
+ * admission. It is the only module that knows the process is a loop — owner of
+ * time (the fixed 60 s tick), of the --once boundary and of waking by event
+ * (end of worker vs tick) — and it decides nothing of the domain. Each domain
+ * answers at its own module, and the loop asks:
  *
- * Ticket 14: the derivation of the tick covers the states of ALL reserved
- * works (done · done-fallback · rejected · feedback · resumable — the Work
- * state decides, the loop executes the tracker and disk writes), the launches
- * prioritize the parked reserved works before new claims by age, and the
- * continuous run wakes by event (end of worker), not only by the clock.
+ * - work-state/ answers WHAT happened to a Work and what may be done now, in
+ *   one vocabulary: read before a launch (the derivation) and after an Attempt
+ *   (the collection);
+ * - collect/ collects an ended Attempt and APPLIES its verdict, with every
+ *   tracker and disk verb it triggers — archive, close, comment, release,
+ *   block, persist, clear, consume, notice;
+ * - launch/ runs the pipeline from the decided launch to the collected end:
+ *   claim (or resume), prepare, the runtime launch and the budget waits;
+ * - survivors/ owns liveness and the survivor ledger (which worker carries each
+ *   Work, and every occurrence of that observation said once);
+ * - non-failures/ owns the two endings that are not a failure (the Continuity
+ *   pause and the model provider failure);
+ * - tracker/ + pool/ + git/ + runtime/ are the IO (ticket 07).
+ *
+ * What is left here is the cycle's own: the slot of each admission (released
+ * even when a collection fails), the capacity read before admitting, the
+ * derivation of the pool and the decision of what to launch, in which order,
+ * and the wait for the next event. Each verdict the state decides is executed
+ * by the module that owns it; the loop only reads the facts and asks.
  */
 
 export const TICK_MS = 60_000;
@@ -155,40 +147,12 @@ export interface LoopDeps {
   wait?: (ms: number) => Promise<void>;
 }
 
-/** The ruler's decided transition, as the sweep REPORTS it (ticket 13).
- *  A PROJECTION of the Work state the module answered with (D5): the engine
- *  decides in one vocabulary, and this is the operator's — and the suites' —
- *  word for what it decided. It is built where the result is built and read by
- *  nobody on the decision path. */
-export interface AppliedRuling {
-  decision: "reserve" | "record-only" | "release" | "block" | "interrupt" | "done";
-  because: string;
-}
-
 export interface CollectedWork {
   work: WorkIdentity;
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
-  /** The ruler's decided transition, applied at the act (ticket 13). */
-  ruling: AppliedRuling;
-}
-
-/** The facts that settle one attempt's end (issue 118): its own dir, its number
- *  and who ended it. What the end MEANS is the Work state's reading, not a
- *  launch-time fact handed over by the registry. */
-interface AttemptEnd {
-  dir: string;
-  attempt: number;
-  /** A worker this process launched, or a survivor whose exit Docker confirmed. */
-  origin: "collected" | "survivor";
-}
-
-/** What applying the ruler produced: the next launch it asks for (if any), the
- *  PR fact the sweep reports, and the ruling itself. */
-interface RulingApplied {
-  next: Launchable | null;
-  prConfirmed: boolean;
+  /** The decided transition, as the collection reports it (ticket 13, D5). */
   ruling: AppliedRuling;
 }
 
@@ -265,98 +229,6 @@ function changedWorkKeys(
   return changed;
 }
 
-/**
- * The decided transition as the sweep reports it: a PROJECTION of the Work
- * state the module answered with, and nothing else (D5/epic #198). The engine
- * decides in one vocabulary; the seven e2e suites that read the collection
- * report keep the words of ticket 13. Computed once, where the result is built,
- * and never read back by a decision — no arm below consults it.
- */
-export function projectCollectedRuling(reading: WorkStateReading): AppliedRuling {
-  switch (reading.state) {
-    case "done":
-      return { decision: "done", because: "issue-closed" };
-    case "done-fallback":
-      return { decision: "done", because: "pr-merged" };
-    case "parked": {
-      // Two facts park a work at collection: the human owns the PR, or the
-      // worker reported itself blocked.
-      return reading.because === "blocked-self-report"
-        ? { decision: "record-only", because: "blocked-self-report" }
-        : { decision: "reserve", because: "pr-open" };
-    }
-    case "fall":
-      return reading.decision === "release"
-        ? { decision: "release", because: "fall-first" }
-        : { decision: "block", because: "fall-second" };
-    case "interrupted":
-    case "model-provider-failure":
-    case "stop-resume":
-    case "stop-unconfirmed":
-      // No attempt was consumed and the fall ruler never applies (issue 123):
-      // the end is an interruption, whatever ended the turn or who ordered it.
-      return { decision: "interrupt", because: "no-outcome" };
-    case "rejected":
-      // A PR closed without merge is the Block the state declares (epic #198's
-      // one delta): the report names the fact itself, never a fall.
-      return { decision: "block", because: "pr-closed-unmerged" };
-    // The states the read AFTER an attempt never answers — they belong to the
-    // read before a launch. Named so the projection is total over the one
-    // vocabulary; the collection's own "no verdict was written" is what an end
-    // reaches when no other word applies.
-    case "feedback":
-    case "resumable":
-    case "repair":
-    case "repair-recovered":
-    case "repair-blocked":
-    case "repair-fall-blocked":
-    case "continuity-paused":
-    case "unreadable":
-    case "not-planned":
-      return { decision: "interrupt", because: "no-outcome" };
-  }
-}
-
-/**
- * The PR the collection read saw, when the reading handed one over. The read
- * before a launch leaves it out (it has no association to persist), and the
- * states whose PR is their own payload carry it under that name.
- */
-function prOf(reading: WorkStateReading): PullRequestRecord | null {
-  return "pr" in reading ? reading.pr ?? null : null;
-}
-
-/**
- * Whether this end wrote a verdict of its own. An INTERRUPTION has none — the
- * agent's (issue 123), a model provider failure's (issue 144) or the operator's
- * requested stop (#146) — so the pause that keeps a work out of later rounds
- * (issue 119) and the stop evidence that owns the end both survive it.
- */
-function wroteNoVerdict(reading: WorkStateReading): boolean {
-  switch (reading.state) {
-    case "interrupted":
-    case "model-provider-failure":
-    case "stop-resume":
-      return true;
-    case "done":
-    case "done-fallback":
-    case "parked":
-    case "fall":
-    case "rejected": // a rejection WROTE a verdict: a closed PR is a Block, never an interruption
-    case "feedback":
-    case "repair":
-    case "repair-recovered":
-    case "repair-blocked":
-    case "repair-fall-blocked":
-    case "resumable":
-    case "continuity-paused":
-    case "stop-unconfirmed":
-    case "unreadable":
-    case "not-planned":
-      return false;
-  }
-}
-
 /** A recovery (no human age) goes first; the rest by creation age, then key. */
 function byParkedPriority(a: Launchable, b: Launchable): number {
   if (a.createdAt === null || b.createdAt === null) {
@@ -400,18 +272,14 @@ function renderPoolSummary(
   return detail === "" ? head : `${head} — ${detail}`;
 }
 
-/** What a launch starts as: a new claim, a parked feedback round, a retomada, a
- *  repair — or the continuation of an attempt that ended without its own
- *  outcome: the recovery of an interruption (issue 123) or the retry of a
- *  model provider failure (issue 144). */
-
 /**
- * One sweep engine, four phases (ticket 07): derivation (+ the reserved
- * actions decided by state/), launches into free slots (parked reserved
- * first, then new claims by age), collection at the act of each worker's
- * end (régua applied, slot replenished in the same cycle), and the wait for
- * the next event. The --once boundary awaits everything launched; the
- * continuous run keeps sweeping on the tick and wakes by event.
+ * One sweep engine, four phases (ticket 07) and nothing but the cycle: the
+ * derivation (the Work state read before a launch, its actions executed by the
+ * module that owns them), the launches into free slots (parked reserved first,
+ * then new claims by age), the collection of each worker's end by collect/
+ * (slot replenished in the same cycle, even when that collection fails), and
+ * the wait for the next event. The --once boundary awaits everything launched;
+ * the continuous run keeps sweeping on the tick and wakes by event.
  */
 export class SweepEngine {
   private readonly slots: Slots;
@@ -448,6 +316,9 @@ export class SweepEngine {
   /** The two endings that are not a failure (ticket #207): the Continuity pause
    *  and the model provider failure. */
   private readonly nonFailures: NonFailures;
+  /** The collection (ticket #208): an Attempt's end and the verdict applied,
+   *  with every tracker and disk verb it triggers. The engine only asks. */
+  private readonly collect: Collect;
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -467,7 +338,25 @@ export class SweepEngine {
       unavailableWarnMs: deps.config.liveness.unavailableWarnMs,
       cycle: {
         ended: (launchable, attempt) => this.survivorEnded(launchable, attempt),
-        notice: (notification) => this.deliverNotice(notification),
+        notice: (notification) => this.collect.notify(notification),
+      },
+    });
+    // The collection (ticket #208): what the factory DOES with an Attempt that
+    // ended — the Work state's second reading applied, every write included.
+    // The one process-wide fact it needs (whether this factory is stopping) and
+    // the set of works it holds come back through the cycle's port.
+    this.collect = openCollect({
+      config: deps.config,
+      tickets: deps.tickets,
+      pullRequests: deps.pullRequests,
+      git: deps.git,
+      workspace: deps.workspace,
+      log: this.log,
+      ...(deps.notifier === undefined ? {} : { notifier: deps.notifier }),
+      cycle: {
+        announce: (work, resulting) => this.announce(work, resulting),
+        stopping: () => this.stopping,
+        inFlight: () => this.liveInFlight,
       },
     });
     // The two endings that are not a failure (ticket #207): the Continuity pause
@@ -484,7 +373,7 @@ export class SweepEngine {
       recheckEvidence: (work, dir, attempt, pause) =>
         recheckPausedEffects(this.continuityDeps(work, dir, attempt), pause),
       cycle: {
-        blockAndAsk: (work, comment) => this.applyBlockWithComment(work, comment),
+        blockAndAsk: (work, comment) => this.collect.blockWithComment(work, comment),
         reassertBlock: async (work) => {
           await this.deps.tickets.blockTicketClaim(work.ticket, this.deps.config.labels);
         },
@@ -653,7 +542,7 @@ export class SweepEngine {
       switch (decision.state) {
         case "done": {
           this.log(`derived ${key}: issue closed — done; archiving artifacts, cleaning branches`);
-          await this.finishWork(decision.work);
+          await this.collect.archiveDone(decision.work);
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           break;
         }
@@ -662,7 +551,7 @@ export class SweepEngine {
             `derived ${key}: PR merged without closing the issue — ` +
               "the factory closes it (fallback of the linkage), then archives",
           );
-          await this.completeMergedWork(decision.work, decision.comment);
+          await this.collect.closeIssueAndArchive(decision.work, decision.comment);
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           break;
         }
@@ -671,7 +560,7 @@ export class SweepEngine {
             `derived ${key}: PR closed without merge — rejected, ` +
               "blocked with a comment pointing at the PR",
           );
-          await this.applyBlockWithComment(decision.work, decision.comment);
+          await this.collect.blockWithComment(decision.work, decision.comment);
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           break;
         }
@@ -679,13 +568,13 @@ export class SweepEngine {
           // A WRITTEN failure the factory died before ruling: it consumes the
           // attempt and the ruler applies as at collection (issue 123).
           const dir = decision.dir;
-          await this.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
+          await this.collect.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
           if (decision.decision === "release") {
             this.log(
               `derived ${key}: unreconciled failure (the factory died before ruling it) — ` +
                 "release (claimed→ready back; the branch stays)",
             );
-            await this.applyRelease(decision.work);
+            await this.collect.releaseClaim(decision.work);
             // A released fall lands ELIGIBLE, not the class the state declares:
             // the action says so here, where it acts (ADR-0010).
             this.announce(decision.work, "eligible");
@@ -694,7 +583,7 @@ export class SweepEngine {
               `derived ${key}: 2nd consecutive fall, unreconciled — ` +
                 "blocked with the attempt's diagnosis on the issue",
             );
-            await this.applyBlockWithComment(decision.work, decision.comment);
+            await this.collect.blockWithComment(decision.work, decision.comment);
             this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           }
           break;
@@ -818,7 +707,7 @@ export class SweepEngine {
             `derived ${key}: repair attempt ${decision.attempt} fell without publishing — ` +
               "blocked with the attempt's diagnosis on the issue (the open PR does not hide the fall)",
           );
-          await this.applyBlockWithComment(decision.work, decision.comment);
+          await this.collect.blockWithComment(decision.work, decision.comment);
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           break;
         }
@@ -834,7 +723,7 @@ export class SweepEngine {
             `derived ${key}: ${decision.usedRounds} automatic repair rounds without recovery — ` +
               "blocked with the reason on the issue",
           );
-          await this.applyBlockWithComment(decision.work, decision.comment);
+          await this.collect.blockWithComment(decision.work, decision.comment);
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
           break;
         }
@@ -997,7 +886,7 @@ export class SweepEngine {
    * and asked; applying a verdict is the cycle's write.
    */
   private async survivorEnded(launchable: Launchable, attempt: number): Promise<Launchable | null> {
-    const outcome = await this.applyEnd(launchable, {
+    const outcome = await this.collect.attemptEnd(launchable, {
       dir: launchable.dir,
       attempt,
       origin: "survivor",
@@ -1216,7 +1105,7 @@ export class SweepEngine {
       // The collection of the attempt's end: the Work state's second reading
       // and the verdict it asks for — the report is what this sweep collected.
       collect: async (launchable, result, attempt) => {
-        const outcome = await this.applyEnd(launchable, {
+        const outcome = await this.collect.attemptEnd(launchable, {
           dir: result.request.workDir,
           attempt,
           origin: "collected",
@@ -1333,7 +1222,7 @@ export class SweepEngine {
       `the interrupted attempt ${attempt} of ${renderWorkIdentity(work)} is paused (${decision.reason}) — ` +
         "blocked with the evidence; a human decision is needed",
     );
-    await this.applyBlockWithComment(work, comment);
+    await this.collect.blockWithComment(work, comment);
     this.announce(work, "reserved");
   }
 
@@ -1551,294 +1440,6 @@ export class SweepEngine {
     }
   }
 
-  /**
-   * The end of an attempt (ticket 13, extended by 14/123; survivor ends by
-   * issue 118), read as ONE Work state: the module is asked what happened to the
-   * attempt and what may the factory do now, and the loop executes exactly that.
-   * An interruption returns the SAME attempt as the next launch (issue 123).
-   * `origin` only names the actor in the operator's log: a survivor's end is
-   * reconciled by these same properties, never by the launch object this
-   * process never had.
-   */
-  private async applyEnd(launchable: Launchable, end: AttemptEnd): Promise<RulingApplied> {
-    const { dir, attempt, origin } = end;
-    const { work } = launchable;
-    const key = workKeyOf(work);
-
-    const reading = await this.workState(this.liveInFlight).afterAttempt({
-      work,
-      dir,
-      attempt,
-      stopping: this.stopping,
-    });
-    const pr = prOf(reading);
-    const prConfirmed = pr !== null && pr.state === "open";
-    // The attempt's own artifact: settling it is a WRITE the loop owns (see
-    // settleFailure), so it is read here — never to decide anything.
-    const record = await readOutcomeRecord(dir);
-
-    // A settled attempt makes any continuity pause of its own history (issue
-    // 119): the new record (or block) is the current fact, and a stale pause
-    // must not keep the work out of later rounds. An interruption keeps it.
-    if (!wroteNoVerdict(reading)) clearPause(dir);
-
-    // A known PR — open, merged or closed — is persisted beside the Work
-    // (issue 125): the facts survive a restart, and a later attempt appends
-    // its own. Persistence never changes the reading above.
-    if (pr !== null) {
-      try {
-        recordPrAssociation(dir, { work, pullRequest: pr.identity, attempt });
-      } catch (error) {
-        this.log(
-          `PR association of ${key} was not persisted (${describeError(error)}) — ` +
-            "the ruling stands and the earlier evidence is untouched",
-        );
-      }
-    }
-
-    // A confirmed Outcome prevails over the interpretation of the stop (issue
-    // #146): the attempt ended with a verdict, so the suspended-stop evidence
-    // has done its job and is cleared (a fall replaces it with its own stop).
-    if (!wroteNoVerdict(reading)) await consumeStopRequest(dir, attempt);
-
-    let resulting: OperationalClass | null;
-    let next: Launchable | null = null;
-    // Whether landing in this state is an occurrence the operator must see: a
-    // work held for them (the PR is theirs, or they were asked for help) and a
-    // released fall (ticket 13). A block and the done already notify; an
-    // interruption is absorbed by its budget.
-    let occurrence = false;
-    switch (reading.state) {
-      case "done": {
-        // The terminal state was reached while this claim was held: archive the
-        // artifacts and clean the branches, nothing is released or recorded.
-        this.log(`${origin} ${key}: issue closed — done; artifacts archived, branches cleaned`);
-        await this.finishWork(work);
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        break;
-      }
-      case "done-fallback": {
-        // Delivery, whatever the attempt wrote (issue 149): a merge that did not
-        // close the issue is closed here first — done must always be reflected
-        // on the tracker (ticket 04 Q11), including a merge that landed mid-round.
-        this.log(
-          `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
-            "(fallback of the linkage), then archives",
-        );
-        await this.completeMergedWork(work, reading.comment);
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        break;
-      }
-      case "parked": {
-        // Nothing is consumed, no fall is recorded and the claim is held: the PR
-        // is the human's, or the worker reported itself blocked.
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        occurrence = true;
-        if (reading.because === "blocked-self-report") {
-          this.log(`${origin} ${key}: blocked self-report — the factory only records the outcome`);
-        } else {
-          this.log(`${origin} ${key}: PR open — stays reserved, waiting for the human`);
-        }
-        break;
-      }
-      case "fall": {
-        // A written failure/abandon without a PR: the attempt is consumed and the
-        // ruler applies — the 1st releases, the 2nd blocks (ticket 05 Q3).
-        await this.settleFailure(dir, attempt, record);
-        if (reading.decision === "release") {
-          this.log(
-            `${origin} ${key}: fall without PR — release (claimed→ready back; ` +
-              "the branch stays, the next sweep picks it up)",
-          );
-          await this.applyRelease(work);
-          // The released fall lands ELIGIBLE, not the class its state declares:
-          // the action says so here, where it acts (ADR-0010).
-          resulting = "eligible";
-          occurrence = true;
-        } else {
-          this.log(
-            `${origin} ${key}: 2nd consecutive fall — blocked, the attempt's outcome goes to the issue`,
-          );
-          await this.applyBlockWithComment(work, reading.comment);
-          resulting = STATE_DECLARATIONS[reading.state].announces;
-        }
-        break;
-      }
-      case "interrupted": {
-        // No attempt is consumed and the fall ruler never applies (issue 123). A
-        // repair round is settled by its own reconciliation (issue 112) instead.
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        if (launchable.kind === "repair") {
-          this.logRepairEnded(origin, key);
-        } else {
-          this.log(
-            `${origin} ${key}: interrupted (no outcome record) — not a failure; attempt ${attempt} keeps its ` +
-              "number and the recovery budget answers it",
-          );
-          next = this.continuation(launchable, attempt, null, pr);
-        }
-        break;
-      }
-      case "model-provider-failure": {
-        // A model provider outage is not an interruption of the agent (issue
-        // 144): the SAME attempt retries on its own budget, and the retry launch
-        // says what it consumed.
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        if (launchable.kind === "repair") this.logRepairEnded(origin, key);
-        else next = this.continuation(launchable, attempt, reading.failure, pr);
-        break;
-      }
-      case "stop-resume": {
-        // The operator's requested stop (#146): the attempt is left for the next
-        // invocation to resume, never relaunched inside a requested stop.
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        if (launchable.kind === "repair") {
-          this.logRepairEnded(origin, key);
-        } else if (reading.because === "stop-in-progress") {
-          this.log(
-            `collected ${key}: attempt ${attempt} ended without an outcome record while the factory stops — ` +
-              "no recovery is spent and the next run resumes the same attempt",
-          );
-        } else {
-          // Promoting a stop whose confirmation failed is a WRITE: the module
-          // reports the fact and the loop settles it (issue #146).
-          await this.confirmRequestedStop(dir, attempt);
-          this.log(
-            `${origin} ${key}: attempt ${attempt} ended without an outcome record, and the operator's requested ` +
-              "stop owns that end — it resumes now, spending no recovery",
-          );
-          next = { work, dir, kind: "recover", createdAt: null, pr, attempt, requestedStop: true };
-        }
-        break;
-      }
-      case "rejected": {
-        // A PR closed without merge, SEEN AT COLLECTION (epic #198's one
-        // delta): the Block the state already declares — the ticket is blocked
-        // with the comment pointing at the PR and the claim is HELD, so the
-        // work never returns to the pool carrying a closed PR. The attempt is
-        // liquidated as ONE outcome: a closed PR is not a written failure, so
-        // no fall is recorded and no recovery is spent.
-        this.log(
-          `${origin} ${key}: the PR was closed without merging (PR #${reading.pr.number}) — ` +
-            "blocked with a comment pointing at the PR; the work stays reserved",
-        );
-        await this.applyBlockWithComment(work, reading.comment);
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        break;
-      }
-      // The states only the read BEFORE a launch answers: an attempt that ended
-      // cannot be one of them. Named here so the switch speaks the whole
-      // vocabulary — with no `default` that could hide a state a later change
-      // adds — and they leave the work in the class their declaration states.
-      case "feedback":
-      case "resumable":
-      case "repair":
-      case "repair-recovered":
-      case "repair-blocked":
-      case "repair-fall-blocked":
-      case "continuity-paused":
-      case "stop-unconfirmed":
-      case "unreadable":
-      case "not-planned": {
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        break;
-      }
-    }
-    this.announce(work, resulting);
-
-    // One notice per new occurrence: an applied block already notified help
-    // (applyBlockWithComment), so here only what the ruler did not block. Help
-    // wins over review; the state decision is untouched. The self-report is the
-    // fact the reading kept (the blocked label, or this attempt's own record) and
-    // it counts only for THIS attempt — desfecho.json survives between attempts.
-    // A survivor's end is a review occurrence too: its open PR reaches the
-    // operator even though this process never launched it (issue 118).
-    if (occurrence) {
-      const isReviewLaunch =
-        origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
-      if (reading.state === "parked" && reading.helpRequested === true) {
-        await this.deliverNotice(helpNotice(work));
-      } else if (isReviewLaunch && prConfirmed && pr !== null) {
-        await this.deliverNotice(reviewNotice(work, pr.number));
-      }
-    }
-    return { next, prConfirmed, ruling: projectCollectedRuling(reading) };
-  }
-
-  /**
-   * Persist the WRITTEN failure that ended the attempt (issue 123): the next
-   * attempt starts with a full interruption budget, and `msf status` says the
-   * attempt was consumed. A missing or other-attempt record, or a class that
-   * is not a failure (pr-open, self-report), settles nothing.
-   */
-  private async settleFailure(dir: string, attempt: number, record: OutcomeRecord | null): Promise<void> {
-    const own = ownWrittenOutcome(record, attempt);
-    if (own !== null && isRecordedFailure(own)) await recordFailure(dir, attempt, own.class);
-  }
-
-  /**
-   * The operator's requested stop whose confirmation failed (issue #146) is
-   * PROMOTED once the end of its attempt is read: a reading reports the fact, so
-   * settling it is a write and belongs to the loop.
-   */
-  private async confirmRequestedStop(dir: string, attempt: number): Promise<void> {
-    const claim = operatorStopClaim(await readRecoveryLedger(dir), { lastAttempt: attempt });
-    if (claim.kind === "unconfirmed") await confirmStopRequest(dir, attempt);
-  }
-
-  /**
-   * The launch of an attempt that ended without publishing a record: the SAME
-   * number continues, with the material of the interrupted launch preserved. A
-   * model provider failure retries on its own budget (issue 144); an
-   * interruption of the agent keeps issue 123's recovery.
-   */
-  private continuation(
-    launchable: Launchable,
-    attempt: number,
-    failure: ModelProviderFailure | null,
-    pr: PullRequestRecord | null,
-  ): Launchable {
-    return {
-      work: launchable.work,
-      dir: launchable.dir,
-      kind: failure === null ? "recover" : "model-provider-retry",
-      createdAt: null,
-      pr,
-      ...(launchable.issueReplies === undefined ? {} : { issueReplies: launchable.issueReplies }),
-      attempt,
-    };
-  }
-
-  /** A repair attempt that ended without publishing is settled by its own
-   *  reconciliation (issue 112): the loop relaunches nothing over it. */
-  private logRepairEnded(origin: string, key: string): void {
-    this.log(
-      `${origin} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
-        "settles its publication before another round (issue 112)",
-    );
-  }
-
-  /** The 1st-fall release (the ruler's mirrored swap): claimed→ready back,
-   *  the assignee of the worker account released — the work re-enters the
-   *  pool, the branch stays. One write pair, one helper: the derivation's
-   *  unreconciled release and the collection's ruled release share it. */
-  private async applyRelease(work: WorkIdentity): Promise<void> {
-    const { tickets, config } = this.deps;
-    await tickets.releaseTicketClaim(work.ticket, config.workerGhAccount, config.labels.ready);
-  }
-
-  /** The block transition every 2nd fall and every rejection shares: the
-   *  claimed label swaps to blocked (the claim is held until the terminal
-   *  state) and the diagnosis is commented on the issue — the human must
-   * SEE why it fell before deciding to resume. Applying a block IS the
-   * new occurrence, so the help notice is delivered here, once. */
-  private async applyBlockWithComment(work: WorkIdentity, comment: string): Promise<void> {
-    const { tickets, config } = this.deps;
-    await tickets.blockTicketClaim(work.ticket, config.labels);
-    await tickets.commentOnTicket(work.ticket, comment);
-    await this.deliverNotice(helpNotice(work));
-  }
-
   /** The engine's side of an exhausted model provider budget: keep the claim and
    *  ask the operator — the comment and the notice, never the blocked label (an
    *  awaiting model provider is not a Block). */
@@ -1846,7 +1447,7 @@ export class SweepEngine {
     const { tickets, config } = this.deps;
     await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
     await tickets.commentOnTicket(work.ticket, comment);
-    await this.deliverNotice(helpNotice(work));
+    await this.collect.notify(helpNotice(work));
   }
 
   /** Whether a worker of this Work may still be alive — an admission of this
@@ -1857,46 +1458,12 @@ export class SweepEngine {
     return this.slots.workKeys.includes(key) || this.carriedKeys.has(key);
   }
 
-  /** The done duties on real disk and real git: archive the work's artifacts
-   * (trabalhos/ → arquivo/, nothing deleted) and clean the branches. */
-  private async finishWork(work: WorkIdentity): Promise<void> {
-    await archiveDoneWorkFor(this.deps.workspace, work);
-    await this.deps.git.cleanupDoneWorkFor(work);
-  }
-
-  /** The delivery a merge without closure implies: close the issue with the
-   *  short fallback comment, then archive and clean — done must always be
-   *  reflected on the tracker (ticket 04 Q11). Shared by the derivation's
-   *  done-fallback and by a merge that landed mid-round (issue 149). */
-  private async completeMergedWork(work: WorkIdentity, comment: string): Promise<void> {
-    const { tickets } = this.deps;
-    await tickets.markTicketDone(work.ticket);
-    await tickets.commentOnTicket(work.ticket, comment);
-    await this.finishWork(work);
-  }
-
   /** A collected work never stays launchable in this process's memory. A
    *  survivor's pending recovery is already in the parked queue: the ledger
    *  hands its continuations over once per derivation. */
   private discardFromCacheAndParked(key: string): void {
     this.cache = this.cache.filter((entry) => workKeyOf(entry.work) !== key);
     this.parkedQueue = this.parkedQueue.filter((entry) => workKeyOf(entry.work) !== key);
-  }
-
-  /** Best-effort delivery of one occurrence notice; a failure only logs. A
-   *  delivery failure never turns unknown safety into permission to launch. */
-  private async deliverNotice(notification: Notification): Promise<void> {
-    if (!this.deps.config.notifications) return;
-    const notifier = this.deps.notifier;
-    if (notifier === undefined) return;
-    try {
-      await notifier.notify(notification);
-    } catch (error) {
-      this.log(
-        `local notification failed (${describeNotification(notification)}): ` +
-          describeError(error),
-      );
-    }
   }
 }
 
