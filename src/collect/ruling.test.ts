@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { projectCollectedRuling } from "./loop.js";
-import { githubRepository, githubTicket, pullRequestIdentity } from "./tracker/identity.js";
-import type { PullRequestRecord } from "./tracker/expanded-port.js";
-import type { WorkStateReading } from "./work-state/state.js";
+import { projectCollectedRuling } from "./ruling.js";
+import { githubRepository, githubTicket, pullRequestIdentity } from "../tracker/identity.js";
+import type { PullRequestRecord } from "../tracker/expanded-port.js";
+import type { WorkStateReading } from "../work-state/state.js";
 
 /**
  * `SweepResult.collected[].ruling` after ticket #202 (D5, epic #198).
