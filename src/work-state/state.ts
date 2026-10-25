@@ -1,0 +1,213 @@
+import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
+import type { WorkspaceLayout } from "../layout.js";
+import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
+import type { WorkIdentity } from "../tracker/identity.js";
+import type { IssueComment, PrRepairFacts, RepairReason, RequiredCheckResult } from "../tracker/port.js";
+import type { ModelProviderDecision } from "../pool/model-provider.js";
+import type { RecoveryDecision } from "../pool/recovery.js";
+import type { PauseRecord } from "../work-record/continuity.js";
+import type { ModelProviderFailure } from "../work-record/record.js";
+import type { RepairAttempt } from "../work-record/repair.js";
+import { deriveBeforeLaunch } from "./core.js";
+import { workFacts } from "./facts.js";
+
+/**
+ * The Work state (ADR-0010; GLOSSARY: *Work state*): the one answer to "what
+ * happened to this Work, and what may the factory do now?", in one vocabulary,
+ * read at two moments — before a launch and after an Attempt ends.
+ *
+ * This module owns the first reading. The caller hands the Work — its identity
+ * and the reservation's dir — and receives the state with the payload its
+ * action needs; the ticket read, the PR read and the Work record read stay
+ * behind the seam, so the list of facts a verdict needs can change without
+ * touching a caller, and "unreadable" and "absent" are told apart in one place
+ * (facts.ts) instead of by every stage that consults the tracker.
+ *
+ * No consumer is migrated yet (ticket #200): `state/derive.ts` and the loop
+ * keep answering as they do, with their own vocabulary. Tickets #202–#204
+ * delete that reading and let the loop, the status and the log speak this one.
+ */
+
+/** The Work as the state addresses it: the identity on disk plus its dir. */
+export interface WorkRef {
+  work: WorkIdentity;
+  /** The reservation's registry dir — never reconstructed from current config. */
+  dir: string;
+}
+
+/**
+ * The confirmed impediments of an open PR, read from structured facts alone
+ * (ticket 107's repair trigger). The shape is the one the launch path already
+ * carries; #202 moves the definition here — duplicated today, like the ladder.
+ */
+export interface RepairTrigger {
+  reasons: RepairReason[];
+  facts: PrRepairFacts;
+  /** The required checks that concluded with failure or timeout on this head. */
+  failingChecks: RequiredCheckResult[];
+}
+
+/**
+ * The Work state itself: the state string with the payload its action needs.
+ * `fall` is two members under one state — the written failure releases or
+ * blocks — so the action discriminates on `decision`.
+ */
+export type WorkStateReading = WorkRef &
+  (
+    /** The terminal state: the ticket is closed (done). */
+    | { state: "done" }
+    /** PR merged but issue open: close the issue with a short comment first —
+     *  done must always be reflected on the tracker (ticket 04 Q11). */
+    | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
+    /** PR closed without merge: block with a comment pointing at the PR. */
+    | { state: "rejected"; pr: PullRequestRecord; comment: string }
+    /** New human comment on the PR: a feedback round on the same branch and PR. */
+    | { state: "feedback"; pr: PullRequestRecord; createdAt: string }
+    /** A confirmed impediment of the open PR reactivates the worker in one
+     *  round (issue 107). `resuming` is the unpublished attempt the round takes
+     *  over (issue 112), never redone from scratch. */
+    | {
+        state: "repair";
+        pr: PullRequestRecord;
+        createdAt: string;
+        trigger: RepairTrigger;
+        resuming: RepairAttempt | null;
+      }
+    /** The PR is confirmed clean (no conflicts, every required check approved):
+     *  the repair budget resets (issue 107, story 22). */
+    | { state: "repair-recovered"; pr: PullRequestRecord }
+    /** A confirmed trigger after the automatic rounds: block and ask help. */
+    | {
+        state: "repair-blocked";
+        pr: PullRequestRecord;
+        trigger: RepairTrigger;
+        usedRounds: number;
+        comment: string;
+      }
+    /** Repair stopped without publishing (issue 112): the block holds even with
+     *  the PR open — the fall is never hidden by the PR's state. */
+    | { state: "repair-fall-blocked"; pr: PullRequestRecord; comment: string; attempt: number }
+    /** Human answer on the issue after the marker: the retomada continues from
+     *  the existing branch. Only replies after the last agent marker are context. */
+    | {
+        state: "resumable";
+        pr: PullRequestRecord | null;
+        createdAt: string;
+        issueReplies: IssueComment[];
+      }
+    /** Nothing to decide: waiting for the human, or a released work the pool owns. */
+    | { state: "parked" }
+    /** A written failure the factory did not rule yet (it died between the
+     *  record and the transition): release, or block on the 2nd consecutive
+     *  failure — the ruler applies as at collection (ticket 05 Q3). */
+    | { state: "fall"; decision: "release"; attempt: number }
+    | { state: "fall"; decision: "block"; comment: string; attempt: number }
+    /** An INTERRUPTION (issue 123): the attempt ended without an outcome record.
+     *  It is not a failure: the same attempt is recovered within its budget, or
+     *  the exhausted budget pauses the work and asks the operator for help. */
+    | { state: "interrupted"; attempt: number; recovery: RecoveryDecision }
+    /** The operator's REQUESTED stop (issue #146): the same attempt resumes on
+     *  the next run, spending no recovery. */
+    | { state: "stop-resume"; attempt: number }
+    /** The requested stop could not be confirmed: a previous worker may still be
+     *  alive, so the work is held with the reason until a probe proves it gone. */
+    | { state: "stop-unconfirmed"; attempt: number; because: string }
+    /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
+     *  model provider error, so it retries on its own budget — or awaits the
+     *  operator when that budget is exhausted (never a block). */
+    | {
+        state: "model-provider-failure";
+        attempt: number;
+        failure: ModelProviderFailure;
+        modelProvider: ModelProviderDecision;
+      }
+    /** The interrupted attempt cannot be continued safely (issue 119): the
+     *  pause is persisted, so no cycle re-attempts the recovery. */
+    | { state: "continuity-paused"; attempt: number; pause: PauseRecord }
+    /** The ticket could not be read: never acted on, and never called "not
+     *  found" — a failed read is not a verdict (ADR-0010; D2). */
+    | { state: "unreadable"; because: string }
+    /** Never acted on: the issue was read fine and is closed as not-planned
+     *  (not done). Its own state, so "unreadable" never means this. */
+    | { state: "not-planned" }
+  );
+
+/** The class a Work state contributes to the observed operational state. */
+export type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
+
+/** The three properties every state declares, next to the union. */
+export interface StateDeclaration {
+  /** Consent never reopens this state: the work already reached a terminal
+   *  verdict, or a worker may still carry it (issue #128). */
+  terminalForConsent: boolean;
+  /** The operational class the state contributes to the observed state;
+   *  `null` means the work leaves it (a done work is archived by the same
+   *  tick). An action may announce another class — a released fall lands
+   *  eligible — and says so where it acts. */
+  announces: OperationalClass | null;
+  /** The state presumes a worker stopped: while liveness cannot be read,
+   *  nothing that would archive, spend or block is done (issue 118). */
+  holdsWhileLivenessUnknown: boolean;
+}
+
+/**
+ * The declarations the loop kept in three hand-maintained tables (and only
+ * checked for one of them). `satisfies` makes a new state fail to compile
+ * until all three properties are declared.
+ */
+export const STATE_DECLARATIONS = {
+  done: { terminalForConsent: true, announces: null, holdsWhileLivenessUnknown: true },
+  "done-fallback": { terminalForConsent: true, announces: null, holdsWhileLivenessUnknown: true },
+  rejected: { terminalForConsent: true, announces: "reserved", holdsWhileLivenessUnknown: true },
+  feedback: { terminalForConsent: false, announces: "feedback", holdsWhileLivenessUnknown: false },
+  repair: { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+  "repair-recovered": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+  "repair-blocked": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  "repair-fall-blocked": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  resumable: { terminalForConsent: false, announces: "resumable", holdsWhileLivenessUnknown: false },
+  parked: { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+  fall: { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  interrupted: { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  "stop-resume": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+  "stop-unconfirmed": { terminalForConsent: true, announces: "reserved", holdsWhileLivenessUnknown: false },
+  "model-provider-failure": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  "continuity-paused": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: true },
+  unreadable: { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+  "not-planned": { terminalForConsent: false, announces: "reserved", holdsWhileLivenessUnknown: false },
+} satisfies Record<WorkStateReading["state"], StateDeclaration>;
+
+/** Whether a human authorization written over this state still applies. */
+export function consentAppliesTo(state: WorkStateReading["state"]): boolean {
+  return !STATE_DECLARATIONS[state].terminalForConsent;
+}
+
+/** What the module is given once, not per call: the ports and the policy. */
+export interface WorkStateDeps {
+  tickets: TicketTracker;
+  pullRequests: PullRequestTracker;
+  /** The workspace the Work's dir lives in (the fall comment names paths). */
+  workspace: WorkspaceLayout;
+  labels: Labels;
+  /** The worker's tracker account. The PR channels never read it: a comment is
+   *  the factory's by its marker, not by its login ("speech, not login"). */
+  workerAccount: string;
+  recovery: RecoveryBudget;
+  modelProvider: ModelProviderBudget;
+  /** The works this process holds a launch for, by registry key. */
+  inFlight: ReadonlySet<string>;
+}
+
+/** The Work state module as a caller receives it. */
+export interface WorkState {
+  /** The read before a launch: in what state is this Work, and what may the
+   *  factory do now. */
+  beforeLaunch(work: WorkRef): Promise<WorkStateReading>;
+}
+
+export function openWorkState(deps: WorkStateDeps): WorkState {
+  return {
+    async beforeLaunch(work: WorkRef): Promise<WorkStateReading> {
+      return deriveBeforeLaunch(work, workFacts(deps, work), deps);
+    },
+  };
+}
