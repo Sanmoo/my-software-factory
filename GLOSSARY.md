@@ -20,7 +20,7 @@ Provider + site + the provider's stable ticket id (plus the repository for a Git
 The ticket provider and site a Work comes from.
 
 **Jira site**:
-The Jira Cloud installation a Source names; its selections share one Acting account.
+The Jira Cloud installation a Source names.
 
 **Destination**:
 The GitHub repository that receives a Work's code and PR.
