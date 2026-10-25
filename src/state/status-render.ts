@@ -21,7 +21,6 @@ import type {
   StatusView,
 } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
-import type { Liveness } from "./status.js";
 import type { RecoveryBudget } from "../config.js";
 import type { RecoveryDecision } from "../pool/recovery.js";
 import type { PauseRecord } from "../work-record/continuity.js";
@@ -91,12 +90,15 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt is INTERRUPTED in the Work state's own words is what
-  // the liveness sections name; every other state owns its line below
-  // (ticket #204). No hand map decides this any more: the state does.
+  // WHICH section names a reserved work is the Work state's answer (ticket
+  // #204): the liveness section names the interrupted ones — and only those —
+  // and the block below names every other state. No hand map decides this any
+  // more, so a requested stop, a model provider failure or a continuity pause
+  // can never be piled into "orphaned" as an ordinary interruption.
   const interruptedKeys = new Set(
     view.reserved.filter((entry) => entry.reading.state === "interrupted").map((entry) => entry.key),
   );
+  const orphaned = liveness.state === "known" ? liveness.orphaned.filter((entry) => interruptedKeys.has(entry.key)) : [];
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
   lines.push(
@@ -118,23 +120,15 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // The liveness section names the works the state calls interrupted, and only
-  // those: a work whose attempt ended by a requested stop, a model provider
-  // failure or a continuity pause has a state of its own in the block below,
-  // and is never repeated as an ordinary interruption.
   lines.push(
     ...section(
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive)",
-      liveness.state === "known"
-        ? liveness.orphaned
-            .filter((entry) => interruptedKeys.has(entry.key))
-            .map((entry) => renderOrphaned(entry, view))
-        : null,
+      liveness.state === "known" ? orphaned.map((entry) => renderOrphaned(entry, view)) : null,
       cap,
     ),
   );
 
-  lines.push(...renderReserved(view, cap, shownAsOrphaned(liveness, interruptedKeys)));
+  lines.push(...renderReserved(view, cap, new Set(orphaned.map((entry) => entry.key))));
 
   lines.push(
     ...section(
@@ -301,14 +295,6 @@ function renderInterrupted(
       ? "no outcome record on disk"
       : `the record on disk is attempt ${recordedAttempt}'s — history, not this attempt's`;
   return `${renderWorkKey(key)} (${[`attempt ${attempt} was interrupted — ${history}`, ...facts].join("; ")})`;
-}
-
-/** The works the liveness section names: an interrupted attempt with no live
- *  worker and a known liveness answer. Those own their line above; the block
- *  below never repeats them. */
-function shownAsOrphaned(liveness: Liveness, interruptedKeys: ReadonlySet<string>): ReadonlySet<string> {
-  if (liveness.state !== "known") return new Set();
-  return new Set(liveness.orphaned.filter((entry) => interruptedKeys.has(entry.key)).map((entry) => entry.key));
 }
 
 /**
