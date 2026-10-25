@@ -9,6 +9,7 @@ import { FakeWorkerRuntime, launchOf } from "./runtime/fake-runtime.js";
 import { DEFAULT_LIVENESS_POLICY, DEFAULT_MODEL_PROVIDER_BUDGET } from "./config.js";
 import { ensureWorkspace, workDir } from "./layout.js";
 import { runOnce, SweepEngine, type LoopDeps } from "./loop.js";
+import { workKeyOf } from "./pool/work-key.js";
 import { workBranchName, type LocalWorkFacts, type PreparedWork } from "./git/port.js";
 import type { IssueRef } from "./tracker/port.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./e2e/legacy-git.js";
@@ -57,6 +58,16 @@ class FakeGitWork implements LegacyGitWork {
 
   async inspectLocalWork(_ref: IssueRef): Promise<LocalWorkFacts> {
     return { headSha: null, commits: 0, uncommitted: false, operationInProgress: null };
+  }
+}
+
+
+/** Poll until `condition` holds; the timeout names what was waited for. */
+async function waitFor(condition: () => boolean, what: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for: " + what);
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
 
@@ -191,5 +202,43 @@ describe("loop wiring — the git host feeds every launch", () => {
 
     assert.equal(event, "worker-end");
     await run;
+  });
+test("a collection that fails still frees the slot and refills admission", async () => {
+    const failing = new FakeTrackerAdapter({ workerAccount: "bot" });
+    seedIssue(failing, { repo: "Sanmoo/a", number: 7, labels: ["ready-for-agent"], createdAt: "2026-01-01T00:00:00Z" });
+    seedIssue(failing, { repo: "Sanmoo/a", number: 8, labels: ["ready-for-agent"], createdAt: "2026-01-02T00:00:00Z" });
+    // #7 writes a first fall (clean without PR): its collection releases the
+    // claim — the write this test makes fail. #8 collects normally.
+    const runtime = new FakeWorkerRuntime({ outcomes: ["clean-without-pr", "pr-open"], tracker: failing });
+    const engine = new SweepEngine({
+      ...deps,
+      config: { ...deps.config, concurrency: 1 },
+      tickets: failing,
+      pullRequests: failing,
+      runtime,
+    });
+    await engine.deriveAndAct();
+
+    // The failure lands in the collection, after the worker ran: the release's
+    // label write. It is never swallowed — the caller sees it.
+    failing.failAt.add("release:relabel");
+    const started = engine.fillSlots();
+    const [first] = await Promise.allSettled(started);
+    assert.equal(first?.status, "rejected", "the failed collection reaches the caller");
+
+    // The slot was released and admission refilled in the same cycle: the work
+    // that was waiting goes out even though the first one never collected.
+    await waitFor(() => runtime.launched.length === 2, "the refilled admission");
+    assert.deepEqual(
+      runtime.launched.map((request) => launchedNumber(request)),
+      [7, 8],
+      "the next work of the pool takes the freed slot",
+    );
+    await engine.awaitAllLaunched();
+    assert.deepEqual(
+      engine.collected.map((entry) => workKeyOf(entry.work)),
+      ["Sanmoo/a#8"],
+      "the work whose collection succeeded is the one the sweep reports",
+    );
   });
 });

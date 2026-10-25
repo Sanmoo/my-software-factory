@@ -5,7 +5,7 @@ import { describeError } from "../format.js";
 import type { LocalWorkFacts } from "../git/port.js";
 import { SESSIONS_SUBDIR, workDirOfKey } from "../layout.js";
 import { readLaunchFacts } from "../pool/registry.js";
-import { consumeRecovery, recordStopRequest, resetFallCount, consumeStopRequest } from "../pool/recovery.js";
+import { consumeRecovery, consumeStopRequest, recordStopRequest, resetFallCount } from "../pool/recovery.js";
 import { openRepairRound, type RepairRoundContext } from "../pool/repair-round.js";
 import { reservationRecordOf, reserveWork } from "../pool/reservation.js";
 import { EMPTY_REPAIR_CYCLE, readRepairCycle, writeRepairCycle, type RepairAttempt } from "../work-record/repair.js";
@@ -17,11 +17,10 @@ import { clearPause, knownAttempt, readPause } from "../work-record/continuity.j
 import { recheckPausedEffects, planContinuity, type ContinuityDeps } from "../runtime/continuity.js";
 import { describeRemoteChange, shortSha } from "../state/repair-view.js";
 import { repairSignature, workPullRequest, type RepairTrigger } from "../state/derive.js";
-import { renderWorkIdentity, ticketUrl } from "../tracker/identity.js";
+import { renderWorkIdentity, ticketUrl, type WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
 import type { StopLaunch } from "../pool/stop.js";
-import type { WorkerMaterial } from "../runtime/port.js";
-import type { SessionResult } from "../runtime/port.js";
+import type { SessionResult, WorkerMaterial } from "../runtime/port.js";
 import type { GitWork } from "../git/port.js";
 import type { PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import type { Launch, LaunchDeps, Launchable } from "./launch.js";
@@ -455,7 +454,7 @@ class LaunchPipeline implements Launch {
    * Persist the concurrent-change verdict the opening reached: the derivation
    * then blocks the work with the help request (issue 112).
    */
-  private async markConcurrentChange(work: Launchable["work"], attempt: RepairAttempt): Promise<void> {
+  private async markConcurrentChange(work: WorkIdentity, attempt: RepairAttempt): Promise<void> {
     const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
     const cycle = await readRepairCycle(dir);
     await writeRepairCycle(dir, { ...cycle, attempt });
@@ -473,7 +472,7 @@ class LaunchPipeline implements Launch {
    *  attributable once the remote answers (issue 112). */
   private async recordRepairRound(
     dir: string,
-    work: Launchable["work"],
+    work: WorkIdentity,
     trigger: RepairTrigger,
     attempt: number,
     localWork: LocalWorkFacts | null,
