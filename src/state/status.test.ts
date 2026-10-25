@@ -671,7 +671,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a PR closed without merge is blocked with the PR pointed at — the state names the fact (ticket #203)", async () => {
+  test("a PR closed without merge is blocked with the PR pointed at — the status reads the state that says so (ticket #203)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 50);
     seedAttempt(50, 1);
