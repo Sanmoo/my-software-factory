@@ -301,11 +301,9 @@ describe("the Repair reconciliation — a settled attempt, through the module", 
     const git = new ProbeGit();
     git.remoteHead = "c".repeat(40); // somebody else moved the remote
     const tracker = trackerWithIssue();
-    tracker.seedPullRequest({ repo: REPO, number: 5 });
-    // A mergeable PR whose required set is KNOWN and clean: the impediment the
-    // round was launched for is gone, so the round returns without a fall.
-    tracker.setPrRepairFacts({ repo: REPO, prNumber: 5, mergeState: "mergeable", requiredChecks: [] });
-    // The Work's own association is what the round reads (the PR it opened).
+    // The Work's own PR, read NOW: mergeable, with a known and clean required
+    // set — the impediment the round was launched for is gone, so the round
+    // returns without a fall (issue 149). The round's launch facts do not say so.
     tracker.seedPullRequest({ repo: REPO, number: 1, state: "open" });
     tracker.setPrRepairFacts({ repo: REPO, prNumber: 1, mergeState: "mergeable", requiredChecks: [] });
     const { repair, lines } = open(git, tracker);

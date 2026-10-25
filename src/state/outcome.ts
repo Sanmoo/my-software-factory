@@ -18,8 +18,8 @@ import { pauseMarker } from "../tracker/port.js";
  * (issue 187, `src/work-record/`); the VOCABULARY of what a collection decides
  * is owned by the Work state (ADR-0010, `src/work-state/`).
  *
- * What is left here is neither a ruler nor a policy module: the two predicates
- * the fall ruler and the derivation ask of a record (`isRecordedFailure`,
+ * What is left here is neither a ruler nor a policy module: the predicates the
+ * fall ruler and the derivation ask of a record (`isRecordedFailure`,
  * `ownWrittenOutcome`, `selfReportedBlocked`) and the comments the factory
  * writes for the operator — blocked, interruption paused, model provider
  * awaited, continuity paused, repair fall. The old second vocabulary

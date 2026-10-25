@@ -1197,7 +1197,6 @@ export class SweepEngine {
     return true;
   }
 
-
   /** The exhausted recovery budget: block the work and ask the operator for
    *  help, naming the configured value and backoff — no attempt was consumed. */
   private async pauseInterrupted(

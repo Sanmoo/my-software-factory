@@ -3,12 +3,8 @@ import type { WorkspaceLayout } from "../layout.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "../tracker/expanded-port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import type { IssueComment } from "../tracker/port.js";
-/** The repair trigger has ONE owner (pool/repair-trigger.ts): the state carries
- *  it as the payload a repair action needs, so the copy the derivation applies
- *  and the copy the launch hashes into durable evidence cannot drift. */
-import type { RepairTrigger } from "../pool/repair-trigger.js";
-export type { RepairTrigger };
 import type { ModelProviderDecision } from "../pool/model-provider.js";
+import type { RepairTrigger } from "../pool/repair-trigger.js";
 import type { RecoveryDecision } from "../pool/recovery.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { ModelProviderFailure } from "../work-record/record.js";
@@ -35,6 +31,13 @@ import { workFacts } from "./facts.js";
  * map between two vocabularies left in the engine. The remaining reading of the
  * domain (`state/status.ts`, ticket #204) is the last one to migrate.
  */
+
+/** The repair trigger has ONE owner (`pool/repair-trigger.ts`): the state carries
+ *  it as the payload a repair action needs, and the derivation, the launch's
+ *  durable signature and the round's premise all ask that one definition — so the
+ *  copy that decides and the copy that hashes cannot drift. Re-exported here
+ *  because it is part of this interface: the states below carry it. */
+export type { RepairTrigger };
 
 /** The Work as the state addresses it: the identity on disk plus its dir. */
 export interface WorkRef {
