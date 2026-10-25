@@ -11,6 +11,7 @@ import {
   jiraTicket,
   pullRequestIdentity,
   pullRequestIdentityKey,
+  repositoryIdentityKey,
   ticketIdentityKey,
   workIdentityKey,
   type TicketIdentity,
@@ -58,6 +59,19 @@ describe("Work, ticket, repository and PR identities are explicit", () => {
     assert.notEqual(pullRequestIdentityKey(prA), pullRequestIdentityKey(prB), "PR #7 of another repo is another PR");
     assert.equal(prA.repository.repo, repoA.repo);
     assert.equal(prA.provider, "github");
+  });
+
+  test("a destination repository is the same in either case, and keeps the spelling it was given", () => {
+    const spelled = githubRepository("Sanmoo/My-Tasks");
+    const otherCase = githubRepository("sanmoo/my-tasks");
+
+    assert.equal(repositoryIdentityKey(spelled), repositoryIdentityKey(otherCase), "GitHub repository names are case-insensitive");
+    assert.equal(spelled.repo, "Sanmoo/My-Tasks", "the identity keeps the operator's spelling: only the key folds case");
+    assert.notEqual(
+      repositoryIdentityKey(spelled),
+      repositoryIdentityKey(githubRepository("sanmoo/other-tasks")),
+      "another repository stays another destination",
+    );
   });
 });
 

@@ -10,7 +10,7 @@ import type { IssueComment, Known, WriteOutcome } from "./port.js";
 import { known, notKnown } from "./port.js";
 import { jiraTicket, type JiraTicketIdentity, type TicketIdentity, type TicketSource } from "./identity.js";
 import { renderAdf } from "./jira-adf.js";
-import { withNativeRankOrdering, withSiteRankOrdering } from "./jira-jql.js";
+import { withNativeRankOrdering, withSiteRankOrdering, type RankOrdering } from "./jira-jql.js";
 
 /**
  * The real Jira Cloud ticket adapter: reads over the REST API v3
@@ -245,9 +245,7 @@ export class JiraTicketAdapter implements SiteTicketTracker {
    * operator's JQL is the whole selection.
    */
   async listOpenTickets(selection: TicketSelection): Promise<OpenTicket[]> {
-    const ordering = withNativeRankOrdering(this.selectionJql(selection));
-    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
-    return this.readOrdered(ordering.jql);
+    return this.readRankOrdered(withNativeRankOrdering(this.selectionJql(selection)));
   }
 
   /**
@@ -260,12 +258,14 @@ export class JiraTicketAdapter implements SiteTicketTracker {
     if (selections.length === 0) {
       throw new JiraSelectionError(`the Jira site "${this.site}" was asked for no selection`);
     }
-    const ordering = withSiteRankOrdering(selections.map((selection) => this.selectionJql(selection)));
-    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
-    return this.readOrdered(ordering.jql);
+    return this.readRankOrdered(
+      withSiteRankOrdering(selections.map((selection) => this.selectionJql(selection))),
+    );
   }
 
-  /** The query of one selection after both facts it must carry are checked. */
+  /** The selection's JQL, once it names this site and carries a query. Whether
+   *  that query can keep native Rank is the caller's check: only it knows if it
+   *  reads one selection or the site's union. */
   private selectionJql(selection: TicketSelection): string {
     this.assertSource(selection.source);
     const jql = selection.jql;
@@ -273,6 +273,13 @@ export class JiraTicketAdapter implements SiteTicketTracker {
       throw new JiraSelectionError(`the Jira selection for site "${this.site}" carries no JQL`);
     }
     return jql;
+  }
+
+  /** An unordered or re-ordered query is a configuration error, never a result
+   *  silently sorted by something other than the site's Rank. */
+  private async readRankOrdered(ordering: RankOrdering): Promise<OpenTicket[]> {
+    if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
+    return this.readOrdered(ordering.jql);
   }
 
   private async readOrdered(jql: string): Promise<OpenTicket[]> {

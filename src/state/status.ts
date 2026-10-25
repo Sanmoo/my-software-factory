@@ -113,7 +113,14 @@ export interface AmbiguousJiraTicket extends JiraTicketFacts {
  *  the candidates, while this says whether each selection contributed. */
 export type JiraSelectionView =
   | { selection: TicketSelection; state: "known"; selected: number; held: number }
-  | { selection: TicketSelection; state: "unknown"; reason: string };
+  | {
+      selection: TicketSelection;
+      state: "unknown";
+      reason: string;
+      /** The site's line already carries this very reason: repeating it under
+       *  the selection would only echo it. */
+      reasonShownAtSite: boolean;
+    };
 
 /** One Jira site's candidates: ONE native Rank order across all its selections,
  *  never one queue per destination or per declared repository (issue 129). */
@@ -360,12 +367,8 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   const destinations = distinctDestinations(readers.map((reader) => reader.selection.destination));
   if (new Set(readers.map((reader) => reader.tickets)).size > 1) {
     const reason = "the site's selections do not share one tracker";
-    return unknownSite(
-      site,
-      destinations,
-      reason,
-      readers.map((reader) => ({ reader, state: "unknown", reason })),
-    );
+    const unreadable = readers.map((reader) => ({ reader, state: "unknown" as const, reason }));
+    return unknownSite(site, destinations, reason, unreadable, unreadable);
   }
 
   const readings = await Promise.all(
@@ -379,11 +382,14 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   );
   const known = readings.filter(isKnownRead);
   if (known.length === 0) {
+    // Every reading is unknown, so the first one's reason IS the site's.
+    const first = readings.find(isUnknownRead);
     return unknownSite(
       site,
       destinations,
-      readings[0]?.state === "unknown" ? readings[0].reason : "no selection could be read",
+      first?.reason ?? "no selection could be read",
       readings,
+      first === undefined ? [] : [first],
     );
   }
   if (readings.some(isUnknownRead)) {
@@ -472,19 +478,21 @@ function ticketMemberships(known: readonly KnownSelectionRead[]): Map<string, Ma
 }
 
 /** One site that has no reliable order: its reason and selection reads survive,
- *  but no candidate is offered from a guessed or concatenated order. */
+ *  but no candidate is offered from a guessed or concatenated order.
+ *  `reasonOf` names the readings whose own reason the site's line reproduces. */
 function unknownSite(
   site: string,
   destinations: RepositoryIdentity[],
   reason: string,
   readings: readonly SelectionRead[],
+  reasonOf: readonly SelectionRead[] = [],
 ): JiraSiteView {
   return {
     site,
     destinations,
     state: "unknown",
     reason,
-    selections: readings.map((entry) => selectionViewOf(entry)),
+    selections: readings.map((entry) => selectionViewOf(entry, new Set(), reasonOf.includes(entry))),
     candidates: [],
     ambiguous: [],
   };
@@ -492,9 +500,13 @@ function unknownSite(
 
 /** One selection's report line: how many distinct tickets it selected, and how
  *  many of those are held as ambiguous. An unknown read keeps its reason. */
-function selectionViewOf(reading: SelectionRead, heldKeys: ReadonlySet<string> = new Set()): JiraSelectionView {
+function selectionViewOf(
+  reading: SelectionRead,
+  heldKeys: ReadonlySet<string> = new Set(),
+  reasonShownAtSite = false,
+): JiraSelectionView {
   if (reading.state === "unknown") {
-    return { selection: reading.reader.selection, state: "unknown", reason: reading.reason };
+    return { selection: reading.reader.selection, state: "unknown", reason: reading.reason, reasonShownAtSite };
   }
   const keys = new Set(reading.tickets.map((ticket) => ticketIdentityKey(ticket.ticket)));
   return {
@@ -506,10 +518,15 @@ function selectionViewOf(reading: SelectionRead, heldKeys: ReadonlySet<string> =
 }
 
 /** The configured destinations as one deterministic list: declaration order is
- *  never a routing fact. */
+ *  never a routing fact. One repository written in two cases is one entry, and
+ *  which spelling is shown never depends on which selection came first. */
 function distinctDestinations(destinations: readonly RepositoryIdentity[]): RepositoryIdentity[] {
   const byKey = new Map<string, RepositoryIdentity>();
-  for (const destination of destinations) byKey.set(repositoryIdentityKey(destination), destination);
+  for (const destination of destinations) {
+    const key = repositoryIdentityKey(destination);
+    const known = byKey.get(key);
+    if (known === undefined || destination.repo.localeCompare(known.repo) < 0) byKey.set(key, destination);
+  }
   return [...byKey.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, destination]) => destination);
