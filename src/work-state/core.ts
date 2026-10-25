@@ -5,9 +5,10 @@ import { isAgentSpeech } from "../tracker/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { operatorStopClaim } from "../pool/stop.js";
 import { modelProviderDecision } from "../pool/model-provider.js";
+import { emptyModelProviderLedger } from "../work-record/model-provider.js";
 import { hasPendingReconciliation, MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS, hasRepairCycle } from "../pool/repair.js";
+import { ownOutcomeRecord, type OutcomeRecord } from "../work-record/outcome.js";
 import { ownWrittenOutcome, selfReportedBlocked } from "../state/outcome.js";
-import type { OutcomeRecord } from "../work-record/outcome.js";
 import type { WorkRecordSnapshot } from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
@@ -20,7 +21,7 @@ import {
   rejectionComment,
   repairSignature,
 } from "../state/derive.js";
-import type { WorkFacts } from "./facts.js";
+import type { AttemptEndFacts, WorkFacts } from "./facts.js";
 import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 
 /**
@@ -396,9 +397,12 @@ function unreadable(ref: WorkRef, because: string): WorkStateReading {
 }
 
 /**
- * The record, or null when the factory could not read it: the module holds
- * (parked) instead of inventing a verdict out of a failed read — the same rule
- * the Work record applies to a pause it cannot read.
+ * The record, or null when the factory could not read it. The read before a
+ * launch holds (parked) instead of inventing a verdict out of a failed read —
+ * the same rule the Work record applies to a pause it cannot read. The read
+ * after an attempt answers with the record it could not see, because that is
+ * what the collection ruler has always done with it: no written verdict of this
+ * attempt (`readOutcomeRecord` answers null for absence and for garbage alike).
  */
 async function readableRecord(facts: WorkFacts): Promise<WorkRecordSnapshot | null> {
   const record = await facts.record();
@@ -461,3 +465,149 @@ function currentPause(snapshot: WorkRecordSnapshot): { pause: PauseRecord; attem
 }
 
 const NO_REPLIES: IssueComment[] = [];
+
+// ---- the second reading: what happened to the Attempt that just ended ----
+
+/**
+ * The ladder from an ENDED Attempt to the Work state. Same facts seam, same
+ * policy, same vocabulary as the read before a launch: what changes is the
+ * moment, and the questions it asks — the record the attempt wrote, the stop
+ * that may own its end, the PR the factory sees now.
+ *
+ * The rulings are the ones `classifyOutcome` makes at collection today, in the
+ * same priority order, so #202 can let the loop speak this vocabulary without
+ * changing a verdict.
+ */
+export async function deriveAfterAttempt(
+  ref: WorkRef,
+  end: { attempt: number; stopping: boolean },
+  facts: AttemptEndFacts,
+  policy: DecisionPolicy,
+): Promise<WorkStateReading> {
+  const ticket = await facts.ticket();
+  const issue = ticket.reading === "known" ? ticket.value : null;
+
+  // The terminal state was reached while this claim was held (ticket 14).
+  if (issue !== null && issue.state === "closed") return { work: ref.work, dir: ref.dir, state: "done" };
+
+  const pull = await facts.pullRequest();
+  const pr = pull.reading === "with-pull-request" ? pull.pr : null;
+
+  // A merged PR is delivery, whatever the attempt wrote (issue 149): the
+  // terminal state reached the PR first, and the action closes the issue (the
+  // linkage fallback) before archiving — the same state, and the same action,
+  // the read before a launch answers for a merged PR with an open issue.
+  if (pr !== null && pr.merged) {
+    return { work: ref.work, dir: ref.dir, state: "done-fallback", pr, comment: fallbackDoneComment() };
+  }
+
+  // The Work record in one read. Absence, and a record the factory cannot parse,
+  // are the SAME fact here, as they have always been for the collection ruler:
+  // no verdict of this attempt was written. What names an attempt comes out of
+  // it — its own outcome, the fall the ledger counted for the previous one, and
+  // what ended its own turn.
+  const written = await readableRecord(facts);
+  const record = written?.outcome ?? null;
+  const own = ownOutcomeRecord(record, end.attempt);
+
+  // The stop that may own this END (issue #146). A confirmed Outcome prevails
+  // over the interpretation of the stop, so this is asked only while the
+  // attempt wrote no record at all: the operator's requested stop — the one
+  // this process is carrying out, or the evidence a previous one left on the
+  // attempt — resumes the same attempt and spends no recovery.
+  if (own === null && (end.stopping || (await facts.stopClaim(end.attempt)).kind !== "none")) {
+    return {
+      work: ref.work,
+      dir: ref.dir,
+      state: "stop-resume",
+      attempt: end.attempt,
+      because: end.stopping ? "stop-in-progress" : "stop-recorded",
+    };
+  }
+
+  // Classes 1 and 5: an open PR keeps the work reserved for the human. No fall
+  // is ever recorded over it, and the claim is held.
+  if (pr !== null && pr.state === "open") return { work: ref.work, dir: ref.dir, state: "parked", because: "pr-open" };
+
+  // Class 6: the worker posted the marker and the label itself. The factory only
+  // RECORDS it — no release, no fall, no comment of its own. Both structured
+  // facts speak (the label, or the record's own class), and only for THIS
+  // attempt: desfecho.json survives between attempts.
+  const selfReported =
+    (issue !== null && issue.labels.includes(policy.labels.blocked)) || selfReportedBlocked(record, end.attempt);
+  if (selfReported) {
+    return { work: ref.work, dir: ref.dir, state: "parked", because: "blocked-self-report" };
+  }
+
+  // A PR closed without merge is the fact the collection vocabulary had no word
+  // for (epic #198): the Work state has one — the same `rejected` the read
+  // before a launch gives it — and NOBODY executes it yet (#203 wires the
+  // block). Until then this arm merely names the fact, and the loop keeps
+  // answering with `classifyOutcome` exactly as before.
+  if (pr !== null && pr.state === "closed" && !pr.merged) {
+    return { work: ref.work, dir: ref.dir, state: "rejected", pr, comment: rejectionComment(pr) };
+  }
+
+  // No record of its OWN: an INTERRUPTION, not a failure (issue 123). The
+  // attempt keeps its number and no failure is recorded; what ended its own
+  // turn decides which of the two vocabularies answers it.
+  if (own === null) return interruption(ref, end.attempt, facts, written, policy);
+
+  // A written failure/abandon without a PR: the fall ruler applies, exactly as
+  // it does at collection. Its consecutiveness fact is the record's own ledger
+  // — the highest attempt that ended in a WRITTEN failure — so a crash, an
+  // interruption or another process's memory can never make a fall "second".
+  const previousFell = (await facts.lastFallAttempt()) === end.attempt - 1;
+  if (!previousFell) return { work: ref.work, dir: ref.dir, state: "fall", decision: "release", attempt: end.attempt };
+  return {
+    work: ref.work,
+    dir: ref.dir,
+    state: "fall",
+    decision: "block",
+    attempt: end.attempt,
+    comment: await facts.fallenAttemptComment(record, end.attempt),
+  };
+}
+
+/**
+ * An attempt that ended without an outcome record. Two very different things
+ * look alike here, and only the attempt's own stream tells them apart
+ * (issue 144): the agent was interrupted — the recovery budget absorbs it and
+ * the same attempt continues — or its turn ended in a model provider error,
+ * which retries on its OWN budget and never touches the recovery one.
+ *
+ * The provider budget's answer is CARRIED, not acted on: settling it (the wait,
+ * the persisted consumption, the exhausted budget's help request) belongs to the
+ * retry launch, which is where the collection path has always settled it.
+ */
+async function interruption(
+  ref: WorkRef,
+  attempt: number,
+  facts: AttemptEndFacts,
+  written: WorkRecordSnapshot | null,
+  policy: DecisionPolicy,
+): Promise<WorkStateReading> {
+  const failure = await facts.modelProviderFailure(attempt);
+  if (failure !== null) {
+    return {
+      work: ref.work,
+      dir: ref.dir,
+      state: "model-provider-failure",
+      attempt,
+      failure,
+      modelProvider: modelProviderDecision(
+        written?.modelProvider ?? emptyModelProviderLedger(),
+        policy.modelProvider,
+        attempt,
+        failure,
+      ),
+    };
+  }
+  return {
+    work: ref.work,
+    dir: ref.dir,
+    state: "interrupted",
+    attempt,
+    recovery: await facts.recovery(attempt),
+  };
+}

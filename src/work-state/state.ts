@@ -8,7 +8,7 @@ import type { RecoveryDecision } from "../pool/recovery.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { ModelProviderFailure } from "../work-record/record.js";
 import type { RepairAttempt } from "../work-record/repair.js";
-import { deriveBeforeLaunch } from "./core.js";
+import { deriveAfterAttempt, deriveBeforeLaunch } from "./core.js";
 import { workFacts } from "./facts.js";
 
 /**
@@ -16,16 +16,19 @@ import { workFacts } from "./facts.js";
  * happened to this Work, and what may the factory do now?", in one vocabulary,
  * read at two moments — before a launch and after an Attempt ends.
  *
- * This module owns the first reading. The caller hands the Work — its identity
- * and the reservation's dir — and receives the state with the payload its
- * action needs; the ticket read, the PR read and the Work record read stay
+ * This module owns both readings. The caller hands the Work — its identity and
+ * the reservation's dir — and, after an Attempt, the attempt's number and
+ * whether this factory is stopping; it receives the state with the payload its
+ * action needs. The ticket read, the PR read and the Work record read stay
  * behind the seam, so the list of facts a verdict needs can change without
  * touching a caller, and "unreadable" and "absent" are told apart in one place
  * (facts.ts) instead of by every stage that consults the tracker.
  *
- * No consumer is migrated yet (ticket #200): `state/derive.ts` and the loop
- * keep answering as they do, with their own vocabulary. Tickets #202–#204
- * delete that reading and let the loop, the status and the log speak this one.
+ * No consumer is migrated yet (tickets #200/#201): `state/derive.ts`, the loop
+ * and `classifyOutcome` keep answering as they do, with their own vocabulary,
+ * so the only observable difference is the one the epic authorized (#203).
+ * Tickets #202–#204 delete those readings and let the loop, the status and the
+ * log speak this one.
  */
 
 /** The Work as the state addresses it: the identity on disk plus its dir. */
@@ -33,6 +36,22 @@ export interface WorkRef {
   work: WorkIdentity;
   /** The reservation's registry dir — never reconstructed from current config. */
   dir: string;
+}
+
+/**
+ * The Attempt that just ended: the Work it belongs to and its number, plus the
+ * ONE process-wide condition that is not a fact about the Work — this factory
+ * is winding down on a requested stop, so it cannot relaunch anything itself.
+ * Everything else the second reading needs is a fact about the Work, and is
+ * read behind the seam.
+ */
+export interface EndedAttempt extends WorkRef {
+  /** The attempt being collected, as the launch numbered it. It owns the
+   *  outcome record: a record of another attempt is absent here. */
+  attempt: number;
+  /** The requested stop is in progress in THIS process: the attempt's relaunch
+   *  is the next run's business, and the stop spends no recovery anywhere. */
+  stopping: boolean;
 }
 
 /**
@@ -95,8 +114,11 @@ export type WorkStateReading = WorkRef &
         createdAt: string;
         issueReplies: IssueComment[];
       }
-    /** Nothing to decide: waiting for the human, or a released work the pool owns. */
-    | { state: "parked" }
+    /** Nothing to decide: waiting for the human, or a released work the pool owns.
+     *  `because` names the fact that parked it when the Work's own record has a
+     *  word for it — "the human has the PR" is not "the worker blocked
+     *  itself", and both wait the same way. */
+    | { state: "parked"; because?: "pr-open" | "blocked-self-report" }
     /** A written failure the factory did not rule yet (it died between the
      *  record and the transition): release, or block on the 2nd consecutive
      *  failure — the ruler applies as at collection (ticket 05 Q3). */
@@ -107,8 +129,11 @@ export type WorkStateReading = WorkRef &
      *  the exhausted budget pauses the work and asks the operator for help. */
     | { state: "interrupted"; attempt: number; recovery: RecoveryDecision }
     /** The operator's REQUESTED stop (issue #146): the same attempt resumes on
-     *  the next run, spending no recovery. */
-    | { state: "stop-resume"; attempt: number }
+     *  the next run, spending no recovery. `because` names which of the two
+     *  readings of the stop spoke: the one this process is carrying out (its
+     *  last cycle cannot relaunch anything) or the evidence a previous one left
+     *  on the attempt. */
+    | { state: "stop-resume"; attempt: number; because?: "stop-in-progress" | "stop-recorded" }
     /** The requested stop could not be confirmed: a previous worker may still be
      *  alive, so the work is held with the reason until a probe proves it gone. */
     | { state: "stop-unconfirmed"; attempt: number; because: string }
@@ -202,12 +227,20 @@ export interface WorkState {
   /** The read before a launch: in what state is this Work, and what may the
    *  factory do now. */
   beforeLaunch(work: WorkRef): Promise<WorkStateReading>;
+  /** The read after an Attempt ended: what happened to it, and what may the
+   *  factory do now. Same interface, same vocabulary — the caller hands the
+   *  Work and the attempt, never the facts the verdict is built from. */
+  afterAttempt(end: EndedAttempt): Promise<WorkStateReading>;
 }
 
 export function openWorkState(deps: WorkStateDeps): WorkState {
   return {
     async beforeLaunch(work: WorkRef): Promise<WorkStateReading> {
       return deriveBeforeLaunch(work, workFacts(deps, work), deps);
+    },
+    async afterAttempt(end: EndedAttempt): Promise<WorkStateReading> {
+      const ref: WorkRef = { work: end.work, dir: end.dir };
+      return deriveAfterAttempt(ref, end, workFacts(deps, ref), deps);
     },
   };
 }

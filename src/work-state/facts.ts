@@ -8,6 +8,8 @@ import type {
 import type { IssueComment, PrRepairFacts } from "../tracker/port.js";
 import { type WorkspaceLayout } from "../layout.js";
 import { peekRecovery, type RecoveryDecision } from "../pool/recovery.js";
+import { operatorStopClaim, type OperatorStopClaim } from "../pool/stop.js";
+import { emptyLedger } from "../work-record/recovery.js";
 import { blockedCommentBody, repairFallComment, type RepairFallCommentInput } from "../state/outcome.js";
 import {
   openWorkRecord,
@@ -72,6 +74,23 @@ export interface WorkFacts {
   unpublishedRepairComment(input: UnpublishedRepairComment): Promise<string>;
 }
 
+/**
+ * The additional facts the read AFTER an attempt asks: what the record says
+ * about the end of the attempt — the stop that may own it, and the fall the
+ * ruler counted for the previous one. They are read-only and they are not part
+ * of every reading, so they are not on {@link WorkFacts}: the read before a
+ * launch never asks them.
+ */
+export interface AttemptEndFacts extends WorkFacts {
+  /** Which attempt, if any, the persisted requested stop owns (issue #146).
+   *  Read only: promoting an unconfirmed stop to a requested one is a write the
+   *  loop owns, never something a reading does to answer a question. */
+  stopClaim(attempt: number): Promise<OperatorStopClaim>;
+  /** The highest attempt that ended in a WRITTEN failure — the fall ruler's
+   *  consecutiveness fact (an interruption never sets it, issue 123). */
+  lastFallAttempt(): Promise<number | null>;
+}
+
 /** The ports and budgets the facts are read through: injected once, per module. */
 export interface WorkFactsDeps {
   tickets: TicketTracker;
@@ -83,7 +102,7 @@ export interface WorkFactsDeps {
 /** The reason a port cannot word for itself: it answered `known: false`. */
 const TRACKER_SILENT = "the tracker did not answer for it";
 
-export function workFacts(deps: WorkFactsDeps, ref: WorkRef): WorkFacts {
+export function workFacts(deps: WorkFactsDeps, ref: WorkRef): AttemptEndFacts {
   /** Each read happens once per reading, however many arms ask for it. */
   const once = <T>(read: () => Promise<T>): (() => Promise<T>) => {
     let pending: Promise<T> | null = null;
@@ -136,12 +155,21 @@ export function workFacts(deps: WorkFactsDeps, ref: WorkRef): WorkFacts {
       : { reading: "unreadable", because: TRACKER_SILENT };
   });
 
+  /** The recovery part of the record: the stop that ended the last attempt, the
+   *  fall the ruler counts, the recovery the interruption cost. */
+  const ledger = once(async () => {
+    const read = await snapshot();
+    return read.reading === "known" ? read.value.recovery : emptyLedger();
+  });
+
   return {
     ticket,
     comments,
     pullRequest,
     repairFacts,
     record: snapshot,
+    stopClaim: async (attempt) => operatorStopClaim(await ledger(), { lastAttempt: attempt }),
+    lastFallAttempt: async () => (await ledger()).lastFallAttempt,
     modelProviderFailure: async (attempt) => (await record()).readModelProviderFailure(attempt),
     recovery: (attempt) => peekRecovery(ref.dir, deps.recovery, attempt),
     fallenAttemptComment: (outcomeRecord, attempt) =>
