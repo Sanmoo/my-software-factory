@@ -27,8 +27,8 @@ import { openPipeline } from "./pipeline.js";
  * slot and applies the verdict of each end; everything between "this Work is
  * going out" and "this attempt ended" is here, in ONE path. Recovery, the model
  * provider retry, the resume after a requested stop and the feedback round all
- * come through {@link Launch.attempt}, so the ordering, the logs and the notices
- * of every kind of launch live in one file.
+ * come through {@link Launch.attempt}, so the ordering and the logs of every
+ * kind of launch live in one file.
  *
  * The deps are given once: the ticket/PR ports, git, the runtime, the layout,
  * the config (with its budgets), the backoff timer and the engine's own side of

@@ -146,9 +146,11 @@ import { join } from "node:path";
  * boundary and of waking by event (end of worker vs tick). It interlaces the
  * four phases deciding nothing of the domain: the Work state lives in
  * work-state/ (one vocabulary, read before a launch and after an attempt), the
- * liveness policy and the survivor ledger in state/ + pool/, and IO in
- * tracker/ + pool/ + git/ + runtime/ (ticket 07) — the loop only reads the
- * facts and applies what they decide (issue 118).
+ * launch pipeline in launch/ (the claim, the prepare, the runtime launch and
+ * the collected end of every kind of launch), the liveness policy and the
+ * survivor ledger in state/ + pool/, and IO in tracker/ + pool/ + git/ +
+ * runtime/ (ticket 07) — the loop only reads the facts and applies what they
+ * decide (issue 118).
  *
  * Ticket 14: the derivation of the tick covers the states of ALL reserved
  * works (done · done-fallback · rejected · feedback · resumable — the Work
