@@ -175,6 +175,30 @@ export type WorkStateReading = WorkRef &
     | { state: "not-planned" }
   );
 
+/**
+ * What the read AFTER an Attempt can answer — and nothing more. An attempt that
+ * ended cannot be `feedback`, `resumable`, a repair round, a continuity pause,
+ * an unconfirmed stop, `unreadable` or `not-planned`: those are facts of the
+ * read BEFORE a launch, and the collection never asks for them. Declaring the
+ * subset here is what keeps a consumer from inventing a verdict for them (the
+ * collection report used to project them all as interruptions, which the
+ * Glossary's *Interruption* never meant).
+ */
+export type AfterAttemptReading = Extract<
+  WorkStateReading,
+  {
+    state:
+      | "done"
+      | "done-fallback"
+      | "rejected"
+      | "parked"
+      | "fall"
+      | "interrupted"
+      | "model-provider-failure"
+      | "stop-resume";
+  }
+>;
+
 /** The class a Work state contributes to the observed operational state. */
 export type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable";
 
@@ -247,8 +271,9 @@ export interface WorkState {
   beforeLaunch(work: WorkRef): Promise<WorkStateReading>;
   /** The read after an Attempt ended: what happened to it, and what may the
    *  factory do now. Same interface, same vocabulary — the caller hands the
-   *  Work and the attempt, never the facts the verdict is built from. */
-  afterAttempt(end: EndedAttempt): Promise<WorkStateReading>;
+   *  Work and the attempt, never the facts the verdict is built from. The
+   *  answer is honest about which states this moment can reach. */
+  afterAttempt(end: EndedAttempt): Promise<AfterAttemptReading>;
 }
 
 export function openWorkState(deps: WorkStateDeps): WorkState {
@@ -256,7 +281,7 @@ export function openWorkState(deps: WorkStateDeps): WorkState {
     async beforeLaunch(work: WorkRef): Promise<WorkStateReading> {
       return deriveBeforeLaunch(work, workFacts(deps, work), deps);
     },
-    async afterAttempt(end: EndedAttempt): Promise<WorkStateReading> {
+    async afterAttempt(end: EndedAttempt): Promise<AfterAttemptReading> {
       const ref: WorkRef = { work: end.work, dir: end.dir };
       return deriveAfterAttempt(ref, end, workFacts(deps, ref), deps);
     },

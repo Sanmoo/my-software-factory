@@ -24,7 +24,7 @@ import {
 } from "./state/derive.js";
 import { openLaunch, type Launch, type LaunchCycle, type Launchable } from "./launch/launch.js";
 import { openCollect, type Collect } from "./collect/collect.js";
-import type { AppliedRuling } from "./collect/ruling.js";
+import type { CollectedRulingReport } from "./collect/ruling.js";
 import {
   STATE_DECLARATIONS,
   consentAppliesTo as stateConsentAppliesTo,
@@ -153,7 +153,7 @@ export interface CollectedWork {
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
   /** The decided transition, as the collection reports it (ticket 13, D5). */
-  ruling: AppliedRuling;
+  ruling: CollectedRulingReport;
 }
 
 export interface SweepResult {

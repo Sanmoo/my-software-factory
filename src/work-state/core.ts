@@ -18,7 +18,7 @@ import {
   humanCommentsForPause,
 } from "../state/derive.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
-import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
+import type { AfterAttemptReading, RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 
 /**
  * The decision core: the ladder from the facts to the Work state, and nothing
@@ -466,7 +466,7 @@ export async function deriveAfterAttempt(
   end: { attempt: number; stopping: boolean },
   facts: AttemptEndFacts,
   policy: DecisionPolicy,
-): Promise<WorkStateReading> {
+): Promise<AfterAttemptReading> {
   const ticket = await facts.ticket();
   const issue = ticket.reading === "known" ? ticket.value : null;
 
@@ -593,7 +593,7 @@ async function interruption(
   written: WorkRecordSnapshot | null,
   policy: DecisionPolicy,
   pr: PullRequestRecord | null,
-): Promise<WorkStateReading> {
+): Promise<AfterAttemptReading> {
   const failure = await facts.modelProviderFailure(attempt);
   if (failure !== null) {
     return {

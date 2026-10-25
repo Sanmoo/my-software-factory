@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { projectCollectedRuling } from "./ruling.js";
+import { projectCollectedRuling, type CollectedRulingReport } from "./ruling.js";
 import { githubRepository, githubTicket, pullRequestIdentity } from "../tracker/identity.js";
 import type { PullRequestRecord } from "../tracker/expanded-port.js";
-import type { WorkStateReading } from "../work-state/state.js";
+import type { AfterAttemptReading, WorkStateReading } from "../work-state/state.js";
 
 /**
  * `SweepResult.collected[].ruling` after ticket #202 (D5, epic #198).
@@ -13,8 +13,11 @@ import type { WorkStateReading } from "../work-state/state.js";
  * — and the report keeps the shape the e2e suites have always asserted:
  * `decision` / `because`. That report is a PROJECTION of the decided state,
  * computed once where the result is built. This file pins the projection: for
- * every state the second reading can answer, the operator's word for it. What
- * it deliberately does NOT pin is that the engine reads it back — it never
+ * every state the second reading can answer, the operator's word for it, and
+ * — by the compiler — that it cannot be asked about the states the second
+ * reading never answers (a failed read and a not-planned issue are NOT
+ * interruptions; the projection used to invent that word for them). What it
+ * deliberately does NOT pin is that the engine reads the report back — it never
  * does: no verdict, no action and no notice is taken from the ruling.
  */
 
@@ -39,34 +42,41 @@ type WorkStateBody<T = WorkStateReading> = T extends unknown ? Omit<T, "work" | 
 
 const reading = (fields: WorkStateBody): WorkStateReading => ({ work, dir, ...fields }) as WorkStateReading;
 
+/** The same literal, as the read after an Attempt types it. */
+const collected = (fields: WorkStateBody<AfterAttemptReading>): AfterAttemptReading =>
+  reading(fields) as AfterAttemptReading;
+
 test("the collection report names what the state already decided — one word per state", () => {
-  const table: Array<[WorkStateReading, { decision: string; because: string }]> = [
+  const table: Array<[AfterAttemptReading, CollectedRulingReport]> = [
     // The terminal state, by the ticket (ticket 14) and by the merge (issue 149).
-    [reading({ state: "done", pr }), { decision: "done", because: "issue-closed" }],
+    [collected({ state: "done", pr }), { decision: "done", because: "issue-closed" }],
     [
-      reading({ state: "done-fallback", pr, comment: "the PR was merged without closing this issue" }),
+      collected({ state: "done-fallback", pr, comment: "the PR was merged without closing this issue" }),
       { decision: "done", because: "pr-merged" },
     ],
     // Parked: the human owns the PR, or the worker stopped itself (class 6).
-    [reading({ state: "parked", because: "pr-open", pr }), { decision: "reserve", because: "pr-open" }],
+    [collected({ state: "parked", because: "pr-open", pr }), { decision: "reserve", because: "pr-open" }],
     [
-      reading({ state: "parked", because: "blocked-self-report", helpRequested: true, pr }),
+      collected({ state: "parked", because: "blocked-self-report", helpRequested: true, pr }),
       { decision: "record-only", because: "blocked-self-report" },
     ],
     // The fall ruler, applied exactly as at collection.
-    [reading({ state: "fall", decision: "release", attempt: 1, pr }), { decision: "release", because: "fall-first" }],
+    [collected({ state: "fall", decision: "release", attempt: 1, pr }), { decision: "release", because: "fall-first" }],
     [
-      reading({ state: "fall", decision: "block", attempt: 2, comment: "diagnosis", pr }),
+      collected({ state: "fall", decision: "block", attempt: 2, comment: "diagnosis", pr }),
       { decision: "block", because: "fall-second" },
     ],
     // No attempt consumed: the agent's interruption, a model provider failure
     // and the operator's own stop all leave the same attempt to continue.
-    [reading({ state: "interrupted", attempt: 1, recovery: { decision: "recover", consumed: 1, waitMs: 1000 } as never, pr }),
-      { decision: "interrupt", because: "no-outcome" }],
-    [reading({ state: "model-provider-failure", attempt: 1, failure: {} as never, modelProvider: {} as never, pr }),
-      { decision: "interrupt", because: "no-outcome" }],
-    [reading({ state: "stop-resume", attempt: 1, because: "stop-in-progress", pr }),
-      { decision: "interrupt", because: "no-outcome" }],
+    [
+      collected({ state: "interrupted", attempt: 1, recovery: { decision: "recover", consumed: 1, waitMs: 1000 } as never, pr }),
+      { decision: "interrupt", because: "no-outcome" },
+    ],
+    [
+      collected({ state: "model-provider-failure", attempt: 1, failure: {} as never, modelProvider: {} as never, pr }),
+      { decision: "interrupt", because: "no-outcome" },
+    ],
+    [collected({ state: "stop-resume", attempt: 1, because: "stop-in-progress", pr }), { decision: "interrupt", because: "no-outcome" }],
   ];
 
   for (const [state, expected] of table) {
@@ -75,7 +85,7 @@ test("the collection report names what the state already decided — one word pe
 });
 
 test("a PR closed without merge is the Block the state declares — from both readings (D7, epic #198's delta)", () => {
-  const rejection: WorkStateReading = reading({
+  const rejection = collected({
     state: "rejected",
     pr,
     comment: "work rejected: PR #12 was closed without merging",
@@ -86,23 +96,32 @@ test("a PR closed without merge is the Block the state declares — from both re
   assert.deepEqual(projectCollectedRuling(rejection), { decision: "block", because: "pr-closed-unmerged" });
 });
 
-test("the projection is total over the one vocabulary — no state is left unprojected", () => {
-  // The states the read AFTER an attempt never answers still project (they
-  // belong to the read before a launch): the collection calls the projection
-  // with whatever the module answered, and a missing arm would be a hole in the
-  // report rather than a compile error.
-  const states: WorkStateReading[] = [
-    reading({ state: "feedback", pr, createdAt: "2026-01-01T00:00:00Z" }),
-    reading({ state: "resumable", pr, createdAt: "2026-01-01T00:00:00Z", issueReplies: [] }),
-    reading({ state: "continuity-paused", attempt: 1, pause: { reason: "effect-ambiguous" } as never }),
-    reading({ state: "stop-unconfirmed", attempt: 1, because: "the worker may be alive" }),
-    reading({ state: "unreadable", because: "the tracker did not answer" }),
-    reading({ state: "not-planned" }),
-  ];
-
-  for (const state of states) {
-    const ruling = projectCollectedRuling(state);
-    assert.equal(typeof ruling.decision, "string", `${state.state}: a decision is named`);
-    assert.equal(typeof ruling.because, "string", `${state.state}: and why`);
+test("every report word comes from the projection — no decision is carried in by a state", () => {
+  const words = new Set(["reserve", "record-only", "release", "block", "interrupt", "done"]);
+  for (const state of [
+    collected({ state: "done", pr }),
+    collected({ state: "parked", because: "pr-open", pr }),
+    collected({ state: "fall", decision: "release", attempt: 1, pr }),
+    collected({ state: "interrupted", attempt: 1, recovery: {} as never, pr }),
+    collected({ state: "rejected", pr, comment: "closed" }),
+  ] satisfies AfterAttemptReading[]) {
+    const report = projectCollectedRuling(state);
+    assert.equal(words.has(report.decision), true, `${state.state}: ${report.decision} is not the report's word`);
+    assert.equal(typeof report.because, "string", `${state.state}: and why`);
   }
+});
+
+test("the impossible cases are not projected at all — the compiler refuses the question", () => {
+  // The states of the read BEFORE a launch are facts a collection never
+  // answers. They used to be projected as `interrupt/no-outcome`, which
+  // contradicts facts.ts (a failed read never becomes an invented verdict) and
+  // the GLOSSARY (an Interruption is an attempt with no outcome record). The
+  // input type now excludes them, so the pin is the `@ts-expect-error`: if the
+  // projection widens again, tsc fails on an unused directive.
+  const askAboutTheUnanswerable = (): CollectedRulingReport => {
+    // @ts-expect-error — a continuity pause belongs to the read before a launch, never to a collection
+    return projectCollectedRuling(reading({ state: "continuity-paused", attempt: 1, pause: { reason: "effect-ambiguous" } as never }));
+  };
+
+  assert.equal(typeof askAboutTheUnanswerable, "function", "the case above is a compile-time pin");
 });

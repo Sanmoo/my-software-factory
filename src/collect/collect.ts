@@ -4,7 +4,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import type { OperationalClass } from "../work-state/state.js";
 import { openVerdict } from "./verdict.js";
 import { openWrites, type WorkWrites, type WriteDeps } from "./writes.js";
-import type { AppliedRuling } from "./ruling.js";
+import type { CollectedRulingReport } from "./ruling.js";
 
 /**
  * The collection (epic #198, ticket #208): what the factory DOES with an
@@ -53,7 +53,7 @@ export interface CollectedEnd {
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
   /** The decided state as the report names it (a pure projection, D5). */
-  ruling: AppliedRuling;
+  ruling: CollectedRulingReport;
 }
 
 /**

@@ -11,8 +11,8 @@ import { readRecoveryLedger } from "../work-record/recovery.js";
 import {
   STATE_DECLARATIONS,
   openWorkState,
+  type AfterAttemptReading,
   type OperationalClass,
-  type WorkStateReading,
 } from "../work-state/state.js";
 import type { AttemptEnd, CollectCycle, CollectDeps, CollectedEnd } from "./collect.js";
 import { projectCollectedRuling } from "./ruling.js";
@@ -258,23 +258,10 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         resulting = STATE_DECLARATIONS[reading.state].announces;
         break;
       }
-      // The states only the read BEFORE a launch answers: an attempt that ended
-      // cannot be one of them. Named here so the switch speaks the whole
-      // vocabulary — with no `default` that could hide a state a later change
-      // adds — and they leave the work in the class their declaration states.
-      case "feedback":
-      case "resumable":
-      case "repair":
-      case "repair-recovered":
-      case "repair-blocked":
-      case "repair-fall-blocked":
-      case "continuity-paused":
-      case "stop-unconfirmed":
-      case "unreadable":
-      case "not-planned": {
-        resulting = STATE_DECLARATIONS[reading.state].announces;
-        break;
-      }
+      // No other state is possible here: the reading this switch receives is
+      // `AfterAttemptReading`, so a state only the read BEFORE a launch answers
+      // cannot reach it — the compiler proves it instead of a `default`
+      // inventing a class for it.
     }
     cycle.announce(work, resulting);
 
@@ -305,7 +292,7 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
  * before a launch leaves it out (it has no association to persist), and the
  * states whose PR is their own payload carry it under that name.
  */
-function prOf(reading: WorkStateReading): PullRequestRecord | null {
+function prOf(reading: AfterAttemptReading): PullRequestRecord | null {
   return "pr" in reading ? reading.pr ?? null : null;
 }
 
@@ -315,7 +302,7 @@ function prOf(reading: WorkStateReading): PullRequestRecord | null {
  * requested stop (#146) — so the pause that keeps a work out of later rounds
  * (issue 119) and the stop evidence that owns the end both survive it.
  */
-function wroteNoVerdict(reading: WorkStateReading): boolean {
+function wroteNoVerdict(reading: AfterAttemptReading): boolean {
   switch (reading.state) {
     case "interrupted":
     case "model-provider-failure":
@@ -326,16 +313,6 @@ function wroteNoVerdict(reading: WorkStateReading): boolean {
     case "parked":
     case "fall":
     case "rejected": // a rejection WROTE a verdict: a closed PR is a Block, never an interruption
-    case "feedback":
-    case "repair":
-    case "repair-recovered":
-    case "repair-blocked":
-    case "repair-fall-blocked":
-    case "resumable":
-    case "continuity-paused":
-    case "stop-unconfirmed":
-    case "unreadable":
-    case "not-planned":
       return false;
   }
 }

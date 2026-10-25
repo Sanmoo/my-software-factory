@@ -1,4 +1,4 @@
-import type { WorkStateReading } from "../work-state/state.js";
+import type { AfterAttemptReading } from "../work-state/state.js";
 
 /**
  * The decided transition as the collection REPORTS it (ticket 13).
@@ -8,20 +8,27 @@ import type { WorkStateReading } from "../work-state/state.js";
  * payload its action needs — and this is the operator's, and the suites', word
  * for what it decided. It is computed once, where the decision is made, and
  * read by nobody on the decision path: no verdict, no action and no notice is
- * taken from the ruling.
+ * taken from the ruling. It is not a second vocabulary to decide in (the
+ * deleted `OutcomeRuling` was), so it declares the report's words only.
  */
-export interface AppliedRuling {
+export interface CollectedRulingReport {
   decision: "reserve" | "record-only" | "release" | "block" | "interrupt" | "done";
   because: string;
 }
 
 /**
- * The report's word for a decided state. Total over the one vocabulary: the
- * states the read AFTER an Attempt never answers still project — they belong to
- * the read before a launch — because the report must name a decision for
- * whatever the module answered rather than carry a hole.
+ * The report's word for a decided state.
+ *
+ * Total over what the read AFTER an Attempt can answer ({@link
+ * AfterAttemptReading}) and NOT over the module's whole vocabulary: the states
+ * of the read before a launch — `feedback`, `resumable`, the repairs, a
+ * continuity pause, an unconfirmed stop, `unreadable`, `not-planned` — are
+ * facts a collection never answers, and projecting them here as an interruption
+ * was an invented verdict (`facts.ts`: neither a failed read nor a not-planned
+ * issue ever becomes one; GLOSSARY: an *Interruption* is an attempt with no
+ * outcome record). The compiler now refuses the question instead.
  */
-export function projectCollectedRuling(reading: WorkStateReading): AppliedRuling {
+export function projectCollectedRuling(reading: AfterAttemptReading): CollectedRulingReport {
   switch (reading.state) {
     case "done":
       return { decision: "done", because: "issue-closed" };
@@ -41,7 +48,6 @@ export function projectCollectedRuling(reading: WorkStateReading): AppliedRuling
     case "interrupted":
     case "model-provider-failure":
     case "stop-resume":
-    case "stop-unconfirmed":
       // No attempt was consumed and the fall ruler never applies (issue 123):
       // the end is an interruption, whatever ended the turn or who ordered it.
       return { decision: "interrupt", because: "no-outcome" };
@@ -49,19 +55,5 @@ export function projectCollectedRuling(reading: WorkStateReading): AppliedRuling
       // A PR closed without merge is the Block the state declares (epic #198's
       // one delta): the report names the fact itself, never a fall.
       return { decision: "block", because: "pr-closed-unmerged" };
-    // The states the read AFTER an attempt never answers — they belong to the
-    // read before a launch. Named so the projection is total over the one
-    // vocabulary; the collection's own "no verdict was written" is what an end
-    // reaches when no other word applies.
-    case "feedback":
-    case "resumable":
-    case "repair":
-    case "repair-recovered":
-    case "repair-blocked":
-    case "repair-fall-blocked":
-    case "continuity-paused":
-    case "unreadable":
-    case "not-planned":
-      return { decision: "interrupt", because: "no-outcome" };
   }
 }
