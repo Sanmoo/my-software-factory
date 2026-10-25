@@ -22,7 +22,8 @@ import {
   type Reconciliation,
   type PoolEntry,
 } from "./state/derive.js";
-import { openLaunch, type Launch, type LaunchCycle, type Launchable } from "./launch/launch.js";
+import type { Launch, LaunchCycle, Launchable } from "./launch/launch.js";
+import { openPipeline } from "./launch/pipeline.js";
 import { openCollect, type Collect } from "./collect/collect.js";
 import type { CollectedRulingReport } from "./collect/ruling.js";
 import {
@@ -392,7 +393,7 @@ export class SweepEngine {
       log: this.log,
       ...(stop.cooperativeMs === undefined ? {} : { cooperativeMs: stop.cooperativeMs }),
     });
-    this.launch = openLaunch({
+    this.launch = openPipeline({
       config: deps.config,
       tickets: deps.tickets,
       pullRequests: deps.pullRequests,

@@ -15,7 +15,6 @@ import type { PauseRecord } from "../work-record/continuity.js";
 import type { ModelProviderFailure } from "../work-record/model-provider-error.js";
 import type { RepairAttempt } from "../work-record/repair.js";
 import type { OperationalClass } from "../work-state/state.js";
-import { openPipeline } from "./pipeline.js";
 
 /**
  * The launch (epic #198, ticket #205): the pipeline that turns one decided
@@ -154,8 +153,4 @@ export interface Launch {
   admissions(): readonly StopLaunch[];
   /** Whether an admission of this launch carries the work right now. */
   carries(key: string): boolean;
-}
-
-export function openLaunch(deps: LaunchDeps): Launch {
-  return openPipeline(deps);
 }

@@ -7,12 +7,9 @@ import type {
   TicketTracker,
   WorkPullRequest,
 } from "../tracker/expanded-port.js";
-import type { IssueComment } from "../tracker/port.js";
-import { isAgentSpeech, pauseMarkerId } from "../tracker/port.js";
 import { renderWorkIdentity, workIdentity, type WorkIdentity } from "../tracker/identity.js";
 import { mapBounded } from "../concurrency.js";
 import { workKeyOf } from "../pool/work-key.js";
-import type { PauseRecord } from "../work-record/continuity.js";
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
@@ -260,36 +257,6 @@ export function workPullRequest(
   return { work, pullRequest: seen?.identity ?? null };
 }
 
-/**
- * The human replies that resume blocked work: all non-agent comments AFTER
- * the last comment carrying the marker (ticket 04 Q6, amended in 18). The
- * author may be the worker account. Comment order is chronological.
- */
-export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueComment[] {
-  let lastMarkerIndex = -1;
-  for (const [index, comment] of comments.entries()) {
-    if (isAgentSpeech(comment.body)) lastMarkerIndex = index;
-  }
-  return comments.slice(lastMarkerIndex + 1).filter((comment) => !isAgentSpeech(comment.body));
-}
-
-export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
-  return humanCommentsAfterLastMarker(comments).length > 0;
-}
-
-/**
- * The human replies that answer ONE continuity pause (issue 174): every
- * non-agent comment after the FIRST factory comment carrying that pause's
- * marker. A later factory comment about the same pause — a re-assertion or a
- * diagnostic for a changed cause — never displaces an answer already given.
- *
- * Before the request lands there is nothing to answer, and an answer given to
- * an earlier question is never consumed. A record written before the identity
- * existed keeps the generic rule, so old pauses still resume.
- */
-export function humanCommentsForPause(comments: IssueComment[], pause: PauseRecord): IssueComment[] {
-  if (pause.id === undefined) return humanCommentsAfterLastMarker(comments);
-  const request = comments.findIndex((comment) => pauseMarkerId(comment.body) === pause.id);
-  if (request < 0) return [];
-  return comments.slice(request + 1).filter((comment) => !isAgentSpeech(comment.body));
-}
+// Which comments are the human's answer is the tracker's rule and lives there
+// (tracker/speech.ts): "speech, not login" is decided by the marker alone, and
+// the Work state and the Continuity pause both ask it.

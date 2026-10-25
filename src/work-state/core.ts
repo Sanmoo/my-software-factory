@@ -13,10 +13,7 @@ import type { WorkRecordSnapshot } from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import { confirmedRepairTrigger, repairSignature } from "../pool/repair-trigger.js";
-import {
-  humanCommentsAfterLastMarker,
-  humanCommentsForPause,
-} from "../state/derive.js";
+import { humanCommentsAfterLastMarker, humanCommentsForPause } from "../tracker/speech.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
 import type { AfterAttemptReading, RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 

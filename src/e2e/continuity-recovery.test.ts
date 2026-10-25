@@ -20,7 +20,7 @@ import { launchedNumber } from "./work-fixtures.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
 import { readEffectJournal, readGuardrailState, readPause } from "../work-record/continuity.js";
 import { appendJournalIntent, appendJournalStart } from "../work-record/continuity.js";
-import { humanCommentsForPause } from "../state/derive.js";
+import { humanCommentsForPause } from "../tracker/speech.js";
 import { readRecoveryLedger } from "../work-record/recovery.js";
 import { seedExtraToolResult, seedSession, seedSessionToolCall, type SeededCallResult } from "./session-fixtures.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";

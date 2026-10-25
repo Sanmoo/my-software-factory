@@ -1,7 +1,8 @@
 import { renderWorkIdentity } from "../tracker/identity.js";
 import type { Launchable } from "../launch/launch.js";
 import type { WorkIdentity } from "../tracker/identity.js";
-import { humanCommentsForPause, workPullRequest } from "../state/derive.js";
+import { workPullRequest } from "../state/derive.js";
+import { humanCommentsForPause } from "../tracker/speech.js";
 import { continuityPausedCommentBody } from "../state/outcome.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { readAttemptLedger } from "../work-record/attempts.js";

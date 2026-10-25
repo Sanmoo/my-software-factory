@@ -22,7 +22,8 @@ import type { WriteOutcome } from "../tracker/port.js";
 import type { WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
-import { openLaunch, type Launch, type Launchable, type LaunchCycle } from "./launch.js";
+import type { Launch, Launchable, LaunchCycle } from "./launch.js";
+import { openPipeline } from "./pipeline.js";
 import { openWorkState } from "../work-state/state.js";
 import { recordFailure } from "../pool/recovery.js";
 import { readLaunchFacts } from "../pool/registry.js";
@@ -262,7 +263,7 @@ describe("the launch — the pipeline from the claim to the collected end", () =
       ...options.cycle,
     };
     return {
-      launch: openLaunch({
+      launch: openPipeline({
         config,
         tickets: tracker,
         pullRequests: tracker,
