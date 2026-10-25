@@ -23,6 +23,13 @@ import type { WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
 import { openLaunch, type Launch, type Launchable, type LaunchCycle } from "./launch.js";
+import { openWorkState } from "../work-state/state.js";
+import { recordFailure } from "../pool/recovery.js";
+import { readLaunchFacts } from "../pool/registry.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
+import { DESFECHO_FILENAME, type OutcomeRecord } from "../work-record/outcome.js";
+import { appendAttemptEvent } from "../work-record/logs.js";
+import { writeFileSync } from "node:fs";
 
 /**
  * The launch at its own seam (epic #198, ticket #205): the pipeline from the
@@ -369,7 +376,56 @@ describe("the launch — the pipeline from the claim to the collected end", () =
     );
   });
 
-  test("a prepare that fails rejects the admission and launches nothing", async () => {
+  test("a human answer WRITES the fall-count reset, so both readings agree the next fall releases (ticket 14)", async () => {
+    // Attempts 1 and 2 both fell: the 2nd blocked, and `recordFailure` left the
+    // consecutive count in the ledger (`lastFallAttempt`). The human answered, so
+    // the resume launches attempt 3.
+    const h = makeHarness({ outcomes: ["clean-without-pr"] });
+    const work = githubWork(REPO, ISSUE);
+    const dir = workDir(h.layout, REPO, ISSUE);
+    mkdirSync(dir, { recursive: true });
+    const fell: OutcomeRecord = { class: "clean-without-pr", attempt: 2 };
+    writeFileSync(join(dir, DESFECHO_FILENAME), JSON.stringify(fell), "utf8");
+    appendAttemptEvent(dir, 1, { event: "session-start" });
+    appendAttemptEvent(dir, 2, { event: "session-start" });
+    await recordFailure(dir, 2, "clean-without-pr", () => new Date("2026-01-01T00:00:00Z"));
+    seedIssue(h.tracker, { repo: REPO, number: ISSUE, labels: [DEFAULT_LABELS.blocked], createdAt: CREATED });
+
+    // The fact both readings start from: the previous attempt fell.
+    assert.deepEqual(await readLaunchFacts(dir), { attempt: 3, previousFall: true });
+    assert.equal((await readRecoveryLedger(dir))?.lastFallAttempt, 2, "the ledger counts the 2nd fall");
+
+    const next = await h.launch.attempt({ work, dir, kind: "resume", createdAt: CREATED, pr: null });
+    assert.equal(next, null);
+
+    // The reset is the RECORD's fact, not a launch's memory: the answer is over,
+    // so the count is gone from disk and survives the sweep that reads it next.
+    assert.equal(
+      (await readRecoveryLedger(dir))?.lastFallAttempt,
+      null,
+      "the human's answer restarts the count in the ledger (an in-memory flag would be lost)",
+    );
+
+    // And the collection reading — the one a survivor end or the next sweep uses,
+    // which reads the ledger and never a launch's memory — agrees: attempt 3's
+    // written failure is the 1st of a FRESH count, so it releases. Reading the
+    // stale ledger instead is exactly how the two readings used to disagree.
+    const state = openWorkState({
+      tickets: h.tracker,
+      pullRequests: h.tracker,
+      workspace: h.layout,
+      labels: configOf(h.layout).labels,
+      workerAccount: configOf(h.layout).workerGhAccount,
+      recovery: configOf(h.layout).recovery,
+      modelProvider: configOf(h.layout).modelProvider,
+      inFlight: new Set<string>(),
+    });
+    const reading = await state.afterAttempt({ work, dir, attempt: 3, stopping: false });
+    assert.equal(reading.state, "fall");
+    assert.equal(reading.state === "fall" ? reading.decision : null, "release", "the reset count releases");
+  });
+
+    test("a prepare that fails rejects the admission and launches nothing", async () => {
     const h = makeHarness();
     const work = githubWork(REPO, ISSUE);
     const dir = workDir(h.layout, REPO, ISSUE);
