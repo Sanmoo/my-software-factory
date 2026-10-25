@@ -541,7 +541,50 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
       ].join("\n"),
       "utf8",
     );
-    return runCli(dir, ["status"], installGhShim(dir).env());
+    // The one REST channel the run needs: the Work state reads each reserved
+    // work's ticket, its PR linkage and — with no PR — its conversation
+    // (ticket #204). Reads only; `repos: []` keeps the pool listing offline.
+    const shim = installGhShim(dir, {
+      rest: {
+        "repos/Sanmoo/my-tasks/issues/1": {
+          body: {
+            number: 1,
+            title: "issue 1",
+            created_at: "2026-02-01T00:00:00Z",
+            state: "open",
+            labels: [{ name: "agent-claimed" }],
+            assignees: [{ login: "bot-do-samuca" }],
+          },
+        },
+        "repos/Sanmoo/my-tasks/issues/1/timeline?per_page=100": { body: [] },
+        "repos/Sanmoo/my-tasks/issues/1/comments": { body: [] },
+        "repos/Sanmoo/my-tasks/issues/2": {
+          body: {
+            number: 2,
+            title: "issue 2",
+            created_at: "2026-02-01T00:00:00Z",
+            state: "open",
+            labels: [{ name: "agent-claimed" }],
+            assignees: [{ login: "bot-do-samuca" }],
+          },
+        },
+        "repos/Sanmoo/my-tasks/issues/2/timeline?per_page=100": { body: [] },
+        "repos/Sanmoo/my-tasks/issues/2/comments": { body: [] },
+        "repos/Sanmoo/my-tasks/issues/3": {
+          body: {
+            number: 3,
+            title: "issue 3",
+            created_at: "2026-02-01T00:00:00Z",
+            state: "open",
+            labels: [],
+            assignees: [],
+          },
+        },
+        "repos/Sanmoo/my-tasks/issues/3/timeline?per_page=100": { body: [] },
+        "repos/Sanmoo/my-tasks/issues/3/comments": { body: [] },
+      },
+    });
+    return runCli(dir, ["status"], shim.env());
   }
 
   test("status never creates the workspace and answers reserved-without-attempt / running-or-orphaned / last outcome / archived from disk (+ the probe when Docker answers)", () => {
@@ -552,14 +595,17 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.ok(!before, "status created nothing before the run");
     assert.ok(!existsSync(join(dir, "ws", "repos")), "status never ensures the workspace (read-only)");
-    assert.match(result.stdout, /reserved without attempt[^\n]*: 1\n\s+Sanmoo\/my-tasks#3/);
+    // #3 is a bare reservation whose issue carries no factory mark: the state
+    // reads it as parked — the claim the registry saw is not a claim the
+    // tracker agrees with.
+    assert.match(result.stdout, /nothing to decide: 1\n\s+Sanmoo\/my-tasks#3 — parked \(/);
     // #1 carries attempt evidence: where Docker answers, the temp workspace has
     // no worker bind, so the work is Orphaned; without Docker liveness is
-    // unknown and the registry-only line still names it, unclassified.
+    // unknown and the Work state still names it, as the interruption it is.
     if (result.stdout.includes("liveness unknown (docker not reachable)")) {
       assert.match(
         result.stdout,
-        /interrupted attempts without their own outcome[^\n]*: 1\n\s+Sanmoo\/my-tasks#1 \(attempt 1 was interrupted — no outcome record on disk\)/,
+        /Sanmoo\/my-tasks#1 — interrupted \(attempt 1 has no outcome record of its own — no attempt consumed\)/,
       );
     } else {
       assert.match(result.stdout, /orphaned \([^\n]*\): 1\n\s+Sanmoo\/my-tasks#1/);
@@ -572,7 +618,7 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
     const result = runStatus();
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /pool \(eligible\): none/);
-    assert.match(result.stdout, /reserved without attempt[^\n]*: none/);
+    assert.match(result.stdout, /reserved work \([^\n]*\): none/);
     assert.match(result.stdout, /last outcome: none/);
   });
 });

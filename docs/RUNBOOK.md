@@ -229,14 +229,7 @@ msf status --all  # every entry, no cap
 
 Derives on demand from the tracker, the workspace disk and a read-only Docker
 probe: live workers (**running**), the attempts interrupted with no worker
-alive (**orphaned**), the reservations, the **recovery** ledger (was the last
-stop the operator's requested stop, still unconfirmed, an interruption absorbed
-by its budget, or a failure that consumed the attempt), the **model provider**
-ledger (its retries, the provider's message, and whether the work is
-**awaiting model provider**), the works **continuity paused** (the attempt that
-cannot be continued safely, with its reason, the attempt it waits for — its own
-planned number beside the ledger's last evidenced one when they differ — and
-its session when known), the **repair** cycles, last outcomes, the pool, the
+alive (**orphaned**), the **reserved work** block, last outcomes, the pool, the
 Jira **candidates** (below), archived dones — and the two reconciliation
 leftovers when tracker and workspace disagree:
 
@@ -247,13 +240,30 @@ leftovers when tracker and workspace disagree:
 - an **unmarked reservation** is a fact for a human decision — the report
   offers no command.
 
+The **reserved work** block is the Work state itself — the same states the
+operation acts on, so the report cannot describe a world the factory is not
+acting on. Every reserved work gets one line, its state plus the facts that
+state carries, grouped by what happens next: **the factory proceeds by itself**
+(a done to archive, a feedback round, a repair round, an interruption on its
+recovery budget, a model provider retry with the provider's message and whether
+it is **awaiting model provider**, a requested stop to resume); **waiting for
+the operator** (a **continuity pause** with its reason, the attempt it waits
+for — its own planned number beside the ledger's last evidenced one when they
+differ — and its session when known; an unconfirmed stop; a repair that
+exhausted its rounds; a ticket that could not be read); **nothing to decide**
+(**parked**, or a ticket closed as not-planned). A repair cycle's own facts
+(rounds, falls, the unpublished attempt's publication and local work, the
+evidence paths) hang off that work's line. A reserved dir whose key names no
+GitHub work — a Jira reservation — is listed as not read, with the identity its
+record carries, and no state is invented for it.
+
 Each entry names the work by its ticket source and the destination repository;
 a GitHub Issues work keeps the `owner/repo#n` spelling. The report never
 deletes, moves or archives anything; a released work (reservation + pool label)
 is normal and is never reported. Without Docker the
-two liveness lines read `liveness unknown (docker not reachable)`; the works
-carrying attempt evidence are still listed, unclassified, and the rest of the
-report is unchanged. A work carried by more than one container lists each
+two liveness lines read `liveness unknown (docker not reachable)`; every
+reserved work is still named, by its own state, and the rest of the report is
+unchanged. A work carried by more than one container lists each
 container and a **duplicate workers** line — the decision is yours.
 
 **Jira candidates** are read-only: each `jira:` selection's JQL result in the

@@ -6,7 +6,9 @@ import {
   type RegistryView,
 } from "../pool/registry.js";
 import { readLastAttempt } from "../work-record/attempts.js";
-import type { TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
+import type { PullRequestTracker, TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
+import { workOfKey } from "../pool/work-key.js";
+import { openWorkState, type WorkStateReading } from "../work-state/state.js";
 import {
   githubSelections,
   repositoryIdentityKey,
@@ -111,11 +113,27 @@ export interface JiraSelectionReader {
   tickets: TicketTracker;
 }
 
+/**
+ * The GitHub adapter: it serves BOTH ports — the ticket facts and the PR facts —
+ * through the one identity the factory verifies at boot. `msf status` reads the
+ * Work state through it (ticket #204), so the reserved works are described in
+ * the vocabulary the engine acts on, from the same facts.
+ */
+export type StatusGitHub = TicketTracker & PullRequestTracker;
+
+/** One reserved Work with the state the module reads for it (ticket #204):
+ *  what happened to it, and what the factory may do now. The key is the dir's
+ *  own name — the identity anchor, never reconstructed from configuration. */
+export interface ReservedWorkState {
+  key: string;
+  reading: WorkStateReading;
+}
+
 /** Where the status derivation reads from: the GitHub Issues tracker (always
  *  present — the factory verifies its GitHub identity at boot) and the Jira
  *  selections. */
 export interface StatusSources {
-  github: TicketTracker;
+  github: StatusGitHub;
   jira?: readonly JiraSelectionReader[];
 }
 
@@ -155,6 +173,14 @@ export interface StatusView {
   registry: RegistryView;
   /** Running and Orphaned, or unknown when Docker could not answer. */
   liveness: Liveness;
+  /** The state of every reserved Work, as the module the engine acts on reads
+   *  it (ticket #204) — the renderer names no state of its own. */
+  reserved: ReservedWorkState[];
+  /** Reserved dirs the state cannot be asked about: their registry key names no
+   *  Work it may read (a Jira dir keeps its readable ticket key in the
+   *  reservation record). They are reported as the registry facts they are; no
+   *  state is invented for them. */
+  unaddressedReservations: string[];
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
   /** The configured model provider budget (issue 144). */
@@ -174,28 +200,90 @@ export async function deriveStatus(
 ): Promise<StatusView> {
   const registry = await scanRegistry(layout);
   // The reservations this workspace holds: every dir still under trabalhos/.
-  const reservations = new Set<string>([
+  // The same list answers the pool's "is this issue already reserved" and the
+  // Work state's "what is this Work's state now" — one read of the disk.
+  const reservedKeys = [
     ...registry.attemptsWithoutOwnOutcome.map((entry) => entry.key),
     ...registry.reservedWithoutAttempt,
     ...registry.lastOutcome.map((entry) => entry.key),
-  ]);
+  ];
+  const reservations = new Set<string>(reservedKeys);
   const selections = githubSelections(config.repos);
-  const state =
+  const tracker =
     selections.length === 0
       ? emptyTrackerState()
       : await deriveTrackerState(sources.github, selections, config.labels, reservations);
   const jira = holdAmbiguousTickets(await readJiraCandidates(sources.jira ?? []));
+  // The liveness answer comes FIRST: what a live worker carries is in flight,
+  // and the Work state is asked with that set — the very reading the engine
+  // acts on. The probe stays exactly what it was (ADR 0002): a read.
+  const liveness = await classifyLiveness(registry, layout, probe);
+  const reserved = await readReservedStates(sources.github, config, layout, liveness, reservedKeys);
   return {
-    pool: state.pool,
+    pool: tracker.pool,
     jira: jira.selections,
     jiraAmbiguous: jira.ambiguous,
-    unbackedClaims: state.unbackedClaims,
-    unmarkedReservations: state.unmarkedReservations,
+    unbackedClaims: tracker.unbackedClaims,
+    unmarkedReservations: tracker.unmarkedReservations,
     registry,
-    liveness: await classifyLiveness(registry, layout, probe),
+    liveness,
+    reserved: reserved.reserved,
+    unaddressedReservations: reserved.unaddressedReservations,
     recoveryBudget: config.recovery,
     modelProviderBudget: config.modelProvider,
   };
+}
+
+/**
+ * The state of every reserved Work, read by the module the engine acts on
+ * (ticket #204). This is the ONE reading status makes of "what happened to this
+ * Work, and what may the factory do now": the renderer names no state of its
+ * own, and cannot describe a world the engine is not acting on.
+ *
+ * Nothing here writes — a reading claims nothing, comments nothing, blocks
+ * nothing and archives nothing (ADR 0002) — and nothing here ensures the
+ * workspace: an absent work dir is an empty record, not a creation.
+ *
+ * A work a live worker carries is skipped, exactly as the tick skips it: the
+ * running/duplicate sections already own it, and the module is opened with the
+ * same in-flight set the engine uses (a running worker is its own state).
+ */
+async function readReservedStates(
+  github: StatusGitHub,
+  config: Config,
+  layout: WorkspaceLayout,
+  liveness: Liveness,
+  keys: readonly string[],
+): Promise<{ reserved: ReservedWorkState[]; unaddressedReservations: string[] }> {
+  const carried = new Set(liveness.state === "known" ? liveness.running.map((worker) => worker.key) : []);
+  const workState = openWorkState({
+    tickets: github,
+    pullRequests: github,
+    workspace: layout,
+    labels: config.labels,
+    workerAccount: config.workerGhAccount,
+    recovery: config.recovery,
+    modelProvider: config.modelProvider,
+    inFlight: carried,
+  });
+  const addressable: Array<{ key: string; work: WorkIdentity }> = [];
+  const unaddressedReservations: string[] = [];
+  for (const key of keys) {
+    if (carried.has(key)) continue;
+    const work = workOfKey(key);
+    // A dir key that names no Work honestly (another provider's dir: its
+    // readable ticket key lives in the reservation record, not in the key) is
+    // never handed to the state as a guess.
+    if (work === null) unaddressedReservations.push(key);
+    else addressable.push({ key, work });
+  }
+  const reserved = await Promise.all(
+    addressable.map(async (entry): Promise<ReservedWorkState> => ({
+      key: entry.key,
+      reading: await workState.beforeLaunch({ work: entry.work, dir: workDirOfKey(layout, entry.key) }),
+    })),
+  );
+  return { reserved, unaddressedReservations };
 }
 
 /** No configured GitHub Issues repo means no GitHub Issues read. Fresh per

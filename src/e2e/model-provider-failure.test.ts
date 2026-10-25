@@ -400,13 +400,10 @@ describe("e2e: a model provider failure is not an interruption of the agent (iss
     const view = await deriveStatus({ github: tracker }, config, layout, () => Promise.resolve([]));
     const text = renderStatus(view);
 
+    assert.match(text, /the factory proceeds by itself: 1/, "the retry is the factory's own move");
     assert.match(
       text,
-      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): 1/,
-    );
-    assert.match(
-      text,
-      /Sanmoo\/my-tasks#1 \(attempt 1: 1\/1 retries \(waits 10ms\); last model provider error: 429: .*Endpoint is unavailable/,
+      /Sanmoo\/my-tasks#1 — model provider failure \(attempt 1: 1\/1 retries \(waits 10ms\); last model provider error: 429: .*Endpoint is unavailable/,
     );
     assert.match(text, /— awaiting model provider — a help request, not a block\)/);
     assert.match(

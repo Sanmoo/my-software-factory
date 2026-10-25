@@ -97,6 +97,14 @@ describe("status — derivation on demand + local registry scan", () => {
     return target;
   }
 
+  /** The tracker's side of a reserved work: an open issue carrying the claim —
+   *  what the Work state reads to name the state the registry's own facts
+   *  describe (ticket #204). A claim with a reservation on disk is not an
+   *  unbacked claim, so no reconciliation line moves. */
+  function claimIssue(tracker: FakeTrackerAdapter, number: number): void {
+    seedIssue(tracker, { repo: REPO, number, labels: [DEFAULT_LABELS.claimed] });
+  }
+
   test("eligible works derive on demand through the port — the factory being stopped is the default state", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
@@ -186,6 +194,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates (issue 160)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 6);
     seedAttempt(4, 1);
     seedAttempt(5, 1);
     seedAttempt(6, 1); // no container: a genuine orphan
@@ -280,6 +289,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("without Docker the status degrades: liveness unknown, the rest of the answers intact", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 4);
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
     seedAttempt(4, 1);
     mkdirSync(join(layout.archive, `${REPO}#3-2026-02-01`), { recursive: true });
@@ -297,8 +307,11 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /orphaned[^\n]*: liveness unknown \(docker not reachable\)/);
     assert.match(
       text,
-      /interrupted attempts without their own outcome \(Running or Orphaned — only Docker can tell\): 1\n\s+Sanmoo\/my-tasks#4 \(attempt 1 was interrupted — no outcome record on disk\)/,
-      "the registry-only view is still complete — the works are named, just not classified",
+      new RegExp(
+        `reserved work[^\\n]*: 1\\n\\s+the factory proceeds by itself: 1\\n\\s+${REPO}#4 — interrupted ` +
+          "\\(attempt 1 has no outcome record of its own",
+      ),
+      "the state still names every reserved work when Docker cannot answer",
     );
     assert.match(text, /pool \(eligible\): 1/);
     assert.match(text, new RegExp(`archived \\(dones\\): 1[\\s\\S]*${REPO}#3-2026-02-01`));
@@ -306,6 +319,8 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("renderStatus answers in the order a human asks: running → orphaned → last outcome → pool → archived", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 5);
+    claimIssue(tracker, 2);
     seedIssue(tracker, { repo: REPO, number: 1, labels: [DEFAULT_LABELS.ready] });
     mkdirSync(workDir(layout, REPO, 1), { recursive: true }); // reserved, no attempt yet
     seedAttempt(4, 1); // live below
@@ -334,13 +349,12 @@ describe("status — derivation on demand + local registry scan", () => {
         `  ${REPO}#4 (13m, attempt 1, container aaaa00000004)`,
         "duplicate workers (more than one container for the same work — a human decision is needed): none",
         "orphaned (attempt interrupted — no outcome record of its own, no worker alive): 1",
-        `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk)`,
-        "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
-        `  ${REPO}#1`,
-        "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt): none",
-        "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
-        "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator): none",
-        "repair (unpublished attempts, local work, pending reconciliation): none",
+        `  ${REPO}#5 (attempt 1 was interrupted — no outcome record on disk; 0/3 recoveries consumed (waits 1s/4s/16s) — the next interruption recovers on this budget)`,
+        "reserved work (the state the factory acts on — every reserved Work, grouped by what happens next): 2",
+        "  the factory proceeds by itself: 1",
+        `    ${REPO}#2 — fall (attempt 1: a written failure the factory did not rule yet — released to the pool)`,
+        "  nothing to decide: 1",
+        `    ${REPO}#1 — parked (waiting for the human, or a released work the pool owns)`,
         "last outcome: 1",
         `  ${REPO}#2 = clean-without-pr (attempt 1)`,
         "pool (eligible): 1",
@@ -354,6 +368,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("a continuity pause is named with its reason — not hidden as an ordinary reservation", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
     writeFileSync(
       join(dir, "pausa.json"),
@@ -373,12 +388,13 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.deepEqual(view.registry.continuityPauses.map((entry) => entry.pause.reason), ["session-missing"]);
     assert.match(
       renderStatus(view),
-      new RegExp(`continuity paused[\\s\\S]*${REPO}#21 \\(attempt 1: session-missing — the session recorded for attempt 1 is not on disk\\)`),
+      new RegExp(`${REPO}#21 — continuity paused \\(attempt 1: session-missing — the session recorded for attempt 1 is not on disk\\)`),
     );
   });
 
   test("a pause on the attempt the launch planned is shown with the ledger's last evidenced attempt (issue 175)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
     // The launch planned attempt 2 and continuity refused it before the runtime
     // spawned: the record names 2, the ledger evidences 1.
@@ -408,7 +424,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       renderStatus(view),
       new RegExp(
-        `continuity paused[\\s\\S]*${REPO}#21 \\(planned attempt 2; last evidenced attempt 1; session sess-4f2a: ` +
+        `${REPO}#21 — continuity paused \\(planned attempt 2; last evidenced attempt 1; session sess-4f2a: ` +
           `effect-ambiguous — the push to the work branch may or may not have landed\\)`,
       ),
     );
@@ -418,6 +434,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("with liveness unknown, a paused work is listed once — under the pause, not as an interruption", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
     writePause(dir, {
       version: 1,
@@ -431,16 +448,18 @@ describe("status — derivation on demand + local registry scan", () => {
     const unreachable: LivenessProbe = () => Promise.reject(new Error("docker: command not found"));
     const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, unreachable));
 
-    assert.match(
-      text,
-      /interrupted attempts without their own outcome \(Running or Orphaned — only Docker can tell\): none/,
-      "the pause's own section owns the work — never two lines for one wait",
+    assert.equal(
+      (text.match(new RegExp(`${REPO}#21`, "g")) ?? []).length,
+      1,
+      "the pause's own state owns the work — never two lines for one wait",
     );
-    assert.match(text, new RegExp(`continuity paused[\\s\\S]*${REPO}#21 \\(planned attempt 2`));
+    assert.match(text, new RegExp(`${REPO}#21 — continuity paused \\(planned attempt 2`));
+    assert.doesNotMatch(text, /#21[^\n]*interrupted/, "and never also as an interruption");
   });
 
   test("a pause on the attempt the ledger evidences shows one number", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1, 2);
     writePause(dir, {
       version: 1,
@@ -453,11 +472,15 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const text = renderStatus(await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS));
 
-    assert.match(text, new RegExp(`${REPO}#21 \\(attempt 2: journal-unreadable — the effect journal could not be read\\)`));
+    assert.match(
+      text,
+      new RegExp(`${REPO}#21 — continuity paused \\(attempt 2: journal-unreadable — the effect journal could not be read\\)`),
+    );
   });
 
   test("a pause the ledger advanced beyond is history, not an active pause", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1, 2);
     writePause(dir, {
       version: 1,
@@ -471,11 +494,14 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(view.registry.continuityPauses, [], "attempt 2 is evidenced: attempt 1's pause is over");
-    assert.match(renderStatus(view), /continuity paused[^\n]*: none/);
+    const text = renderStatus(view);
+    assert.doesNotMatch(text, /continuity paused/, "a pause the record advanced past is history");
+    assert.match(text, /#21 \(attempt 2 was interrupted/, "the attempt is an interruption, and the state says so");
   });
 
   test("a resolved pause is not an active pause", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
     writePause(dir, {
       version: 1,
@@ -491,11 +517,14 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.ok(existsSync(join(dir, `${PAUSE_FILENAME}.resolved`)), "the resolved evidence stays on disk");
     assert.deepEqual(view.registry.continuityPauses, []);
-    assert.match(renderStatus(view), /continuity paused[^\n]*: none/);
+    const text = renderStatus(view);
+    assert.doesNotMatch(text, /continuity paused/, "a resolved pause is never an active one");
+    assert.match(text, /#21 \(attempt 1 was interrupted/, "the attempt is an interruption, and the state says so");
   });
 
   test("an unreadable pause is still shown — the attempt unknown, never an invented one", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1);
     writeFileSync(join(dir, PAUSE_FILENAME), "{not json", "utf8");
 
@@ -513,13 +542,14 @@ describe("status — derivation on demand + local registry scan", () => {
     const text = renderStatus(view);
     assert.match(
       text,
-      new RegExp(`${REPO}#21 \\(attempt unknown: record-unreadable — the pause record at pausa\\.json could not be read`),
+      new RegExp(`${REPO}#21 — continuity paused \\(attempt unknown: record-unreadable — the pause record at pausa\\.json could not be read`),
     );
     assert.doesNotMatch(text, /attempt 0/, "a number the record never named is not printed");
   });
 
   test("a fallen attempt is named even when an older outcome record sits on disk (issue 112)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 20);
     const dir = seedAttempt(20, 1, 2);
     writeFileSync(
       join(dir, DESFECHO_FILENAME),
@@ -535,13 +565,17 @@ describe("status — derivation on demand + local registry scan", () => {
     ]);
     assert.deepEqual(view.registry.lastOutcome.map((entry) => entry.record.attempt), [1]);
     const text = renderStatus(view);
-    assert.match(text, /#20 \(attempt 2 was interrupted — the record on disk is attempt 1's — history, not this attempt's\)/);
+    assert.match(
+      text,
+      /#20 \(attempt 2 was interrupted — the record on disk is attempt 1's — history, not this attempt's;/,
+    );
     assert.match(text, /last outcome: 1[\s\S]*#20 = pr-open \(attempt 1\)/);
     assert.doesNotMatch(text, /attempt 2 was interrupted[^\n]*pr-open/, "history is never presented as the current result");
   });
 
   test("the repair section exposes the unpublished attempt, its local work and the pending reconciliation", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 21);
     const dir = seedAttempt(21, 1, 2);
     await writeRepairCycle(dir, {
       usedRounds: 1,
@@ -565,10 +599,9 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
-    assert.match(text, /repair \(unpublished attempts, local work, pending reconciliation\): 1/);
     assert.match(
       text,
-      /#21 \(rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent\)/,
+      /#21 — parked[^\n]*repair cycle: rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent/,
       "the diagnosis names the attempt's own evidence paths, present or absent (story 32)",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
@@ -576,6 +609,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("the repair evidence reports an unverifiable location as such, never as absent", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 23);
     const dir = seedAttempt(23, 1, 2);
     // A file where the attempt's session dir should be: the probe cannot look
     // inside it (ENOTDIR is absence; a permission error is "could not be verified").
@@ -600,15 +634,24 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
   });
 
-  test("the recovery section says whether the last stop was an interruption or a failure (issue 123)", async () => {
+  test("the state says whether an attempt was interrupted or fell, and the record facts stay (issue 123)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 30);
+    claimIssue(tracker, 31);
     // #30: interrupted twice — two recoveries consumed, the attempt kept.
     const interrupted = seedAttempt(30, 2);
     const now = () => new Date("2026-01-01T00:00:00Z");
     await consumeRecovery(interrupted, DEFAULT_RECOVERY_BUDGET, 2, now);
     await consumeRecovery(interrupted, DEFAULT_RECOVERY_BUDGET, 2, now);
-    // #31: a written failure — the attempt was consumed.
+    // #31: a written failure — the attempt was consumed. The outcome record is
+    // the fact the state rules on; the ledger is what the collection writes
+    // beside it (settleFailure writes both).
     const failed = seedAttempt(31, 1);
+    writeFileSync(
+      join(failed, DESFECHO_FILENAME),
+      JSON.stringify({ class: "clean-without-pr", attempt: 1 }),
+      "utf8",
+    );
     await recordFailure(failed, 1, "clean-without-pr", now);
 
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
@@ -616,18 +659,40 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /recovery \(what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt\): 2/,
-    );
-    assert.match(
-      text,
-      /#30 \(attempt 2: last stop was an interruption — no attempt consumed; 2\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
+      /#30 \(attempt 2 was interrupted — no outcome record on disk; 2\/3 recoveries consumed \(waits 1s\/4s\/16s\) — the next interruption recovers on this budget\)/,
       "the interruption names the consumed recoveries and the configured backoff",
     );
     assert.match(
       text,
-      /#31 \(attempt 1: last stop was a failure \(clean-without-pr\) — the attempt was consumed\)/,
+      /#31 — fall \(attempt 1: a written failure the factory did not rule yet — released to the pool\)/,
+      "a written failure is a fall, and the state names the attempt it consumed",
     );
+    assert.match(text, /#31 = clean-without-pr \(attempt 1\)/, "the outcome record is still a fact of its own");
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
+  });
+
+  test("a PR closed without merge is blocked with the PR pointed at — the state names the fact (ticket #203)", async () => {
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 50);
+    seedAttempt(50, 1);
+    tracker.seedPullRequest({ repo: REPO, number: 50 });
+    tracker.closePr({ repo: REPO, prNumber: 50 }, { merged: false });
+
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
+    const reading = view.reserved.find((entry) => entry.key === `${REPO}#50`)?.reading;
+    assert.equal(reading?.state, "rejected", "a PR closed without merge is a Block, never a release");
+    assert.ok(reading?.state === "rejected", "the state carries the payload its action needs");
+    assert.equal(reading.pr.number, 50, "the PR the block points at travels with the state");
+    assert.match(reading.comment, /closed without merging/);
+
+    const text = renderStatus(view);
+    assert.match(
+      text,
+      new RegExp(
+        `${REPO}#50 — rejected \\(PR #50 was closed without merging — blocked with a comment pointing at the PR\\)`,
+      ),
+      "the operator reads the reserved work blocked, with the PR pointed at",
+    );
   });
 
   /** The attempt's current session ended by a model provider error at `at`. */
@@ -652,6 +717,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("the model provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 40);
     const dir = seedAttempt(40, 1);
     const at = seedModelProviderEnding(dir, 1);
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
@@ -664,17 +730,19 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): 1/,
+      /the factory proceeds by itself: 1/,
+      "a model provider failure is the factory's own retry, not a wait for the operator",
     );
     assert.match(
       text,
-      /#40 \(attempt 1: 1\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 429: upstream unavailable — retrying after the model provider backoff\)/,
+      /#40 — model provider failure \(attempt 1: 1\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 429: upstream unavailable — retrying after the model provider backoff\)/,
     );
     assert.doesNotMatch(text, /blocked/, "a model provider failure is never rendered as a block");
   });
 
   test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 41);
     const dir = seedAttempt(41, 1);
     const at = seedModelProviderEnding(dir, 1, 1_700_000_000_900);
     for (let index = 0; index < DEFAULT_MODEL_PROVIDER_BUDGET.maxRetries; index += 1) {
@@ -693,13 +761,15 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /#41 \(attempt 1: 4\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 503: unavailable — awaiting model provider — a help request, not a block\)/,
+      /#41 — model provider failure \(attempt 1: 4\/4 retries \(waits 15s\/30s\/60s\/120s\); last model provider error: 429: upstream unavailable — awaiting model provider — a help request, not a block\)/,
+      "the exhausted budget is the help request the attempt's own stream reports",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
   test("a later plain interruption is not read as 'retrying after the model provider' (issue 144)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 42);
     const dir = seedAttempt(42, 1);
     const at = seedModelProviderEnding(dir, 1);
     await settleModelProviderFailure(dir, DEFAULT_MODEL_PROVIDER_BUDGET, 1, {
@@ -712,9 +782,9 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
 
-    assert.match(
+    assert.doesNotMatch(
       text,
-      /model provider \(the last attempt ended by a model provider failure — not an interruption of the agent\): none/,
+      /model provider failure/,
       "the earlier failure is history: the current session is a plain interruption",
     );
     assert.match(
@@ -725,8 +795,10 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /#42 \(attempt 1 was interrupted/);
   });
 
-  test("the requested stop and the unconfirmed stop are named in the recovery section (issue #146)", async () => {
+  test("the requested stop and the unconfirmed stop are states of their own (issue #146)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 33);
+    claimIssue(tracker, 34);
     const stopped = seedAttempt(33, 1);
     await recordStopRequest(stopped, 1);
     const unconfirmed = seedAttempt(34, 2);
@@ -736,22 +808,23 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /#33 \(attempt 1: last stop was the operator's requested stop — no attempt consumed and no recovery spent; it resumes on the next run\)/,
+      /#33 — stop-resume \(attempt 1: last stop was the operator's requested stop — no attempt consumed and no recovery spent; it resumes on the next run\)/,
     );
     assert.match(
       text,
-      /#34 \(attempt 2: the requested stop could not be confirmed — a worker of this work is still alive; it will not relaunch until the previous worker is known to be gone\)/,
+      /#34 — stop-unconfirmed \(attempt 2: the requested stop could not be confirmed — a worker of this work is still alive; it will not relaunch until the previous worker is known to be gone\)/,
       "an unconfirmed stop is a diagnosis the operator can act on",
     );
     // The stop owns its explanation: neither work is repeated under the
     // interruption wording (the branch's own GLOSSARY stops calling the
     // operator's act an Interruption).
-    assert.doesNotMatch(text, /#33 \(attempt 1 was interrupted/);
-    assert.doesNotMatch(text, /#34 \(attempt 2 was interrupted/);
+    assert.doesNotMatch(text, /#33[^\n]*interrupted/);
+    assert.doesNotMatch(text, /#34[^\n]*interrupted/);
   });
 
-  test("a legacy work dir without a recovery ledger shows no recovery line — nothing is invented", async () => {
+  test("a legacy work dir without a recovery ledger shows no recovery budget — nothing is invented", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 32);
     const dir = seedAttempt(32, 1);
     writeFileSync(
       join(dir, DESFECHO_FILENAME),
@@ -762,10 +835,9 @@ describe("status — derivation on demand + local registry scan", () => {
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
 
     assert.deepEqual(view.registry.recovery, []);
-    assert.match(
-      renderStatus(view),
-      /recovery \(what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt\): none/,
-    );
+    const text = renderStatus(view);
+    assert.match(text, /#32 — fall \(attempt 1/, "the written outcome is ruled by the state");
+    assert.doesNotMatch(text, /recoveries consumed/, "an absent ledger spends nothing and is given no budget");
     assert.equal(
       JSON.parse(readFileSync(join(dir, DESFECHO_FILENAME), "utf8")).class,
       "clean-without-pr",
@@ -775,6 +847,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   test("a legacy reparo.json is read as it stands: rounds counted, no attempt or fall invented", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    claimIssue(tracker, 22);
     const dir = seedAttempt(22, 1);
     writeFileSync(
       join(dir, "reparo.json"),
@@ -784,7 +857,11 @@ describe("status — derivation on demand + local registry scan", () => {
 
     const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
     const text = renderStatus(view);
-    assert.match(text, /#22 \(rounds 1\/2; falls 0\/2\)/, "the legacy cycle is shown without invented facts");
+    assert.match(
+      text,
+      /#22[^\n]*repair cycle: rounds 1\/2; falls 0\/2/,
+      "the legacy cycle is shown without invented facts",
+    );
   });
 
   test("the archived and the pool list one entry per line, capped at 10 with an omission marker", async () => {
@@ -935,6 +1012,13 @@ describe("status — derivation on demand + local registry scan", () => {
         archived: [],
       },
       liveness: { state: "known", running: [], duplicates: [], orphaned: [] },
+      // Neither dir names a GitHub Work: the state cannot address them, and the
+      // registry says what it knows without inventing a state.
+      reserved: [],
+      unaddressedReservations: [
+        "jira@acme.atlassian.net@10042@Sanmoo%2Fmy-tasks",
+        "jira@acme.atlassian.net@99999@Sanmoo%2Fmy-tasks",
+      ],
       recoveryBudget: config.recovery,
       modelProviderBudget: config.modelProvider,
     };
@@ -943,19 +1027,19 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks/, "source and destination are separate facts");
     assert.match(
       text,
-      /reserved without attempt[\s\S]*jira:acme\.atlassian\.net:10042 → Sanmoo\/my-tasks/,
+      /not read \(the registry key names no GitHub Work[\s\S]*jira:acme\.atlassian\.net:10042 → Sanmoo\/my-tasks/,
       "a registry-only Jira work shows its site and stable ticket id, never a raw key",
     );
     assert.doesNotMatch(text, /github\.com\/.*\/issues\//, "no synthesized GitHub issue URL for a Jira ticket");
     assert.doesNotMatch(text, /10042 \(jira/, "the stable id is never fabricated into a readable key");
     assert.match(
       text,
-      /continuity paused[\s\S]*ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks \(planned attempt 2; last evidenced attempt 1: session-missing/,
+      /the record names it ABC-42 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks; a continuity pause waits: planned attempt 2; last evidenced attempt 1: session-missing/,
       "a pause names the Work its own record carries",
     );
     assert.match(
       text,
-      /jira:acme\.atlassian\.net:99999 → Sanmoo\/my-tasks \(attempt unknown: record-unreadable/,
+      /jira:acme\.atlassian\.net:99999 → Sanmoo\/my-tasks \([^\n]*a continuity pause waits: attempt unknown: record-unreadable/,
       "without a recorded Work the directory key names it — the key is not invented, its readable ticket is simply absent",
     );
   });

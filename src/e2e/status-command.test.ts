@@ -178,6 +178,25 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       [`repos/${REPO}/issues/12/dependencies/blocked_by`]: { body: [{ number: 102, state: "open" }] },
       // Unreadable blockers: unknown is never "without impediment".
       [`repos/${REPO}/issues/13/dependencies/blocked_by`]: { notFound: true },
+
+      // The Work state reads every reserved Work of this workspace (ticket
+      // #204): its ticket, the PR linkage its timeline answers and — with no PR
+      // — the conversation. Reads only: the report writes nothing.
+      // #1 waits on a continuity pause, #4 is an interrupted attempt with a
+      // repair cycle, #2 carries a written outcome the factory never applied,
+      // #3 is the bare reservation the reconciliation also names.
+      [`repos/${REPO}/issues/1`]: { body: issue(1, "2026-02-01T00:00:00Z", [claimed], ["bot-do-samuca"]) },
+      [`repos/${REPO}/issues/1/timeline?per_page=100`]: { body: [] },
+      [`repos/${REPO}/issues/1/comments`]: { body: [] },
+      [`repos/${REPO}/issues/2`]: { body: issue(2, "2026-02-01T00:00:00Z", [claimed], ["bot-do-samuca"]) },
+      [`repos/${REPO}/issues/2/timeline?per_page=100`]: { body: [] },
+      [`repos/${REPO}/issues/2/comments`]: { body: [] },
+      [`repos/${REPO}/issues/3`]: { body: issue(3, "2026-02-08T00:00:00Z", []) },
+      [`repos/${REPO}/issues/3/timeline?per_page=100`]: { body: [] },
+      [`repos/${REPO}/issues/3/comments`]: { body: [] },
+      [`repos/${REPO}/issues/4`]: { body: issue(4, "2026-02-01T00:00:00Z", [claimed], ["bot-do-samuca"]) },
+      [`repos/${REPO}/issues/4/timeline?per_page=100`]: { body: [] },
+      [`repos/${REPO}/issues/4/comments`]: { body: [] },
     };
   }
 
@@ -213,16 +232,14 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       "running (worker alive): liveness unknown (docker not reachable)",
       "duplicate workers (more than one container for the same work — a human decision is needed): liveness unknown (docker not reachable)",
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive): liveness unknown (docker not reachable)",
-      "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell): 1",
-      `  ${REPO}#4 (attempt 1 was interrupted — no outcome record on disk)`,
-      "reserved without attempt (the claim landed, no attempt evidence on disk): 1",
-      `  ${REPO}#3`,
-      "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt): none",
-      "model provider (the last attempt ended by a model provider failure — not an interruption of the agent): none",
-      "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator): 1",
-      `  ${REPO}#1 (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
-      "repair (unpublished attempts, local work, pending reconciliation): 1",
-      `  ${REPO}#4 (rounds 1/2; falls 0/2; attempt 1: not published (the remote does not carry the attempt's commit); local work: the local work could not be read; evidence: reservation trabalhos/${REPO}#4/ present, event log trabalhos/${REPO}#4/log-1.jsonl present, sandcastle log trabalhos/${REPO}#4/sessao/sandcastle-1.log absent)`,
+      "reserved work (the state the factory acts on — every reserved Work, grouped by what happens next): 4",
+      "  the factory proceeds by itself: 2",
+      `    ${REPO}#2 — fall (attempt 1: a written failure the factory did not rule yet — released to the pool)`,
+      `    ${REPO}#4 — interrupted (attempt 1 has no outcome record of its own — no attempt consumed); repair cycle: rounds 1/2; falls 0/2; attempt 1: not published (the remote does not carry the attempt's commit); local work: the local work could not be read; evidence: reservation trabalhos/${REPO}#4/ present, event log trabalhos/${REPO}#4/log-1.jsonl present, sandcastle log trabalhos/${REPO}#4/sessao/sandcastle-1.log absent; 0/3 recoveries consumed (waits 1s/4s/16s) — the next interruption recovers on this budget`,
+      "  waiting for the operator: 1",
+      `    ${REPO}#1 — continuity paused (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
+      "  nothing to decide: 1",
+      `    ${REPO}#3 — parked (waiting for the human, or a released work the pool owns)`,
       "last outcome: 1",
       `  ${REPO}#2 = pr-open (attempt 1)`,
       "pool (eligible): 2",
@@ -264,18 +281,15 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
     const result = runStatus([]);
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.match(
-      result.stdout,
-      /continuity paused \(the interrupted attempt cannot be continued safely — waiting for the operator\): 1/,
-    );
+    assert.match(result.stdout, /waiting for the operator: 1/);
     assert.ok(
       result.stdout.includes(
-        `${REPO}#1 (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
+        `${REPO}#1 — continuity paused (planned attempt 2; last evidenced attempt 1; session ${PAUSE_SESSION}: effect-ambiguous — ${PAUSE_DETAIL})`,
       ),
       `the pause's cause, work, session and BOTH attempts are named: ${result.stdout}`,
     );
-    // The pause's own section owns the work: it is not also an interruption.
-    assert.ok(!result.stdout.includes(`${REPO}#1 (attempt 1 was interrupted`), "one line per wait, never two");
+    // The pause's own state owns the work: it is not also an interruption.
+    assert.doesNotMatch(result.stdout, new RegExp(`${REPO}#1[^\\n]*interrupted`), "one line per wait, never two");
     // A resolved pause is not an active one, and its diagnosis is not surfaced.
     assert.ok(!result.stdout.includes(RESOLVED_DETAIL), "a resolved pause never reappears as active");
 
@@ -314,8 +328,22 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
         `repos/${REPO}/issues/11/dependencies/blocked_by`,
         `repos/${REPO}/issues/12/dependencies/blocked_by`,
         `repos/${REPO}/issues/13/dependencies/blocked_by`,
+        // The Work state's own reads (ticket #204): each reserved work's ticket,
+        // its PR linkage and — with no PR — its conversation. One read each.
+        `repos/${REPO}/issues/1`,
+        `repos/${REPO}/issues/1/comments`,
+        `repos/${REPO}/issues/1/timeline?per_page=100`,
+        `repos/${REPO}/issues/2`,
+        `repos/${REPO}/issues/2/comments`,
+        `repos/${REPO}/issues/2/timeline?per_page=100`,
+        `repos/${REPO}/issues/3`,
+        `repos/${REPO}/issues/3/comments`,
+        `repos/${REPO}/issues/3/timeline?per_page=100`,
+        `repos/${REPO}/issues/4`,
+        `repos/${REPO}/issues/4/comments`,
+        `repos/${REPO}/issues/4/timeline?per_page=100`,
       ].sort(),
-      "one listing pass, and one blocker read per candidate — never a skipped check, never an extra one",
+      "one listing pass, one blocker read per candidate and one Work-state read per reserved work — never a skipped check, never an extra one",
     );
   });
 

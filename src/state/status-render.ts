@@ -7,10 +7,8 @@ import { renderWorkIdentity, renderTicketIdentity, renderRepositoryIdentity } fr
 import { MAX_REPAIR_FALLS, MAX_REPAIR_ROUNDS } from "../pool/repair.js";
 import { formatDuration } from "../format.js";
 import { renderWaits } from "../pool/waits.js";
-import type { RecoveryLedger } from "../work-record/recovery.js";
-import { awaitingModelProvider } from "../pool/model-provider.js";
 import { describePublication, renderLocalWork } from "./repair-view.js";
-import type { ContinuityPauseEntry, ModelProviderViewEntry, RepairViewEntry } from "../pool/registry.js";
+import type { RepairViewEntry } from "../pool/registry.js";
 import { knownAttempt } from "../work-record/continuity.js";
 import type { WorkEvidence } from "../work-record/evidence.js";
 import type {
@@ -18,11 +16,16 @@ import type {
   JiraSelectionView,
   KnownJiraSelectionView,
   OrphanedAttempt,
+  ReservedWorkState,
   RunningWorker,
   StatusView,
 } from "./status.js";
 import type { DuplicateWorkers } from "./liveness.js";
-import type { ModelProviderBudget, RecoveryBudget } from "../config.js";
+import type { Liveness } from "./status.js";
+import type { RecoveryBudget } from "../config.js";
+import type { RecoveryDecision } from "../pool/recovery.js";
+import type { PauseRecord } from "../work-record/continuity.js";
+import type { RepairTrigger, WorkStateReading } from "../work-state/state.js";
 
 /**
  * The rendering half of `msf status` (issue 102): the human view, one line per
@@ -36,6 +39,50 @@ const LIST_CAP = 10;
 /** The Docker-unreachable note: liveness is unknown, the other answers are not. */
 const LIVENESS_UNKNOWN = "liveness unknown (docker not reachable)";
 
+/** The reserved-work block's header: what the block answers, in one line. */
+const RESERVED_HEADER =
+  "reserved work (the state the factory acts on — every reserved Work, grouped by what happens next)";
+
+/**
+ * What the operator's next move is, per Work state — the status-only grouping
+ * (ticket #204). One group per operator action instead of one section per
+ * registry bucket, and `satisfies` makes a state the module adds fail to
+ * compile until it is placed here.
+ */
+type ReservedGroup = "factory" | "operator" | "quiet";
+
+/** The groups in the order an operator reads them: what moves, what waits, what rests. */
+const RESERVED_GROUP_ORDER: readonly ReservedGroup[] = ["factory", "operator", "quiet"];
+
+/** The group headings: each says what happens next, never which bucket it is. */
+const RESERVED_GROUP_TITLES: Record<ReservedGroup | "unaddressed", string> = {
+  factory: "the factory proceeds by itself",
+  operator: "waiting for the operator",
+  quiet: "nothing to decide",
+  unaddressed: "not read (the registry key names no GitHub Work — its readable ticket lives in the reservation record)",
+};
+
+const RESERVED_GROUPS = {
+  done: "factory",
+  "done-fallback": "factory",
+  rejected: "factory",
+  feedback: "factory",
+  repair: "factory",
+  "repair-recovered": "factory",
+  resumable: "factory",
+  fall: "factory",
+  interrupted: "factory",
+  "stop-resume": "factory",
+  "model-provider-failure": "factory",
+  "continuity-paused": "operator",
+  "stop-unconfirmed": "operator",
+  "repair-blocked": "operator",
+  "repair-fall-blocked": "operator",
+  unreadable: "operator",
+  parked: "quiet",
+  "not-planned": "quiet",
+} satisfies Record<WorkStateReading["state"], ReservedGroup>;
+
 export interface RenderOptions {
   /** `msf status --all`: lift every list cap. */
   all?: boolean;
@@ -44,21 +91,12 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // A work whose attempt ended by a model provider failure (issue 144), by the
-  // operator's requested stop (issue 146) or by a continuity pause (issue 119)
-  // is NOT an interruption: the section that owns the cause already names it,
-  // so it is not repeated under the liveness/interruption wording.
-  const explainedKeys = new Set([
-    ...view.registry.modelProvider.map((entry) => entry.key),
-    ...view.registry.continuityPauses.map((entry) => entry.key),
-    ...view.registry.recovery
-      .filter(
-        (entry) =>
-          entry.ledger.lastStop?.kind === "stop-requested" ||
-          entry.ledger.lastStop?.kind === "stop-unconfirmed",
-      )
-      .map((entry) => entry.key),
-  ]);
+  // A work whose attempt is INTERRUPTED in the Work state's own words is what
+  // the liveness sections name; every other state owns its line below
+  // (ticket #204). No hand map decides this any more: the state does.
+  const interruptedKeys = new Set(
+    view.reserved.filter((entry) => entry.reading.state === "interrupted").map((entry) => entry.key),
+  );
   const lines: string[] = ["msf status (derived on demand — the factory may be stopped)"];
 
   lines.push(
@@ -80,77 +118,23 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
+  // The liveness section names the works the state calls interrupted, and only
+  // those: a work whose attempt ended by a requested stop, a model provider
+  // failure or a continuity pause has a state of its own in the block below,
+  // and is never repeated as an ordinary interruption.
   lines.push(
     ...section(
       "orphaned (attempt interrupted — no outcome record of its own, no worker alive)",
       liveness.state === "known"
         ? liveness.orphaned
-            .filter((entry) => !explainedKeys.has(entry.key))
-            .map(renderOrphaned)
+            .filter((entry) => interruptedKeys.has(entry.key))
+            .map((entry) => renderOrphaned(entry, view))
         : null,
       cap,
     ),
   );
 
-  // Liveness unknown: the registry can still name the works whose outcome was
-  // never recorded — it just cannot say which of them a worker still carries.
-  if (liveness.state === "unknown" && view.registry.attemptsWithoutOwnOutcome.length > 0) {
-    lines.push(
-      ...section(
-        "interrupted attempts without their own outcome (Running or Orphaned — only Docker can tell)",
-        view.registry.attemptsWithoutOwnOutcome
-          .filter((entry) => !explainedKeys.has(entry.key))
-          .map((entry) => renderInterrupted(entry.key, entry.attempt, entry.recordedAttempt)),
-        cap,
-      ),
-    );
-  }
-
-  lines.push(
-    ...section(
-      "reserved without attempt (the claim landed, no attempt evidence on disk)",
-      view.registry.reservedWithoutAttempt.map(renderWorkKey),
-      cap,
-    ),
-  );
-
-  lines.push(
-    ...section(
-      "recovery (what ended the last stop: the operator's requested stop — confirmed or not — an interruption absorbed by its budget, or a failure that consumed the attempt)",
-      view.registry.recovery.map((entry) => renderRecovery(entry.key, entry.ledger, view.recoveryBudget)),
-      cap,
-    ),
-  );
-
-  // The model provider's own budget (issue 144): a work whose last attempt
-  // ended by a model provider failure is named here — retrying on its own
-  // backoff, or awaiting the operator's help.
-  lines.push(
-    ...section(
-      "model provider (the last attempt ended by a model provider failure — not an interruption of the agent)",
-      view.registry.modelProvider.map((entry) => renderModelProvider(entry, view.modelProviderBudget)),
-      cap,
-    ),
-  );
-
-  // A continuity pause is neither a fall nor Docker's silence (issue 119): the
-  // attempt cannot be reopened safely, the work waits for the operator, and
-  // naming the reason here is what tells it apart from an ordinary reservation.
-  lines.push(
-    ...section(
-      "continuity paused (the interrupted attempt cannot be continued safely — waiting for the operator)",
-      view.registry.continuityPauses.map(renderContinuityPause),
-      cap,
-    ),
-  );
-
-  lines.push(
-    ...section(
-      "repair (unpublished attempts, local work, pending reconciliation)",
-      view.registry.repair.map(renderRepair),
-      cap,
-    ),
-  );
+  lines.push(...renderReserved(view, cap, shownAsOrphaned(liveness, interruptedKeys)));
 
   lines.push(
     ...section(
@@ -261,18 +245,19 @@ function renderRunning(worker: RunningWorker): string {
   return `${renderWorkKey(worker.key)} (${formatDuration(worker.ageMs)}${attempt}, container ${shortId(worker.containerId)})`;
 }
 
-/** One persisted continuity pause: the work, the attempt it waits for, its
- *  session and why it waits. The attempt is the one the pause's launch PLANNED;
- *  when the ledger evidences a different one, both are named — the divergence
- *  is the operator's fact, never repaired here (issue 175). A record too
- *  unreadable to name its attempt or its work says so instead of printing a
- *  fabricated `attempt 0` or an identity it does not carry.
+/**
+ * One continuity pause's facts: the attempt it waits for, its session and why
+ * it waits. The attempt is the one the pause's launch PLANNED; when the ledger
+ * evidences a different one, both are named — the divergence is the operator's
+ * fact, never repaired here (issue 175). A record too unreadable to name its
+ * attempt says so instead of printing a fabricated `attempt 0`.
  */
-function renderContinuityPause(entry: ContinuityPauseEntry): string {
-  const work = entry.pause.work === undefined ? renderWorkKey(entry.key) : renderWorkIdentity(entry.pause.work);
-  const facts = [describePauseAttempt(knownAttempt(entry.pause.attempt), knownAttempt(entry.lastAttempt))];
-  if (entry.pause.sessionId !== undefined) facts.push(`session ${entry.pause.sessionId}`);
-  return `${work} (${facts.join("; ")}: ${entry.pause.reason} — ${entry.pause.detail})`;
+function describePause(pause: PauseRecord, evidenced: number | null, sessionId: string | undefined): string {
+  const facts = [
+    describePauseAttempt(knownAttempt(pause.attempt), evidenced === null ? null : knownAttempt(evidenced)),
+  ];
+  if (sessionId !== undefined) facts.push(`session ${sessionId}`);
+  return `${facts.join("; ")}: ${pause.reason} — ${pause.detail}`;
 }
 
 /** The attempt a pause waits for, against the one the ledger evidences: one
@@ -295,61 +280,229 @@ function shortId(containerId: string): string {
 }
 
 /** One interrupted attempt: the attempt itself, and the record that is NOT its own. */
-function renderOrphaned(orphan: OrphanedAttempt): string {
-  return renderInterrupted(orphan.key, orphan.attempt, orphan.recordedAttempt);
+function renderOrphaned(orphan: OrphanedAttempt, view: StatusView): string {
+  return renderInterrupted(orphan.key, orphan.attempt, orphan.recordedAttempt, [
+    ...describeRecordFacts(orphan.key, view, readingOf(view, orphan.key)),
+  ]);
 }
 
 /** The interrupted attempt (issues 112/123): the current one named, the
  *  historical record disowned — a human must not read attempt 1's outcome as
- *  attempt 2's result. */
-function renderInterrupted(key: string, attempt: number, recordedAttempt: number | null): string {
+ *  attempt 2's result — plus the record facts the state's payload leaves to the
+ *  registry (the recoveries already spent, the repair cycle). */
+function renderInterrupted(
+  key: string,
+  attempt: number,
+  recordedAttempt: number | null,
+  facts: readonly string[],
+): string {
   const history =
     recordedAttempt === null
       ? "no outcome record on disk"
       : `the record on disk is attempt ${recordedAttempt}'s — history, not this attempt's`;
-  return `${renderWorkKey(key)} (attempt ${attempt} was interrupted — ${history})`;
+  return `${renderWorkKey(key)} (${[`attempt ${attempt} was interrupted — ${history}`, ...facts].join("; ")})`;
+}
+
+/** The works the liveness section names: an interrupted attempt with no live
+ *  worker and a known liveness answer. Those own their line above; the block
+ *  below never repeats them. */
+function shownAsOrphaned(liveness: Liveness, interruptedKeys: ReadonlySet<string>): ReadonlySet<string> {
+  if (liveness.state !== "known") return new Set();
+  return new Set(liveness.orphaned.filter((entry) => interruptedKeys.has(entry.key)).map((entry) => entry.key));
 }
 
 /**
- * One work's interruption budget: what it cost and what ended the last stop.
- * An interruption names the recoveries spent and the configured backoff; the
- * operator's requested stop says it cost nothing; an unconfirmed one carries
- * the reason the work is held; a failure names only the outcome class that
- * consumed the attempt.
+ * The reserved-work block: every reserved Work, in the state the module the
+ * engine acts on reads for it (ticket #204), grouped by what the operator can
+ * do next. This is the status's ONLY state vocabulary — a state the module
+ * declares is named here, once, and nowhere else.
  */
-function renderRecovery(key: string, ledger: RecoveryLedger, budget: RecoveryBudget): string {
-  const label = renderWorkKey(key);
-  const spend = `${ledger.consumed}/${budget.maxRecoveries} recoveries (waits ${renderWaits(budget.waitsMs)})`;
-  const attempt = `attempt ${ledger.attempt}`;
-  const last = ledger.lastStop;
-  if (last === null) return `${label} (${attempt}: ${spend}; no stop settled yet)`;
-  if (last.kind === "interruption") {
-    return `${label} (${attempt}: last stop was an interruption — no attempt consumed; ${spend})`;
+function renderReserved(view: StatusView, cap: number, named: ReadonlySet<string>): string[] {
+  const readings = view.reserved.filter((entry) => !named.has(entry.key));
+  const unaddressed = view.unaddressedReservations;
+  const total = readings.length + unaddressed.length;
+  if (total === 0) return [`${RESERVED_HEADER}: none`];
+  const lines = [`${RESERVED_HEADER}: ${total}`];
+  for (const group of RESERVED_GROUP_ORDER) {
+    const entries = readings
+      .filter((entry) => RESERVED_GROUPS[entry.reading.state] === group)
+      .sort((left, right) => left.key.localeCompare(right.key));
+    if (entries.length === 0) continue;
+    lines.push(`  ${RESERVED_GROUP_TITLES[group]}: ${entries.length}`);
+    renderCapped(lines, entries, cap, (entry) => `    ${describeReserved(entry, view)}`, "    ");
   }
-  if (last.kind === "stop-requested") {
-    return `${label} (${attempt}: last stop was the operator's requested stop — no attempt consumed and no recovery spent; it resumes on the next run)`;
+  if (unaddressed.length > 0) {
+    lines.push(`  ${RESERVED_GROUP_TITLES.unaddressed}: ${unaddressed.length}`);
+    renderCapped(
+      lines,
+      [...unaddressed].sort(),
+      cap,
+      (key) => `    ${describeUnaddressed(key, view)}`,
+      "    ",
+    );
   }
-  if (last.kind === "stop-unconfirmed") {
-    return `${label} (${attempt}: the requested stop could not be confirmed — ${last.because}; it will not relaunch until the previous worker is known to be gone)`;
-  }
-  return `${label} (${attempt}: last stop was a failure (${last.outcome}) — the attempt was consumed)`;
+  return lines;
+}
+
+/** One reserved Work: the state the module reads, plus the record facts the
+ *  state's payload does not carry. */
+function describeReserved(entry: ReservedWorkState, view: StatusView): string {
+  const facts = [describeState(entry.key, entry.reading, view), ...describeRecordFacts(entry.key, view, entry.reading)];
+  return `${renderWorkIdentity(entry.reading.work)} — ${facts.join("; ")}`;
+}
+
+/** The state the module read for a reserved work, when it read one. */
+function readingOf(view: StatusView, key: string): WorkStateReading | undefined {
+  return view.reserved.find((entry) => entry.key === key)?.reading;
 }
 
 /**
- * One work's model provider failure budget: the retries spent, the provider's
- * own last message and whether the work is retrying or awaiting the operator.
- * Awaiting is a help request — the work is not blocked.
+ * The facts the STATE's payload leaves to the record — appended to whichever
+ * section names the work, never a state of their own: the repair cycle (its two
+ * ledgers, the unpublished attempt, the evidence paths, issue 112) and, for an
+ * interruption, the recoveries already spent (issue 123).
  */
-function renderModelProvider(entry: ModelProviderViewEntry, budget: ModelProviderBudget): string {
-  const { last } = entry;
-  const spend = `${entry.ledger.consumed}/${budget.maxRetries} retries (waits ${renderWaits(budget.waitsMs)})`;
-  const state = awaitingModelProvider(entry.ledger, entry.attempt, budget)
-    ? "awaiting model provider — a help request, not a block"
-    : "retrying after the model provider backoff";
+function describeRecordFacts(key: string, view: StatusView, reading: WorkStateReading | undefined): string[] {
+  const facts: string[] = [];
+  const repair = view.registry.repair.find((candidate) => candidate.key === key);
+  if (repair !== undefined) facts.push(`repair cycle: ${describeRepair(repair)}`);
+  if (reading?.state === "interrupted") facts.push(describeRecovery(reading.recovery, view.recoveryBudget));
+  return facts;
+}
+
+/**
+ * A reserved dir the state cannot be asked about — its key names no Work it may
+ * read. Reported as the registry facts it is: the key (or the Work the pause's
+ * own record carries, which the key cannot), plus the pause that waits for it.
+ * No state is invented for a work the module never read.
+ */
+function describeUnaddressed(key: string, view: StatusView): string {
+  const pause = view.registry.continuityPauses.find((entry) => entry.key === key);
+  const facts = ["the Work state cannot address this dir (its key names no GitHub Work)"];
+  // The readable ticket key the dir key cannot carry lives in the record: it is
+  // named as what it is, never fabricated into the key.
+  if (pause?.pause.work !== undefined) facts.push(`the record names it ${renderWorkIdentity(pause.pause.work)}`);
+  if (pause !== undefined) {
+    facts.push(`a continuity pause waits: ${describePause(pause.pause, pause.lastAttempt, pause.pause.sessionId)}`);
+  }
+  return `${renderWorkKey(key)} (${facts.join("; ")})`;
+}
+
+/**
+ * One Work state, in words. The switch is exhaustive over the module's union:
+ * a state that is added there fails to compile here until it is named — this is
+ * the single place a state is put into words, and it never re-derives one.
+ */
+function describeState(key: string, reading: WorkStateReading, view: StatusView): string {
+  switch (reading.state) {
+    case "done":
+      return "done (the ticket is closed — the factory archives the work)";
+    case "done-fallback":
+      return `done (PR #${reading.pr.number} merged without closing the issue — the factory closes it, then archives)`;
+    case "rejected":
+      return `rejected (PR #${reading.pr.number} was closed without merging — blocked with a comment pointing at the PR)`;
+    case "feedback":
+      return `feedback (a human commented on PR #${reading.pr.number} — a feedback round on the same branch and PR)`;
+    case "repair":
+      return (
+        `repair (PR #${reading.pr.number} carries a confirmed impediment: ${describeRepairReasons(reading.trigger)} — ` +
+        "one automatic round)"
+      );
+    case "repair-recovered":
+      return `repair recovered (PR #${reading.pr.number} is clean again — the repair budget resets)`;
+    case "repair-blocked":
+      return (
+        `repair blocked (PR #${reading.pr.number}: ${describeRepairReasons(reading.trigger)} — no automatic rounds left ` +
+        `after ${reading.usedRounds}/${MAX_REPAIR_ROUNDS}; blocked and help asked)`
+      );
+    case "repair-fall-blocked":
+      return (
+        `repair blocked (attempt ${reading.attempt} stopped without publishing — blocked even with ` +
+        `PR #${reading.pr.number} open)`
+      );
+    case "resumable":
+      return "resumable (the human answered on the ticket — the work continues from its existing branch)";
+    case "parked":
+      return `parked (${describeParked(reading)})`;
+    case "fall":
+      return reading.decision === "release"
+        ? `fall (attempt ${reading.attempt}: a written failure the factory did not rule yet — released to the pool)`
+        : `fall (attempt ${reading.attempt}: a written failure the factory did not rule yet — blocked on the 2nd consecutive fall)`;
+    case "interrupted":
+      return `interrupted (attempt ${reading.attempt} has no outcome record of its own — no attempt consumed)`;
+    case "stop-resume":
+      return (
+        `stop-resume (attempt ${reading.attempt}: last stop was the operator's requested stop — ` +
+        "no attempt consumed and no recovery spent; it resumes on the next run)"
+      );
+    case "stop-unconfirmed":
+      return (
+        `stop-unconfirmed (attempt ${reading.attempt}: the requested stop could not be confirmed — ` +
+        `${reading.because}; it will not relaunch until the previous worker is known to be gone)`
+      );
+    case "model-provider-failure": {
+      const { modelProvider } = reading;
+      const spend = `${modelProvider.consumed}/${view.modelProviderBudget.maxRetries} retries (waits ${renderWaits(view.modelProviderBudget.waitsMs)})`;
+      // Awaiting is a help request — never a block.
+      const outcome =
+        modelProvider.decision === "awaiting-model-provider"
+          ? "awaiting model provider — a help request, not a block"
+          : "retrying after the model provider backoff";
+      return (
+        `model provider failure (attempt ${reading.attempt}: ${spend}; ` +
+        `last model provider error: ${collapseWhitespace(reading.failure.message)} — ${outcome})`
+      );
+    }
+    case "continuity-paused": {
+      const pause = view.registry.continuityPauses.find((candidate) => candidate.key === key);
+      // The record's own numbers: the pause's planned attempt against the one
+      // the ledger evidences (issue 175).
+      const evidenced = pause?.lastAttempt ?? reading.attempt;
+      return `continuity paused (${describePause(reading.pause, evidenced, reading.pause.sessionId)})`;
+    }
+    case "unreadable":
+      return `unreadable (the ticket could not be read — ${reading.because}; never acted on)`;
+    case "not-planned":
+      return "not planned (the ticket was closed as not-planned — never acted on)";
+    default: {
+      const exhaustive: never = reading;
+      return exhaustive;
+    }
+  }
+}
+
+/** Why a Work is parked: the fact that holds it, when its record has a word for it. */
+function describeParked(reading: Extract<WorkStateReading, { state: "parked" }>): string {
+  const reason =
+    reading.because === "pr-open"
+      ? "the human has the PR"
+      : reading.because === "blocked-self-report"
+        ? "the worker blocked itself"
+        : "waiting for the human, or a released work the pool owns";
+  return reading.helpRequested === true ? `${reason}; help was asked for` : reason;
+}
+
+/**
+ * The interruption budget's answer for this Work: the recoveries already spent
+ * and the configured backoff, or the pause that asks the operator for help. The
+ * numbers are the module's own decision — status never counts a budget itself.
+ */
+function describeRecovery(decision: RecoveryDecision, budget: RecoveryBudget): string {
+  if (decision.decision === "pause-help") {
+    return (
+      `${decision.consumed}/${budget.maxRecoveries} recoveries consumed — the budget is exhausted: ` +
+      `the work pauses and the operator is asked (${decision.reason})`
+    );
+  }
   return (
-    `${renderWorkKey(entry.key)} (attempt ${entry.attempt}: ${spend}; ` +
-    `last model provider error: ${collapseWhitespace(last.message)} — ${state})`
+    `${decision.consumed - 1}/${budget.maxRecoveries} recoveries consumed (waits ${renderWaits(budget.waitsMs)}) — ` +
+    "the next interruption recovers on this budget"
   );
+}
+
+/** The confirmed impediments of a PR, as one clause. */
+function describeRepairReasons(trigger: RepairTrigger): string {
+  return trigger.reasons.join(", ");
 }
 
 /** The model provider's message as one status line: whitespace collapsed, never a new section. */
@@ -358,11 +511,12 @@ function collapseWhitespace(message: string): string {
 }
 
 /**
- * One repair cycle: the two ledgers, the attempt's publication, the local work
- * it preserved and the evidence the operator opens by hand (issue 112, story
- * 32 — paths always shown, workspace-relative, whatever their presence).
+ * One repair cycle's facts: the two ledgers, the attempt's publication, the
+ * local work it preserved and the evidence the operator opens by hand (issue
+ * 112, story 32 — paths always shown, workspace-relative, whatever their
+ * presence). Appended to the Work's own line: a record fact, not a state.
  */
-function renderRepair(entry: RepairViewEntry): string {
+function describeRepair(entry: RepairViewEntry): string {
   const { cycle, evidence } = entry;
   const parts = [
     `rounds ${cycle.usedRounds}/${MAX_REPAIR_ROUNDS}`,
@@ -373,7 +527,7 @@ function renderRepair(entry: RepairViewEntry): string {
     parts.push(`local work: ${renderLocalWork(cycle.attempt.localWork)}`);
   }
   if (evidence !== null) parts.push(`evidence: ${renderEvidence(evidence)}`);
-  return `${renderWorkKey(entry.key)} (${parts.join("; ")})`;
+  return parts.join("; ");
 }
 
 /** The three evidence locations in one clause: path, then what the probe said. */
