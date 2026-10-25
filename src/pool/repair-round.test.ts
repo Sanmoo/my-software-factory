@@ -521,4 +521,75 @@ describe("repair-round — settling a non-finished round from direct observation
     assert.equal(decision.kind, "not-published", "a pending attempt is settled when the remote answers");
     assert.equal(startReads, 0);
   });
+
+  // ---- issue 181: a round no worker ever saw is not an attempt and not a fall ----
+
+  test("an already-recorded unpublished attempt with no runtime footprint never started", async () => {
+    // The record an older version wrote: the round was charged and settled as
+    // unpublished before the continuity decision could refuse the launch, so
+    // no event log, journal session or outcome record of that attempt exists.
+    const ghost = unsettledAttempt(OBSERVED, { publication: "not-published" });
+    const decision = await settleRepairRound(
+      settlementOf(repairCycle(ghost, { usedRounds: 0, consecutiveFalls: 2 }), {
+        observeRoundStart: async () => ({ reached: false, journalIntact: true, journaledAttempts: [] }),
+        readOutcomeRecord: async () => ({ class: "pr-open", attempt: 1 }),
+      }),
+    );
+
+    assert.deepEqual(decision, {
+      kind: "returned-unstarted",
+      attempt: ghost,
+      cycle: {
+        usedRounds: 0,
+        lastEvidence: null,
+        consecutiveFalls: 2,
+        attempt: null,
+      },
+    });
+  });
+
+  test("a recorded unpublished attempt whose event log exists keeps its verdict and its fall", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(
+        repairCycle(unsettledAttempt(OBSERVED, { publication: "not-published" }), {
+          usedRounds: 0,
+          consecutiveFalls: 1,
+        }),
+        { observeRoundStart: async () => ({ reached: true }) },
+      ),
+    );
+
+    assert.deepEqual(decision, { kind: "none" }, "a round that ran is settled, never returned");
+  });
+
+  test("an already-recorded attempt with its own outcome record is not re-read as never started", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(
+        repairCycle(unsettledAttempt(OBSERVED, { publication: "not-published" }), {
+          usedRounds: 0,
+          consecutiveFalls: 1,
+        }),
+        {
+          observeRoundStart: async () => ({ reached: false, journalIntact: true, journaledAttempts: [] }),
+          readOutcomeRecord: async () => ({ class: "clean-without-pr", attempt: 2 }),
+        },
+      ),
+    );
+
+    assert.deepEqual(decision, { kind: "none" }, "the attempt wrote its own outcome: it ran");
+  });
+
+  test("an unreadable journal is not proof that an already-recorded attempt never started", async () => {
+    const decision = await settleRepairRound(
+      settlementOf(
+        repairCycle(unsettledAttempt(OBSERVED, { publication: "not-published" }), {
+          usedRounds: 0,
+          consecutiveFalls: 1,
+        }),
+        { observeRoundStart: async () => ({ reached: false, journalIntact: false, journaledAttempts: [] }) },
+      ),
+    );
+
+    assert.deepEqual(decision, { kind: "none" }, "uncertainty is never turned into a returned round");
+  });
 });

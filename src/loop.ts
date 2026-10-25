@@ -2278,10 +2278,10 @@ export class SweepEngine {
         const adoptedAttempt = adopted?.attempt ?? null;
         if (adopted === null || adoptedAttempt === null) continue;
         cycle = adopted;
-        // An adopted cycle is settled as an attempt: the registry gap is
-        // today's evidence that it ran, and re-deciding that from the
-        // artifacts is #181's fix, not this settlement's.
-        observeRoundStart = async () => ({ reached: true });
+        // The adoption's registry gap says an attempt ran; the settlement
+        // re-reads that from the attempt's own artifacts (issue 181), so a
+        // legacy cycle the artifacts do not back never blocks the work.
+        observeRoundStart = () => this.observeRepairRoundStart(work.dir, adoptedAttempt.attempt);
         inspectLocalWork = async () => adoptedAttempt.localWork;
       }
 
@@ -2473,7 +2473,8 @@ export class SweepEngine {
     }
   }
 
-  /** Charge one automatic repair round before its session: the budget, the
+  /** Charge one automatic repair round as its session starts — only after the
+   *  continuity decision allowed the launch (issue 181): the budget, the
    *  consumed evidence and the attempt's own facts persist on disk, so a
    *  restart neither renews the cap nor repeats the same round, and a death is
    *  attributable once the remote answers (issue 112). */

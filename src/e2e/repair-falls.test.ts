@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -29,8 +29,9 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import { githubTicketNumber } from "./work-fixtures.js";
 import { waitFor } from "./cli-harness.js";
 import { seedSession, seedSessionToolCall } from "./session-fixtures.js";
-import { appendJournalIntent } from "../work-record/continuity.js";
+import { appendJournalIntent, readPause } from "../work-record/continuity.js";
 import { readRecoveryLedger } from "../work-record/recovery.js";
+import { scanRegistry } from "../pool/registry.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -1291,6 +1292,214 @@ describe("e2e: a repair attempt that fell before publishing (issue 112)", () => 
     assert.equal(settled.usedRounds, 1, "the published round is charged, not doubled");
     const record = await readRepairCycle(workDir(layout, REPO, 109));
     assert.equal(record.attempt?.remoteHeadSha, "head-fixed");
+  });
+
+  // ---- issue 181: a round no worker ever saw is not an attempt and not a fall ----
+
+  /** The record an older version wrote for a round it charged before the
+   *  continuity decision could refuse the launch: settled as unpublished, with
+   *  the PREVIOUS attempt's head as its local work, and no session evidence at
+   *  all (no log-N.jsonl, no sandcastle log, no journaled session). */
+  function seedGhostRound(number: number, attempt: number, falls: number): void {
+    writeFileSync(
+      join(workDir(layout, REPO, number), REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 0,
+        lastEvidence: signatureOf(number, OBSERVED),
+        consecutiveFalls: falls,
+        attempt: {
+          evidence: signatureOf(number, OBSERVED),
+          attempt,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: OBSERVED,
+          publication: "not-published",
+          localWork: { headSha: OBSERVED, commits: 0, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+  }
+
+  test("issue 181 — a repair round paused by continuity is neither charged nor presented by the status", async () => {
+    const { tracker, runtime, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 130);
+    const target = workDir(layout, REPO, 130);
+    // The attempt on disk left an effect nobody can reconcile: continuity
+    // refuses to reopen it, so the repair round must not be charged at all.
+    const original = runtime.launched[0]!;
+    const session = seedSession(target, original.work, 1, { sessionId: original.session!.sessionId });
+    seedSessionToolCall(session, { callId: "uncertain", command: "node /tmp/unknown.mjs", answered: false });
+    appendJournalIntent(target, {
+      attempt: 1,
+      sessionId: session.sessionId,
+      callId: "uncertain",
+      tool: "bash",
+      command: "node /tmp/unknown.mjs",
+      safety: "unknown",
+      actions: [],
+    });
+    await conflictingOn(tracker, pr, OBSERVED);
+
+    for (let tick = 0; tick < 3; tick += 1) {
+      assert.equal((await runOnce(deps)).launched.length, 0, "continuity refuses the launch");
+      const cycle = await readRepairCycle(target);
+      assert.equal(cycle.usedRounds, 0, "the paused round is not charged");
+      assert.equal(cycle.consecutiveFalls, 0, "continuity is not a repair fall");
+      assert.equal(cycle.attempt, null, "no attempt is recorded for a round no worker saw");
+      assert.equal(cycle.lastEvidence, null, "the evidence was not consumed");
+      assert.notEqual(readPause(target), null, "the continuity pause is the only explanation of the parked work");
+      const registry = await scanRegistry(layout);
+      assert.deepEqual(registry.repair, [], "the status repair section does not present the paused round");
+      assert.equal(registry.continuityPauses.length, 1, "the status presents the pause instead");
+    }
+  });
+
+  test("issue 181 — after the pause the work continues and the repair score never becomes a block", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 131);
+    const target = workDir(layout, REPO, 131);
+    const branch = workBranchName(131);
+    // The interrupted call attempted a push whose commit is not the head the
+    // branch holds: the effect is ambiguous until the real state settles it.
+    const original = runtime.launched[0]!;
+    const session = seedSession(target, original.work, 1, { sessionId: original.session!.sessionId });
+    seedSessionToolCall(session, { callId: "call-push", command: `git push origin ${branch}`, answered: false });
+    appendJournalIntent(target, {
+      attempt: 1,
+      sessionId: session.sessionId,
+      callId: "call-push",
+      tool: "bash",
+      command: `git push origin ${branch}`,
+      safety: "effect",
+      actions: [{ kind: "push", key: `push:${branch}@abc123`, detail: `push branch ${branch}`, branch, sha: "abc123" }],
+    });
+    git.remoteHead = OBSERVED;
+    await conflictingOn(tracker, pr, OBSERVED);
+
+    assert.equal((await runOnce(deps)).launched.length, 0, "continuity pauses the repair launch");
+    const paused = await readRepairCycle(target);
+    assert.equal(paused.usedRounds, 0, "the paused round is not charged");
+    assert.equal(paused.consecutiveFalls, 0, "the pause is not a repair fall");
+    assert.notEqual(readPause(target), null, "the pause that prevented the launch is on record");
+
+    // The operator answers and the real state settles the doubt: the branch is
+    // gone, so the push the interrupted call attempted never landed.
+    tracker.addComment({ repo: REPO, number: 131 }, "operator", "authorized — go ahead");
+    git.remoteHead = null;
+    const resumed = await runOnce(deps);
+    assert.equal(resumed.launched.length, 1, "the work continues after the pause");
+    assert.equal(readPause(target), null, "the pause is resolved by the fresh read");
+    const after = await readRepairCycle(target);
+    assert.equal(after.consecutiveFalls, 0, "the pause never became a repair fall");
+    assert.equal(after.usedRounds, 0, "and never charged a round");
+    const issue = await tracker.readIssue({ repo: REPO, number: 131 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no block remains");
+  });
+
+  test("issue 181 — a round that started and published nothing still counts its fall", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 132);
+    const target = workDir(layout, REPO, 132);
+    // Attempt 2 reached the runtime — its own event log is on disk — and
+    // published nothing: the settled fall must be kept, never returned.
+    writeFileSync(
+      join(target, REPAIR_FILENAME),
+      `${JSON.stringify({
+        usedRounds: 0,
+        lastEvidence: signatureOf(132, OBSERVED),
+        consecutiveFalls: 1,
+        attempt: {
+          evidence: signatureOf(132, OBSERVED),
+          attempt: 2,
+          observedHeadSha: OBSERVED,
+          remoteHeadSha: OBSERVED,
+          publication: "not-published",
+          localWork: { headSha: "local132", commits: 1, uncommitted: false, operationInProgress: null },
+        },
+      })}\n`,
+      "utf8",
+    );
+    writeFileSync(join(target, "log-2.jsonl"), '{"event":"session-start","attempt":2}\n', "utf8");
+    tracker.setPrRepairFacts({ repo: REPO, prNumber: pr, mergeState: "unknown", requiredChecks: null });
+    git.remoteHead = OBSERVED;
+
+    await runOnce(deps);
+    const cycle = await readRepairCycle(target);
+    assert.equal(cycle.consecutiveFalls, 1, "the fall is kept");
+    assert.equal(cycle.attempt?.publication, "not-published", "and so is its verdict");
+    assert.equal(cycle.attempt?.attempt, 2, "the attempt that really ran is not erased");
+    assert.equal(cycle.usedRounds, 0, "its round stays returned: it did not publish");
+  });
+
+  test("issue 181 — a legacy record of a ghost round no longer blocks the work on the next sweep", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    const pr = await seedFirstAttempt(tracker, runtime, deps, 128);
+    // #128's reparo.json: two ghost rounds and the last one recorded as attempt
+    // 6, "not published", with no session evidence at all.
+    seedGhostRound(128, 6, 2);
+    await conflictingOn(tracker, pr, OBSERVED);
+    git.remoteHead = OBSERVED;
+
+    const sweep = await runOnce(deps);
+    const issue = await tracker.readIssue({ repo: REPO, number: 128 });
+    assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "the ghost attempt does not block the work");
+    assert.ok(
+      logs.some((line) => line.includes("repair attempt 6 of") && line.includes("never reached the runtime")),
+      "the operator's log names the round no worker ever saw",
+    );
+    assert.equal(sweep.launched.length, 1, "the work continues: the round the ghost consumed opens again");
+    const cycle = await readRepairCycle(workDir(layout, REPO, 128));
+    assert.equal(cycle.attempt?.attempt, 2, "a real attempt is numbered from the registry, after the ghost");
+    assert.equal(cycle.usedRounds, 1, "one round is charged — the real one");
+    assert.equal(cycle.consecutiveFalls, 2, "the ledger keeps its history; no fall is invented or erased");
+  });
+
+  test("issue 181 — the ghost verdict does not depend on a restart, a moved workspace or a file time", async () => {
+    const { tracker, runtime, git, deps } = makeFactory();
+    seedIssue(tracker, { repo: REPO, number: 133, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    seedIssue(tracker, { repo: REPO, number: 134, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    await runOnce(deps);
+    assert.equal(runtime.launched.length, 2, "both works opened their PR");
+    const prOf = async (number: number): Promise<number> => {
+      const feedback = await tracker.readPrFeedback({ repo: REPO, number });
+      assert.ok(feedback.known && feedback.value.pr);
+      return feedback.value.pr.number;
+    };
+    const prA = await prOf(133);
+    const prB = await prOf(134);
+    // The SAME ghost record under opposite file times: an old one and a future
+    // one. Nothing may be inferred from mtime.
+    seedGhostRound(133, 6, 2);
+    seedGhostRound(134, 6, 2);
+    utimesSync(join(workDir(layout, REPO, 133), REPAIR_FILENAME), 946684800, 946684800);
+    utimesSync(join(workDir(layout, REPO, 134), REPAIR_FILENAME), 1893456000, 1893456000);
+    // No confirmed impediment: the verdict of the ghost is the only thing the
+    // sweep decides, so a restart cannot be mistaken for a new repair round.
+    tracker.setPrRepairFacts({ repo: REPO, prNumber: prA, mergeState: "unknown", requiredChecks: null });
+    tracker.setPrRepairFacts({ repo: REPO, prNumber: prB, mergeState: "unknown", requiredChecks: null });
+    git.remoteHead = OBSERVED;
+
+    // The factory restarts with the workspace MOVED: only the files moved.
+    const movedRoot = join(dir, "ws-moved");
+    renameSync(layout.root, movedRoot);
+    const movedLayout = ensureWorkspace(movedRoot);
+    const movedDeps: LoopDeps = {
+      ...deps,
+      workspace: movedLayout,
+      config: { ...deps.config, workspace: movedLayout.root },
+    };
+
+    for (let restart = 0; restart < 2; restart += 1) {
+      assert.equal((await runOnce(movedDeps)).launched.length, 0, "no worker: no confirmed impediment is presented");
+      for (const number of [133, 134]) {
+        const cycle = await readRepairCycle(workDir(movedLayout, REPO, number));
+        assert.equal(cycle.attempt, null, `#${number}: the ghost attempt is gone`);
+        assert.equal(cycle.usedRounds, 0, `#${number}: no round was spent`);
+        assert.equal(cycle.consecutiveFalls, 2, `#${number}: the ledger is untouched`);
+        const issue = await tracker.readIssue({ repo: REPO, number });
+        assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), `#${number}: not blocked`);
+      }
+    }
   });
 });
 

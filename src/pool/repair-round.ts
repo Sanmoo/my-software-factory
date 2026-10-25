@@ -140,8 +140,9 @@ export interface RepairSettlementInput {
    *  writes its own outcome, the same Repair is stopped, not finished. */
   operatorStopped: boolean;
   /** Whether the round ever reached the runtime. An adopted legacy cycle
-   *  reports `reached: true`: the adoption itself is the evidence that an
-   *  attempt ran (#181 owns re-deciding it from the artifacts). */
+   *  reports what its artifacts say: the registry gap that adopted it is a
+   *  fact of the Work, and the attempt's own evidence decides whether a worker
+   *  ever saw it (issue 181). */
   observeRoundStart: () => Promise<RepairRoundStart>;
   /** The Work's outcome record on disk — another attempt's is not this one's. */
   readOutcomeRecord: () => Promise<OutcomeRecord | null>;
@@ -163,11 +164,46 @@ export type RepairSettlement =
   /** Nothing to settle: no attempt, one already settled, or one whose
    *  operator stop has not written its own outcome yet. */
   | { kind: "none" }
-  /** The round never reached the runtime: the charge returns and no fall is
-   *  counted. The attempt leaves the cycle; `attempt` names it for the log. */
+  /** The round never reached the runtime: it is neither an attempt nor a fall,
+   *  so its charge returns and its evidence is not consumed. `attempt` names it
+   *  for the log. */
   | { kind: "returned-unstarted"; cycle: RepairCycle; attempt: RepairAttempt }
   /** The publication reconciliation of the attempt (pool/repair.ts). */
   | Exclude<RepairReconciliation, { kind: "none" }>;
+
+/**
+ * Whether the recorded attempt left the runtime footprint that proves a worker
+ * ever saw it: its own event log, the guardrail's journaled session, or an
+ * outcome record of its own. An unreadable journal (or record) proves nothing
+ * either way, so it is never read as absence.
+ */
+async function roundReachedRuntime(
+  input: RepairSettlementInput,
+  attempt: RepairAttempt,
+): Promise<boolean> {
+  const start = await input.observeRoundStart();
+  if (start.reached) return true;
+  if (!start.journalIntact) return true;
+  if (start.journaledAttempts.includes(attempt.attempt)) return true;
+  const record = await input.readOutcomeRecord();
+  return record?.attempt === attempt.attempt;
+}
+
+/**
+ * The cycle after a round no worker ever saw: the attempt and the evidence it
+ * would have consumed are gone. An UNSETTLED attempt was charged at launch and
+ * never refunded, so its round returns to the budget; one the record already
+ * settled as unpublished returned its charge when that verdict was written, and
+ * refunding it again would erase another round's charge (issue 181).
+ */
+function unstartedCycle(cycle: RepairCycle, refundCharge: boolean): RepairCycle {
+  return {
+    ...cycle,
+    usedRounds: refundCharge ? Math.max(0, cycle.usedRounds - 1) : cycle.usedRounds,
+    lastEvidence: null,
+    attempt: null,
+  };
+}
 
 /**
  * Decide what became of the round's recorded attempt from the observations;
@@ -177,36 +213,29 @@ export type RepairSettlement =
 export async function settleRepairRound(input: RepairSettlementInput): Promise<RepairSettlement> {
   const attempt = input.cycle.attempt;
   if (attempt === null) return { kind: "none" };
+
+  // An attempt already settled as unpublished, with no runtime footprint, is a
+  // ghost an older version wrote: the round was charged before the continuity
+  // decision could refuse the launch, and the settlement could only compare the
+  // branch (issue 181). The verdict is re-read from the attempt's own artifacts;
+  // a ghost leaves nothing spent and no fall. A `published` verdict is proof
+  // the round ran, and `pending` is uncertainty — neither is re-read here.
+  if (attempt.publication === "not-published" && !(await roundReachedRuntime(input, attempt))) {
+    return { kind: "returned-unstarted", attempt, cycle: unstartedCycle(input.cycle, false) };
+  }
   if (isSettledPublication(attempt.publication)) return { kind: "none" };
 
   if (input.operatorStopped) {
     const record = await input.readOutcomeRecord();
     if (ownWrittenOutcome(record, attempt.attempt) === null) return { kind: "none" };
   } else if (attempt.publication === "unknown") {
-    // A round with no runtime footprint is not an attempt — the home issue
-    // 181's fix lands in. The event log, the guardrail's session and the
-    // outcome record are the only facts that can prove it started. A record
-    // for another attempt, an intact journal with no session of this one, and
-    // no event log mean the charge returns and no fall is counted.
-    const start = await input.observeRoundStart();
-    if (!start.reached) {
-      const record = await input.readOutcomeRecord();
-      if (
-        start.journalIntact &&
-        !start.journaledAttempts.includes(attempt.attempt) &&
-        record?.attempt !== attempt.attempt
-      ) {
-        return {
-          kind: "returned-unstarted",
-          attempt,
-          cycle: {
-            ...input.cycle,
-            usedRounds: Math.max(0, input.cycle.usedRounds - 1),
-            lastEvidence: null,
-            attempt: null,
-          },
-        };
-      }
+    // A round with no runtime footprint is not an attempt. The event log, the
+    // guardrail's session and the outcome record are the only facts that can
+    // prove it started. A record for another attempt, an intact journal with no
+    // session of this one, and no event log mean the charge returns and no fall
+    // is counted.
+    if (!(await roundReachedRuntime(input, attempt))) {
+      return { kind: "returned-unstarted", attempt, cycle: unstartedCycle(input.cycle, true) };
     }
   }
 
