@@ -40,6 +40,7 @@ import type {
   WorkPullRequest,
 } from "./expanded-port.js";
 import { legacyPullRequest, withPullRequestIdentity } from "./expanded-port.js";
+import { workBranchName } from "../git/port.js";
 import {
   githubRepository,
   githubTicket,
@@ -584,7 +585,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
       `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
     );
     if (!timeline) return { performed: [] };
-    const prNumber = linkedPrNumber(timeline);
+    const prNumber = await this.linkedPrNumber(ref, crossReferencedPrNumbers(timeline));
     if (prNumber === null) return { performed: [] };
     return this.reopenPullRequestAt(ref.repo, prNumber);
   }
@@ -635,13 +636,36 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
       `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
     );
     if (!timeline) return notKnown;
-    const prNumber = linkedPrNumber(timeline);
+    const prNumber = await this.linkedPrNumber(ref, crossReferencedPrNumbers(timeline));
     if (prNumber === null) {
       const comments = await this.apiOrNull<RestComment[]>(`repos/${ref.repo}/issues/${ref.number}/comments`);
       if (!comments) return notKnown;
       return known({ pr: null, comments: comments.map(mapComment), reviews: [] });
     }
     return known(this.legacyFeedback(await this.readPullRequestFeedbackAt(ref.repo, prNumber)));
+  }
+
+  /**
+   * Which cross-referenced PR is THIS Work's. The timeline lists any PR that
+   * merely mentions the issue, and the newest of them used to answer:
+   * a foreign PR could take over the Work's linkage and, when it merged, close
+   * the Work as delivered. The PR whose head is the Work's own branch wins.
+   *
+   * Only an ambiguous timeline pays the extra read — a single candidate is taken
+   * as it is. A Work whose branch the adapter cannot name keeps the legacy
+   * answer (the newest cross-reference): on a site other than github.com the
+   * branch is derived from provider and site, so it can never match here and
+   * that site behaves exactly as before.
+   */
+  private async linkedPrNumber(ref: IssueRef, candidates: readonly number[]): Promise<number | null> {
+    const newest = candidates.at(-1);
+    if (newest === undefined || candidates.length === 1) return newest ?? null;
+    const ownBranch = workBranchName(ref.number);
+    for (const number of [...candidates].reverse()) {
+      const pull = await this.apiOrNull<RestPull>(`repos/${ref.repo}/pulls/${number}`);
+      if (pull !== null && pull.head.ref === ownBranch) return number;
+    }
+    return newest;
   }
 
   /** The old TrackerPort shape: the explicit PR identity belongs to the expanded contract only. */
@@ -703,7 +727,7 @@ export class GitHubTrackerAdapter implements TrackerPort, TicketTracker, PullReq
       `repos/${ref.repo}/issues/${ref.number}/timeline?per_page=100`,
     );
     if (!timeline) return notKnown;
-    const prNumber = linkedPrNumber(timeline);
+    const prNumber = await this.linkedPrNumber(ref, crossReferencedPrNumbers(timeline));
     if (prNumber === null) return notKnown;
     return this.readPullRequestRepairFactsAt(ref.repo, prNumber);
   }
@@ -1059,14 +1083,13 @@ function isSpeechReview(review: RestReview): review is RestReview & { body: stri
   return review.body !== null && review.body !== "";
 }
 
-/** The PR linked to the issue: the latest cross-reference from a PR ("Closes #N"). */
-function linkedPrNumber(timeline: RestTimelineEvent[]): number | null {
-  const numbers = timeline
+/** The PRs the issue's timeline cross-references, oldest first: a Work's own
+ *  PR and any other that merely mentions the issue. */
+function crossReferencedPrNumbers(timeline: RestTimelineEvent[]): number[] {
+  return timeline
     .filter((event) => event.event === "cross-referenced")
     .map((event) => event.source?.issue)
     .flatMap((issue) => (issue !== undefined && issue.pull_request != null ? [issue.number] : []));
-  const last = numbers.at(-1);
-  return last === undefined ? null : last;
 }
 
 function terminalReason(reason: RestIssue["state_reason"]): IssueSnapshot["stateReason"] {

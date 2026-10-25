@@ -475,6 +475,83 @@ describe("the 9 operations over gh", () => {
     assert.ok(timeline.args.some((a) => a.includes("/issues/1/timeline")));
   });
 
+  test("9a. readPrFeedback: another Work's PR that mentions the issue never steals the linkage", async () => {
+    // The timeline lists every cross-referenced PR, in order. The #141 work saw
+    // its own PR (164) and later #181's PR (184), which mentioned the issue —
+    // the newest cross-reference answered for the wrong Work.
+    const { adapter } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/timeline")) {
+        return {
+          stdout: JSON.stringify([
+            { event: "cross-referenced", source: { issue: { number: 164, pull_request: { merged_at: null } } } },
+            { event: "cross-referenced", source: { issue: { number: 184, pull_request: { merged_at: null } } } },
+          ]),
+        };
+      }
+      if (path?.endsWith("/pulls/184")) {
+        return {
+          stdout: JSON.stringify({
+            number: 184,
+            state: "open",
+            merged_at: null,
+            head: { ref: "agent-issue-181" },
+            base: { ref: "main" },
+            user: { login: "bot-do-samuca" },
+          }),
+        };
+      }
+      if (path?.endsWith("/pulls/164")) {
+        return {
+          stdout: JSON.stringify({
+            number: 164,
+            state: "open",
+            merged_at: null,
+            head: { ref: "agent-issue-141" },
+            base: { ref: "main" },
+            user: { login: "bot-do-samuca" },
+          }),
+        };
+      }
+      return { stdout: "[]" };
+    });
+    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 141 });
+    assert.ok(feedback.known);
+    assert.equal(feedback.value.pr?.number, 164, "the PR whose head is this Work's branch");
+    assert.equal(feedback.value.pr?.headBranch, "agent-issue-141");
+  });
+
+  test("9a. readPrFeedback: with no PR on this Work's branch the newest cross-reference stands", async () => {
+    const { adapter } = await makeAdapter((call) => {
+      const path = call.args.find((a) => a.startsWith("repos/"));
+      if (path?.includes("/timeline")) {
+        return {
+          stdout: JSON.stringify([
+            { event: "cross-referenced", source: { issue: { number: 3, pull_request: { merged_at: null } } } },
+            { event: "cross-referenced", source: { issue: { number: 4, pull_request: { merged_at: null } } } },
+          ]),
+        };
+      }
+      const number = path?.endsWith("/pulls/4") ? 4 : path?.endsWith("/pulls/3") ? 3 : null;
+      if (number !== null) {
+        return {
+          stdout: JSON.stringify({
+            number,
+            state: "open",
+            merged_at: null,
+            head: { ref: `agent-issue-9${number}` },
+            base: { ref: "main" },
+            user: { login: "samuca" },
+          }),
+        };
+      }
+      return { stdout: "[]" };
+    });
+    const feedback = await adapter.readPrFeedback({ repo: "Sanmoo/a", number: 1 });
+    assert.ok(feedback.known);
+    assert.equal(feedback.value.pr?.number, 4, "a hand-named branch keeps the legacy answer");
+  });
+
   test("9a. readPrFeedback: an approval-only review (body null) is dropped — no crash, the inline comment still counts", async () => {
     // Spec #7: GitHub returns body: null for approval-only reviews. The
     // adapter drops them (no speech signal); the inline comment — the other
