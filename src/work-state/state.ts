@@ -24,11 +24,11 @@ import { workFacts } from "./facts.js";
  * touching a caller, and "unreadable" and "absent" are told apart in one place
  * (facts.ts) instead of by every stage that consults the tracker.
  *
- * No consumer is migrated yet (tickets #200/#201): `state/derive.ts`, the loop
- * and `classifyOutcome` keep answering as they do, with their own vocabulary,
- * so the only observable difference is the one the epic authorized (#203).
- * Tickets #202–#204 delete those readings and let the loop, the status and the
- * log speak this one.
+ * The loop executes this vocabulary (ticket #202): it asks for the state at
+ * both moments and does what the state asks — archive, close with the fallback
+ * comment, block with a comment, comment, release, launch, recover — with no
+ * map between two vocabularies left in the engine. The remaining reading of the
+ * domain (`state/status.ts`, ticket #204) is the last one to migrate.
  */
 
 /** The Work as the state addresses it: the identity on disk plus its dir. */
@@ -56,8 +56,9 @@ export interface EndedAttempt extends WorkRef {
 
 /**
  * The confirmed impediments of an open PR, read from structured facts alone
- * (ticket 107's repair trigger). The shape is the one the launch path already
- * carries; #202 moves the definition here — duplicated today, like the ladder.
+ * (ticket 107's repair trigger). The definition stays with the Repair premise
+ * that reads it (`state/derive.ts`, `pool/repair-round.ts`); the state carries
+ * it as the payload a repair action needs, so the two cannot drift.
  */
 export interface RepairTrigger {
   reasons: RepairReason[];
@@ -67,6 +68,36 @@ export interface RepairTrigger {
 }
 
 /**
+ * The PR the reading saw, handed over only when the moment has an action to
+ * spend it on: the collection persists the association beside the Work, carries
+ * the PR to the next launch and names it in the notice. The read before a
+ * launch leaves it out — it has no write to make with it — and the states whose
+ * PR IS their payload (`done-fallback`, `rejected`, `feedback`, the repairs)
+ * carry it under their own name instead.
+ */
+type PrSeen = { pr?: PullRequestRecord | null };
+
+/**
+ * TEMPORARY (#203): what today's collection reading does with a PR closed
+ * without merge. The Work state already names the fact (`rejected`), but the
+ * ticket that makes it a Block is #203; until then the collection reading also
+ * names the action the collection has always taken for that very fact — not a
+ * second vocabulary, this ticket's promise to change nothing — and the engine
+ * executes exactly that. Deleted by #203 together with the arm it feeds. The
+ * read before a launch never carries it: there the state alone decides (block
+ * with the comment pointing at the PR).
+ */
+export type ClosedPrCollectionAction =
+  /** No outcome record of its own: an interruption — the same attempt is
+   *  recovered within its budget. */
+  | { action: "interrupt" }
+  /** A written failure/abandon: the 1st consecutive fall releases. */
+  | { action: "release" }
+  /** A written failure/abandon, 2nd consecutive: blocked with the attempt's
+   *  diagnosis on the issue. */
+  | { action: "block"; comment: string };
+
+/**
  * The Work state itself: the state string with the payload its action needs.
  * `fall` is two members under one state — the written failure releases or
  * blocks — so the action discriminates on `decision`.
@@ -74,12 +105,19 @@ export interface RepairTrigger {
 export type WorkStateReading = WorkRef &
   (
     /** The terminal state: the ticket is closed (done). */
-    | { state: "done" }
+    | ({ state: "done" } & PrSeen)
     /** PR merged but issue open: close the issue with a short comment first —
      *  done must always be reflected on the tracker (ticket 04 Q11). */
     | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
-    /** PR closed without merge: block with a comment pointing at the PR. */
-    | { state: "rejected"; pr: PullRequestRecord; comment: string }
+    /** PR closed without merge: block with a comment pointing at the PR. The
+     *  collection reading also carries the transitional action of #203 — see
+     *  {@link ClosedPrCollectionAction}. */
+    | {
+        state: "rejected";
+        pr: PullRequestRecord;
+        comment: string;
+        collectionAction?: ClosedPrCollectionAction;
+      }
     /** New human comment on the PR: a feedback round on the same branch and PR. */
     | { state: "feedback"; pr: PullRequestRecord; createdAt: string }
     /** A confirmed impediment of the open PR reactivates the worker in one
@@ -118,34 +156,46 @@ export type WorkStateReading = WorkRef &
      *  `because` names the fact that parked it when the Work's own record has a
      *  word for it — "the human has the PR" is not "the worker blocked
      *  itself", and both wait the same way. */
-    | { state: "parked"; because?: "pr-open" | "blocked-self-report" }
+    | ({
+        state: "parked";
+        because?: "pr-open" | "blocked-self-report";
+        /** Help was asked for — the ticket carries the blocked label, or this
+         *  attempt wrote the self-report. The reading that parks a work keeps
+         *  the fact even when the PR wins the precedence, because the collection
+         *  notifies it: help outranks the review of an open PR. */
+        helpRequested?: boolean;
+      } & PrSeen)
     /** A written failure the factory did not rule yet (it died between the
      *  record and the transition): release, or block on the 2nd consecutive
      *  failure — the ruler applies as at collection (ticket 05 Q3). */
-    | { state: "fall"; decision: "release"; attempt: number }
-    | { state: "fall"; decision: "block"; comment: string; attempt: number }
+    | ({ state: "fall"; decision: "release"; attempt: number } & PrSeen)
+    | ({ state: "fall"; decision: "block"; comment: string; attempt: number } & PrSeen)
     /** An INTERRUPTION (issue 123): the attempt ended without an outcome record.
      *  It is not a failure: the same attempt is recovered within its budget, or
      *  the exhausted budget pauses the work and asks the operator for help. */
-    | { state: "interrupted"; attempt: number; recovery: RecoveryDecision }
+    | ({ state: "interrupted"; attempt: number; recovery: RecoveryDecision } & PrSeen)
     /** The operator's REQUESTED stop (issue #146): the same attempt resumes on
      *  the next run, spending no recovery. `because` names which of the two
      *  readings of the stop spoke: the one this process is carrying out (its
      *  last cycle cannot relaunch anything) or the evidence a previous one left
      *  on the attempt. */
-    | { state: "stop-resume"; attempt: number; because?: "stop-in-progress" | "stop-recorded" }
+    | ({
+        state: "stop-resume";
+        attempt: number;
+        because?: "stop-in-progress" | "stop-recorded";
+      } & PrSeen)
     /** The requested stop could not be confirmed: a previous worker may still be
      *  alive, so the work is held with the reason until a probe proves it gone. */
     | { state: "stop-unconfirmed"; attempt: number; because: string }
     /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
      *  model provider error, so it retries on its own budget — or awaits the
      *  operator when that budget is exhausted (never a block). */
-    | {
+    | ({
         state: "model-provider-failure";
         attempt: number;
         failure: ModelProviderFailure;
         modelProvider: ModelProviderDecision;
-      }
+      } & PrSeen)
     /** The interrupted attempt cannot be continued safely (issue 119): the
      *  pause is persisted, so no cycle re-attempts the recovery. */
     | { state: "continuity-paused"; attempt: number; pause: PauseRecord }

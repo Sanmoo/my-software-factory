@@ -8,12 +8,16 @@ import { consentAppliesTo } from "./loop.js";
  * attempt on a work whose repair cycle had already fallen twice derives to
  * `repair-fall-blocked`, and a whitelist that forgot it stranded a valid
  * authorization forever (real incident on #128).
+ *
+ * The names are the Work state's (ADR-0010; epic #198): the two that lied are
+ * `parked` (waiting for the human) and `unreadable` / `not-planned`, which the
+ * one `unknown` used to blur together.
  */
-const DERIVATION_STATES = [
+const WORK_STATES = [
   "done",
   "done-fallback",
   "rejected",
-  "idle",
+  "parked",
   "fall",
   "interrupted",
   "model-provider-failure",
@@ -26,11 +30,12 @@ const DERIVATION_STATES = [
   "repair-recovered",
   "repair-blocked",
   "repair-fall-blocked",
-  "unknown",
+  "unreadable",
+  "not-planned",
 ] as const;
 
 test("consent never reopens a terminal state or a work a worker may still carry", () => {
-  for (const state of DERIVATION_STATES) {
+  for (const state of WORK_STATES) {
     const terminal = ["done", "done-fallback", "rejected", "stop-unconfirmed"].includes(state);
     assert.equal(consentAppliesTo(state), !terminal, `${state}: consent must ${terminal ? "not " : ""}apply`);
   }

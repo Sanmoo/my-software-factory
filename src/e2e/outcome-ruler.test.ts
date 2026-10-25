@@ -357,7 +357,7 @@ describe("e2e: the ruler of outcomes (ticket 13)", () => {
     const { deps, runtime } = makeFactory(config, tracker, ["pr-open"]);
     const sweep = await runOnce(deps);
 
-    assert.equal(sweep.reserved[0]?.state, "idle", "a released work is the pool's business, not a recovery");
+    assert.equal(sweep.reserved[0]?.state, "parked", "a released work is the pool's business, not a recovery");
     assert.equal(runtime.launched.length, 1);
     assert.equal(runtime.launched[0]?.attempt, 2, "the explicit operator act ended attempt 1 — attempt 2 starts");
     assert.deepEqual(await labelsOf(tracker, 1), [DEFAULT_LABELS.claimed], "re-claimed, not blocked");

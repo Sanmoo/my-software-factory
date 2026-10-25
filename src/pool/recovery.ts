@@ -232,6 +232,22 @@ export async function recordFailure(
   });
 }
 
+/**
+ * Restart the fall count (ticket 14): the human answered the block the 2nd
+ * consecutive fall asked for, so the next failure starts a FRESH count — the
+ * 1st fall releases again. The count is the ledger's fact (`lastFallAttempt`),
+ * so the restart is written there: kept only in a launch's memory it would be
+ * lost by the next sweep or a restart, and the 2nd-fall block would come back
+ * over an answer already given.
+ */
+export async function resetFallCount(workDir: string): Promise<void> {
+  await updateRecoveryLedger(workDir, (ledger) =>
+    ledger.lastFallAttempt === null
+      ? { next: null, result: undefined }
+      : { next: { ...ledger, lastFallAttempt: null }, result: undefined },
+  );
+}
+
 /** The ledger scoped to an attempt: its allowance is per attempt, its events
  *  stay as the work's history. */
 function ledgerForAttempt(ledger: RecoveryLedger, attempt: number): RecoveryLedger {

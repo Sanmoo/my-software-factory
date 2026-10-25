@@ -14,15 +14,12 @@ import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import type { PrRepairFacts, RepairReason, RequiredCheckResult } from "../tracker/port.js";
 import {
-  fallbackDoneComment,
   humanCommentsAfterLastMarker,
   humanCommentsForPause,
-  lastPrComment,
-  rejectionComment,
   repairSignature,
 } from "../state/derive.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
-import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
+import type { RepairTrigger, WorkRef, WorkStateReading, ClosedPrCollectionAction } from "./state.js";
 
 /**
  * The decision core: the ladder from the facts to the Work state, and nothing
@@ -31,12 +28,10 @@ import type { RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
  * the facts handed to it. Every read it needs is a method of {@link WorkFacts};
  * that is why this file imports no port, no disk and no adapter.
  *
- * The ladder is the one `state/derive.ts` walks today, carried over verbatim
- * (ticket #200): where the old ruler and the new module disagree, that is a
- * regression, not a decision. The text helpers (`lastPrComment`, the comment
- * builders) are imported from that ruler rather than copied, so the two cannot
- * drift by a word while both exist; #202 moves them here when it deletes the
- * old ladder.
+ * The ladder is the one `state/derive.ts` used to walk: where that ruler and
+ * this module disagreed, that is a regression, not a decision. Since #202 the
+ * loop speaks only this vocabulary, so the texts the verdicts carry live here
+ * with the verdicts and nobody else can drift from them by a word.
  */
 
 /** The policy the ladder applies: injected once, never per call. */
@@ -475,8 +470,10 @@ const NO_REPLIES: IssueComment[] = [];
  * that may own its end, the PR the factory sees now.
  *
  * The rulings are the ones `classifyOutcome` makes at collection today, in the
- * same priority order, so #202 can let the loop speak this vocabulary without
- * changing a verdict.
+ * same priority order; the loop executes them in this vocabulary (#202). The
+ * one fact the two readings answer differently — a PR closed without merge —
+ * carries today's collection action in a transitional payload (#203), so that
+ * this ticket changes no verdict.
  */
 export async function deriveAfterAttempt(
   ref: WorkRef,
@@ -487,11 +484,11 @@ export async function deriveAfterAttempt(
   const ticket = await facts.ticket();
   const issue = ticket.reading === "known" ? ticket.value : null;
 
-  // The terminal state was reached while this claim was held (ticket 14).
-  if (issue !== null && issue.state === "closed") return { work: ref.work, dir: ref.dir, state: "done" };
-
   const pull = await facts.pullRequest();
   const pr = pull.reading === "with-pull-request" ? pull.pr : null;
+
+  // The terminal state was reached while this claim was held (ticket 14).
+  if (issue !== null && issue.state === "closed") return { work: ref.work, dir: ref.dir, state: "done", pr };
 
   // A merged PR is delivery, whatever the attempt wrote (issue 149): the
   // terminal state reached the PR first, and the action closes the issue (the
@@ -510,6 +507,15 @@ export async function deriveAfterAttempt(
   const record = written?.outcome ?? null;
   const own = ownOutcomeRecord(record, end.attempt);
 
+  // Class 6: the worker posted the marker and the label itself. The factory only
+  // RECORDS it — no release, no fall, no comment of its own. Both structured
+  // facts speak (the label, or the record's own class), and only for THIS
+  // attempt: desfecho.json survives between attempts. Read before the arms that
+  // park on a PR fact, because help outranks the review of an open PR and the
+  // parking must keep the fact either way (the collection notifies it).
+  const selfReported =
+    (issue !== null && issue.labels.includes(policy.labels.blocked)) || selfReportedBlocked(record, end.attempt);
+
   // The stop that may own this END (issue #146). A confirmed Outcome prevails
   // over the interpretation of the stop, so this is asked only while the
   // attempt wrote no record at all: the operator's requested stop — the one
@@ -522,43 +528,49 @@ export async function deriveAfterAttempt(
       state: "stop-resume",
       attempt: end.attempt,
       because: end.stopping ? "stop-in-progress" : "stop-recorded",
+      pr,
     };
   }
 
   // Classes 1 and 5: an open PR keeps the work reserved for the human. No fall
   // is ever recorded over it, and the claim is held.
-  if (pr !== null && pr.state === "open") return { work: ref.work, dir: ref.dir, state: "parked", because: "pr-open" };
+  if (pr !== null && pr.state === "open") {
+    return { work: ref.work, dir: ref.dir, state: "parked", because: "pr-open", helpRequested: selfReported, pr };
+  }
 
-  // Class 6: the worker posted the marker and the label itself. The factory only
-  // RECORDS it — no release, no fall, no comment of its own. Both structured
-  // facts speak (the label, or the record's own class), and only for THIS
-  // attempt: desfecho.json survives between attempts.
-  const selfReported =
-    (issue !== null && issue.labels.includes(policy.labels.blocked)) || selfReportedBlocked(record, end.attempt);
   if (selfReported) {
-    return { work: ref.work, dir: ref.dir, state: "parked", because: "blocked-self-report" };
+    return { work: ref.work, dir: ref.dir, state: "parked", because: "blocked-self-report", helpRequested: true, pr };
   }
 
   // A PR closed without merge is the fact the collection vocabulary had no word
   // for (epic #198): the Work state has one — the same `rejected` the read
-  // before a launch gives it — and NOBODY executes it yet (#203 wires the
-  // block). Until then this arm merely names the fact, and the loop keeps
-  // answering with `classifyOutcome` exactly as before.
+  // before a launch gives it. #203 is the ticket that makes it the Block the
+  // state names; until then the reading carries the action today's collection
+  // takes for the same fact, so the loop changes nothing but its words.
   if (pr !== null && pr.state === "closed" && !pr.merged) {
-    return { work: ref.work, dir: ref.dir, state: "rejected", pr, comment: rejectionComment(pr) };
+    return {
+      work: ref.work,
+      dir: ref.dir,
+      state: "rejected",
+      pr,
+      comment: rejectionComment(pr),
+      collectionAction: await collectionActionOf(ref, end.attempt, facts, record, own),
+    };
   }
 
   // No record of its OWN: an INTERRUPTION, not a failure (issue 123). The
   // attempt keeps its number and no failure is recorded; what ended its own
-  // turn decides which of the two vocabularies answers it.
-  if (own === null) return interruption(ref, end.attempt, facts, written, policy);
+  // turn decides whether it is an interruption of the agent or a model provider
+  // failure.
+  if (own === null) return interruption(ref, end.attempt, facts, written, policy, pr);
 
   // A written failure/abandon without a PR: the fall ruler applies, exactly as
   // it does at collection. Its consecutiveness fact is the record's own ledger
   // — the highest attempt that ended in a WRITTEN failure — so a crash, an
   // interruption or another process's memory can never make a fall "second".
-  const previousFell = (await facts.lastFallAttempt()) === end.attempt - 1;
-  if (!previousFell) return { work: ref.work, dir: ref.dir, state: "fall", decision: "release", attempt: end.attempt };
+  if (!(await previousAttemptFell(facts, end.attempt))) {
+    return { work: ref.work, dir: ref.dir, state: "fall", decision: "release", attempt: end.attempt, pr };
+  }
   return {
     work: ref.work,
     dir: ref.dir,
@@ -566,7 +578,36 @@ export async function deriveAfterAttempt(
     decision: "block",
     attempt: end.attempt,
     comment: await facts.fallenAttemptComment(record, end.attempt),
+    pr,
   };
+}
+
+/**
+ * The consecutiveness fact of the fall ruler: the attempt NUMBER of the last
+ * written failure, never the last stop — an interruption of the current attempt
+ * must not erase the fall of the one before it.
+ */
+async function previousAttemptFell(facts: AttemptEndFacts, attempt: number): Promise<boolean> {
+  return (await facts.lastFallAttempt()) === attempt - 1;
+}
+
+/**
+ * TEMPORARY (#203): the action today's collection reading takes for a PR closed
+ * without merge — the fact the collection ruler never had a word for, so it read
+ * it as "no PR at all". With no outcome record of its own the attempt was an
+ * interruption; a written failure followed the fall ruler. #203 replaces all of
+ * this with the Block the state already names.
+ */
+async function collectionActionOf(
+  ref: WorkRef,
+  attempt: number,
+  facts: AttemptEndFacts,
+  record: OutcomeRecord | null,
+  own: OutcomeRecord | null,
+): Promise<ClosedPrCollectionAction> {
+  if (own === null) return { action: "interrupt" };
+  if (!(await previousAttemptFell(facts, attempt))) return { action: "release" };
+  return { action: "block", comment: await facts.fallenAttemptComment(record, attempt) };
 }
 
 /**
@@ -586,6 +627,7 @@ async function interruption(
   facts: AttemptEndFacts,
   written: WorkRecordSnapshot | null,
   policy: DecisionPolicy,
+  pr: PullRequestRecord | null,
 ): Promise<WorkStateReading> {
   const failure = await facts.modelProviderFailure(attempt);
   if (failure !== null) {
@@ -601,6 +643,7 @@ async function interruption(
         attempt,
         failure,
       ),
+      pr,
     };
   }
   return {
@@ -609,5 +652,33 @@ async function interruption(
     state: "interrupted",
     attempt,
     recovery: await facts.recovery(attempt),
+    pr,
   };
+}
+
+/**
+ * The last comment of the PR across both channels (conversation + reviews),
+ * merged by createdAt. Feedback is "the LAST comment does not carry the
+ * agent marker" (ticket 07 Q3, amended in 18) — login cannot separate the
+ * sides when they are the same account.
+ */
+function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null {
+  if (feedback === null) return null;
+  const all = [...feedback.comments, ...feedback.reviews].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt), // stable — ties keep read order
+  );
+  return all.at(-1) ?? null;
+}
+
+/** The fallback-done comment: short, by decision (ticket 04 Q11). */
+function fallbackDoneComment(): string {
+  return "the PR was merged without closing this issue — the factory closes it (done)";
+}
+
+/** The rejection comment: points at the PR (ticket 04 Q5). */
+function rejectionComment(pr: PullRequestRecord): string {
+  return (
+    `work rejected: PR #${pr.number} (${pr.headBranch} → ${pr.baseBranch}) was closed without merging. ` +
+    "The work is blocked and the branch stays — answer on this issue (after the marker) to resume from the existing branch."
+  );
 }
