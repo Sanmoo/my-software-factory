@@ -1,5 +1,11 @@
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
-import { githubRepository, jiraTicket, renderWorkIdentity, workIdentity } from "../tracker/identity.js";
+import {
+  githubRepository,
+  jiraTicket,
+  renderWorkIdentity,
+  workIdentity,
+  type TicketIdentity,
+} from "../tracker/identity.js";
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,8 +15,9 @@ import { join } from "node:path";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
 import { JiraSim } from "../tracker/jira-sim.js";
-import type { TicketSelection } from "../tracker/expanded-port.js";
-import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
+import type { TicketSelection, TicketSnapshot } from "../tracker/expanded-port.js";
+import type { Known } from "../tracker/port.js";
+import { ensureWorkspace, workDir, workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import {
   DEFAULT_LABELS,
   DEFAULT_LIVENESS_POLICY,
@@ -29,7 +36,7 @@ import {
 import { settleModelProviderFailure } from "../pool/model-provider.js";
 import { appendAttemptEvent } from "../work-record/logs.js";
 import { PAUSE_FILENAME, clearPause, writePause } from "../work-record/continuity.js";
-import { deriveStatus, type Liveness, type StatusView } from "./status.js";
+import { RESERVED_STATE_READS_IN_FLIGHT, deriveStatus, type Liveness, type StatusView } from "./status.js";
 import { renderStatus } from "./status-render.js";
 import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
@@ -51,6 +58,28 @@ const fakeProbe =
   (...workers: LiveWorker[]): LivenessProbe =>
   () =>
     Promise.resolve(workers);
+
+/**
+ * A tracker whose ticket read is slow, so the reserved-work readings overlap
+ * observably (issue 147): `peakInFlight` is a fact of how many were in flight at
+ * once — never of how fast this machine ran them.
+ */
+class SlowTicketTracker extends FakeTrackerAdapter {
+  peakInFlight = 0;
+  private inFlight = 0;
+
+  constructor(private readonly delayMs: number) {
+    super({ workerAccount: "bot-do-samuca" });
+  }
+
+  override async readTicket(ticket: TicketIdentity): Promise<Known<TicketSnapshot>> {
+    this.inFlight += 1;
+    this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    this.inFlight -= 1;
+    return super.readTicket(ticket);
+  }
+}
 
 /** The known liveness of a view: the tests that assert the states never expect unknown. */
 function known(view: StatusView): Extract<Liveness, { state: "known" }> {
@@ -671,7 +700,32 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a PR closed without merge is blocked with the PR pointed at — the status reads the state that says so (ticket #203)", async () => {
+  test("many reservations cost a bounded burst, not one per reservation (issue 147)", async () => {
+    const tracker = new SlowTicketTracker(100);
+    const numbers = Array.from({ length: 12 }, (_, index) => 100 + index);
+    for (const number of numbers) {
+      claimIssue(tracker, number);
+      mkdirSync(workDir(layout, REPO, number), { recursive: true });
+    }
+
+    const view = await deriveStatus({ github: tracker }, makeConfig(), layout, NO_WORKERS);
+
+    assert.deepEqual(
+      view.reserved.map((entry) => entry.key).sort(),
+      numbers.map((number) => `${REPO}#${number}`).sort(),
+      "every reserved work still gets its reading, in input order",
+    );
+    assert.equal(
+      view.reserved.every((entry) => entry.reading.dir === workDirOfKey(layout, entry.key)),
+      true,
+      "each reading answers for its own reservation, not for a shared placeholder",
+    );
+    // The burst is the bound, not the number of reservations: up to
+    // RESERVED_STATE_READS_IN_FLIGHT tracker reads overlap and never more.
+    assert.equal(tracker.peakInFlight, RESERVED_STATE_READS_IN_FLIGHT);
+  });
+
+    test("a PR closed without merge is blocked with the PR pointed at — the status reads the state that says so (ticket #203)", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 50);
     seedAttempt(50, 1);

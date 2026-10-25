@@ -9,6 +9,7 @@ import { readLastAttempt } from "../work-record/attempts.js";
 import type { PullRequestTracker, TicketSelection, TicketTracker } from "../tracker/expanded-port.js";
 import { workOfKey } from "../pool/work-key.js";
 import { openWorkState, type WorkStateReading } from "../work-state/state.js";
+import { mapBounded } from "../concurrency.js";
 import {
   githubSelections,
   repositoryIdentityKey,
@@ -234,6 +235,13 @@ export async function deriveStatus(
   };
 }
 
+/** How many reserved-work readings may be in flight at once (issue 147). Each
+ *  reading issues up to four tracker/PR round-trips (ticket, comments, linkage,
+ *  repair facts), so an unbounded burst over every reservation would spend the
+ *  tracker's rate budget on the first screen of the command. The same bound, and
+ *  the same reason, as the pool derivation's blocker reads. */
+export const RESERVED_STATE_READS_IN_FLIGHT = 8;
+
 /**
  * The state of every reserved Work, read by the module the engine acts on
  * (ticket #204). This is the ONE reading status makes of "what happened to this
@@ -277,11 +285,13 @@ async function readReservedStates(
     if (work === null) unaddressedReservations.push(key);
     else addressable.push({ key, work });
   }
-  const reserved = await Promise.all(
-    addressable.map(async (entry): Promise<ReservedWorkState> => ({
+  const reserved = await mapBounded(
+    addressable,
+    RESERVED_STATE_READS_IN_FLIGHT,
+    async (entry): Promise<ReservedWorkState> => ({
       key: entry.key,
       reading: await workState.beforeLaunch({ work: entry.work, dir: workDirOfKey(layout, entry.key) }),
-    })),
+    }),
   );
   return { reserved, unaddressedReservations };
 }
