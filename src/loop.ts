@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type { Config } from "./config.js";
 import type { PullRequestRecord, PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
@@ -23,7 +21,6 @@ import { scanReservations, type IdentifiedReservation } from "./pool/reservation
 import { recordPrAssociation } from "./pool/pr-association.js";
 import {
   deriveTrackerState,
-  humanCommentsForPause,
   workPullRequest,
   renderUnbackedClaim,
   renderUnmarkedReservation,
@@ -47,10 +44,8 @@ import {
   isRecordedFailure,
   ownWrittenOutcome,
   interruptionPausedCommentBody,
-  modelProviderAwaitingCommentBody,
-  continuityPausedCommentBody,
 } from "./state/outcome.js";
-import { readAttemptLedger, readLastAttempt } from "./work-record/attempts.js";
+import { readAttemptLedger } from "./work-record/attempts.js";
 import { archiveDoneWorkFor } from "./pool/registry.js";
 import {
   EMPTY_REPAIR_CYCLE,
@@ -87,29 +82,11 @@ import {
   type StopReport,
 } from "./pool/stop.js";
 import { workKeyOf } from "./pool/work-key.js";
-import { readModelProviderLedger } from "./work-record/model-provider.js";
-import {
-  isModelProviderFailureSettled,
-  isModelProviderHelpPending,
-  isModelProviderRetryGranted,
-  markModelProviderHelpRequested,
-  modelProviderDecision,
-  settleModelProviderFailure,
-  type ModelProviderDecision,
-} from "./pool/model-provider.js";
 import { deferred } from "./runtime/deferred.js";
 import { recheckPausedEffects, type ContinuityDeps } from "./runtime/continuity.js";
 import { pendingCallRecovery, type CallRecovery } from "./runtime/call-recovery.js";
-import { ContinuityDiagnostics } from "./continuity-diagnostics.js";
-import {
-  clearPause,
-  readEffectJournal,
-  knownAttempt,
-  readPause,
-  recheckablePause,
-  writePause,
-  type PauseRecord,
-} from "./work-record/continuity.js";
+import { clearPause, readEffectJournal } from "./work-record/continuity.js";
+import { openNonFailures, type NonFailures } from "./non-failures/non-failures.js";
 import { Slots } from "./pool/slots.js";
 import { openSurvivors, type Survivors } from "./survivors/survivors.js";
 import {
@@ -117,7 +94,7 @@ import {
   occupiedSlots,
   type LivenessProbe,
 } from "./state/liveness.js";
-import { appendAttemptEvent, eventLogName } from "./work-record/logs.js";
+import { eventLogName } from "./work-record/logs.js";
 import { processRecoveryRequests } from "./recover.js";
 import type { ModelProviderFailure } from "./work-record/model-provider-error.js";
 import { operationalLog } from "./log.js";
@@ -134,7 +111,10 @@ import { join } from "node:path";
  * launch pipeline in launch/ (the claim, the prepare, the runtime launch and
  * the collected end of every kind of launch), liveness and the survivor ledger
  * in survivors/ (which worker carries each Work, and every occurrence of that
- * observation said once), and IO in tracker/ + pool/ + git/ + runtime/
+ * observation said once), the two endings that are not a failure in
+ * non-failures/ (the Continuity pause and the model provider failure — whether a
+ * pause is settled by reliable evidence, the asking-once rule, the provider
+ * failure's own budget), and IO in tracker/ + pool/ + git/ + runtime/
  * (ticket 07) — the loop only reads the facts and applies what they decide
  * (issue 118).
  *
@@ -386,60 +366,6 @@ function byParkedPriority(a: Launchable, b: Launchable): number {
   return a.createdAt.localeCompare(b.createdAt) || workKeyOf(a.work).localeCompare(workKeyOf(b.work));
 }
 
-/**
- * The pause as it is PERSISTED and announced, now that the factory knows which
- * work and attempt it is pausing, and with its occurrence identity (issue 174).
- * An unreadable record carries no work and no attempt (0); writing those into
- * the file and the operator's comment would fabricate facts the record never
- * held. Every other reason keeps its own.
- */
-function pauseOccurrence(
-  pending: PauseRecord,
-  work: WorkIdentity,
-  attempt: number,
-  previous: PauseRecord | null,
-): PauseRecord & { id: string } {
-  const pause = persistedPause(pending, work, attempt);
-  const id = pause.id ?? previous?.id ?? randomUUID();
-  // A record of the SAME occurrence keeps the moment it started; a new one
-  // starts now (the pause itself carries the time it was created). A previous
-  // record with no identity is that same occurrence still waiting — written
-  // before identities existed — so the request the operator already answered
-  // keeps its own start time instead of being dated by this sweep. A record
-  // with no time at all (unreadable) has none to keep.
-  const sameOccurrence = previous !== null && (previous.id === undefined || previous.id === id);
-  const at = sameOccurrence && previous.at !== "" ? previous.at : pause.at;
-  return { ...pause, id, at };
-}
-
-/**
- * The work and attempt a pause is persisted with. An unreadable record carries
- * neither; every other reason keeps its own, so the attempt the launch planned
- * is not rewritten into one the disk evidences.
- */
-function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number): PauseRecord {
-  if (pause.reason !== "record-unreadable") return pause;
-  // `readPause` fabricates no attempt for an unreadable record, so the caller's
-  // is the only one there is.
-  return { ...pause, work, attempt };
-}
-
-/**
- * The record of a pause whose request already landed (the block and the
- * comment are being re-asserted, never repeated). A legacy occurrence — one
- * announced before identities existed — stays WITHOUT one: the identity
- * generated for it now has no comment carrying it, and a record with no
- * identity is the one case where the factory still binds the answers by the
- * generic last-comment rule, so stamping it would orphan the answer already
- * given (issue 174). The occurrence gains its identity with the first factory
- * comment that can carry one: a diagnostic for a changed cause.
- */
-function reassertedPause(pause: PauseRecord & { id: string }, previous: PauseRecord): PauseRecord {
-  if (previous.id !== undefined) return { ...pause, announced: true };
-  const { id: _generated, ...occurrence } = pause;
-  return { ...occurrence, announced: true };
-}
-
 /** The stable rendering order of a key set — presentation only, never the schedule. */
 const byKey = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b));
 
@@ -489,7 +415,6 @@ function renderPoolSummary(
  */
 export class SweepEngine {
   private readonly slots: Slots;
-  private readonly continuityDiagnostics = new ContinuityDiagnostics();
   /** The full pool of the latest derivation — what `runOnce` reports. */
   lastPool: PoolEntry[] = [];
   /** The working copy the launches drain (parked reserved first). */
@@ -520,6 +445,9 @@ export class SweepEngine {
   /** Liveness and the survivor ledger (issue 118; ticket #206): which worker
    *  carries each Work, and every occurrence of that observation said once. */
   private readonly survivors: Survivors;
+  /** The two endings that are not a failure (ticket #207): the Continuity pause
+   *  and the model provider failure. */
+  private readonly nonFailures: NonFailures;
   /** The last reported capacity verdict, so the change is said once. */
   private overCapacity = false;
 
@@ -540,6 +468,31 @@ export class SweepEngine {
       cycle: {
         ended: (launchable, attempt) => this.survivorEnded(launchable, attempt),
         notice: (notification) => this.deliverNotice(notification),
+      },
+    });
+    // The two endings that are not a failure (ticket #207): the Continuity pause
+    // and the model provider failure. Their decisions live in non-failures/; the
+    // engine executes the verdicts and keeps the cycle.
+    this.nonFailures = openNonFailures({
+      config: deps.config,
+      tickets: deps.tickets,
+      pullRequests: deps.pullRequests,
+      workspace: deps.workspace,
+      log: this.log,
+      // The evidence read stays the runtime's own: the attempt's session, its
+      // journal and the real state — never an mtime.
+      recheckEvidence: (work, dir, attempt, pause) =>
+        recheckPausedEffects(this.continuityDeps(work, dir, attempt), pause),
+      cycle: {
+        blockAndAsk: (work, comment) => this.applyBlockWithComment(work, comment),
+        reassertBlock: async (work) => {
+          await this.deps.tickets.blockTicketClaim(work.ticket, this.deps.config.labels);
+        },
+        holdAndAsk: (work, comment) => this.holdAndAsk(work, comment),
+        unblock: async (work) => {
+          await this.deps.tickets.resumeTicketClaim(work.ticket, this.deps.config.labels);
+        },
+        workerMayBeAlive: (work) => this.workerMayBeAlive(work),
       },
     });
     this.operatorStop = new OperatorStop({
@@ -775,7 +728,7 @@ export class SweepEngine {
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
           if (decision.modelProvider.decision === "awaiting-model-provider") {
-            await this.applyModelProviderFailure(
+            await this.nonFailures.settleModelProvider(
               decision.work,
               decision.dir,
               decision.attempt,
@@ -820,56 +773,19 @@ export class SweepEngine {
           break;
         }
         case "continuity-paused": {
-          // Continuity could not safely reopen the attempt's session (issue
-          // 119). The pause is persisted and asks for help once; every sweep
-          // re-reads the doubt this pause names — a terminal result in the
-          // attempt's own session, or the real state — and clears it on its own
-          // once that evidence settles it (issue 173). Other works keep going.
-          const pause = decision.pause;
-          const attempt = knownAttempt(pause.attempt) ?? decision.attempt;
+          // The Attempt cannot safely continue (issue 119). The Continuity pause
+          // decides at its own seam whether reliable evidence settles it — a
+          // continuation of the SAME attempt, or a NEW round oriented by the
+          // human answer — or whether the Work keeps waiting for the operator,
+          // having asked once. Other works keep going.
           this.announce(decision.work, STATE_DECLARATIONS[decision.state].announces);
-          // A worker of this work may still be alive — one this process
-          // launched, or one a reliable probe carried. Its journal is never
-          // written and no substitute is launched over it (issue 173).
-          if (this.slots.workKeys.includes(key) || this.carriedKeys.has(key)) {
-            this.log(
-              `continuity of ${renderWorkIdentity(decision.work)} is not re-evaluated: a worker of this work ` +
-                "may still be alive — nothing is written and nothing is relaunched",
-            );
-            break;
-          }
-          // A pause the factory can settle by itself returns to the normal
-          // cycle: the evidence it doubts is read again from the attempt's own
-          // session, the journal and the real state, WITHOUT another human
-          // answer (issue 173). The one cause never re-read is a record it
-          // cannot read — that doubt IS the record.
-          const verdict = recheckablePause(pause.reason)
-            ? await recheckPausedEffects(this.continuityDeps(decision.work, decision.dir, attempt), pause)
-            : null;
-          if (verdict !== null && verdict.resolved) {
-            await this.resolvedPause(decision.work, decision.dir, pause, attempt, parked);
-            break;
-          }
-          const current = verdict?.pause ?? pause;
-          // A real change of cause is a new fact the operator must see, told
-          // once by the same occurrence (issue 174); a pause whose request
-          // never landed is announced now. A steady cause is said once — `msf
-          // status` keeps it visible — so a persistent doubt never becomes a
-          // line per cycle.
-          if (pause.announced !== true || current.reason !== pause.reason) {
-            await this.pauseForContinuity(decision.work, decision.dir, current, attempt);
-          } else if (verdict !== null) {
-            // The cause did not change, but the evidence behind it may have:
-            // the fresher diagnosis is kept on the SAME occurrence (its id, its
-            // moment and its announcement) and said in the diagnostic line. No
-            // comment and no notice — the operator was asked once, and the
-            // request has not changed.
-            const fresher = current.detail !== pause.detail;
-            if (fresher) writePause(decision.dir, { ...pause, detail: current.detail });
-            this.reportContinuityPause(decision.work, decision.dir, { ...pause, detail: current.detail });
-          } else {
-            this.reportContinuityPause(decision.work, decision.dir, pause);
-          }
+          const verdict = await this.nonFailures.recheckPause(
+            decision.work,
+            decision.dir,
+            decision.pause,
+            decision.attempt,
+          );
+          if (verdict.kind === "continue") parked.push(verdict.launch);
           break;
         }
         case "feedback":
@@ -1314,9 +1230,15 @@ export class SweepEngine {
         return outcome.next;
       },
       pauseInterrupted: (work, dir, attempt, decision) => this.pauseInterrupted(work, dir, attempt, decision),
-      pauseForContinuity: (work, dir, pause, attempt) => this.pauseForContinuity(work, dir, pause, attempt),
+      // Both are the non-failures module's: the pause persists and asks once
+      // (the launch path is where a refused continuation is told), and the
+      // model provider failure settles on its own budget before the wait.
+      pauseForContinuity: async (work, dir, pause, attempt) => {
+        this.announce(work, "reserved");
+        await this.nonFailures.askForContinuity(work, dir, pause, attempt);
+      },
       settleModelProviderFailure: (work, dir, attempt, failure) =>
-        this.applyModelProviderFailure(work, dir, attempt, failure),
+        this.nonFailures.settleModelProvider(work, dir, attempt, failure),
       inspectLocalWork: (work) => this.inspectLocalWork(work),
       observeRemote: (work) => this.observeRemote(work),
     };
@@ -1343,122 +1265,7 @@ export class SweepEngine {
     return { workDir: dir, sessionsDir: join(dir, SESSIONS_SUBDIR), work, attempt, git, tickets, pullRequests };
   }
 
-  /**
-   * A pause whose doubt the attempt's session and the real state now settle
-   * (issue 173): the record is closed and the CORRECT continuation is parked —
-   * never launched from here, so every existing gate (liveness, continuity, the
-   * recovery ruler, the operator's stop) applies again. A human answer bound to
-   * the pause orients a NEW round; without one the SAME attempt continues.
-   * Resolving a pause spends neither an attempt nor a recovery.
-   */
-  private async resolvedPause(
-    work: WorkIdentity,
-    dir: string,
-    pause: PauseRecord,
-    attempt: number,
-    parked: Launchable[],
-  ): Promise<void> {
-    const { tickets, pullRequests, config } = this.deps;
-    this.continuityDiagnostics.resolved(workKeyOf(work));
-    const comments = await tickets.readTicketComments(work.ticket);
-    const answers = comments.known ? humanCommentsForPause(comments.value, pause) : [];
-    const feedback = await pullRequests.readPullRequestFeedback(workPullRequest(work));
-    const pr = feedback.known ? feedback.value.pr : null;
-    if (answers.length > 0) {
-      // The clear lands first because the answer self-heals a death on either
-      // side of it: with the record still there the answer is read again, and
-      // with it cleared the resume launch swaps the block off.
-      clearPause(dir);
-      this.log(
-        `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
-          "the human answer orients a NEW round (no recovery is spent)",
-      );
-      // The resume launch swaps blocked→claimed itself.
-      parked.push({ work, dir, kind: "resume", createdAt: pause.at, pr, issueReplies: answers });
-      return;
-    }
-    // The block leaves with the pause: the recover launch continues the SAME
-    // attempt and the existing recovery ruler decides whether it may relaunch.
-    // The unblock lands BEFORE the record is cleared, and both are idempotent —
-    // a death in between leaves the pause for the next recheck to resolve again,
-    // while a death after the clear leaves an unblocked interrupted attempt,
-    // which derives to a recovery on its own.
-    await tickets.resumeTicketClaim(work.ticket, config.labels);
-    clearPause(dir);
-    this.log(
-      `continuity of ${renderWorkIdentity(work)} is resolved by its own evidence — ` +
-        `attempt ${attempt} continues (the recovery ruler applies)`,
-    );
-    parked.push({ work, dir, kind: "recover", createdAt: null, pr, attempt });
-  }
 
-  /**
-   * A continuity pause (issue 119): the interrupted attempt cannot be reopened
-   * safely, so the work stops and asks for help instead of pretending a fresh
-   * session is a continuation. The record is written FIRST and survives a
-   * restart; the issue comment, the blocked label and the notice happen only
-   * once per occurrence — a recheck that learned nothing new, a later sweep and
-   * a restart never re-ask (issue 174), and neither does the first sweep after
-   * an upgrade for a pause that was announced before occurrences had identities.
-   * Only a changed REASON is a new fact worth a diagnostic, and it keeps the
-   * occurrence's identity, so the answers already on the issue stay bound to it.
-   */
-  private async pauseForContinuity(
-    work: WorkIdentity,
-    dir: string,
-    pending: PauseRecord,
-    attempt: number,
-  ): Promise<void> {
-    const { tickets, config, workspace } = this.deps;
-    const previous = readPause(dir);
-    // By now the factory knows which work and attempt it is pausing, whatever
-    // the record could say: an unreadable record's unknown work/attempt is
-    // replaced here, so the persisted pause and the operator's comment name the
-    // real attempt instead of a fabricated zero. The occurrence keeps its id
-    // and its start time for as long as the record lives; only a resolved
-    // pause (its record cleared) makes the next one a different occurrence.
-    const pause = pauseOccurrence(pending, work, attempt, previous);
-    this.announce(work, "reserved");
-    // A record with no identity was announced before occurrences had one: the
-    // question is already on the issue, so this is the same occurrence and the
-    // identity it lacks must not ask it again. A record whose reason changed
-    // since is a NEW fact and is told.
-    const alreadyAnnounced =
-      previous !== null &&
-      previous.reason === pause.reason &&
-      previous.announced === true &&
-      (previous.id === undefined || previous.id === pause.id);
-    if (alreadyAnnounced) {
-      // The same pause was already announced: re-assert the blocked label
-      // without repeating the request (a failed retomada swapped it), so the
-      // work stays out of every launch and the human sees one request. Only the
-      // detail may carry fresher evidence. The record is not marked
-      // unannounced on the way: the request DID land.
-      await tickets.blockTicketClaim(work.ticket, config.labels);
-      writePause(dir, reassertedPause(pause, previous));
-      this.reportContinuityPause(work, dir, pause);
-      return;
-    }
-    // The record lands FIRST (a restart must know the work waits), marked
-    // unannounced until the block and the request really landed: a death in
-    // between leaves the fact that the operator was never told.
-    writePause(dir, { ...pause, announced: false });
-    this.reportContinuityPause(work, dir, pause);
-    await this.applyBlockWithComment(
-      work,
-      await continuityPausedCommentBody({
-        attempt: pause.attempt,
-        evidencedAttempt: (await readAttemptLedger(dir)).lastAttempt,
-        reason: pause.reason,
-        id: pause.id,
-        detail: pause.detail,
-        workDir: dir,
-        workspace,
-        ...(pause.sessionId === undefined ? {} : { sessionId: pause.sessionId }),
-      }),
-    );
-    writePause(dir, { ...pause, announced: true });
-  }
 
   /**
    * Consent may be discovered on the sweep after the host cleared the pause and
@@ -1502,10 +1309,6 @@ export class SweepEngine {
     return true;
   }
 
-  private reportContinuityPause(work: WorkIdentity, dir: string, pause: PauseRecord): void {
-    const message = this.continuityDiagnostics.paused(workKeyOf(work), dir, pause);
-    if (message !== null) this.log(message);
-  }
 
   /** The exhausted recovery budget: block the work and ask the operator for
    *  help, naming the configured value and backoff — no attempt was consumed. */
@@ -1534,85 +1337,6 @@ export class SweepEngine {
     this.announce(work, "reserved");
   }
 
-  /**
-   * Settle one model provider failure and apply its decision (issue 144): the
-   * attempt's own log records the failure and each granted retry, the ledger
-   * persists the count, and an exhausted budget comments the help request on
-   * the issue — keeping the claim, never the blocked label. Idempotent: the
-   * same failure settled twice records once; the help request is retryable, so
-   * a death between the ledger and the comment never loses it.
-   */
-  private async applyModelProviderFailure(
-    work: WorkIdentity,
-    dir: string,
-    attempt: number,
-    failure: ModelProviderFailure,
-  ): Promise<ModelProviderDecision> {
-    const { config, tickets, workspace } = this.deps;
-    const ledger = await readModelProviderLedger(dir);
-    const decision = modelProviderDecision(ledger, config.modelProvider, attempt, failure);
-
-    // The attempt's own log carries the event BEFORE the ledger is written: a
-    // death between the two leaves the evidence (at worst a repeated line),
-    // never a silent loss of the failure or of the retry it granted.
-    const alreadyGranted = isModelProviderRetryGranted(ledger, attempt, failure);
-    if (!isModelProviderFailureSettled(ledger, attempt, failure)) {
-      appendAttemptEvent(dir, attempt, {
-        event: "model-provider-failure",
-        message: failure.message,
-        failureIdentity: failure.identity,
-      });
-    }
-    if (decision.decision === "retry" && !alreadyGranted) {
-      appendAttemptEvent(dir, attempt, {
-        event: "model-provider-retry",
-        retry: decision.consumed,
-        maxRetries: config.modelProvider.maxRetries,
-        waitMs: decision.waitMs,
-      });
-    }
-
-    const settlement = await settleModelProviderFailure(dir, config.modelProvider, attempt, failure);
-    if (settlement.decision === "awaiting-model-provider") {
-      // The help request is retryable, not tied to the settlement that raised
-      // it: a death between the ledger and the comment leaves it unrequested,
-      // and the next sweep asks again.
-      const helpPending = isModelProviderHelpPending(
-        await readModelProviderLedger(dir),
-        attempt,
-        failure,
-      );
-      if (helpPending) {
-        // Keep the work reserved before asking: re-asserting the (already held)
-        // claim is idempotent and is what the operator's answer resumes.
-        await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
-        const comment = await modelProviderAwaitingCommentBody({
-          attempt,
-          failure,
-          budget: config.modelProvider,
-          workDir: dir,
-          workspace,
-        });
-        await tickets.commentOnTicket(work.ticket, comment);
-        await this.deliverNotice(helpNotice(work));
-        await markModelProviderHelpRequested(dir, attempt, failure);
-        this.log(
-          `awaiting model provider for ${renderWorkIdentity(work)}: attempt ${attempt} ended by a model provider failure ` +
-            `(${settlement.reason}) — a help request on the issue, never a block; the recovery budget is untouched`,
-        );
-      }
-      return settlement;
-    }
-
-    if (settlement.recorded) {
-      this.log(
-        `model provider failure on attempt ${attempt} of ${renderWorkIdentity(work)}: ${failure.message} — ` +
-          `retry ${settlement.consumed}/${config.modelProvider.maxRetries} after ${settlement.waitMs}ms ` +
-          "(the recovery budget is untouched)",
-      );
-    }
-    return settlement;
-  }
 
   /**
    * The repair reconciliation of the tick (issue 112): every repair attempt
@@ -2113,6 +1837,24 @@ export class SweepEngine {
     await tickets.blockTicketClaim(work.ticket, config.labels);
     await tickets.commentOnTicket(work.ticket, comment);
     await this.deliverNotice(helpNotice(work));
+  }
+
+  /** The engine's side of an exhausted model provider budget: keep the claim and
+   *  ask the operator — the comment and the notice, never the blocked label (an
+   *  awaiting model provider is not a Block). */
+  private async holdAndAsk(work: WorkIdentity, comment: string): Promise<void> {
+    const { tickets, config } = this.deps;
+    await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
+    await tickets.commentOnTicket(work.ticket, comment);
+    await this.deliverNotice(helpNotice(work));
+  }
+
+  /** Whether a worker of this Work may still be alive — an admission of this
+   *  process or a survivor: the one liveness fact the endings ask, and the one
+   *  only the engine holds. */
+  private workerMayBeAlive(work: WorkIdentity): boolean {
+    const key = workKeyOf(work);
+    return this.slots.workKeys.includes(key) || this.carriedKeys.has(key);
   }
 
   /** The done duties on real disk and real git: archive the work's artifacts
