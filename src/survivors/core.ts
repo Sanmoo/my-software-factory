@@ -1,19 +1,18 @@
 import { readActivityStamp, workActivityDirs } from "../runtime/activity.js";
-import type { WorkIdentity } from "../tracker/identity.js";
 import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
+import type { WorkIdentity } from "../tracker/identity.js";
 
 /**
- * The survivor ledger and policy of the operational cycle (issue 118): the
- * workers a reliable liveness probe shows but THIS process did not launch —
- * the workers that outlived a factory death. Recognition is observation only:
- * nothing is relaunched, attached to, killed or given a new attempt while a
- * survivor lives. The ledger is process-local on purpose; a restart re-reads
- * the same facts from Docker, and a work whose exit is confirmed is reconciled
- * from disk + tracker by the ordinary ruler.
+ * The pure core of the survivor ledger (issue 118; epic #198, ticket #206): the
+ * record of one surviving worker and the tables over it, decided without I/O.
+ *
+ * This is the module's INTERNAL seam — imported by `ledger.ts` and by the
+ * module's own tests, by nobody else. The module's interface is
+ * `survivors.ts`; a caller asks that for an answer, never this for a table.
  *
  * The decisions the cycle asks for live HERE, pure: which silence is owed a
- * warning, how many slots a live workforce exceeds, which duplicates are new.
- * The loop only logs and delivers what they return.
+ * warning, which duplicates are new, whether an activity stamp moved. The
+ * ledger only logs and delivers what they return.
  *
  * The activity observation is the runtime's own (runtime/activity.ts): what
  * the agents write counts, the factory's derived logs never do. For a survivor

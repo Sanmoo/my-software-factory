@@ -121,7 +121,7 @@ import {
   unavailableWarningDue,
   type SurvivorRecord,
   type UnavailableEpisode,
-} from "./pool/survivors.js";
+} from "./survivors/core.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   capacityExcess,
