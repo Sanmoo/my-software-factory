@@ -123,9 +123,9 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 17
 
   function refusesBeforeWorker(
     message: string,
-    launches = 1,
+    refusals = 1,
   ): (request: WorkRequest, index: number) => Error | null {
-    return (_request, index) => (index < launches ? new LaunchPreconditionError(message) : null);
+    return (_request, index) => (index < refusals ? new LaunchPreconditionError(message) : null);
   }
 
   test("the refusal refunds the grant: the budget stays intact, the work reserved, and the next tick retries the same attempt", async () => {
@@ -152,6 +152,11 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 17
     assert.equal(afterRefusal.attempt, 1, "the attempt keeps its number");
     assert.equal(afterRefusal.lastStop?.kind, "interruption", "the attempt is still the interrupted one");
     assert.equal(existsSync(join(target, "desfecho.json")), false, "no outcome was written: no attempt was consumed");
+    assert.equal(
+      readFileSync(join(target, "log-1.jsonl"), "utf8").includes("session-start"),
+      false,
+      "the refusal left no footprint: no session started, so no worker existed",
+    );
     const issue = await tracker.readIssue({ repo: REPO, number: 1 });
     assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.claimed), "the work stays reserved");
     assert.equal(
@@ -272,6 +277,32 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 17
     const retried = await runOnce(deps(runtime, cfg));
     assert.equal(retried.launched.length, 1, "the work relaunches once the environment allows it");
     assert.equal((await readRecoveryLedger(target)).consumed, 3, "and spends exactly one more recovery");
+  });
+
+  test("a refused launch that held no grant refunds nothing and says so", async () => {
+    // A first claim holds no Recovery grant: the refusal of its launch has no
+    // recovery to return, and the note must not claim one was returned.
+    seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
+    const runtime = new FakeWorkerRuntime({
+      tracker,
+      outcomes: ["pr-open"],
+      rejectLaunch: refusesBeforeWorker("no model credentials for the worker"),
+    });
+
+    await assert.rejects(runOnce(deps(runtime)), /no model credentials for the worker/);
+
+    const target = workDir(layout, REPO, 2);
+    const ledger = await readRecoveryLedger(target);
+    assert.equal(ledger.consumed, 0, "nothing was consumed, so nothing could be refunded");
+    assert.deepEqual(ledger.events, []);
+    assert.equal(
+      logs.some((line) => line.includes("no recovery was granted to this launch")),
+      true,
+      "the operator reads what the launch really held",
+    );
+    assert.equal(existsSync(join(target, "desfecho.json")), false, "no attempt was consumed");
+    const issue = await tracker.readIssue({ repo: REPO, number: 2 });
+    assert.ok(issue.known && issue.value.labels.includes(DEFAULT_LABELS.claimed), "the claim keeps the work reserved");
   });
 
   test("a requested stop that cancels the admission first does not cost the grant of a launch that then proves no worker existed", async () => {

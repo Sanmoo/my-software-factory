@@ -167,11 +167,11 @@ export async function consumeStopRequest(workDir: string, attempt: number): Prom
 }
 
 /**
- * Return a recovery whose relaunch the requested stop cancelled:
- * the grant was persisted before the backoff, but no worker ever started with
- * it, so spending it would penalize a requested restart. Only the grant named
- * by its ledger event index is returned — earlier, legitimate consumption and
- * a second return of the same grant are impossible.
+ * Return one Recovery grant to the attempt's budget: the launch it paid for
+ * provably carried no worker — the requested stop cancelled the admission, or
+ * the environment refused the launch. Only the grant named by its ledger event
+ * index is returned — earlier, legitimate consumption and a second return of
+ * the same grant are impossible.
  */
 export async function refundRecovery(workDir: string, attempt: number, index: number): Promise<boolean> {
   return updateRecoveryLedger(workDir, (ledger) => {

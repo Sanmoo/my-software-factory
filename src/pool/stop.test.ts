@@ -11,11 +11,12 @@ import type { LivenessObservation, LiveWorker } from "../state/liveness.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
 import { readRecoveryLedger, type RecoveryLedger, type RecoveryStop } from "../work-record/recovery.js";
-import { consumeRecovery, recordUnconfirmedStop } from "./recovery.js";
+import { consumeRecovery, recordUnconfirmedStop, refundRecovery } from "./recovery.js";
 import {
   OperatorStop,
   operatorStopClaim,
   reconcileUnconfirmedStops,
+  refundHeldGrant,
   stopConfirmed,
   type StopInput,
   type StopLaunch,
@@ -393,5 +394,70 @@ describe("the operator-stop claim shared by the derivation and the launch path "
       kind: "requested",
       attempt: 2,
     });
+  });
+});
+
+describe("returning the grant an admission still holds (issues #146 and #178)", () => {
+  let root: string;
+  let layout: WorkspaceLayout;
+  let dir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "msf-stop-grant-"));
+    layout = ensureWorkspace(join(root, "ws"));
+    dir = workDirOfKey(layout, KEY);
+    mkdirSync(dir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const held = (recoveryIndex: number | null): StopLaunch => ({
+    work: githubWork(REPO, 1),
+    dir,
+    attempt: 1,
+    launched: false,
+    recoveryIndex,
+  });
+
+  test("only the grant the admission names is returned, and only once", async () => {
+    await consumeRecovery(dir, { maxRecoveries: 3, waitsMs: [1_000] }, 1);
+    await consumeRecovery(dir, { maxRecoveries: 3, waitsMs: [1_000] }, 1);
+    const launch = held(1);
+
+    assert.equal(await refundHeldGrant(launch, 1), "refunded");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 1, "exactly its own grant, not the earlier one");
+    assert.equal(launch.recoveryIndex, null, "the admission no longer names it");
+
+    assert.equal(await refundHeldGrant(launch, 1), "none-held", "a second return has nothing to return");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 1, "and cannot inflate the budget");
+  });
+
+  test("an admission that names no grant returns none", async () => {
+    assert.equal(await refundHeldGrant(held(null), 1), "none-held");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 0);
+  });
+
+  test("a grant the ledger no longer holds is gone, not refunded", async () => {
+    await consumeRecovery(dir, { maxRecoveries: 3, waitsMs: [1_000] }, 1);
+    // A previous caller already returned this grant (a requested stop, an
+    // earlier refusal): the event is gone even though the admission still
+    // names it.
+    await refundRecovery(dir, 1, 0);
+
+    assert.equal(await refundHeldGrant(held(0), 1), "gone-from-ledger");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 0, "nothing was consumed twice");
+  });
+
+  test("a ledger that moved past the attempt keeps the grant consumed", async () => {
+    await consumeRecovery(dir, { maxRecoveries: 3, waitsMs: [1_000] }, 1);
+    // The ledger now counts another attempt's recoveries: the grant of attempt 1
+    // is history, so returning it would renew a budget nothing proved unused.
+    await consumeRecovery(dir, { maxRecoveries: 3, waitsMs: [1_000] }, 2);
+    const launch = held(0);
+
+    assert.equal(await refundHeldGrant(launch, 1), "still-consumed");
+    assert.equal((await readRecoveryLedger(dir)).consumed, 1, "the attempt's count is untouched");
   });
 });
