@@ -1,16 +1,18 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { OPERATIONAL_LOG_FILENAME } from "./log.js";
+
 /**
  * The workspace: root of clones, worktrees, works, the archive and the
  * retrospective reports.
  *
  * Disk names are taken decisions, not code, and stay in PT-BR:
- *   <workspace>/repos/      — single clone per target repo
- *   <workspace>/trabalhos/  — a work's per-attempt artifacts while it runs
+ *   <workspace>/repos/ — single clone per target repo
+ *   <workspace>/trabalhos/ — a work's per-attempt artifacts while it runs
  *                             (sessao/, log-<n>.jsonl, desfecho.json)
- *   <workspace>/arquivo/    — works moved here on done; nothing is deleted
- *   <workspace>/retros/     — the retrospective reports (the next marker)
+ *   <workspace>/arquivo/ — works moved here on done; nothing is deleted
+ *   <workspace>/retros/ — the retrospective reports (the next marker)
  */
 
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */
@@ -34,7 +36,7 @@ export const RETRO_MOUNT_PATHS = {
   retros: "/msf-retros",
   archive: "/msf-arquivo",
   works: "/msf-trabalhos",
-  operationalLog: "/msf-operacional.log",
+  operationalLog: `/msf-${OPERATIONAL_LOG_FILENAME}`,
 } as const;
 
 export interface WorkspaceLayout {

@@ -26,9 +26,9 @@ function cliPath(): string {
  * Markers let a test observe, hold and break the owner:
  *   MSF_SHIM_READY — the shim writes its PID here once the boot check reached
  *     it (the run already holds the lock at that point).
- *   MSF_SHIM_HOLD  — while this file exists the shim blocks, so the owner
+ *   MSF_SHIM_HOLD — while this file exists the shim blocks, so the owner
  *     process stays alive (and keeps its exclusivity) under test control.
- *   MSF_SHIM_FAIL  — the boot check fails, exercising a startup error AFTER
+ *   MSF_SHIM_FAIL — the boot check fails, exercising a startup error AFTER
  *     the lock was acquired.
  *   MSF_GH_REST, MSF_GH_REST_ANSWERS, MSF_GH_REST_LOG — the canned REST
  *     channel's responder, its answer map and the log of paths read.

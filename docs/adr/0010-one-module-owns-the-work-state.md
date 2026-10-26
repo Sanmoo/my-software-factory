@@ -64,8 +64,9 @@ acted on, so no verdict changes and no operator-visible behaviour moves — the
 only thing that changes is which word names which fact.
 
 The epic's only behaviour delta — the only **new verdict** — is named here so
-that no difference enters underneath: a PR closed without merge, seen at collection, becomes a **Block with the PR pointed at**, in place
-of the release or block-by-failure that happens today. Where the two verdicts of
+that no difference enters underneath: a PR closed without merge, seen at
+collection, becomes a **Block with the PR pointed at**, in place of the release
+or block-by-failure that happens today. Where the two verdicts of
 today diverge, the read before a launch wins, because it is the one that matches
 the Glossary's definition of Block; it gets a test of its own. No other delta:
 the Requested stop protocol (ADR 0008), the continuity rules (ADR 0005), the

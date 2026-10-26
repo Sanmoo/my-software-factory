@@ -19,7 +19,7 @@
  *   1 → issue ONE guarded call a probe extension refuses after the guardrail
  *       journaled its intent (so the journal keeps an intent with no result and
  *       the terminal error records no `durationMs`);
- *   — → the first session ends with NO outcome record: its attempt is
+ * — → the first session ends with NO outcome record: its attempt is
  *       interrupted, and repairing the journal is the factory's job;
  *   resumed    → write the outcome record once, then the completion.
  */

@@ -139,7 +139,7 @@ class LaunchPipeline implements Launch {
             : `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
                 "the same attempt continues (no new attempt, branch preserved)",
       );
-      // The claim swap itself may have been interrupted  — or the
+      // The claim swap itself may have been interrupted — or the
       // outage killed it: re-asserting the idempotent claim heals
       // it without releasing the work to the pool.
       if (launchable.callRecovery !== undefined) await tickets.resumeTicketClaim(work.ticket, config.labels);
@@ -232,7 +232,7 @@ class LaunchPipeline implements Launch {
     // A work branch reaches the remote only when the worker publishes it
     // (push + PR): a relaunch of a work that fell before publishing reuses a
     // branch the remote never saw, so the reuse has nothing to fast-forward.
-    // Said once per launch, next to the launch it explains  — the
+    // Said once per launch, next to the launch it explains — the
     // runtime's reuse fetch then reads as expected instead of a broken remote.
     if (!prepared.branchCreated && !prepared.branchOnOrigin) {
       this.log(

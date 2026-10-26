@@ -18,7 +18,7 @@ export interface EffectRecord {
 
 /**
  * `present` — the effect is recorded and readable: the outside world confirmed it.
- * `absent`  — nothing recorded: safe to perform.
+ * `absent` — nothing recorded: safe to perform.
  * `ambiguous` — a torn/partial write: the evidence cannot decide, so the contract
  *               forbids guessing (help request), never a blind repeat.
  */

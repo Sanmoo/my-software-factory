@@ -302,6 +302,27 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     );
   });
 
+  test("two works finishing in the same millisecond are never dropped at the boundary", async () => {
+    const config = makeConfig({ threshold: 1 });
+    const { runtime, deps } = makeFactory(config);
+    for (let number = 1; number <= 12; number += 1) seedArchived(number, at(1));
+
+    await runOnce(deps);
+    const firstWindow = runtime.retroLaunched[0]!.works.map((work) => work.key);
+    assert.equal(firstWindow.length, 10, "the first round still covers ten works");
+    const uncovered = Array.from({ length: 12 }, (_value, index) => `${REPO}#${index + 1}`).filter(
+      (key) => !firstWindow.includes(key),
+    );
+
+    await runOnce(deps);
+
+    assert.deepEqual(
+      runtime.retroLaunched[1]?.works.map((work) => work.key).sort(),
+      uncovered.sort(),
+      "the works outside the window share the boundary instant and are analyzed next, never skipped",
+    );
+  });
+
   test("a round that writes no report advances nothing — the same window is retried", async () => {
     const config = makeConfig({ threshold: 1 });
     const first = makeLoggedFactory(config, [{ report: false }]);

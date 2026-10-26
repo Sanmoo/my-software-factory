@@ -69,8 +69,7 @@ import { processRecoveryRequests } from "./recover.js";
 import { operationalLog } from "./log.js";
 import { collectFinishedWorks } from "./retro/window.js";
 import { RetroBusyError, planAutomaticRound, runRetroRound } from "./retro/round.js";
-import { describeError, formatDuration } from "./format.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { describeError } from "./format.js";
 import { join } from "node:path";
 
 /**
@@ -300,7 +299,7 @@ export class SweepEngine {
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
-  /** The retrospective round in flight  — its own lane, never a slot. */
+  /** The retrospective round in flight — its own lane, never a slot. */
   private retroRun: Promise<void> | null = null;
 
   /** Liveness and the survivor ledger: which worker
@@ -949,7 +948,7 @@ export class SweepEngine {
 
   /**
    * The end of a survivor, ruled by the ordinary ruler over the attempt's own
-   * artifacts and the current tracker  — the ledger read the facts
+   * artifacts and the current tracker — the ledger read the facts
    * and asked; applying a verdict is the cycle's write.
    */
   private async survivorEnded(launchable: Launchable, attempt: number): Promise<Launchable | null> {

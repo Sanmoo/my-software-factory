@@ -3,8 +3,8 @@
  * concurrency problem is out of scope here).
  *
  * Two independent facts are tracked:
- *   owner.lock   — who is conducting this work (the processing role).
- *   worker.json  — the worker process, when one was launched.
+ *   owner.lock — who is conducting this work (the processing role).
+ *   worker.json — the worker process, when one was launched.
  *
  * They are separate because the contract distinguishes them: the controller can
  * die while its worker survives, and the surviving worker must be recognized and

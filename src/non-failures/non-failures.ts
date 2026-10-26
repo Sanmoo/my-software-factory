@@ -69,7 +69,7 @@ export interface NonFailureCycle {
    *  repeating the request (a failed retomada swapped it off). */
   reassertBlock(work: WorkIdentity): Promise<void>;
   /** Hold the claim and ask the operator: the claim, the comment and the notice
-   *  — never the blocked label (an exhausted model provider budget is not a
+   * — never the blocked label (an exhausted model provider budget is not a
    *  Block). */
   holdAndAsk(work: WorkIdentity, comment: string): Promise<void>;
   /** The block leaves with the pause: a resolved pause that continues the SAME

@@ -226,7 +226,7 @@ async function claimedWithoutPullRequest(
 
   const unreconciled = await unreconciledAttempt(ref, facts, policy, snapshot);
   // Only an interruption can be a model provider failure: the attempt's own
-  // stream decides it  — a written outcome or a bare reservation
+  // stream decides it — a written outcome or a bare reservation
   // never reads the model provider ledger.
   if (unreconciled.state === "interrupted") {
     const providerFailure = await modelProviderFailureOf(ref, issue, facts, policy, snapshot, unreconciled.attempt);
@@ -628,7 +628,7 @@ async function interruption(
 /**
  * The last comment of the PR across both channels (conversation + reviews),
  * merged by createdAt. Feedback is "the LAST comment does not carry the
- * agent marker"  — login cannot separate the
+ * agent marker" — login cannot separate the
  * sides when they are the same account.
  */
 function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null {

@@ -13,9 +13,9 @@
  *                                      line: it continues the one recorded
  *                                      here, so the file keeps saying which
  *                                      session a recovery must reopen.
- *   <work dir>/efeitos.jsonl         — intents (before the action) and results
- *   <work dir>/continuidade.json     — what the host reconciled before the launch
- *   <work dir>/pausa.json            — the pause that survives a restart
+ *   <work dir>/efeitos.jsonl — intents (before the action) and results
+ *   <work dir>/continuidade.json — what the host reconciled before the launch
+ *   <work dir>/pausa.json — the pause that survives a restart
  *
  * The journal is append-only and fsynced: an intent is on disk BEFORE the tool
  * runs, so a kill inside the window still leaves the fact that the action was

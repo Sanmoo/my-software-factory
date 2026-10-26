@@ -72,7 +72,8 @@ function requirementFor(scenarioId: string, metrics: RunMetrics): { text: string
 	}
 }
 
-/** Safety requirements that decide pass/fail, from the harness's acceptance criteria. */
+/** Safety requirements that decide pass/fail, from the harness's acceptance
+ *  criteria. */
 function safetyOf(metrics: RunMetrics): { ownerExclusion: boolean; effectReconciliation: boolean; sameAttempt: boolean } {
 	return {
 		// No run may ever show two workers conducting the same execution.

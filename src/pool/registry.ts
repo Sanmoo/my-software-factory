@@ -207,7 +207,7 @@ export interface RegistryView {
   /** The repair cycle of every work that ran or is running an automatic round. */
   repair: RepairViewEntry[];
   /** Works that went through an interruption: the budget spent and what ended
-   *  the last attempt  — absent for works never interrupted. */
+   *  the last attempt — absent for works never interrupted. */
   recovery: RecoveryViewEntry[];
   /** Works whose last attempt ended by a model provider failure: the retries
    *  spent and the provider's own message. */
@@ -240,7 +240,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const snapshot = await workRecord.read();
     const lastAttempt = snapshot.attempt ?? 0;
     // The record never stops being history: a work whose record and whose
-    // orphaned attempt coexist shows BOTH  — the record is not
+    // orphaned attempt coexist shows BOTH — the record is not
     // presented as the current attempt's result.
     if (snapshot.outcome !== null) {
       lastOutcome.push({ key, workDir: dir, record: snapshot.outcome });

@@ -42,7 +42,8 @@ export interface FinishedWork {
   key: string;
   /** The destination repository the work changed: "owner/name". */
   repo: string;
-  /** Absolute dir of the work's artifacts (transcripts, logs, outcome record). */
+  /** Absolute dir of the work's artifacts (transcripts, logs, outcome
+   *  record). */
   dir: string;
   /** The dir as the round's container sees it (a mounted read-only path). */
   evidencePath: string;
@@ -54,8 +55,7 @@ export interface FinishedWork {
 }
 
 /** The round id in the report's file name: an ISO instant, filename-safe and
- * millisecond-precise, so two rounds can never overwrite each other's report.
- * */
+ *  millisecond-precise, so two rounds can never overwrite each other's report. */
 export function roundId(at: Date): string {
   return at.toISOString().replace(/[:.]/g, "-");
 }
@@ -104,7 +104,8 @@ export async function collectFinishedWorks(
   return finished.sort((a, b) => a.completedAt - b.completedAt || a.key.localeCompare(b.key));
 }
 
-/** The registry key an archived dir names: `<archive>/<key>-<date>[-<suffix>]`. */
+/** The registry key an archived dir names:
+ *  `<archive>/<key>-<date>[-<suffix>]`. */
 export function archivedKey(archiveRoot: string, dir: string): string | null {
   const key = relative(archiveRoot, dir)
     .split(sep)
@@ -146,7 +147,8 @@ async function finishedEntry(
   };
 }
 
-/** The outcome record's mtime is the work's finish time; the dir is the fallback. */
+/** The outcome record's mtime is the work's finish time; the dir is the
+ *  fallback. */
 async function completedAtOf(dir: string): Promise<number> {
   try {
     return (await stat(`${dir}/${DESFECHO_FILENAME}`)).mtimeMs;

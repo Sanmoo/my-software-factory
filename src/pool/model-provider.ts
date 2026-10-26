@@ -167,8 +167,7 @@ export function isModelProviderRetryGranted(
 }
 
 /** Whether this settled failure still owes its help request: awaiting, and
- * the comment was not posted yet (a death between the ledger and the comment).
- * */
+ *  the comment was not posted yet (a death between the ledger and the comment). */
 export function isModelProviderHelpPending(
   ledger: ModelProviderLedger,
   attempt: number,

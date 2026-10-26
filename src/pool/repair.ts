@@ -188,8 +188,7 @@ export function reconcileRepairAttempt(input: {
     settleAttempt(cycle, attempt, publication, localWork, remoteHeadSha);
   /** The round returns: the charge is refunded and the attempt settles as
    *  "nothing of it reached the remote". Counting a fall is the caller's
-   * business — an attempt that fell counts one, an obsolete premise does not.
-   * */
+   *  business — an attempt that fell counts one, an obsolete premise does not. */
   const settledUnpublished = (cycle: RepairCycle): { cycle: RepairCycle; attempt: RepairAttempt } =>
     settled("not-published", { ...cycle, usedRounds: Math.max(0, cycle.usedRounds - 1) });
 

@@ -85,9 +85,8 @@ export type WorkStateReading = WorkRef &
      *  done must always be reflected on the tracker. */
     | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
     /** PR closed without merge: block with a comment pointing at the PR. The
-     *  same state from both readings — before a launch and after an Attempt
-     *   — so the work never returns to the
-     *  pool carrying a closed PR. */
+     *  same state from both readings — before a launch and after an Attempt —
+     *  so the work never returns to the pool carrying a closed PR. */
     | { state: "rejected"; pr: PullRequestRecord; comment: string }
     /** New human comment on the PR: a feedback round on the same branch and PR. */
     | { state: "feedback"; pr: PullRequestRecord; createdAt: string }
