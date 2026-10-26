@@ -10,7 +10,7 @@ import {
 import { renderWaits } from "./waits.js";
 
 /**
- * The interruption-recovery budget of a work (issue 123; terms in GLOSSARY):
+ * The interruption-recovery budget of a work (terms in GLOSSARY):
  * an attempt that ended with no outcome record is interrupted, not failed, so
  * the factory absorbs it with a finite allowance scoped to the attempt instead
  * of consuming it. The ledger is an artifact of the work
@@ -167,7 +167,7 @@ export async function consumeStopRequest(workDir: string, attempt: number): Prom
 }
 
 /**
- * Return a recovery whose relaunch the requested stop cancelled (issue #146):
+ * Return a recovery whose relaunch the requested stop cancelled:
  * the grant was persisted before the backoff, but no worker ever started with
  * it, so spending it would penalize a requested restart. Only the grant named
  * by its ledger event index is returned — earlier, legitimate consumption and
@@ -233,7 +233,7 @@ export async function recordFailure(
 }
 
 /**
- * Restart the fall count (ticket 14): the human answered the block the 2nd
+ * Restart the fall count: the human answered the block the 2nd
  * consecutive fall asked for, so the next failure starts a FRESH count — the
  * 1st fall releases again. The count is the ledger's fact (`lastFallAttempt`),
  * so the restart is written there: kept only in a launch's memory it would be

@@ -19,13 +19,13 @@ import { appendAttemptEvent } from "../work-record/logs.js";
 import type { NonFailureDeps } from "./non-failures.js";
 
 /**
- * The model provider failure (issue 144; epic #198, ticket #207): an Attempt
+ * The model provider failure: an Attempt
  * whose turn ended in the model provider's own error (`stopReason: error` with
  * the provider's `errorMessage` in the session stream) — not in an interruption
  * of the agent (GLOSSARY).
  *
  * It retries on its OWN finite, persisted allowance with its own backoff, and it
- * never spends the interruption's recovery budget (issue 123) nor enters the fall
+ * never spends the interruption's recovery budget nor enters the fall
  * ruler. The ledger is an artifact of the Work record (provedor.json); the tables
  * of the allowance live in `pool/model-provider.ts`. What this module owns is the
  * ENDING: settling the failure exactly once, granting the retry with its wait, or

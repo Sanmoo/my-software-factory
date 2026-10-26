@@ -7,7 +7,7 @@
 import type { IssueComment, RepairReason, RequiredCheckResult } from "../tracker/port.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 import type { LocalWorkFacts } from "../git/port.js";
-import type { OutcomeClass } from "../state/outcome.js";
+import type { OutcomeClass } from "../work-record/outcome.js";
 
 /**
  * The repair context of a reactivated session: why the factory

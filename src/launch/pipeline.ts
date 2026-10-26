@@ -37,7 +37,7 @@ const logClaim = (log: (message: string) => void, key: string): void =>
  *  queue and the admissions a stop may still have to reach. */
 class LaunchPipeline implements Launch {
   // Prepare (clone/fetch/branch) touches the shared clone of a repo — two
-  // first-launches of the same repo must not race inside it (ticket 12
+  // first-launches of the same repo must not race inside it.
   // introduced the parallelism; the serialization stays local to prepares,
   // the launches themselves run concurrently).
   private readonly preparing = new Map<string, Promise<void>>();
@@ -88,9 +88,9 @@ class LaunchPipeline implements Launch {
     const { work, kind, dir } = launchable;
     const key = workKeyOf(work);
 
-    // The requested stop closes admissions the instant it arrives (issue
-    // #146): a launch that has not written to the tracker yet leaves nothing
-    // behind, and one that already reserved the work merely stops here — the
+    // The requested stop closes admissions the instant it arrives: a launch
+    // that has not written to the tracker yet leaves nothing behind, and one
+    // that already reserved the work merely stops here — the
     // reservation stays for the next run's reconciliation.
     if (this.cycle.stopping()) {
       this.log(`the launch of ${key} stopped before the claim — nothing was reserved`);
@@ -99,8 +99,8 @@ class LaunchPipeline implements Launch {
 
     if (kind === "claim") {
       logClaim(this.log, key);
-      // The dir is the safety footprint of issue 98 and lands before the claim;
-      // the record is the Work's own facts (issue 125). An unknown or
+      // The dir is the safety footprint and lands before the claim;
+      // the record is the Work's own facts. An unknown or
       // unwritable record is reported and never blocks the claim — nor is it
       // overwritten.
       mkdirSync(dir, { recursive: true });
@@ -139,8 +139,8 @@ class LaunchPipeline implements Launch {
             : `recovering ${key}: attempt ${launchable.attempt} was interrupted — ` +
                 "the same attempt continues (no new attempt, branch preserved)",
       );
-      // The claim swap itself may have been interrupted (issue 98) — or the
-      // outage of issue 144 killed it: re-asserting the idempotent claim heals
+      // The claim swap itself may have been interrupted  — or the
+      // outage killed it: re-asserting the idempotent claim heals
       // it without releasing the work to the pool.
       if (launchable.callRecovery !== undefined) await tickets.resumeTicketClaim(work.ticket, config.labels);
       await tickets.claimTicket(work.ticket, config.workerGhAccount, config.labels.ready);
@@ -150,20 +150,20 @@ class LaunchPipeline implements Launch {
     // Every launch kind holds the claim, so the work is reserved from here.
     this.cycle.announce(work, "reserved");
 
-    // Git host (ticket 15): clone once + delta fetch + work branch born from
+    // Git host: clone once + delta fetch + work branch born from
     // the default the clone reveals; relaunches reuse the branch untouched.
     const prepared = await this.serializePrepare(work.destination.repo, () => git.prepareWorkFor(work));
 
-    // A repair targets the PR's CURRENT base — never the repo default (story 8)
+    // A repair targets the PR's CURRENT base — never the repo default
     // — and opens only on a premise re-read now. The opening owns the single
     // read of the facts, the head the intervention is pinned to and the
-    // concurrent-change verdict (issue 189); this method only applies them.
+    // concurrent-change verdict; this method only applies them.
     const derivedTrigger = launchable.repair;
     const resuming = launchable.resuming ?? null;
     let repair: RepairRoundContext | undefined;
     let baseBranch = prepared.baseBranch;
     if (derivedTrigger !== undefined) {
-      // The facts are re-read at the opening point (issue 149): the impediment
+      // The facts are re-read at the opening point: the impediment
       // that opened the round may have been resolved meanwhile — by a human
       // pushing the resolution, by a base advance. Only a confirmed premise
       // buys a session; an obsolete one returns the round unspent, and an
@@ -208,8 +208,8 @@ class LaunchPipeline implements Launch {
       }
       // A fresh round follows the facts as they read now: when the head moved
       // while the impediment persists, the evidence was recalculated, so the
-      // round opens on the current head and is charged on the new evidence
-      // (issue 149). A resumption keeps its observed head — moving it would
+      // round opens on the current head and is charged on the new evidence. A
+      // resumption keeps its observed head — moving it would
       // publish the fallen attempt's local history over a concurrent one.
       if (resuming === null && opening.context.trigger.facts.headSha !== derivedTrigger.facts.headSha) {
         this.log(
@@ -232,7 +232,7 @@ class LaunchPipeline implements Launch {
     // A work branch reaches the remote only when the worker publishes it
     // (push + PR): a relaunch of a work that fell before publishing reuses a
     // branch the remote never saw, so the reuse has nothing to fast-forward.
-    // Said once per launch, next to the launch it explains (issue 96) — the
+    // Said once per launch, next to the launch it explains  — the
     // runtime's reuse fetch then reads as expected instead of a broken remote.
     if (!prepared.branchCreated && !prepared.branchOnOrigin) {
       this.log(
@@ -243,12 +243,12 @@ class LaunchPipeline implements Launch {
 
     // The registry numbers the attempt and remembers the previous WRITTEN
     // failure — both are disk facts of this work, not process state (ticket
-    // 13; an interruption never counts as a fall, issue 123).
+    // 13; an interruption never counts as a fall).
     const continuesAttempt = kind === "recover" || kind === "model-provider-retry";
     const facts = await readLaunchFacts(dir, continuesAttempt ? launchable.attempt : undefined);
     entry.attempt = facts.attempt;
     if (kind === "resume" && facts.previousFall) {
-      // Ticket 14's decision: the human's answer resets the consecutive
+      // The human's answer resets the consecutive
       // failure count — the blocked valve already did its job and was
       // addressed; a new failure starts a fresh count (1st → release again).
       // The count is the Work's own fact (the recovery ledger), so the restart
@@ -258,15 +258,15 @@ class LaunchPipeline implements Launch {
     }
     if (kind === "resume") {
       // A human answer that unblocks the work also renews the automatic
-      // repair budget (issue 107 story 23); new commits never do.
+      // repair budget; new commits never do.
       await writeRepairCycle(dir, EMPTY_REPAIR_CYCLE);
     }
     // The local work the round takes over, read from real git only once the
     // round is really going out: existing commits are reused, changes are
     // inspected, an unfinished operation is continued — the resumption never
-    // restarts the work blind (issue 112).
+    // restarts the work blind.
     const localWork = repair === undefined ? null : await this.cycle.inspectLocalWork(work);
-    // The launch material (ticket 17): the issue, the open PR with its
+    // The launch material: the issue, the open PR with its
     // conversation (a feedback round), the diff of the branch — every
     // session starts from the whole context through the port + git host.
     const material = await launchMaterial(tickets, pullRequests, git, launchable, repair, localWork);
@@ -279,7 +279,7 @@ class LaunchPipeline implements Launch {
       return null;
     }
 
-    // Continuity (issue 119): which Pi session this launch opens, and whether
+    // Continuity: which Pi session this launch opens, and whether
     // it may open it at all. A human's answer to a paused work is orientation,
     // not proof about the world: the facts are read again before acting, and
     // an effect that is still ambiguous keeps the work paused.
@@ -305,7 +305,7 @@ class LaunchPipeline implements Launch {
         if (!recheck.resolved && recheck.pause !== null) {
           // No new information and no changed cause: the answer does not
           // authorize a replay and the same question is not asked again. The
-          // pause keeps its identity and its binding to the answer (issue 174);
+          // pause keeps its identity and its binding to the answer;
           // a real cause change posts exactly one diagnostic.
           await this.cycle.pauseForContinuity(work, dir, recheck.pause, facts.attempt);
           return null;
@@ -338,12 +338,12 @@ class LaunchPipeline implements Launch {
       return null;
     }
 
-    // The recovery is GRANTED and persisted before the wait and the relaunch
-    // (issue 123): a death during the backoff or the session continues the
+    // The recovery is GRANTED and persisted before the wait and the relaunch: a
+    // death during the backoff or the session continues the
     // count instead of renewing the allowance. An exhausted budget pauses the
     // work and asks the operator for help — never another blind relaunch.
     //
-    // The resume after the operator's requested stop (issue #146) spends
+    // The resume after the operator's requested stop spends
     // nothing and waits nothing: it continues the SAME attempt.
     if (kind === "recover" && launchable.requestedStop !== true) {
       const decision = await consumeRecovery(dir, config.recovery, facts.attempt);
@@ -371,9 +371,9 @@ class LaunchPipeline implements Launch {
         return null;
       }
     }
-    // The model provider retry is settled and persisted before the wait (issue 144):
+    // The model provider retry is settled and persisted before the wait:
     // a death during the backoff continues the model provider count instead of
-    // renewing it, and the recovery budget of issue 123 is never touched.
+    // renewing it, and the interruption recovery is never touched.
     if (kind === "model-provider-retry") {
       const failure = await readTurnModelProviderError(dir, facts.attempt);
       if (failure === null) {
@@ -401,7 +401,8 @@ class LaunchPipeline implements Launch {
     }
 
     // A launch means this attempt is being carried NOW: a stop record left on
-    // it by a previous requested stop has done its job (or the record is stale on a
+    // it by a previous requested stop has done its job (or the record is stale
+    // on a
     // fresh claim of the same number), so it never excuses a later, unexpected
     // interruption of this attempt.
     const stopBeforeLaunch = (await readRecoveryLedger(dir)).lastStop;
@@ -453,7 +454,7 @@ class LaunchPipeline implements Launch {
 
   /**
    * Persist the concurrent-change verdict the opening reached: the derivation
-   * then blocks the work with the help request (issue 112).
+   * then blocks the work with the help request.
    */
   private async markConcurrentChange(work: WorkIdentity, attempt: RepairAttempt): Promise<void> {
     const dir = workDirOfKey(this.deps.workspace, workKeyOf(work));
@@ -467,10 +468,10 @@ class LaunchPipeline implements Launch {
   }
 
   /** Charge one automatic repair round as its session starts — only after the
-   *  continuity decision allowed the launch (issue 181): the budget, the
+   *  continuity decision allowed the launch: the budget, the
    *  consumed evidence and the attempt's own facts persist on disk, so a
    *  restart neither renews the cap nor repeats the same round, and a death is
-   *  attributable once the remote answers (issue 112). */
+   *  attributable once the remote answers. */
   private async recordRepairRound(
     dir: string,
     work: WorkIdentity,
@@ -510,7 +511,7 @@ class LaunchPipeline implements Launch {
 }
 
 /**
- * Gather the launch material of a work from the port + git host (ticket 17):
+ * Gather the launch material of a work from the port + git host:
  * the issue (title/body), human issue replies on a blocked retomada, the open
  * PR's conversation on a feedback round, the repair context above, and the
  * diff. Unknown reads degrade to empty — the prompt still carries whatever is

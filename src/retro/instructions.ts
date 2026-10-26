@@ -4,7 +4,8 @@
  * — never fetched at runtime, never inherited from a personal profile.
  *
  * Provenance: the method is derived, with credit, from the `retro` skill of
- * mattpocock/skills, at the immutable revision 49dd158d1076134a641b33efb035946536778336.
+ * mattpocock/skills, at the immutable revision
+ * 49dd158d1076134a641b33efb035946536778336.
  * The target categories are his; the factory axis (worker prompt, outcome
  * classification, runtime/toolchain, tracker communication) and the
  * filing/reporting contract are the factory's own, because the factory, not a

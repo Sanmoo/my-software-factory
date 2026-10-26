@@ -4,8 +4,8 @@ import { test } from "node:test";
 import { STATE_DECLARATIONS, consentAppliesTo, type StateDeclaration, type WorkStateReading } from "./state.js";
 
 /**
- * The declarations that replace the loop's three hand-maintained tables
- * (ticket #200, AC2). The compile-time half of this test is the `satisfies` on
+ * The declarations that replace the loop's three hand-maintained tables. The
+ * compile-time half of this test is the `satisfies` on
  * STATE_DECLARATIONS: a state added to the union without its three properties —
  * or declared here without existing in the union — does not compile. What the
  * test below pins is the content: the vocabulary and the values carried over
@@ -65,7 +65,7 @@ test("consent never reopens a terminal state or a work a worker may still carry"
   for (const state of STATES) {
     assert.equal(consentAppliesTo(state), !terminal.includes(state), `${state}: consent must ${terminal.includes(state) ? "not " : ""}apply`);
   }
-  assert.equal(consentAppliesTo("repair-fall-blocked"), true, "the state that stranded an authorization (issue #128)");
+  assert.equal(consentAppliesTo("repair-fall-blocked"), true, "the state that stranded an authorization ");
 });
 
 test("the class a state contributes: the two dones leave, two speak their own class, the rest are reserved", () => {

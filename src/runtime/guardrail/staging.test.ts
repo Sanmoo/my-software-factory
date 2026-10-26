@@ -14,13 +14,13 @@ import {
 } from "./staging.js";
 
 /**
- * The image-side half of the continuity guardrail (issue 193): the staging
+ * The image-side half of the continuity guardrail: the staging
  * build provisions the extension's relative-import closure, and the launch
  * preflight requires those exact modules inside the image. The closure is a
  * fact of the compiled tree, never a hand list that drifts from it.
  */
 
-describe("the guardrail's image closure (issue 193)", () => {
+describe("the guardrail's image closure ", () => {
   let root: string | undefined;
 
   afterEach(() => {

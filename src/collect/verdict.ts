@@ -19,13 +19,12 @@ import { projectCollectedRuling } from "./ruling.js";
 import type { WorkWrites } from "./writes.js";
 
 /**
- * Applying the verdict of one ended Attempt (ticket 13, extended by 14/123;
- * survivor ends by issue 118; epic #198, ticket #208).
+ * Applying the verdict of one ended Attempt, survivor ends included.
  *
  * The end is read as ONE Work state: the module is asked what happened to the
  * Attempt and what may the factory do now, and exactly that is executed — the
  * tracker and disk verbs it triggers are {@link WorkWrites}. An interruption
- * returns the SAME attempt as the next launch (issue 123). `origin` only names
+ * returns the SAME attempt as the next launch. `origin` only names
  * the actor in the operator's log: a survivor's end is reconciled by these same
  * properties, never by the launch object this process never had.
  *
@@ -60,8 +59,9 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
   }
 
   /**
-   * The operator's requested stop whose confirmation failed (issue #146) is
-   * PROMOTED once the end of its attempt is read: a reading reports the fact, so
+   * The operator's requested stop whose confirmation failed is
+   * PROMOTED once the end of its attempt is read: a reading reports the fact,
+   * so
    * settling it is a write.
    */
   async function confirmRequestedStop(dir: string, attempt: number): Promise<void> {
@@ -72,8 +72,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
   /**
    * The launch of an attempt that ended without publishing a record: the SAME
    * number continues, with the material of the interrupted launch preserved. A
-   * model provider failure retries on its own budget (issue 144); an
-   * interruption of the agent keeps issue 123's recovery.
+   * model provider failure retries on its own budget; an
+   * interruption of the agent keeps its recovery.
    */
   function continuation(
     launchable: Launchable,
@@ -93,11 +93,11 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
   }
 
   /** A repair attempt that ended without publishing is settled by its own
-   *  reconciliation (issue 112): nothing is relaunched over it. */
+   *  reconciliation: nothing is relaunched over it. */
   function logRepairEnded(origin: string, key: string): void {
     log(
       `${origin} ${key}: the repair attempt wrote no outcome record — the repair reconciliation ` +
-        "settles its publication before another round (issue 112)",
+        "settles its publication before another round ",
     );
   }
 
@@ -114,7 +114,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
     });
     const pr = prOf(reading);
     const prConfirmed = pr !== null && pr.state === "open";
-    // The attempt's own artifact: settling it is a WRITE (see the writes), so it
+    // The attempt's own artifact: settling it is a WRITE (see the writes), so
+    // it
     // is read here — never to decide anything.
     const record = await readOutcomeRecord(dir);
 
@@ -123,13 +124,13 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
     // must not keep the work out of later rounds. An interruption keeps it.
     if (!wroteNoVerdict(reading)) clearPause(dir);
 
-    // A known PR — open, merged or closed — is persisted beside the Work
-    // (issue 125): the facts survive a restart, and a later attempt appends
+    // A known PR — open, merged or closed — is persisted beside the Work: the
+    // facts survive a restart, and a later attempt appends
     // its own. Persistence never changes the reading above.
     if (pr !== null) await writes.persistPrAssociation(work, dir, pr, attempt);
 
     // A confirmed Outcome prevails over the interpretation of the stop (issue
-    // #146): the attempt ended with a verdict, so the suspended-stop evidence
+    // The attempt ended with a verdict, so the suspended-stop evidence
     // has done its job and is cleared (a fall replaces it with its own stop).
     if (!wroteNoVerdict(reading)) await consumeStopRequest(dir, attempt);
 
@@ -137,7 +138,7 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
     let next: Launchable | null = null;
     // Whether landing in this state is an occurrence the operator must see: a
     // work held for them (the PR is theirs, or they were asked for help) and a
-    // released fall (ticket 13). A block and the done already notify; an
+    // released fall. A block and the done already notify; an
     // interruption is absorbed by its budget.
     let occurrence = false;
     switch (reading.state) {
@@ -150,9 +151,9 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "done-fallback": {
-        // Delivery, whatever the attempt wrote (issue 149): a merge that did not
+        // Delivery, whatever the attempt wrote: a merge that did not
         // close the issue is closed here first — done must always be reflected
-        // on the tracker (ticket 04 Q11), including a merge that landed mid-round.
+        // on the tracker, including a merge that landed mid-round.
         log(
           `${origin} ${key}: PR merged while the attempt ran — done; the factory closes the issue ` +
             "(fallback of the linkage), then archives",
@@ -162,7 +163,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "parked": {
-        // Nothing is consumed, no fall is recorded and the claim is held: the PR
+        // Nothing is consumed, no fall is recorded and the claim is held: the
+        // PR
         // is the human's, or the worker reported itself blocked.
         resulting = STATE_DECLARATIONS[reading.state].announces;
         occurrence = true;
@@ -174,8 +176,9 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "fall": {
-        // A written failure/abandon without a PR: the attempt is consumed and the
-        // ruler applies — the 1st releases, the 2nd blocks (ticket 05 Q3).
+        // A written failure/abandon without a PR: the attempt is consumed and
+        // the
+        // ruler applies — the 1st releases, the 2nd blocks.
         await writes.settleFailure(dir, attempt, record);
         if (reading.decision === "release") {
           log(
@@ -197,8 +200,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "interrupted": {
-        // No attempt is consumed and the fall ruler never applies (issue 123). A
-        // repair round is settled by its own reconciliation (issue 112) instead.
+        // No attempt is consumed and the fall ruler never applies. A
+        // repair round is settled by its own reconciliation instead.
         resulting = STATE_DECLARATIONS[reading.state].announces;
         if (launchable.kind === "repair") {
           logRepairEnded(origin, key);
@@ -213,7 +216,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
       }
       case "model-provider-failure": {
         // A model provider outage is not an interruption of the agent (issue
-        // 144): the SAME attempt retries on its own budget, and the retry launch
+        // 144): the SAME attempt retries on its own budget, and the retry
+        // launch
         // says what it consumed.
         resulting = STATE_DECLARATIONS[reading.state].announces;
         if (launchable.kind === "repair") logRepairEnded(origin, key);
@@ -221,7 +225,7 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "stop-resume": {
-        // The operator's requested stop (#146): the attempt is left for the next
+        // The operator's requested stop: the attempt is left for the next
         // invocation to resume, never relaunched inside a requested stop.
         resulting = STATE_DECLARATIONS[reading.state].announces;
         if (launchable.kind === "repair") {
@@ -233,7 +237,7 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
           );
         } else {
           // Promoting a stop whose confirmation failed is a WRITE: the module
-          // reports the fact and the collection settles it (issue #146).
+          // reports the fact and the collection settles it.
           await confirmRequestedStop(dir, attempt);
           log(
             `${origin} ${key}: attempt ${attempt} ended without an outcome record, and the operator's requested ` +
@@ -244,8 +248,8 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
         break;
       }
       case "rejected": {
-        // A PR closed without merge, SEEN AT COLLECTION (epic #198's one
-        // delta): the Block the state already declares — the ticket is blocked
+        // A PR closed without merge, SEEN AT COLLECTION: the Block the state
+        // already declares — the ticket is blocked
         // with the comment pointing at the PR and the claim is HELD, so the
         // work never returns to the pool carrying a closed PR. The attempt is
         // liquidated as ONE outcome: a closed PR is not a written failure, so
@@ -268,10 +272,12 @@ export function openVerdict(deps: CollectDeps, writes: WorkWrites): Verdict {
     // One notice per new occurrence: an applied block already notified help
     // (blockWithComment), so here only what the ruler did not block. Help
     // wins over review; the state decision is untouched. The self-report is the
-    // fact the reading kept (the blocked label, or this attempt's own record) and
-    // it counts only for THIS attempt — desfecho.json survives between attempts.
+    // fact the reading kept (the blocked label, or this attempt's own record)
+    // and
+    // it counts only for THIS attempt — desfecho.json survives between
+    // attempts.
     // A survivor's end is a review occurrence too: its open PR reaches the
-    // operator even though this process never launched it (issue 118).
+    // operator even though this process never launched it.
     if (occurrence) {
       const isReviewLaunch =
         origin === "survivor" || launchable.kind === "claim" || launchable.kind === "feedback";
@@ -298,9 +304,9 @@ function prOf(reading: AfterAttemptReading): PullRequestRecord | null {
 
 /**
  * Whether this end wrote a verdict of its own. An INTERRUPTION has none — the
- * agent's (issue 123), a model provider failure's (issue 144) or the operator's
- * requested stop (#146) — so the pause that keeps a work out of later rounds
- * (issue 119) and the stop evidence that owns the end both survive it.
+ * agent's, a model provider failure's or the operator's requested stop — so the
+ * pause that keeps a work out of later rounds and the stop evidence that owns
+ * the end both survive it.
  */
 function wroteNoVerdict(reading: AfterAttemptReading): boolean {
   switch (reading.state) {

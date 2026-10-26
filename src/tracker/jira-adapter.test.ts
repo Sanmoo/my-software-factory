@@ -7,7 +7,7 @@ import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount } from "./jira-sim.js";
 
 /**
- * The real Jira adapter over the simulated REST (issue 128): native Rank
+ * The real Jira adapter over the simulated REST: native Rank
  * ordering across token-paginated pages, a selection that is exactly the
  * operator's JQL (no hidden assignee/status/type/subtask filters), the
  * authenticated Acting account, ADF content in usable form, and diagnostics
@@ -48,7 +48,7 @@ const HUMAN: SimJiraAccount = {
   displayName: "Ana Silva",
 };
 
-describe("Jira adapter: native Rank selection over the simulated REST (issue 128)", () => {
+describe("Jira adapter: native Rank selection over the simulated REST ", () => {
   test("the query is read in Rank ascending order and /myself identifies the Acting account", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "First in Rank", created: "2026-03-01T00:00:00.000+0000" });

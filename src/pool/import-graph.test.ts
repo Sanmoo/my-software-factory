@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import { posixPath, relativeSpecifiers } from "../runtime/guardrail/staging.js";
 
 /**
- * The pool's side of the Work record contract (issue 192): the ledgers read
+ * The pool's side of the Work record contract: the ledgers read
  * and write the record through its owner (`src/work-record/`), never through
  * the state derivation or the runtime compatibility re-exports that closed the
  * model-provider ↔ recovery ↔ outcome cycle. This scan names the forbidden
@@ -78,7 +78,7 @@ function findCycle(graph: ReadonlyMap<string, string[]>, scope: readonly string[
   return null;
 }
 
-describe("the pool's source import graph — one Work record owner, no ledger cycle (issue 192)", () => {
+describe("the pool's source import graph — one Work record owner, no ledger cycle ", () => {
   const files = productionSources();
   const graph = graphOf(files);
   const imports = (from: string, to: string): boolean => graph.get(from)?.includes(to) ?? false;

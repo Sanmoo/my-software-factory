@@ -9,7 +9,7 @@ import { reconcileRepairAttempt, type RepairWork } from "./settlement.js";
 export type { RepairWork };
 
 /**
- * The Repair reconciliation (epic #198, ticket #207): every repair attempt that
+ * The Repair reconciliation: every repair attempt that
  * wrote its facts on disk and is not carried by a live worker is settled before
  * the derivation reads the cycle, so the work's state is decided over an
  * attempt whose publication is already known.
@@ -30,7 +30,7 @@ export type { RepairWork };
 /**
  * The engine's side of the reconciliation — one duty, because it is the one fact
  * only the cycle owns. Whether the operator's requested stop owns the end of an
- * attempt (issue #146) is decided at the engine's stop boundary (which may have
+ * attempt is decided at the engine's stop boundary (which may have
  * to confirm a stop first), so the settlement asks instead of reading the
  * ledger itself.
  */
@@ -42,7 +42,7 @@ export interface ReconciliationCycle {
 export interface RepairDeps {
   /** The git host: the local work and the remote head of an attempt. */
   git: GitWork;
-  /** The PR's current facts — the premise of the round (issue 149). */
+  /** The PR's current facts — the premise of the round. */
   pullRequests: PullRequestTracker;
   cycle: ReconciliationCycle;
   log: (message: string) => void;

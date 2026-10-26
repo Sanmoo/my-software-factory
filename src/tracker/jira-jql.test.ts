@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { RANK_ORDER, withNativeRankOrdering } from "./jira-jql.js";
 
 /**
- * The configured query's effective ordering (issue 128): Jira Rank ascending
+ * The configured query's effective ordering: Jira Rank ascending
  * always, supplied when absent and refused when the query asks for something
  * else. The parser never rewrites a conflicting query and never reads a Rank
  * value — Rank is opaque.

@@ -18,8 +18,8 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import type { OutcomeRecord } from "../work-record/outcome.js";
 
 /**
- * The tracker and disk verbs the factory performs when a verdict is applied
- * (epic #198, ticket #208): archive the work, close the issue with the fallback
+ * The tracker and disk verbs the factory performs when a verdict is applied:
+ * archive the work, close the issue with the fallback
  * comment, comment, release the claim, block the claim, persist the written
  * failure, persist the PR association and deliver the occurrence notice.
  *
@@ -36,7 +36,7 @@ export interface WorkWrites {
   archiveDone(work: WorkIdentity): Promise<void>;
   /** The delivery a merge without closure implies: close the issue with the
    *  short fallback comment, then archive and clean — done must always be
-   *  reflected on the tracker (ticket 04 Q11). */
+   *  reflected on the tracker. */
   closeIssueAndArchive(work: WorkIdentity, comment: string): Promise<void>;
   /** The block every 2nd fall and every rejection shares: the claimed label
    *  swaps to blocked (the claim is held until the terminal state) and the
@@ -48,7 +48,7 @@ export interface WorkWrites {
    *  assignee of the worker account released — the work re-enters the pool, the
    *  branch stays. */
   releaseClaim(work: WorkIdentity): Promise<void>;
-  /** Persist the WRITTEN failure that ended the attempt (issue 123): the next
+  /** Persist the WRITTEN failure that ended the attempt: the next
    *  attempt starts with a full interruption budget, and `msf status` says the
    *  attempt was consumed. A missing or other-attempt record, or a class that
    *  is not a failure (pr-open, self-report), settles nothing. The record is

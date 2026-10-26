@@ -6,7 +6,7 @@ import type { OutcomeClass } from "./outcome.js";
 import { WorkRecordError } from "./errors.js";
 
 /**
- * The interruption-recovery part of a Work's record (issue 123; terms in
+ * The interruption-recovery part of a Work's record (terms in
  * GLOSSARY): the persisted allowance counted per attempt, the stop facts that
  * ended the last attempt, and the fall fact the ruler reads at a crash. The
  * DECISION the count supports stays with the domain module (pool/recovery.ts);
@@ -32,7 +32,7 @@ export interface RecoveryEvent {
  * What ended the last attempt, as the factory settled it: an interruption
  * (absorbed by this budget), a failure (a written failure/abandon outcome,
  * which consumes the attempt and enters the fall ruler), or the operator's
- * requested stop (issue #146) — a lifecycle condition that spends nothing and
+ * requested stop  — a lifecycle condition that spends nothing and
  * resumes the same attempt. `stop-unconfirmed` means the requested stop could
  * not be confirmed: the next invocation must not relaunch the work until the
  * previous worker is known to be gone.
@@ -122,7 +122,7 @@ function isStop(value: unknown): value is RecoveryStop {
 
 /**
  * One writer per work's ledger: the requested stop and a collection can reach
- * the same artifact concurrently (issue #146 — the stop bookkeeping and the
+ * the same artifact concurrently (the stop bookkeeping and the
  * admission it cancels), and two read-modify-write cycles interleaved would
  * lose one of the updates. Each mutation queues behind the previous one for
  * the same dir; the chain survives a rejected writer.

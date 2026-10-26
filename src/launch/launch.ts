@@ -17,7 +17,7 @@ import type { RepairAttempt } from "../work-record/repair.js";
 import type { OperationalClass } from "../work-state/state.js";
 
 /**
- * The launch (epic #198, ticket #205): the pipeline that turns one decided
+ * The launch: the pipeline that turns one decided
  * launch into an attempt that ran — claim (or resume), prepare, the runtime
  * launch, the budget waits and the collection of every end it starts.
  *
@@ -39,8 +39,8 @@ import type { OperationalClass } from "../work-state/state.js";
 
 /** What a launch starts as: a new claim, a parked feedback round, a retomada, a
  *  repair — or the continuation of an attempt that ended without its own
- *  outcome: the recovery of an interruption (issue 123) or the retry of a
- *  model provider failure (issue 144). */
+ *  outcome: the recovery of an interruption or the retry of a
+ *  model provider failure. */
 export type LaunchKind = "claim" | "feedback" | "resume" | "repair" | "recover" | "model-provider-retry";
 
 /**
@@ -64,12 +64,12 @@ export interface Launchable {
   issueReplies?: IssueComment[];
   /** The confirmed impediments, only for a repair round. */
   repair?: RepairTrigger;
-  /** The unpublished attempt this repair takes over (issue 112), when resuming. */
+  /** The unpublished attempt this repair takes over, when resuming. */
   resuming?: RepairAttempt | null;
   /** The attempt a recovery or a model provider retry continues — the SAME
-   *  number (issues 123, 144). */
+   *  number. */
   attempt?: number;
-  /** The attempt was ended by the operator's requested stop (issue #146): it
+  /** The attempt was ended by the operator's requested stop: it
    *  resumes now, spending no recovery. */
   requestedStop?: boolean;
   callRecovery?: CallRecovery;
@@ -143,8 +143,8 @@ export interface Launch {
   /**
    * Claim (or resume), prepare, launch and collect one attempt; the reservation
    * lands BEFORE any launch. Resolves with the attempt the SAME admission
-   * continues — an interruption inside the session (issue 123) or a model
-   * provider retry (issue 144) returns the same attempt for the same held slot
+   * continues — an interruption inside the session or a model
+   * provider retry returns the same attempt for the same held slot
    * — or null when the work needs nothing more from this admission. A failure
    * of any step propagates: the caller owns the slot and the failure path.
    */

@@ -24,14 +24,14 @@ import { workKeyOf } from "./work-key.js";
 import { workDirCandidates } from "./reservation.js";
 
 /**
- * The registry (ticket 13): the reader of what survives a process death.
+ * The registry: the reader of what survives a process death.
  * Slots are only in memory (pool/slots.ts); everything else about a work is
  * an artifact in real disk under <workspace>/trabalhos/<repo>#<n>/ —
  * desfecho.json (written by the runtime when it can; its absence is an
- * INTERRUPTION of the attempt — issue 123), log-<n>.jsonl (the attempt's event
+ * INTERRUPTION of the attempt), log-<n>.jsonl (the attempt's event
  * log), sessao/ (the session dir) and recuperacao.json (the recovery budget) —
- * and the reconciliation of a restart is nothing but reading them back here
- * (ticket 05 Q3). The record's parts are read through their owner
+ * and the reconciliation of a restart is nothing but reading them back here.
+ * The record's parts are read through their owner
  * (`openWorkRecord`); this module keeps the VIEW built on them. Names on disk
  * stay PT-BR.
  */
@@ -42,7 +42,7 @@ export interface LaunchFacts {
   attempt: number;
   /** True when the previous attempt on this branch ended in a WRITTEN failure
    * (a recorded failure/abandon outcome). An interruption — an attempt with no
-   * outcome record — never sets it: it never enters the fall ruler (issue 123). */
+   * outcome record — never sets it: it never enters the fall ruler. */
   previousFall: boolean;
 }
 
@@ -51,7 +51,7 @@ export interface LaunchFacts {
  * launched (no dir, no evidence) is attempt 1 with no prior fall; a recorded
  * previous attempt numbers the next one. A previous attempt with logs but no
  * record was INTERRUPTED: it does not number a new attempt by itself — a
- * recovery continues it (pass `continueAttempt`, issue 123) — and it is not a
+ * recovery continues it (pass `continueAttempt`) — and it is not a
  * fall.
  */
 export async function readLaunchFacts(
@@ -98,7 +98,7 @@ function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
   return logs.length > 0 || existsSync(join(workDir, SESSIONS_SUBDIR));
 }
 
-// ---- the done archive (ticket 14) ----
+// ---- the done archive  ----
 
 /** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
 export function parseWorkKey(name: string): { repo: string; number: number } | null {
@@ -107,7 +107,7 @@ export function parseWorkKey(name: string): { repo: string; number: number } | n
 }
 
 /**
- * Done-only disk duty addressed by the explicit Work identity (issue 126):
+ * Done-only disk duty addressed by the explicit Work identity:
  * MOVE the Work's artifacts out of trabalhos/<work key> into
  * arquivo/<work key>-<date>/ — nothing is deleted, the audit trail stays
  * forever. Returns the archive path, or null when there was nothing to move.
@@ -142,10 +142,9 @@ export interface LastOutcomeEntry {
 
 /**
  * A work whose CURRENT attempt carries no outcome record of its own — the
- * interruption (or the repair fall, issue 112) awaiting reconciliation. It is
+ * interruption (or the repair fall) awaiting reconciliation. It is
  * not the same thing as "no record on disk": an older attempt's record may sit
- * there as history, and it never becomes this attempt's outcome (issue 103's
- * rule, now visible here too).
+ * there as history, and it never becomes this attempt's outcome.
  */
 export interface AttemptWithoutOwnOutcome {
   key: string;
@@ -155,13 +154,13 @@ export interface AttemptWithoutOwnOutcome {
   recordedAttempt: number | null;
 }
 
-/** A work's interruption-recovery ledger as `msf status` reads it (issue 123). */
+/** A work's interruption-recovery ledger as `msf status` reads it. */
 export interface RecoveryViewEntry {
   key: string;
   ledger: RecoveryLedger;
 }
 
-/** A work's model provider failure ledger as `msf status` reads it (issue 144). */
+/** A work's model provider failure ledger as `msf status` reads it. */
 export interface ModelProviderViewEntry {
   key: string;
   /** The attempt the registry numbers right now — the awaiting is scoped to it. */
@@ -171,7 +170,7 @@ export interface ModelProviderViewEntry {
   last: ModelProviderSettlement;
 }
 
-/** A persisted continuity pause as `msf status` reads it (issue 119). */
+/** A persisted continuity pause as `msf status` reads it. */
 export interface ContinuityPauseEntry {
   key: string;
   pause: PauseRecord;
@@ -181,7 +180,7 @@ export interface ContinuityPauseEntry {
   lastAttempt: number;
 }
 
-/** The repair cycle of a work as `msf status` reads it (issue 112). */
+/** The repair cycle of a work as `msf status` reads it. */
 export interface RepairViewEntry {
   key: string;
   cycle: RepairCycle;
@@ -190,7 +189,7 @@ export interface RepairViewEntry {
 }
 
 /**
- * The local registry as seen with the factory stopped (ticket 07 Q7): a dir
+ * The local registry as seen with the factory stopped: a dir
  * with attempt evidence but no desfecho is an attempt whose outcome was never
  * recorded — Running while a live worker carries it, Orphaned otherwise (only
  * the liveness probe can tell the two apart); a dir created before any attempt
@@ -208,13 +207,13 @@ export interface RegistryView {
   /** The repair cycle of every work that ran or is running an automatic round. */
   repair: RepairViewEntry[];
   /** Works that went through an interruption: the budget spent and what ended
-   *  the last attempt (issue 123) — absent for works never interrupted. */
+   *  the last attempt  — absent for works never interrupted. */
   recovery: RecoveryViewEntry[];
   /** Works whose last attempt ended by a model provider failure: the retries
-   *  spent and the provider's own message (issue 144). */
+   *  spent and the provider's own message. */
   modelProvider: ModelProviderViewEntry[];
   /** Works waiting for the operator because their interrupted attempt cannot
-   *  be continued safely (issue 119): the persisted pause, with its reason. */
+   *  be continued safely: the persisted pause, with its reason. */
   continuityPauses: ContinuityPauseEntry[];
   /** Absolute paths of the archived works (moved there by the done — a later ticket). */
   archived: string[];
@@ -241,11 +240,11 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     const snapshot = await workRecord.read();
     const lastAttempt = snapshot.attempt ?? 0;
     // The record never stops being history: a work whose record and whose
-    // orphaned attempt coexist shows BOTH (issue 112) — the record is not
+    // orphaned attempt coexist shows BOTH  — the record is not
     // presented as the current attempt's result.
     if (snapshot.outcome !== null) {
       lastOutcome.push({ key, workDir: dir, record: snapshot.outcome });
-      // The same criterion the ruler and the collection apply (issue 143).
+      // The same criterion the ruler and the collection apply.
       if (snapshot.ownOutcome === null) {
         attemptsWithoutOwnOutcome.push({ key, attempt: lastAttempt, recordedAttempt: snapshot.outcome.attempt });
       }
@@ -269,7 +268,7 @@ export async function scanRegistry(workspace: WorkspaceLayout | string): Promise
     if (ledger.consumed > 0 || ledger.lastStop !== null) recovery.push({ key, ledger });
 
     // A work that never met a model provider failure has no ledger and is not
-    // shown here either (issue 144). Only the CURRENT attempt's unresolved
+    // shown here either. Only the CURRENT attempt's unresolved
     // model provider failure, still the current session's ending, is the
     // work's condition: a later outcome, a new attempt, or a later plain
     // interruption settles it (the attempt's log stays as the history).

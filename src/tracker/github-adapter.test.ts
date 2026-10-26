@@ -39,7 +39,8 @@ function fakeRunner(routes: (call: Call) => { stdout?: string; stderr?: string; 
     calls.push(call);
     const out = routes(call);
     if (out.fail) {
-      // gh-shaped, like the real runner and the simulator: the adapter reads the
+      // gh-shaped, like the real runner and the simulator: the adapter reads
+      // the
       // failure reason from `stderr`, and the tolerances (absent label, unknown
       // issue) are decided on it — a failure without stderr is a real one.
       const failure = new Error(`${out.fail}\nstderr:${out.stderr ?? ""}`);
@@ -475,8 +476,9 @@ describe("the 9 operations over gh", () => {
   });
 
   test("9a. readPrFeedback: another Work's PR that mentions the issue never steals the linkage", async () => {
-    // The timeline lists every cross-referenced PR, in order. The #141 work saw
-    // its own PR (164) and later #181's PR (184), which mentioned the issue —
+    // The timeline lists every cross-referenced PR, in order. The work saw its
+    // own PR (164) and later another Work's PR (184), which mentioned the issue
+    // —
     // the newest cross-reference answered for the wrong Work.
     const { adapter } = await makeAdapter((call) => {
       const path = call.args.find((a) => a.startsWith("repos/"));
@@ -656,7 +658,8 @@ describe("the 9 operations over gh", () => {
 describe("9c. pushBranch: git with the credential helper baked into the clone", () => {
   test("fresh clone: clone with helper configs, bake helper into local config, branch from origin/HEAD and push", async () => {
     const { adapter, calls } = await makeAdapter(() => ({ stdout: "" }));
-    // no clone dir exists (never created in tests): the sequence is exercised for its command lines
+    // no clone dir exists (never created in tests): the sequence is exercised
+    // for its command lines
     await adapter.pushBranch({ repo: "Sanmoo/a", branch: "agent-issue-3" }).catch(() => {});
     const clone = calls.find((c) => c.file === "git" && c.args[0] === "clone");
     assert.ok(clone, "a clone is made when none exists");
@@ -692,7 +695,8 @@ describe("9c. credential bake: a reused clone with accumulated helpers ends with
   const exec = promisify(execFileCallback);
 
   /** A fixture "clone": a local repo whose config already accumulated helpers —
-   * the clone-time pair plus a stale machine leftover (the smoke's exit-5 state). */
+   * the clone-time pair plus a stale machine leftover (the smoke's exit-5
+   * state). */
   async function fixtureCloneWithAccumulatedHelpers(): Promise<{ dir: string; root: string }> {
     const root = mkdtempSync(join(tmpdir(), "msf-credhelper-"));
     tempRoots.push(root);
@@ -874,7 +878,8 @@ describe("9e. readPrRepairFacts: the merge state and the required checks of the 
     assert.equal(build?.conclusion, "failure");
     assert.equal(build?.detailsUrl, "https://ci/build", "the evidence for investigating travels");
     assert.equal(facts.value.requiredChecks?.find((check) => check.name === "e2e")?.status, "in_progress");
-    // The check-runs were read on the CURRENT head, and the rules on the PR base.
+    // The check-runs were read on the CURRENT head, and the rules on the PR
+    // base.
     assert.ok(calls.some((c) => pathOf(c).includes("/commits/head-sha/check-runs")));
     assert.ok(
       calls.some((c) => pathOf(c).includes(`/rules/branches/${encodeURIComponent("release/next")}`)),

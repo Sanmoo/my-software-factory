@@ -31,7 +31,7 @@ import {
   type RetroConfig,
 } from "../config.js";
 import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
-import { DESFECHO_FILENAME } from "../state/outcome.js";
+import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import {
   planManualRound,
   runRetroRound,
@@ -109,6 +109,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
       workerGhAccount: "bot-do-samuca",
       workerModel: WORKER_MODEL,
       repos: [REPO, OTHER_REPO],
+      jira: [],
       concurrency,
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
@@ -330,7 +331,8 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     const { runtime, deps } = makeFactory(config);
     // Settled archived delivery.
     seedArchived(1, at(1));
-    // Archived, but attempt 2 wrote no record of its own: pending reconciliation.
+    // Archived, but attempt 2 wrote no record of its own: pending
+    // reconciliation.
     seedArchived(2, at(2), { attempts: [1, 2] });
     // A blocked work still under trabalhos/: finished, never archived.
     seedBlocked(3, at(3));
@@ -568,7 +570,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     const running = runOnce(deps);
     await began;
 
-    const inFlight = await deriveStatus(tracker, config, layout, async () => []);
+    const inFlight = await deriveStatus({ github: tracker }, config, layout, async () => []);
     assert.equal(inFlight.retro?.inFlight?.round, runtime.retroLaunched[0]!.round);
     assert.deepEqual(inFlight.retro?.inFlight?.window, [`${REPO}#1`]);
     assert.match(renderStatus(inFlight), /retro in flight \(outside the worker slots\)/);
@@ -576,7 +578,7 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
     release();
     await running;
 
-    const settled = await deriveStatus(tracker, config, layout, async () => []);
+    const settled = await deriveStatus({ github: tracker }, config, layout, async () => []);
     assert.equal(settled.retro?.inFlight, null, "the in-flight record is gone once the round ended");
     assert.match(settled.retro?.lastReport ?? "", /-retro\.md$/);
     assert.equal(settled.retro?.filed, 1);
@@ -682,14 +684,16 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
       });
     mkdirSync(layout.retros, { recursive: true });
 
-    // This test process is alive: the round belongs to a factory that is still running.
+    // This test process is alive: the round belongs to a factory that is still
+    // running.
     writeFileSync(inFlightPath, inFlight(process.pid), "utf8");
     await runOnce(deps);
     assert.equal(runtime.retroLaunched.length, 0, "the lane is taken");
     assert.ok(logs.some((line) => line.includes("already in flight")));
     assert.ok(readdirSync(layout.retros).includes(RETRO_IN_FLIGHT_FILENAME), "a live owner's record is never wiped");
 
-    // A process that exited owns nothing: its record is stale, the lane is free.
+    // A process that exited owns nothing: its record is stale, the lane is
+    // free.
     const deadPid = spawnSync(process.execPath, ["-e", ""]).pid!;
     writeFileSync(inFlightPath, inFlight(deadPid), "utf8");
     let heldWhileRunning = "";

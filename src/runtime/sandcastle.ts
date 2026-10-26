@@ -313,7 +313,7 @@ export function workerFlagArgs(
 export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
 
 /** Every module the in-container guardrail loads, computed from the compiled
- *  extension's own relative imports (issue 193): the image must carry all of
+ *  extension's own relative imports: the image must carry all of
  *  them and nothing else. The stage script provisions the same closure, so a
  *  stale image is refused by the exact missing names and a dissolved
  *  compatibility re-export cannot be demanded as a dead file. */

@@ -7,9 +7,9 @@ import { consentAppliesTo } from "./loop.js";
  * meanwhile never outranks it. The regression this locks: an interrupted
  * attempt on a work whose repair cycle had already fallen twice derives to
  * `repair-fall-blocked`, and a whitelist that forgot it stranded a valid
- * authorization forever (real incident on #128).
+ * authorization forever.
  *
- * The names are the Work state's (ADR-0010; epic #198): the two that lied are
+ * The names are the Work state's (ADR-0010): the two that lied are
  * `parked` (waiting for the human) and `unreadable` / `not-planned`, which the
  * one `unknown` used to blur together.
  */

@@ -6,7 +6,7 @@ import { WORK_OPERATIONS, type LocalWorkFacts, type WorkOperation } from "../git
 import { WorkRecordError } from "./errors.js";
 
 /**
- * The Repair part of a Work's record (issue 107, extended by 112): the
+ * The Repair part of a Work's record: the
  * persisted round/fall budget and the attempt currently on disk — the remote
  * head observed before the intervention, the evidence it addressed and the
  * commit it produced. The RECONCILIATION that settles the attempt and the
@@ -67,7 +67,7 @@ export interface RepairCycle {
   /** The evidence signature of the last launched round, so re-finding the
    *  same failure without new evidence never opens another session. */
   lastEvidence: string | null;
-  /** Repair attempts in a row that ended without publishing (issue 112). */
+  /** Repair attempts in a row that ended without publishing. */
   consecutiveFalls: number;
   /** The current (or last) attempt of the cycle; null for a legacy file. */
   attempt: RepairAttempt | null;
@@ -83,7 +83,7 @@ export const EMPTY_REPAIR_CYCLE: RepairCycle = {
 
 /**
  * Read the cycle; an absent or corrupt file is the honest initial state. A
- * file written before issue 112 carries only usedRounds/lastEvidence: it is
+ * file carrying only usedRounds/lastEvidence is read as it stands: it is
  * read as it stands — no attempt, no falls, and nothing renewed or deleted
  * silently because the older shape lacks the newer facts.
  */

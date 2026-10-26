@@ -14,7 +14,7 @@ import { EVENT_LOG_PATTERN } from "./logs.js";
  */
 
 /**
- * The attempt ledger of one work (issue 112): the highest attempt the registry
+ * The attempt ledger of one work: the highest attempt the registry
  * numbers, and the attempt the outcome record on disk belongs to (null when no
  * record exists). The gap between the two is an attempt that wrote no record
  * of its own — the fall a repair reconciliation must settle.
@@ -30,7 +30,7 @@ export async function readAttemptLedger(dir: string): Promise<AttemptLedger> {
 }
 
 /**
- * The attempt a work is on right now (issue 102): the highest per-attempt log,
+ * The attempt a work is on right now: the highest per-attempt log,
  * or the record's own number when the record is the latest evidence — read
  * from the registry that numbers attempts, never guessed from elsewhere. Null
  * when nothing on disk numbers an attempt (a work dir that is gone): the

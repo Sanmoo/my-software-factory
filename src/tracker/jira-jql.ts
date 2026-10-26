@@ -1,5 +1,5 @@
 /**
- * The JQL contract of a Jira selection (issue 128): the operator's query
+ * The JQL contract of a Jira selection: the operator's query
  * decides WHAT is selected, and the factory always reads the result in Jira's
  * native Rank ascending order.
  *

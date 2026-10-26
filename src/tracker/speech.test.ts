@@ -10,8 +10,8 @@ import {
 } from "./speech.js";
 
 /**
- * The tracker's own rule for "which comment is the human's answer" (ticket 04
- * Q6, amended in 18; issue 174). It moved out of the state derivation because
+ * The tracker's own rule for "which comment is the human's answer". It moved
+ * out of the state derivation because
  * two domains ask it — the Work state (a blocked work resumes on an answer) and
  * the Continuity pause (a pause resumes on the answer to ITS request) — and the
  * marker, not the login, decides who spoke.

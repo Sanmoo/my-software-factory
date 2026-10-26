@@ -4,7 +4,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 
 /**
- * The pure core of the Continuity pause (epic #198, ticket #207): the identity
+ * The pure core of the Continuity pause: the identity
  * of one occurrence and the asking-once rule over the persisted record, decided
  * without I/O.
  *
@@ -26,7 +26,7 @@ function persistedPause(pause: PauseRecord, work: WorkIdentity, attempt: number)
 /**
  * The record one occurrence is persisted as. The identity is generated once,
  * when the pause is first written, and kept through rechecks, re-announcements
- * and a changed reason (issue 174); a record that already has one keeps it, and a
+ * and a changed reason; a record that already has one keeps it, and a
  * previous record of the same occurrence hands its own over. A record of the
  * SAME occurrence keeps the moment it started; a new one starts now (the pause
  * itself carries the time it was created). A previous record with no identity is
@@ -54,7 +54,7 @@ export function pauseOccurrence(
  * before identities existed — stays WITHOUT one: the identity generated for it
  * now has no comment carrying it, and a record with no identity is the one case
  * where the factory still binds the answers by the generic last-comment rule, so
- * stamping it would orphan the answer already given (issue 174). The occurrence
+ * stamping it would orphan the answer already given. The occurrence
  * gains its identity with the first factory comment that can carry one: a
  * diagnostic for a changed cause.
  */

@@ -18,7 +18,7 @@ import {
 } from "./survivors.js";
 
 /**
- * The liveness and the survivor ledger at its own seam (epic #198, ticket #206):
+ * The liveness and the survivor ledger at its own seam:
  * the domain through {@link Survivors} with a FAKE probe and an INJECTED clock —
  * no factory, no derivation, no Docker, no container. What the module asks the
  * cycle for (the end of a survivor, the operator's notice) is a recording port,

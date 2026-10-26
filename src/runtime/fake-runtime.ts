@@ -18,12 +18,13 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
  * exercise the ruler without any container.
  *
  * Scripted outcomes, per launch, in order (the last repeats once exhausted):
- *   pr-open             — writes the record (class pr-open) and opens a PR via the tracker
+ * pr-open — writes the record (class pr-open) and opens a PR via the tracker
  *   clean-without-pr    — writes the record (class clean-without-pr), no PR
  *   blocked-self-report — writes the record (class blocked-self-report), no PR
- *   abrupt-death        — writes nothing: the absence of the record is the class
+ * abrupt-death — writes nothing: the absence of the record is the class
  *
- * A launch may also be told to die by a model provider outage: the fake records the
+ * A launch may also be told to die by a model provider outage: the fake records
+ * the
  * provider's failing stream line into the attempt's log (the same artifact the
  * real runtime writes), so the factory's own detection reads it.
  *
@@ -128,7 +129,7 @@ export class FakeWorkerRuntime implements WorkerRuntime {
   }
 
   /** The scripted round writes the two artifacts the agent writes — the report
-   *  and the result record — and files its items as `needs-triage` issues on the
+   * and the result record — and files its items as `needs-triage` issues on the
    *  tracker, exactly as the agent's `gh issue create` does. A round with
    *  `report: false` leaves neither artifact and files nothing. */
   async launchRetro(request: RetroRequest): Promise<void> {
@@ -315,7 +316,8 @@ export class FakeWorkerRuntime implements WorkerRuntime {
 
   private async apply(outcome: ScriptedOutcome, request: WorkRequest, index: number): Promise<void> {
     if (outcome === "abrupt-death") {
-      // A model provider outage leaves the provider's own stream line behind — the
+      // A model provider outage leaves the provider's own stream line behind —
+      // the
       // real runtime records pi's stdout verbatim, and the factory reads the
       // turn's ending from it. One identity per launch keeps the
       // fake's failures as distinct as real sessions'.

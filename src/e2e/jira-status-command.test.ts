@@ -15,7 +15,7 @@ import {
 
 /**
  * `msf status` and `msf run` at the hermetic CLI seam over the REAL Jira
- * adapter (issue 128): the spawned binary reads the configured selections
+ * adapter: the spawned binary reads the configured selections
  * through a canned Jira REST channel (fetch preload), with an isolated HOME and
  * no ambient credential. Status presents the JQL candidates in the native Rank
  * order without claiming anything; a selection without its local credential is
@@ -27,7 +27,7 @@ const ALPHA = "acme.atlassian.net";
 const BETA = "beta.atlassian.net";
 const REPO = "Sanmoo/my-tasks";
 
-describe("e2e: Jira Cloud selections at the CLI seam (read-only, issue 128)", () => {
+describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
   let dir: string;
   let gh: GhShim;
   let jira: JiraFetchShim;

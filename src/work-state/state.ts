@@ -25,11 +25,11 @@ import { workFacts } from "./facts.js";
  * touching a caller, and "unreadable" and "absent" are told apart in one place
  * (facts.ts) instead of by every stage that consults the tracker.
  *
- * The loop executes this vocabulary (ticket #202): it asks for the state at
+ * The loop executes this vocabulary: it asks for the state at
  * both moments and does what the state asks — archive, close with the fallback
  * comment, block with a comment, comment, release, launch, recover — with no
  * map between two vocabularies left in the engine. The remaining reading of the
- * domain (`state/status.ts`, ticket #204) is the last one to migrate.
+ * domain (`state/status.ts`) is the last one to migrate.
  */
 
 /** The repair trigger has ONE owner (`pool/repair-trigger.ts`): the state carries
@@ -82,18 +82,18 @@ export type WorkStateReading = WorkRef &
     /** The terminal state: the ticket is closed (done). */
     | ({ state: "done" } & PrSeen)
     /** PR merged but issue open: close the issue with a short comment first —
-     *  done must always be reflected on the tracker (ticket 04 Q11). */
+     *  done must always be reflected on the tracker. */
     | { state: "done-fallback"; pr: PullRequestRecord; comment: string }
     /** PR closed without merge: block with a comment pointing at the PR. The
      *  same state from both readings — before a launch and after an Attempt
-     *  (epic #198's one behaviour delta) — so the work never returns to the
+     *   — so the work never returns to the
      *  pool carrying a closed PR. */
     | { state: "rejected"; pr: PullRequestRecord; comment: string }
     /** New human comment on the PR: a feedback round on the same branch and PR. */
     | { state: "feedback"; pr: PullRequestRecord; createdAt: string }
     /** A confirmed impediment of the open PR reactivates the worker in one
-     *  round (issue 107). `resuming` is the unpublished attempt the round takes
-     *  over (issue 112), never redone from scratch. */
+     *  round. `resuming` is the unpublished attempt the round takes
+     *  over, never redone from scratch. */
     | {
         state: "repair";
         pr: PullRequestRecord;
@@ -102,7 +102,7 @@ export type WorkStateReading = WorkRef &
         resuming: RepairAttempt | null;
       }
     /** The PR is confirmed clean (no conflicts, every required check approved):
-     *  the repair budget resets (issue 107, story 22). */
+     *  the repair budget resets. */
     | { state: "repair-recovered"; pr: PullRequestRecord }
     /** A confirmed trigger after the automatic rounds: block and ask help. */
     | {
@@ -112,7 +112,7 @@ export type WorkStateReading = WorkRef &
         usedRounds: number;
         comment: string;
       }
-    /** Repair stopped without publishing (issue 112): the block holds even with
+    /** Repair stopped without publishing: the block holds even with
      *  the PR open — the fall is never hidden by the PR's state. */
     | { state: "repair-fall-blocked"; pr: PullRequestRecord; comment: string; attempt: number }
     /** Human answer on the issue after the marker: the retomada continues from
@@ -138,14 +138,14 @@ export type WorkStateReading = WorkRef &
       } & PrSeen)
     /** A written failure the factory did not rule yet (it died between the
      *  record and the transition): release, or block on the 2nd consecutive
-     *  failure — the ruler applies as at collection (ticket 05 Q3). */
+     *  failure — the ruler applies as at collection. */
     | ({ state: "fall"; decision: "release"; attempt: number } & PrSeen)
     | ({ state: "fall"; decision: "block"; comment: string; attempt: number } & PrSeen)
-    /** An INTERRUPTION (issue 123): the attempt ended without an outcome record.
+    /** An INTERRUPTION: the attempt ended without an outcome record.
      *  It is not a failure: the same attempt is recovered within its budget, or
      *  the exhausted budget pauses the work and asks the operator for help. */
     | ({ state: "interrupted"; attempt: number; recovery: RecoveryDecision } & PrSeen)
-    /** The operator's REQUESTED stop (issue #146): the same attempt resumes on
+    /** The operator's REQUESTED stop: the same attempt resumes on
      *  the next run, spending no recovery. `because` names which of the two
      *  readings of the stop spoke: the one this process is carrying out (its
      *  last cycle cannot relaunch anything) or the evidence a previous one left
@@ -158,7 +158,7 @@ export type WorkStateReading = WorkRef &
     /** The requested stop could not be confirmed: a previous worker may still be
      *  alive, so the work is held with the reason until a probe proves it gone. */
     | { state: "stop-unconfirmed"; attempt: number; because: string }
-    /** A MODEL PROVIDER FAILURE (issue 144): the attempt's stream ended in a
+    /** A MODEL PROVIDER FAILURE: the attempt's stream ended in a
      *  model provider error, so it retries on its own budget — or awaits the
      *  operator when that budget is exhausted (never a block). */
     | ({
@@ -167,11 +167,11 @@ export type WorkStateReading = WorkRef &
         failure: ModelProviderFailure;
         modelProvider: ModelProviderDecision;
       } & PrSeen)
-    /** The interrupted attempt cannot be continued safely (issue 119): the
+    /** The interrupted attempt cannot be continued safely: the
      *  pause is persisted, so no cycle re-attempts the recovery. */
     | { state: "continuity-paused"; attempt: number; pause: PauseRecord }
     /** The ticket could not be read: never acted on, and never called "not
-     *  found" — a failed read is not a verdict (ADR-0010; D2). */
+     *  found" — a failed read is not a verdict (ADR-0010). */
     | { state: "unreadable"; because: string }
     /** Never acted on: the issue was read fine and is closed as not-planned
      *  (not done). Its own state, so "unreadable" never means this. */
@@ -208,7 +208,7 @@ export type OperationalClass = "eligible" | "reserved" | "feedback" | "resumable
 /** The three properties every state declares, next to the union. */
 export interface StateDeclaration {
   /** Consent never reopens this state: the work already reached a terminal
-   *  verdict, or a worker may still carry it (issue #128). */
+   *  verdict, or a worker may still carry it. */
   terminalForConsent: boolean;
   /** The operational class the state contributes to the observed state;
    *  `null` means the work leaves it (a done work is archived by the same
@@ -216,7 +216,7 @@ export interface StateDeclaration {
    *  eligible — and says so where it acts. */
   announces: OperationalClass | null;
   /** The state presumes a worker stopped: while liveness cannot be read,
-   *  nothing that would archive, spend or block is done (issue 118). */
+   *  nothing that would archive, spend or block is done. */
   holdsWhileLivenessUnknown: boolean;
 }
 

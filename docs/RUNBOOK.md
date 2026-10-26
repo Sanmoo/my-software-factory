@@ -284,7 +284,7 @@ more than one selection promises to a **different** destination is held under
 `ambiguous` with those destinations instead of being offered as a candidate for
 either.
 
-## (d) Local desktop notifications (issue 93)
+## (d) Local desktop notifications
 
 `msf run` (continuous and `--once`) shows a Linux desktop notice when a new
 occurrence needs you: an open PR to review, a help request or a block, an
@@ -305,7 +305,7 @@ or silent worker, the factory's Docker warning after the configured threshold,
 silence after a restart — and every work notice carrying the work and its
 address, with no window opened and no focus taken.
 
-## (e) Retrospective (issue 141)
+## (e) Retrospective
 
 The retrospective is a factory job on its own lane (ADR 0006): enable the
 `retro:` block; manual triggers are in README (Usage) and never wait for the

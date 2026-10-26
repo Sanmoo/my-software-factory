@@ -11,10 +11,10 @@ import { writeAtomic } from "./fs.js";
  * same shape through this module, so one schema serves both sides.
  */
 
-/** Disk name is a taken decision (tickets 05/10) and stays in PT-BR. */
+/** Disk name is a taken decision  and stays in PT-BR. */
 export const DESFECHO_FILENAME = "desfecho.json";
 
-/** The class field of the outcome record — vocabulary of ticket 05. */
+/** The class field of the outcome record. */
 export type OutcomeClass =
   /** The work ended with an open PR: stays reserved, waiting for the human. */
   | "pr-open"
@@ -44,7 +44,7 @@ export interface OutcomeRecord {
 /**
  * The record OF THIS ATTEMPT, or null: the ONE place the criterion "is this
  * record this attempt's?" lives — the collection path, the ruler and the
- * status call it, so they cannot diverge (issue 143). A record without an
+ * status call it, so they cannot diverge. A record without an
  * `attempt` (legacy) never parses, so it is absence too.
  */
 export function ownOutcomeRecord(
@@ -56,7 +56,7 @@ export function ownOutcomeRecord(
 
 /**
  * Read the outcome record of a work. Returns null when the record is absent,
- * invalid or corrupt. Absence is the FACT "no-outcome" (issue 123): the
+ * invalid or corrupt. Absence is the FACT "no-outcome": the
  * recovery budget, never the fall ruler, answers it.
  */
 export async function readOutcomeRecord(workDir: string): Promise<OutcomeRecord | null> {

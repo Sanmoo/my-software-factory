@@ -30,8 +30,8 @@ import type {
 } from "./survivors.js";
 
 /**
- * The liveness and the survivor ledger's implementation (epic #198, ticket
- * #206). The interface is `survivors.ts`; this file is the depth behind it: the
+ * The liveness and the survivor ledger's implementation. The interface is
+ * `survivors.ts`; this file is the depth behind it: the
  * observation, the recognition of a survivor, the activity watch, the
  * duplicates, the held container and the end of a survivor.
  *

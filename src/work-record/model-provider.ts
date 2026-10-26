@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { WorkRecordError } from "./errors.js";
 
 /**
- * The model-provider part of a Work's record (issue 144): the persisted retry
+ * The model-provider part of a Work's record: the persisted retry
  * allowance of an attempt ended by the model provider's own error, and the last
  * settlement. The DECISIONS (retry or await) stay with the domain module
  * (pool/model-provider.ts); the file and its schema live here, so the shape of

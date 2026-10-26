@@ -45,7 +45,7 @@ import {
 import { readRepairCycle, writeRepairCycle, type RepairCycle } from "./repair.js";
 
 /**
- * The Work record (issue 187): the one owner of the complete on-disk record of
+ * The Work record: the one owner of the complete on-disk record of
  * a Work — its files, their schemas and the cross-references that bind them.
  *
  * A pause names the Attempt it waits for; a session link names its round; an

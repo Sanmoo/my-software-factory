@@ -1,5 +1,5 @@
 /**
- * Jira rich text as usable text (issue 128): an Atlassian Document Format
+ * Jira rich text as usable text: an Atlassian Document Format
  * (ADF) description is rendered into readable plain text that preserves its
  * meaning — paragraphs, headings, lists, code, quotes, links, mentions and
  * media are named, not flattened into noise.

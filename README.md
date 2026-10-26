@@ -28,13 +28,13 @@ repos:
 # worker-auth-file: ~/.secrets/msf-auth.json  # optional Pi auth.json; otherwise
 #                                               # a supported provider API-key
 #                                               # env var is forwarded
-# recovery:                       # an interruption is not a failure (issue 123)
+# recovery:                       # an interruption is not a failure
 #   max: 3                        # recoveries per attempt; 0 pauses on the first
 #   waits-ms: [1000, 4000, 16000] # the backoff before each recovery relaunch
-# model-provider:                 # the worker model provider's own budget (issue 144)
+# model-provider:                 # the worker model provider's own budget
 #   max-retries: 4                # retries per attempt after model provider failures
 #   waits-ms: [15000, 30000, 60000, 120000]  # the backoff before each retry
-# liveness:                       # Docker silence suspends launches (issue 118)
+# liveness:                       # Docker silence suspends launches
 #   unavailable-warn-ms: 60000    # one notice after this long; resumes by itself
 # notifications: true
 # jira:                           # Jira Cloud selections

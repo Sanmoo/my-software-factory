@@ -25,7 +25,7 @@ import type { AfterAttemptReading, RepairTrigger, WorkRef, WorkStateReading } fr
  * that is why this file imports no port, no disk and no adapter.
  *
  * The ladder is the one `state/derive.ts` used to walk: where that ruler and
- * this module disagreed, that is a regression, not a decision. Since #202 the
+ * this module disagreed, that is a regression, not a decision. The
  * loop speaks only this vocabulary, so the texts the verdicts carry live here
  * with the verdicts and nobody else can drift from them by a word.
  */
@@ -52,7 +52,7 @@ export async function deriveBeforeLaunch(
   const issue = ticket.value;
   if (issue.state === "closed") {
     // A closed-as-not-planned issue is a terminal fact the factory never acts
-    // on — its own state, so `unreadable` never means this (ADR-0010; D2).
+    // on — its own state, so `unreadable` never means this (ADR-0010).
     if (issue.stateReason === "not-planned") return { work: ref.work, dir: ref.dir, state: "not-planned" };
     return { work: ref.work, dir: ref.dir, state: "done" };
   }
@@ -80,7 +80,7 @@ async function blocked(ref: WorkRef, issue: TicketSnapshot, facts: WorkFacts): P
   if (snapshot === null) return parked(ref);
 
   const pause = currentPause(snapshot);
-  // The operator's answer is bound to the question it answered (issue 174):
+  // The operator's answer is bound to the question it answered:
   // with a CURRENT continuity pause the boundary is the pause's own request,
   // never the last thing the factory said. Every other blocked cause (a fall, a
   // repair, a rejection) keeps the generic last-marker rule. An unreadable
@@ -94,14 +94,14 @@ async function blocked(ref: WorkRef, issue: TicketSnapshot, facts: WorkFacts): P
       : NO_REPLIES;
 
   if (issueReplies.length > 0) {
-    // A pending reconciliation outranks the human answer (issue 112, story 21):
+    // A pending reconciliation outranks the human answer:
     // the remote may already carry this attempt's commit.
     const cycle = snapshot.repair;
     if (cycle.attempt !== null && hasPendingReconciliation(cycle.attempt)) return parked(ref);
     return resumable(ref, issue, issueReplies, facts);
   }
 
-  // A pause nobody answered is not a reason to wait parked (issue 173): the loop
+  // A pause nobody answered is not a reason to wait parked: the loop
   // re-reads the evidence the pause doubts before any human is asked again.
   if (pause !== null) {
     return { work: ref.work, dir: ref.dir, state: "continuity-paused", attempt: pause.attempt, pause: pause.pause };
@@ -129,8 +129,10 @@ async function withPullRequest(
   const snapshot = await readableRecord(facts);
   if (snapshot === null) return parked(ref);
 
-  // The stop of THIS attempt, when the claim is still on the issue and no worker
-  // of this process carries it: the same channel the claim-without-PR arm reads.
+  // The stop of THIS attempt, when the claim is still on the issue and no
+  // worker
+  // of this process carries it: the same channel the claim-without-PR arm
+  // reads.
   const claim = operatorStopClaim(snapshot.recovery, {
     lastAttempt: snapshot.attempt ?? 0,
     acceptNextAttempt: true,
@@ -143,8 +145,9 @@ async function withPullRequest(
       : { work: ref.work, dir: ref.dir, state: "stop-unconfirmed", attempt: claim.attempt, because: claim.because };
   }
 
-  // The repair channel (issue 107): only CONFIRMED facts of the CURRENT head
-  // trigger — conflicts with the current base, or required checks concluded with
+  // The repair channel: only CONFIRMED facts of the CURRENT head
+  // trigger — conflicts with the current base, or required checks concluded
+  // with
   // failure/timeout. Unknown mergeability and pending/optional checks never do,
   // and the Block above already won over all of it.
   const repairFacts = await facts.repairFacts();
@@ -154,7 +157,7 @@ async function withPullRequest(
   const attempt = cycle.attempt;
 
   // The attempt's own state comes before the trigger and the evidence
-  // consumption (issue 112): two consecutive falls and an unattributable remote
+  // consumption: two consecutive falls and an unattributable remote
   // change block the work EVEN with the PR open and even when the current facts
   // are not confirmed — the open PR never hides a fall.
   if (attempt !== null && cycle.consecutiveFalls >= MAX_REPAIR_FALLS) {
@@ -171,12 +174,12 @@ async function withPullRequest(
   if (trigger !== null) {
     const signature = repairSignature(ref.work, trigger);
     // A resumption takes over the attempt whose evidence is still the one this
-    // head presents (issue 112): a fall on OLDER evidence is history, and the
+    // head presents: a fall on OLDER evidence is history, and the
     // current head gets a round of its own, pinned to its own head.
     if (attempt !== null && attempt.publication === "not-published" && attempt.evidence === signature) {
       return { work: ref.work, dir: ref.dir, state: "repair", pr, createdAt: issue.createdAt, trigger, resuming: attempt };
     }
-    // Story 19: re-finding the same failure without new evidence is never a new
+    // Re-finding the same failure without new evidence is never a new
     // session; the exhausted cap still blocks.
     if (cycle.lastEvidence === signature) {
       if (cycle.usedRounds >= MAX_REPAIR_ROUNDS) return repairBlock(ref, pr, trigger, cycle.usedRounds);
@@ -186,11 +189,11 @@ async function withPullRequest(
     return { work: ref.work, dir: ref.dir, state: "repair", pr, createdAt: issue.createdAt, trigger, resuming: null };
   }
 
-  // Confirmed recovery (story 22): no conflicts and every required check
+  // Confirmed recovery: no conflicts and every required check
   // approved — the only thing besides a human unblock that resets the cap. The
   // gate is "this work has a repair cycle", not "a round is charged": after a
   // fall the charged round was returned, and the fall ledger is what recovery
-  // must clear (issue 112, story 25).
+  // must clear.
   if (repair !== null && hasRepairCycle(cycle) && repairRecovered(repair)) {
     return { work: ref.work, dir: ref.dir, state: "repair-recovered", pr };
   }
@@ -218,12 +221,12 @@ async function claimedWithoutPullRequest(
   if (snapshot === null) return parked(ref);
 
   // A pending reconciliation holds the claim: releasing it would hand the work
-  // back to the pool while its publication is still unknown (issue 112).
+  // back to the pool while its publication is still unknown.
   if (snapshot.repair.attempt !== null && hasPendingReconciliation(snapshot.repair.attempt)) return parked(ref);
 
   const unreconciled = await unreconciledAttempt(ref, facts, policy, snapshot);
   // Only an interruption can be a model provider failure: the attempt's own
-  // stream decides it (issue 144) — a written outcome or a bare reservation
+  // stream decides it  — a written outcome or a bare reservation
   // never reads the model provider ledger.
   if (unreconciled.state === "interrupted") {
     const providerFailure = await modelProviderFailureOf(ref, issue, facts, policy, snapshot, unreconciled.attempt);
@@ -233,10 +236,10 @@ async function claimedWithoutPullRequest(
 }
 
 /**
- * The claimed work whose attempt the factory did not settle (ticket 05 Q3; 123):
+ * The claimed work whose attempt the factory did not settle:
  * the record decides which question is being asked.
  *
- *  - a confirmed Outcome prevails over the interpretation of the stop (#146);
+ *  - a confirmed Outcome prevails over the interpretation of the stop;
  *  - a self-report whose label never landed is reserved, never recovered;
  *  - a written failure is ruled as at collection;
  *  - the persisted stop of THIS attempt is neither an interruption nor a fall;
@@ -310,7 +313,7 @@ async function unreconciledFailure(
 // The trigger itself has one owner (pool/repair-trigger.ts): the same predicate
 // and the same signature the derivation and the launch's durable record use.
 
-/** Confirmed recovery (story 22): no conflicts and every required check
+/** Confirmed recovery: no conflicts and every required check
  *  approved — narrower than an obsolete premise, which also holds for pending,
  *  neutral or skipped checks. The required set must be KNOWN: the empty set a
  *  repository without CI declares is a confirmation; null is never one. */
@@ -341,7 +344,7 @@ function repairReasonsPhrase(trigger: RepairTrigger): string {
     .join(" and ");
 }
 
-/** The block of a Repair that stopped without publishing (issue 112): the
+/** The block of a Repair that stopped without publishing: the
  *  attempt that fell, its abrupt end and the evidence paths are named by the
  *  comment; the local work is never touched. */
 async function unpublishedRepairBlock(
@@ -418,7 +421,8 @@ async function modelProviderFailureOf(
   const decision = modelProviderDecision(snapshot.modelProvider, policy.modelProvider, attempt, failure);
   if (decision.decision === "awaiting-model-provider") {
     // The model provider budget is exhausted: the work waits for the operator —
-    // a help request, never a block. A human answer after the marker resumes it,
+    // a help request, never a block. A human answer after the marker resumes
+    // it,
     // the same channel a blocked work listens to.
     const comments = await facts.comments();
     const issueReplies = comments.reading === "known" ? humanCommentsAfterLastMarker(comments.value) : NO_REPLIES;
@@ -453,10 +457,10 @@ const NO_REPLIES: IssueComment[] = [];
  *
  * The rulings are the ones the collection has always made, in the same priority
  * order — they were the deleted outcome ruler's, and this module is now their
- * one owner (ADR-0010); the loop executes them in this vocabulary (#202). A PR closed
+ * one owner (ADR-0010); the loop executes them in this vocabulary. A PR closed
  * without merge is the one fact the two readings used to answer differently:
  * both answer `rejected` now, and both mean the Block the state declares — the
- * epic's (#198) one behaviour delta.
+ * one behaviour delta.
  */
 export async function deriveAfterAttempt(
   ref: WorkRef,
@@ -470,10 +474,10 @@ export async function deriveAfterAttempt(
   const pull = await facts.pullRequest();
   const pr = pull.reading === "with-pull-request" ? pull.pr : null;
 
-  // The terminal state was reached while this claim was held (ticket 14).
+  // The terminal state was reached while this claim was held.
   if (issue !== null && issue.state === "closed") return { work: ref.work, dir: ref.dir, state: "done", pr };
 
-  // A merged PR is delivery, whatever the attempt wrote (issue 149): the
+  // A merged PR is delivery, whatever the attempt wrote: the
   // terminal state reached the PR first, and the action closes the issue (the
   // linkage fallback) before archiving — the same state, and the same action,
   // the read before a launch answers for a merged PR with an open issue.
@@ -481,7 +485,8 @@ export async function deriveAfterAttempt(
     return { work: ref.work, dir: ref.dir, state: "done-fallback", pr, comment: fallbackDoneComment() };
   }
 
-  // The Work record in one read. Absence, and a record the factory cannot parse,
+  // The Work record in one read. Absence, and a record the factory cannot
+  // parse,
   // are the SAME fact here, as they have always been for the collection ruler:
   // no verdict of this attempt was written. What names an attempt comes out of
   // it — its own outcome, the fall the ledger counted for the previous one, and
@@ -490,7 +495,8 @@ export async function deriveAfterAttempt(
   const record = written?.outcome ?? null;
   const own = ownOutcomeRecord(record, end.attempt);
 
-  // Class 6: the worker posted the marker and the label itself. The factory only
+  // Class 6: the worker posted the marker and the label itself. The factory
+  // only
   // RECORDS it — no release, no fall, no comment of its own. Both structured
   // facts speak (the label, or the record's own class), and only for THIS
   // attempt: desfecho.json survives between attempts. Read before the arms that
@@ -499,7 +505,7 @@ export async function deriveAfterAttempt(
   const selfReported =
     (issue !== null && issue.labels.includes(policy.labels.blocked)) || selfReportedBlocked(record, end.attempt);
 
-  // The stop that may own this END (issue #146). A confirmed Outcome prevails
+  // The stop that may own this END. A confirmed Outcome prevails
   // over the interpretation of the stop, so this is asked only while the
   // attempt wrote no record at all: the operator's requested stop — the one
   // this process is carrying out, or the evidence a previous one left on the
@@ -526,7 +532,7 @@ export async function deriveAfterAttempt(
   }
 
   // A PR closed without merge is a Block in this reading too, and the SAME
-  // Block the read before a launch declares (epic #198's one behaviour delta):
+  // Block the read before a launch declares:
   // the work never returns to the pool carrying a closed PR — the attempt is
   // liquidated as one outcome, not also as a fall.
   if (pr !== null && pr.state === "closed" && !pr.merged) {
@@ -539,7 +545,7 @@ export async function deriveAfterAttempt(
     };
   }
 
-  // No record of its OWN: an INTERRUPTION, not a failure (issue 123). The
+  // No record of its OWN: an INTERRUPTION, not a failure. The
   // attempt keeps its number and no failure is recorded; what ended its own
   // turn decides whether it is an interruption of the agent or a model provider
   // failure.
@@ -574,13 +580,14 @@ async function previousAttemptFell(facts: AttemptEndFacts, attempt: number): Pro
 
 /**
  * An attempt that ended without an outcome record. Two very different things
- * look alike here, and only the attempt's own stream tells them apart
- * (issue 144): the agent was interrupted — the recovery budget absorbs it and
+ * look alike here, and only the attempt's own stream tells them apart: the
+ * agent was interrupted — the recovery budget absorbs it and
  * the same attempt continues — or its turn ended in a model provider error,
  * which retries on its OWN budget and never touches the recovery one.
  *
  * The provider budget's answer is CARRIED, not acted on: settling it (the wait,
- * the persisted consumption, the exhausted budget's help request) belongs to the
+ * the persisted consumption, the exhausted budget's help request) belongs to
+ * the
  * retry launch, which is where the collection path has always settled it.
  */
 async function interruption(
@@ -621,7 +628,7 @@ async function interruption(
 /**
  * The last comment of the PR across both channels (conversation + reviews),
  * merged by createdAt. Feedback is "the LAST comment does not carry the
- * agent marker" (ticket 07 Q3, amended in 18) — login cannot separate the
+ * agent marker"  — login cannot separate the
  * sides when they are the same account.
  */
 function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null {
@@ -632,12 +639,12 @@ function lastPrComment(feedback: ExpandedPrFeedback | null): IssueComment | null
   return all.at(-1) ?? null;
 }
 
-/** The fallback-done comment: short, by decision (ticket 04 Q11). */
+/** The fallback-done comment: short, by decision. */
 function fallbackDoneComment(): string {
   return "the PR was merged without closing this issue — the factory closes it (done)";
 }
 
-/** The rejection comment: points at the PR (ticket 04 Q5). */
+/** The rejection comment: points at the PR. */
 function rejectionComment(pr: PullRequestRecord): string {
   return (
     `work rejected: PR #${pr.number} (${pr.headBranch} → ${pr.baseBranch}) was closed without merging. ` +

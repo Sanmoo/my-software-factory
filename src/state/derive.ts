@@ -13,7 +13,7 @@ import { workKeyOf } from "../pool/work-key.js";
 
 /**
  * Derivation: the stateless re-read of the tracker from which the sweep
- * derives the states of all works and the pool of eligibles (ticket 07).
+ * derives the states of all works and the pool of eligibles.
  * Reads only; all writes to the tracker are commanded from here, executed
  * elsewhere. On GitHub the honest rank is null — order falls back to
  * createdAt ("eligible the longest").
@@ -29,7 +29,7 @@ export interface PoolEntry {
 /**
  * A work the tracker marks as claimed (the claim or the blocked label) but
  * whose registry dir does not exist in this workspace: the factory marked it
- * and left no reservation here (issues 93/97). The command is the operator's
+ * and left no reservation here. The command is the operator's
  * safe way back to the pool; the caveat warns that ANOTHER factory or
  * workspace may be the one holding the claim.
  */
@@ -60,7 +60,7 @@ export interface TrackerState extends Reconciliation {
   pool: PoolEntry[];
 }
 
-/** How many blocker reads may be in flight at once (issue 147): independent
+/** How many blocker reads may be in flight at once: independent
  *  round-trips, bounded so the tracker's rate budget still holds. */
 export const BLOCKER_READS_IN_FLIGHT = 8;
 
@@ -75,11 +75,11 @@ export const unmarkedReservationKey = (reservation: UnmarkedReservation): string
 
 /**
  * The single derivation that returns the pool and the reconciliation from ONE
- * open-tickets read per selection (issue 100): the neutral listing is filtered
+ * open-tickets read per selection: the neutral listing is filtered
  * by the pool's own rules and cross-referenced with the workspace's reservations
  * and the in-flight set. Reads only; never acts. Ticket facts come from the
  * ticket port; a Work is the listed ticket plus the selection's explicit
- * destination (issue 126).
+ * destination.
  */
 export async function deriveTrackerState(
   tickets: TicketTracker,
@@ -119,7 +119,7 @@ export async function deriveTrackerState(
   }
 
   // The blocker read is the only per-candidate round-trip the listing could
-  // not answer, and it is issued with bounded concurrency (issue 147).
+  // not answer, and it is issued with bounded concurrency.
   const verdicts = await mapBounded(candidates, BLOCKER_READS_IN_FLIGHT, async (entry) => ({
     entry,
     unblocked: await hasNoOpenBlocker(tickets, entry.ticket.ticket),
@@ -223,11 +223,11 @@ function releaseCommand(issue: OpenTicket, labels: Labels): string | null {
 
 /** The pool's label rules, over the neutral read — never in the adapter. An
  *  assigned issue is claimed by decoration; a linked PR is already in the PR
- *  channel (ticket 12). */
+ *  channel. */
 function isEligible(issue: OpenTicket, labels: Labels): boolean {
   if (!issue.labels.includes(labels.ready)) return false;
   if (issue.labels.includes(labels.claimed)) return false;
-  // Blocked works listen to the issue channel, never to the pool (ticket 14).
+  // Blocked works listen to the issue channel, never to the pool.
   if (issue.labels.includes(labels.blocked)) return false;
   if (issue.assignees.length > 0) return false;
   // Unknown linkage (null) is never "without an open PR".
@@ -242,7 +242,7 @@ async function hasNoOpenBlocker(tickets: TicketTracker, ticket: OpenTicket["tick
   return blockers.value.every((blocker) => blocker.state === "closed");
 }
 
-// ---- the reserved states — the tick's full derivation (ticket 14) ----
+// ---- the reserved states — the tick's full derivation  ----
 // The repair trigger and the premise it reads have one owner (pool/repair-trigger.ts):
 // the Work state, the derivation and the launch's durable signature all ask it.
 
