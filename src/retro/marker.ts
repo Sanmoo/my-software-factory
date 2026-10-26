@@ -23,8 +23,8 @@ export interface RetroState {
   boundaryAt: number | null;
   /** Works a forced single-work round analyzed without moving the boundary. */
   analyzed: string[];
-  /** Works the last full window covered: the tie-break at the boundary
-   *  instant. */
+  /** The keys a report covered at the boundary instant: every round that
+   *  shares that instant carries them, so no work there is analyzed twice. */
   covered: string[];
   /** Items filed by the last round — `status` names the triage queue's
    *  growth. */

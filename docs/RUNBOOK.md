@@ -25,8 +25,8 @@ npm run build:image
 #    tracker access or workspace changes; failure exits 1, naming the model and
 #    provider. This checks configuration, not whether the provider accepts the
 #    key: a wrong key surfaces at the model call. It never prints the value or
-#    inherits ~/.pi/agent. Only Pi's documented provider variables are forwarded
-# — keep the factory's environment to the one your model needs.
+#    inherits ~/.pi/agent. Only Pi's documented provider variables are
+#    forwarded — keep the factory's environment to the one your model needs.
 
 # 3. the bot credential in the gh keyring (the boot check reads it;
 #    the SAME token is injected as GH_TOKEN inside the worker container;
