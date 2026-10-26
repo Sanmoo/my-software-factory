@@ -1391,9 +1391,10 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
 
   test("one site's Rank spans two Jira projects, so neither project's queue is concatenated", async () => {
     const sim = new JiraSim();
-    // The site's Rank interleaves the two projects: concatenating them, in
-    // either declaration order, could never produce this sequence.
-    sim.addIssue({ id: "20001", key: "DEF-1", summary: "Platform first", labels: ["platform"] });
+    // The site's Rank interleaves the two projects, and DEF-1 is the NEWEST:
+    // neither concatenating the projects nor sorting by creation age could
+    // produce this sequence.
+    sim.addIssue({ id: "20001", key: "DEF-1", summary: "Platform first", labels: ["platform"], created: "2026-12-01T00:00:00.000+0000" });
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "Product first", labels: ["product"], created: "2026-02-01T00:00:00.000+0000" });
     sim.addIssue({ id: "20002", key: "DEF-2", summary: "Platform second", labels: ["platform"], created: "2026-03-01T00:00:00.000+0000" });
     sim.addIssue({ id: "10002", key: "ABC-2", summary: "Product second", labels: ["product"], created: "2026-04-01T00:00:00.000+0000" });
