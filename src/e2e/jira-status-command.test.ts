@@ -140,13 +140,20 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
   }
 
   /** Only the identity read and searches left the CLI; no claim, comment,
-   *  transition or other tracker write. */
+   *  transition or other tracker write. The number of searches is the site
+   *  read's own business (one per selection plus the site's ordered read), so
+   *  it is not pinned here; the identity read IS one per site, and that is. */
   function assertReadOnlyJira(): void {
     const calls = jira.calls();
     assert.ok(calls.length > 0, "the status read reached the tracker");
     for (const call of calls) {
       assert.match(call, /^(GET \/rest\/api\/3\/myself|POST \/rest\/api\/3\/search\/jql)$/);
     }
+    assert.equal(
+      calls.filter((call) => call.startsWith("GET /rest/api/3/myself")).length,
+      1,
+      "one identity read per site, once for the whole read",
+    );
   }
 
   test("status presents the Jira candidates in native Rank order and never claims or launches", () => {
