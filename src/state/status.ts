@@ -224,14 +224,15 @@ export async function deriveStatus(
     selections.length === 0
       ? emptyTrackerState()
       : await deriveTrackerState(sources.github, selections, config.labels, reservations);
-  // Each site's selections are read as ONE ordered set (issue 129); claiming
-  // nothing, it stays a read like everything else status does.
-  const jira = await readJiraSites(sources.jira ?? []);
   // The liveness answer comes FIRST: what a live worker carries is in flight,
   // and the Work state is asked with that set — the very reading the engine
   // acts on. The probe stays exactly what it was (ADR 0002): a read.
   const liveness = await classifyLiveness(registry, layout, probe);
   const reserved = await readReservedStates(sources.github, config, layout, liveness, reservedKeys);
+  // Each site's selections are read as ONE native Rank order (issue 129).
+  // Nothing here claims: like every other read status makes, it changes no
+  // tracker fact and creates no reservation.
+  const jira = await readJiraSites(sources.jira ?? []);
   return {
     pool: tracker.pool,
     jira,
