@@ -86,23 +86,23 @@ export interface StopLaunch {
 }
 
 /**
- * What returning an admission's grant did, read from the ledger by the module
- * that owns its writes: the caller words the outcome and never re-derives it.
- * `none-held` = the admission named no grant; `refunded` = the budget got it
- * back; `gone-from-ledger` = the ledger no longer holds that event, so nothing
- * was consumed by this relaunch; `still-consumed` = the ledger kept the grant
- * (its count moved to another attempt), so this relaunch spends it.
+ * What returning an admission's grant did. `none-held` = the admission named no
+ * grant; `refunded` = the budget got it back; `gone-from-ledger` = the ledger no
+ * longer holds that event, so nothing was consumed by this relaunch;
+ * `still-consumed` = the ledger kept the grant (its count moved to another
+ * attempt), so this relaunch spends it.
  */
 export type GrantReturn = "none-held" | "refunded" | "gone-from-ledger" | "still-consumed";
 
 /**
- * Return the recovery grant an admission still holds, if any: the grant's own
+ * Return the Recovery grant an admission still holds, if any: the grant's own
  * ledger event index is its identity, so refunding it twice is impossible and
  * an earlier, legitimate recovery can never be returned. The admission stops
- * naming the grant once the refund write answered — a write that threw keeps it
- * named, so a later caller can still retry the return. The caller decides WHEN
- * a grant may be released — a requested stop that cancelled the admission, or
- * the runtime's own proof that no worker existed (issue 178).
+ * naming the grant once the ledger answered — a write that threw keeps it named
+ * so a later caller can retry the return, while a `still-consumed` answer drops
+ * it because the ledger no longer scopes that grant to this attempt. The caller
+ * decides WHEN a grant may be released — a requested stop that cancelled the
+ * admission, or the runtime's own proof that no worker existed (issue 178).
  */
 export async function refundHeldGrant(launch: StopLaunch, attempt: number): Promise<GrantReturn> {
   const grant = launch.recoveryIndex;

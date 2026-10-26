@@ -128,6 +128,9 @@ The runtime refusing a launch before any worker existed: a precondition of the e
 **Recovery budget**:
 The finite, per-work and persisted allowance of recoveries for one attempt. Exhausting it pauses the work and asks for help; it is separate from the attempt count. A recovery granted to a relaunch that ended in a Launch refusal is refunded to the budget; an ambiguous failure may have left a worker behind and keeps it consumed.
 
+**Recovery grant**:
+The recovery a relaunch holds: one event of the attempt's ledger, persisted BEFORE the backoff and the relaunch so a death during either continues the count instead of renewing it. Its identity is the event's index, which is what makes returning it idempotent and never an earlier, legitimate recovery.
+
 **Requested stop**:
 The operator ending the factory with Ctrl-C or SIGTERM: admissions close, the running workers are asked to stop and then forced if needed, and the factory calls the stop safe only once no worker survives. The cooperative window bounds that request phase — ten seconds for the whole run, never per worker — and a second signal escalates it, forcing what remains at once; neither shortcut skips the confirmation of the workers' end. It preserves the attempt, branch, history and artifacts; it is neither a Failure nor an Interruption — the stop is persisted as itself — and the resume after it spends no Recovery budget, whatever ended the attempt.
 _Avoid_: shutdown, for the operator's act (the signal handling is the mechanism, not the term).

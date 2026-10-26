@@ -483,11 +483,8 @@ class LaunchPipeline implements Launch {
     attempt: number,
     error: LaunchPreconditionError,
   ): Promise<void> {
-    // Every note ends by telling the operator what the budget now holds: an
-    // intact budget consumed no attempt, while a grant that stayed consumed
-    // still belongs to this work and only its relaunch is pending.
     const intact = "no attempt was consumed and the work stays reserved";
-    const consumed = (because: string): string =>
+    const staysConsumed = (because: string): string =>
       `the recovery granted to this relaunch could not be refunded (${because}) and stays consumed; ` +
       "the work stays reserved";
     let note: string;
@@ -500,14 +497,14 @@ class LaunchPipeline implements Launch {
           note = `the recovery granted to this relaunch is no longer in the ledger; ${intact}`;
           break;
         case "still-consumed":
-          note = consumed("the ledger did not return it");
+          note = staysConsumed("the ledger did not return it");
           break;
         case "none-held":
           note = `no recovery was granted to this launch; ${intact}`;
           break;
       }
     } catch (refundError) {
-      note = consumed(describeError(refundError));
+      note = staysConsumed(describeError(refundError));
     }
     this.log(
       `the launch of ${workKeyOf(entry.work)} was refused before any worker existed ` +
