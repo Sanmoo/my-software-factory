@@ -37,7 +37,7 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  * interface; the recovery ledger remains `pool/recovery.ts`'s writer, and this
  * module owns when a grant is released: the stop that cancelled its relaunch,
  * and (issue 178) a Launch refusal, whose proof that no worker existed the
- * sweep hands here from the launch boundary instead of re-deriving.
+ * launch pipeline hands here from the launch boundary instead of re-deriving.
  */
 
 /** One work whose stop the factory could not confirm: the registry key and
