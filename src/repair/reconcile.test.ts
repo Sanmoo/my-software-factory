@@ -18,7 +18,7 @@ import {
 import { openRepairReconciler, type RepairWork } from "./reconcile.js";
 
 /**
- * The Repair reconciliation through its interface (epic #198, ticket #207): the
+ * The Repair reconciliation through its interface: the
  * module settles a repair attempt that wrote its facts on disk and no live
  * worker carries, persists the cycle and says the verdict — and asks git only
  * what it needs. Nothing here launches, blocks, archives or releases: the
@@ -246,8 +246,8 @@ describe("the Repair reconciliation — a settled attempt, through the module", 
 
   test("a legacy cycle is adopted from the registry gap and settled from the attempt's own artifacts", async () => {
     // A file written before the attempt existed: the gap between the ledger's
-    // attempt and the last recorded outcome is what adopts it (issue 112), and
-    // the artifacts decide whether a worker ever saw it (issue 181).
+    // attempt and the last recorded outcome is what adopts it, and
+    // the artifacts decide whether a worker ever saw it.
     appendAttemptEvent(dir, 2, { event: "session-start" });
     await writeRepairCycle(dir, cycleWith(null));
 
@@ -303,7 +303,7 @@ describe("the Repair reconciliation — a settled attempt, through the module", 
     const tracker = trackerWithIssue();
     // The Work's own PR, read NOW: mergeable, with a known and clean required
     // set — the impediment the round was launched for is gone, so the round
-    // returns without a fall (issue 149). The round's launch facts do not say so.
+    // returns without a fall. The round's launch facts do not say so.
     tracker.seedPullRequest({ repo: REPO, number: 1, state: "open" });
     tracker.setPrRepairFacts({ repo: REPO, prNumber: 1, mergeState: "mergeable", requiredChecks: [] });
     const { repair, lines } = open(git, tracker);
@@ -313,7 +313,7 @@ describe("the Repair reconciliation — a settled attempt, through the module", 
     const cycle = await readRepairCycle(dir);
     // The PR was closed without merge while the round ran: the impediment is
     // gone, so the round returns with no fall counted — the verdict is the
-    // premise's, read now (issue 149).
+    // premise's, read now.
     assert.equal(cycle.usedRounds, 0);
     assert.equal(cycle.consecutiveFalls, 0);
     assert.match(lines.join("\n"), /the impediment it was launched for no longer exists/);

@@ -15,7 +15,7 @@ import { pauseMarker } from "../tracker/port.js";
  * The Work record's two small rules and the operator's texts (tickets 04/05;
  * fleshed out by tickets 12-14). The RECORD (desfecho.json, its schema and the
  * "is this record this attempt's?" criterion) is owned by the Work record
- * (issue 187, `src/work-record/`); the VOCABULARY of what a collection decides
+ * (`src/work-record/`); the VOCABULARY of what a collection decides
  * is owned by the Work state (ADR-0010, `src/work-state/`).
  *
  * What is left here is neither a ruler nor a policy module: the predicates the
@@ -36,7 +36,7 @@ import { pauseMarker } from "../tracker/port.js";
 /**
  * The written failure the ruler counts for CONSECUTIVENESS at launch: a clean
  * end without a PR. A `pr-open` record is a success and resets the count; a
- * self-report is the worker's own stop, not a failure (issue 123).
+ * self-report is the worker's own stop, not a failure.
  */
 export function isRecordedFailure(record: OutcomeRecord | null): boolean {
   return record?.class === "clean-without-pr";
@@ -44,8 +44,8 @@ export function isRecordedFailure(record: OutcomeRecord | null): boolean {
 
 /**
  * The attempt's own written outcome, unless it is the blocked self-report the
- * `record-only` ruling handles: the record that lets the fall ruler decide
- * (issue 123). One rule, shared by collection and by the derivation that
+ * `record-only` ruling handles: the record that lets the fall ruler decide. One
+ * rule, shared by collection and by the derivation that
  * settles an unreconciled attempt.
  */
 export function ownWrittenOutcome(
@@ -57,7 +57,7 @@ export function ownWrittenOutcome(
 }
 
 /** The ACTUAL blocked self-report of one attempt — a record left by another
- *  attempt is never the current attempt's self-report (issue 103). */
+ *  attempt is never the current attempt's self-report. */
 export function selfReportedBlocked(record: OutcomeRecord | null, attempt: number): boolean {
   return ownOutcomeRecord(record, attempt)?.class === "blocked-self-report";
 }
@@ -72,7 +72,7 @@ export interface AttemptCommentInput {
 }
 
 /**
- * The blocked comment (ticket 05 Q7; issue 103): the human must SEE why it fell
+ * The blocked comment: the human must SEE why it fell
  * before deciding to resume. The header names the failed attempt; the outcome
  * is the current attempt's own record — a divergent record is named as such
  * instead of being presented as this attempt's outcome. The evidence of the
@@ -127,7 +127,7 @@ export interface ModelProviderAwaitingInput {
   workspace: WorkspaceLayout;
 }
 
-/** What the continuity pause of issue 119 says to the operator. */
+/** What the continuity pause says to the operator. */
 export interface ContinuityPausedInput {
   attempt: number;
   /** The last attempt the disk evidences (the attempt ledger): the launch path
@@ -144,9 +144,11 @@ export interface ContinuityPausedInput {
 }
 
 /**
- * The help request of an exhausted model provider budget (issue 144): the
- * attempt ended by a model provider failure, the factory stopped retrying, and the work is
- * NOT blocked — it waits for the operator. It names the model provider's own message
+ * The help request of an exhausted model provider budget: the
+ * attempt ended by a model provider failure, the factory stopped retrying, and
+ * the work is
+ * NOT blocked — it waits for the operator. It names the model provider's own
+ * message
  * and the configured allowance, and says how to go on (raise the budget, or
  * answer on the issue to resume with a new attempt).
  */
@@ -166,7 +168,7 @@ export async function modelProviderAwaitingCommentBody(input: ModelProviderAwait
 }
 
 /**
- * The block comment of a continuity pause (issue 119): the interrupted attempt
+ * The block comment of a continuity pause: the interrupted attempt
  * cannot be continued safely — its session is missing, unreadable or of the
  * wrong identity, or an external effect stayed ambiguous — so the factory
  * stopped instead of relaunching. The reason and the attempt's evidence are
@@ -268,11 +270,11 @@ export interface RepairFallCommentInput {
 }
 
 /**
- * The block comment of a Repair that stopped without publishing (issue 112).
+ * The block comment of a Repair that stopped without publishing.
  * It names the attempt that actually fell, the abrupt end and the divergent
  * record on disk — never presenting an older attempt's outcome as this one's —
  * plus the publication verdict, the preserved local work and the attempt's own
- * evidence paths (#103's contract, reused verbatim).
+ * evidence paths (the same contract, reused verbatim).
  */
 export async function repairFallComment(input: RepairFallCommentInput): Promise<string> {
   const { attempt } = input;
@@ -304,9 +306,9 @@ export async function repairFallComment(input: RepairFallCommentInput): Promise<
 /**
  * How the attempt ended without publishing, from the record facts alone: a
  * normal end (its own record exists) or an end with no record at all, with an
- * older attempt's record named as history, never as this attempt's outcome
- * (issue 103's rule, reused here). The repair ledger, not the attempt ruler,
- * counts this end (issue 112/123).
+ * older attempt's record named as history, never as this attempt's outcome. The
+ * repair ledger, not the attempt ruler,
+ * counts this end.
  */
 function describeRepairEnding(record: OutcomeRecord | null, attempt: number): string {
   const own = ownOutcomeRecord(record, attempt);
@@ -322,7 +324,7 @@ function describeRepairEnding(record: OutcomeRecord | null, attempt: number): st
 
 /**
  * The one rendering of the history fact "the record on disk is another
- * attempt's", so the operator's wording cannot drift apart (issue 143).
+ * attempt's", so the operator's wording cannot drift apart.
  */
 export function describeForeignRecord(attempt: number): string {
   return `the record on disk belongs to attempt ${attempt}`;

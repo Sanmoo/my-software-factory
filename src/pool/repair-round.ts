@@ -12,7 +12,7 @@ import {
 } from "./repair.js";
 
 /**
- * The Repair round (issues 189 and 194): "open a round" re-reads the confirmed
+ * The Repair round: "open a round" re-reads the confirmed
  * premise ONCE at the opening point and returns either the launch context —
  * the trigger the session is opened with, the head the intervention is pinned
  * to, the PR's current base and the unpublished attempt it takes over — or a
@@ -21,8 +21,8 @@ import {
  * from direct observations of the record, the remote, the worktree and the
  * premise, and returns the verdict and the cycle to persist.
  *
- * The premise is the PR's current facts, never the ones that opened the round
- * (issue 149): a resolution pushed between the derivation and the launch must
+ * The premise is the PR's current facts, never the ones that opened the round:
+ * a resolution pushed between the derivation and the launch must
  * not buy a session, and an unreadable fact is never taken for a confirmed
  * absence. A remote the host cannot read holds as well; a remote that moved
  * skips the round, and a resumption whose branch moved under it settles the
@@ -42,7 +42,7 @@ import {
 export interface RepairOpeningInput {
   /** The confirmed impediment the derivation opened the round for. */
   trigger: RepairTrigger;
-  /** The unpublished attempt this opening takes over (issue 112), or null. */
+  /** The unpublished attempt this opening takes over, or null. */
   resuming: RepairAttempt | null;
   /** Re-read the PR's facts now — called exactly once, at opening. */
   readPremise: () => Promise<Known<PrRepairFacts>>;
@@ -50,7 +50,7 @@ export interface RepairOpeningInput {
   observeRemote: () => Promise<RemoteObservation>;
 }
 
-/** What a session is launched with (issue 112): the confirmed trigger, the
+/** What a session is launched with: the confirmed trigger, the
  *  head the intervention is pinned to, the PR's current base and the attempt
  *  it resumes. The local work is read by the caller once the round goes out. */
 export interface RepairRoundContext {
@@ -80,7 +80,7 @@ export type RepairOpening =
     };
 
 export async function openRepairRound(input: RepairOpeningInput): Promise<RepairOpening> {
-  // The derivation's trigger is the input; this is the single opening re-read (issue 149).
+  // The derivation's trigger is the input; this is the single opening re-read.
   const reading = readRepairPremise(await input.readPremise());
   if (reading.premise === "obsolete") return { kind: "returned", premise: "obsolete" };
   if (reading.premise === "unknown") return { kind: "held", because: "premise-unknown" };
@@ -142,7 +142,7 @@ export interface RepairSettlementInput {
   /** Whether the round ever reached the runtime. An adopted legacy cycle
    *  reports what its artifacts say: the registry gap that adopted it is a
    *  fact of the Work, and the attempt's own evidence decides whether a worker
-   *  ever saw it (issue 181). */
+   *  ever saw it. */
   observeRoundStart: () => Promise<RepairRoundStart>;
   /** The Work's outcome record on disk — another attempt's is not this one's. */
   readOutcomeRecord: () => Promise<OutcomeRecord | null>;
@@ -194,7 +194,7 @@ async function roundReachedRuntime(
  * would have consumed are gone. An UNSETTLED attempt was charged at launch and
  * never refunded, so its round returns to the budget; one the record already
  * settled as unpublished returned its charge when that verdict was written, and
- * refunding it again would erase another round's charge (issue 181).
+ * refunding it again would erase another round's charge.
  */
 function unstartedCycle(cycle: RepairCycle, refundCharge: boolean): RepairCycle {
   return {
@@ -217,7 +217,7 @@ export async function settleRepairRound(input: RepairSettlementInput): Promise<R
   // An attempt already settled as unpublished, with no runtime footprint, is a
   // ghost an older version wrote: the round was charged before the continuity
   // decision could refuse the launch, and the settlement could only compare the
-  // branch (issue 181). The verdict is re-read from the attempt's own artifacts;
+  // branch. The verdict is re-read from the attempt's own artifacts;
   // a ghost leaves nothing spent and no fall. A `published` verdict is proof
   // the round ran, and `pending` is uncertainty — neither is re-read here.
   if (attempt.publication === "not-published" && !(await roundReachedRuntime(input, attempt))) {
@@ -246,6 +246,7 @@ export async function settleRepairRound(input: RepairSettlementInput): Promise<R
   const premise = readRepairPremise(await input.readPremise()).premise;
   const decision = reconcileRepairAttempt({ cycle: input.cycle, remote, localWork, premise });
   // The cycle carries an unsettled attempt here, so the reconciliation has a
-  // verdict; "none" can only answer an absent or settled attempt, checked above.
+  // verdict; "none" can only answer an absent or settled attempt, checked
+  // above.
   return decision.kind === "none" ? { kind: "none" } : decision;
 }

@@ -8,6 +8,7 @@ import {
   DEFAULT_LABELS,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
   type Config,
   type Labels,
   type ModelProviderBudget,
@@ -26,8 +27,8 @@ import { eventLogName } from "../work-record/logs.js";
 import { openNonFailures, type NonFailureDeps, type NonFailures } from "./non-failures.js";
 
 /**
- * The two endings that are not a failure, at their own seam (epic #198, ticket
- * #207): the **Continuity pause** and the **model provider failure** through
+ * The two endings that are not a failure, at their own seam: the **Continuity
+ * pause** and the **model provider failure** through
  * {@link NonFailures}, with an INJECTED evidence read and FAKE ports — no
  * factory, no launch, no Docker.
  *
@@ -101,6 +102,7 @@ function world(
     labels: { ...DEFAULT_LABELS },
     recovery: { ...DEFAULT_RECOVERY_BUDGET },
     modelProvider: { ...(options.budget ?? DEFAULT_MODEL_PROVIDER_BUDGET) },
+    retro: { ...DEFAULT_RETRO },
     liveness: { unavailableWarnMs: 60_000 },
     notifications: true,
     workerAuthFile: null,
@@ -298,7 +300,7 @@ describe("the continuity pause — resolved by evidence, or waiting for the oper
 
     const rewritten = readPause(w.dir)!;
     assert.equal(rewritten.reason, "session-unreadable", "the record names the cause THIS read found");
-    assert.equal(rewritten.id, "occurrence-7", "a changed cause keeps the occurrence's identity (issue 174)");
+    assert.equal(rewritten.id, "occurrence-7", "a changed cause keeps the occurrence's identity ");
     assert.equal(rewritten.at, NOW, "and the moment the operator was asked");
 
     const again = await w.module.recheckPause(w.work, w.dir, readPause(w.dir)!, 1);

@@ -3,7 +3,7 @@ import { isAgentSpeech, pauseMarkerId, type IssueComment } from "./port.js";
 
 /**
  * Which comments are the HUMAN's answer, read from the marker alone — the
- * tracker's own rule (ticket 04 Q6, amended in 18; issue 174), because "speech,
+ * tracker's own rule, because "speech,
  * not login" is decided by the tracker port and nothing else.
  *
  * Two readers ask it — the Work state (a blocked work resumes on an answer) and
@@ -28,7 +28,7 @@ export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolea
 }
 
 /**
- * The human replies that answer ONE continuity pause (issue 174): every
+ * The human replies that answer ONE continuity pause: every
  * non-agent comment after the FIRST factory comment carrying that pause's
  * marker. A later factory comment about the same pause — a re-assertion or a
  * diagnostic for a changed cause — never displaces an answer already given.

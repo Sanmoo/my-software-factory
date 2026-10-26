@@ -82,12 +82,12 @@ export interface WorkFacts {
  * launch never asks them.
  */
 export interface AttemptEndFacts extends WorkFacts {
-  /** Which attempt, if any, the persisted requested stop owns (issue #146).
+  /** Which attempt, if any, the persisted requested stop owns .
    *  Read only: promoting an unconfirmed stop to a requested one is a write the
    *  loop owns, never something a reading does to answer a question. */
   stopClaim(attempt: number): Promise<OperatorStopClaim>;
   /** The highest attempt that ended in a WRITTEN failure — the fall ruler's
-   *  consecutiveness fact (an interruption never sets it, issue 123). */
+   *  consecutiveness fact (an interruption never sets it). */
   lastFallAttempt(): Promise<number | null>;
 }
 

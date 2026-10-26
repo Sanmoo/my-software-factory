@@ -3,7 +3,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * What the worker image must carry for the continuity guardrail (issue 193).
+ * What the worker image must carry for the continuity guardrail.
  * The compiled extension and every module it loads through a relative import
  * are one closure: the image provisions exactly it, and the launch preflight
  * requires exactly it inside the image. A module the extension imports cannot

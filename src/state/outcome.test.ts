@@ -76,8 +76,8 @@ describe("outcome — the record contract, no prose ever", () => {
   });
 });
 
-describe("the record's own rules and the comments they feed (tickets 05/13/123)", () => {
-  test("a pr-open record is the attempt's own written outcome but never a failure (issue 123)", () => {
+describe("the record's own rules and the comments they feed ", () => {
+  test("a pr-open record is the attempt's own written outcome but never a failure ", () => {
     const record = { class: "pr-open" as const, attempt: 1 };
 
     assert.equal(
@@ -121,7 +121,7 @@ describe("the record's own rules and the comments they feed (tickets 05/13/123)"
   });
 });
 
-describe("issue 103 — the outcome record belongs to an attempt; the comment points at the evidence", () => {
+describe("the outcome record belongs to an attempt; the comment points at the evidence", () => {
   let root: string;
   let layout: WorkspaceLayout;
   const ref = { repo: "Sanmoo/my-tasks", number: 91 };

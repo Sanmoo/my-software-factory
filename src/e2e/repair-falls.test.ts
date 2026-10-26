@@ -386,7 +386,8 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal(settled.usedRounds, 1, "the published round is charged");
     assert.equal(settled.consecutiveFalls, 0, "a delivered round breaks the fall streak");
 
-    // The same verdict again on the next sweep: no second charge, no second refund.
+    // The same verdict again on the next sweep: no second charge, no second
+    // refund.
     await runOnce(deps);
     assert.equal((await readRepairCycle(workDir(layout, REPO, 101))).usedRounds, 1);
   });
@@ -412,7 +413,8 @@ describe("e2e: a repair attempt that fell before publishing", () => {
       assert.equal(cycle.consecutiveFalls, 0, "no fall is invented while publication is uncertain");
     }
 
-    // The remote answers: the pending query is repeated and the attempt resumes.
+    // The remote answers: the pending query is repeated and the attempt
+    // resumes.
     git.remoteUnavailable = false;
     const resumed = await runOnce(deps);
     assert.equal(resumed.launched.length, 1, "a transient unavailability needs no human");
@@ -653,7 +655,8 @@ describe("e2e: a repair attempt that fell before publishing", () => {
 
     assert.equal((await runOnce(deps)).launched.length, 1, "the unpublished attempt resumes");
 
-    // The worker self-reports blocked on the issue: the factory only records it,
+    // The worker self-reports blocked on the issue: the factory only records
+    // it,
     // and the pending human decision is never worked around.
     for (let tick = 0; tick < 2; tick += 1) {
       assert.equal((await runOnce(deps)).launched.length, 0, "a self-reported block waits for the human");
@@ -1297,7 +1300,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal(record.attempt?.remoteHeadSha, "head-fixed");
   });
 
-  // ---- issue 181: a round no worker ever saw is not an attempt and not a fall ----
+  // ---- a round no worker ever saw is not an attempt and not a fall ----
 
   /** The record an older version wrote for a round it charged before the
    *  continuity decision could refuse the launch: settled as unpublished, with
@@ -1323,7 +1326,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     );
   }
 
-  test("issue 181 — a repair round paused by continuity is neither charged nor presented by the status", async () => {
+  test("a repair round paused by continuity is neither charged nor presented by the status", async () => {
     const { tracker, runtime, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 130);
     const target = workDir(layout, REPO, 130);
@@ -1357,7 +1360,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     }
   });
 
-  test("issue 181 — after the pause the work continues and the repair score never becomes a block", async () => {
+  test("after the pause the work continues and the repair score never becomes a block", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 131);
     const target = workDir(layout, REPO, 131);
@@ -1399,7 +1402,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.ok(issue.known && !issue.value.labels.includes(DEFAULT_LABELS.blocked), "no block remains");
   });
 
-  test("issue 181 — a round that started and published nothing still counts its fall", async () => {
+  test("a round that started and published nothing still counts its fall", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 132);
     const target = workDir(layout, REPO, 132);
@@ -1434,10 +1437,11 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal(cycle.usedRounds, 0, "its round stays returned: it did not publish");
   });
 
-  test("issue 181 — a legacy record of a ghost round no longer blocks the work on the next sweep", async () => {
+  test("a legacy record of a ghost round no longer blocks the work on the next sweep", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 128);
-    // #128's reparo.json: two ghost rounds and the last one recorded as attempt
+    // A legacy reparo.json: two ghost rounds and the last one recorded as
+    // attempt
     // 6, "not published", with no session evidence at all.
     seedGhostRound(128, 6, 2);
     await conflictingOn(tracker, pr, OBSERVED);
@@ -1457,7 +1461,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal(cycle.consecutiveFalls, 2, "the ledger keeps its history; no fall is invented or erased");
   });
 
-  test("issue 181 — the ghost verdict does not depend on a restart, a moved workspace or a file time", async () => {
+  test("the ghost verdict does not depend on a restart, a moved workspace or a file time", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     seedIssue(tracker, { repo: REPO, number: 133, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
     seedIssue(tracker, { repo: REPO, number: 134, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });

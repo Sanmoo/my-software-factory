@@ -9,6 +9,7 @@ import {
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
   type Config,
   type Labels,
 } from "../config.js";
@@ -33,7 +34,7 @@ import { appendAttemptEvent } from "../work-record/logs.js";
 import { writeFileSync } from "node:fs";
 
 /**
- * The launch at its own seam (epic #198, ticket #205): the pipeline from the
+ * The launch at its own seam: the pipeline from the
  * claim to the collected end, exercised through {@link Launch} with a fake
  * runtime, a fake tracker and a fake git host — no factory, no derivation, no
  * container. What the engine decides (the state, the slot, the verdict) is
@@ -95,7 +96,7 @@ class ProbeGit implements GitWork {
 /** The tracker with the claim swap of the launch made observable in order. */
 class ProbeTracker extends FakeTrackerAdapter {
   /** Whether the reservation was already on disk when the claim landed — the
-   *  safety footprint of issue 98 lands before the tracker is touched. */
+   *  safety footprint lands before the tracker is touched. */
   reservationAtClaim: boolean | null = null;
 
   constructor(
@@ -136,6 +137,10 @@ class FailingRuntime implements WorkerRuntime {
   requestStop(): void {}
 
   async forceStop(): Promise<void> {}
+
+  launchRetro(): Promise<void> {
+    return Promise.reject(new Error("fake: no retrospective round"));
+  }
 }
 
 /** What the pipeline asked the cycle for, in order. */
@@ -180,6 +185,7 @@ function configOf(layout: WorkspaceLayout): Config {
     labels: { ...DEFAULT_LABELS },
     recovery: { ...DEFAULT_RECOVERY_BUDGET },
     modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+    retro: { ...DEFAULT_RETRO },
     liveness: { ...DEFAULT_LIVENESS_POLICY },
     notifications: false,
     workerAuthFile: null,
@@ -377,7 +383,7 @@ describe("the launch — the pipeline from the claim to the collected end", () =
     );
   });
 
-  test("a human answer WRITES the fall-count reset, so both readings agree the next fall releases (ticket 14)", async () => {
+  test("a human answer WRITES the fall-count reset, so both readings agree the next fall releases ", async () => {
     // Attempts 1 and 2 both fell: the 2nd blocked, and `recordFailure` left the
     // consecutive count in the ledger (`lastFallAttempt`). The human answered, so
     // the resume launches attempt 3.

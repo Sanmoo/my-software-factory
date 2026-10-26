@@ -12,8 +12,8 @@ import {
 } from "./repair-trigger.js";
 
 /**
- * The ONE owner of "this PR needs Repair" (findings 2 and 6 of the epic #198
- * review). The trigger had two byte-identical copies — one in the derivation,
+ * The ONE owner of "this PR needs Repair" (two review findings). The trigger
+ * had two byte-identical copies — one in the derivation,
  * one in the Work state — and the launch hashes whichever reaches it into the
  * DURABLE repair evidence, so a divergence between the copies would have
  * changed a persisted signature across restarts. These tests pin the policy and
@@ -30,7 +30,7 @@ function check(name: string, status: RequiredCheckResult["status"], conclusion: 
   return { name, status, conclusion };
 }
 
-describe("the repair trigger — one predicate, one signature (issues 107/112)", () => {
+describe("the repair trigger — one predicate, one signature ", () => {
   test("only a concluded failure or timeout reacts; every other check state is silent", () => {
     assert.equal(isFailingRequiredCheck(check("unit", "completed", "failure")), true);
     assert.equal(isFailingRequiredCheck(check("unit", "completed", "timed_out")), true);

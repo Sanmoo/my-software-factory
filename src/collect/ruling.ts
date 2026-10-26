@@ -1,10 +1,10 @@
 import type { AfterAttemptReading } from "../work-state/state.js";
 
 /**
- * The decided transition as the collection REPORTS it (ticket 13).
+ * The decided transition as the collection REPORTS it.
  *
- * A PROJECTION of the Work state the module answered with, and nothing else
- * (D5/epic #198): the module decides in one vocabulary — the state, with the
+ * A PROJECTION of the Work state the module answered with, and nothing else:
+ * the module decides in one vocabulary — the state, with the
  * payload its action needs — and this is the operator's, and the suites', word
  * for what it decided. It is computed once, where the decision is made, and
  * read by nobody on the decision path: no verdict, no action and no notice is
@@ -48,12 +48,12 @@ export function projectCollectedRuling(reading: AfterAttemptReading): CollectedR
     case "interrupted":
     case "model-provider-failure":
     case "stop-resume":
-      // No attempt was consumed and the fall ruler never applies (issue 123):
+      // No attempt was consumed and the fall ruler never applies:
       // the end is an interruption, whatever ended the turn or who ordered it.
       return { decision: "interrupt", because: "no-outcome" };
     case "rejected":
-      // A PR closed without merge is the Block the state declares (epic #198's
-      // one delta): the report names the fact itself, never a fall.
+      // A PR closed without merge is the Block the state declares: the report
+      // names the fact itself, never a fall.
       return { decision: "block", because: "pr-closed-unmerged" };
   }
 }

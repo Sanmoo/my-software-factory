@@ -28,7 +28,7 @@ import type { RepairTrigger, WorkStateReading } from "../work-state/state.js";
 import { FIRST_WINDOW_SIZE } from "../retro/window.js";
 
 /**
- * The rendering half of `msf status` (issue 102): the human view, one line per
+ * The rendering half of `msf status`: the human view, one line per
  * answer in the order a human asks for them, with every list capped and an
  * omission marker past the cap. Pure view → string: no reads, no writes.
  */
@@ -44,10 +44,10 @@ const RESERVED_HEADER =
   "reserved work (the state the factory acts on — every reserved Work, grouped by what happens next)";
 
 /**
- * What the operator's next move is, per Work state — the status-only grouping
- * (ticket #204). One group per operator action instead of one section per
- * registry bucket, and `satisfies` makes a state the module adds fail to
- * compile until it is placed here.
+ * What the operator's next move is, per Work state — the status-only grouping.
+ * One group per operator action instead of one section per registry bucket, and
+ * `satisfies` makes a state the module adds fail to compile until it is placed
+ * here.
  */
 type ReservedGroup = "factory" | "operator" | "quiet";
 
@@ -87,7 +87,7 @@ const RESERVED_GROUPS = {
  * What will happen to this reserved Work next — the state's group, with one
  * correction: an `interrupted` attempt whose recovery budget is EXHAUSTED is not
  * something the factory proceeds with. The tick blocks and asks the operator for
- * help (issue 123), so the work is grouped where it waits.
+ * help, so the work is grouped where it waits.
  */
 function reservedGroup(reading: WorkStateReading): ReservedGroup {
   if (reading.state === "interrupted" && reading.recovery.decision === "pause-help") return "operator";
@@ -102,8 +102,8 @@ export interface RenderOptions {
 export function renderStatus(view: StatusView, options: RenderOptions = {}): string {
   const cap = options.all === true ? Number.POSITIVE_INFINITY : LIST_CAP;
   const liveness = view.liveness;
-  // WHICH section names a reserved work is the Work state's answer (ticket
-  // #204): the liveness section names the interrupted ones — and only those —
+  // WHICH section names a reserved work is the Work state's answer: the
+  // liveness section names the interrupted ones — and only those —
   // and the block below names every other state. No hand map decides this any
   // more, so a requested stop, a model provider failure or a continuity pause
   // can never be piled into "orphaned" as an ordinary interruption.
@@ -121,7 +121,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
     ),
   );
 
-  // Multiplicity is a fact, not a rendering accident (issue 118): two
+  // Multiplicity is a fact, not a rendering accident: two
   // containers of one work are two rows above AND named here, because the
   // operator must decide — the factory neither chooses an owner nor ends one.
   lines.push(
@@ -158,7 +158,7 @@ export function renderStatus(view: StatusView, options: RenderOptions = {}): str
 
   lines.push(...section("archived (dones)", view.registry.archived, cap));
 
-  // The retrospective job (issue 141): the last report that covered a window
+  // The retrospective job: the last report that covered a window
   // IS the marker of the next one, and a round in flight is visible even with
   // every slot busy — the lane is outside them.
   if (view.retro !== null) {
@@ -290,7 +290,7 @@ function renderRunning(worker: RunningWorker): string {
  * One continuity pause's facts: the attempt it waits for, its session and why
  * it waits. The attempt is the one the pause's launch PLANNED; when the ledger
  * evidences a different one, both are named — the divergence is the operator's
- * fact, never repaired here (issue 175). A record too unreadable to name its
+ * fact, never repaired here. A record too unreadable to name its
  * attempt says so instead of printing a fabricated `attempt 0`.
  */
 function describePause(pause: PauseRecord, evidenced: number | null, sessionId: string | undefined): string {
@@ -327,7 +327,7 @@ function renderOrphaned(orphan: OrphanedAttempt, view: StatusView): string {
   ]);
 }
 
-/** The interrupted attempt (issues 112/123): the current one named, the
+/** The interrupted attempt: the current one named, the
  *  historical record disowned — a human must not read attempt 1's outcome as
  *  attempt 2's result — plus the record facts the state's payload leaves to the
  *  registry (the recoveries already spent, the repair cycle). */
@@ -346,7 +346,7 @@ function renderInterrupted(
 
 /**
  * The reserved-work block: every reserved Work, in the state the module the
- * engine acts on reads for it (ticket #204), grouped by what the operator can
+ * engine acts on reads for it, grouped by what the operator can
  * do next. This is the status's ONLY state vocabulary — a state the module
  * declares is named here, once, and nowhere else.
  */
@@ -392,8 +392,8 @@ function readingOf(view: StatusView, key: string): WorkStateReading | undefined 
 /**
  * The facts the STATE's payload leaves to the record — appended to whichever
  * section names the work, never a state of their own: the repair cycle (its two
- * ledgers, the unpublished attempt, the evidence paths, issue 112) and, for an
- * interruption, the recoveries already spent (issue 123).
+ * ledgers, the unpublished attempt, the evidence paths) and, for an
+ * interruption, the recoveries already spent.
  */
 function describeRecordFacts(key: string, view: StatusView, reading: WorkStateReading | undefined): string[] {
   const facts: string[] = [];
@@ -489,7 +489,7 @@ function describeState(key: string, reading: WorkStateReading, view: StatusView)
     case "continuity-paused": {
       const pause = view.registry.continuityPauses.find((candidate) => candidate.key === key);
       // The record's own numbers: the pause's planned attempt against the one
-      // the ledger evidences (issue 175).
+      // the ledger evidences.
       const evidenced = pause?.lastAttempt ?? reading.attempt;
       return `continuity paused (${describePause(reading.pause, evidenced, reading.pause.sessionId)})`;
     }
@@ -546,7 +546,7 @@ function collapseWhitespace(message: string): string {
 /**
  * One repair cycle's facts: the two ledgers, the attempt's publication, the
  * local work it preserved and the evidence the operator opens by hand (issue
- * 112, story 32 — paths always shown, workspace-relative, whatever their
+ * paths always shown, workspace-relative, whatever their
  * presence). Appended to the Work's own line: a record fact, not a state.
  */
 function describeRepair(entry: RepairViewEntry): string {

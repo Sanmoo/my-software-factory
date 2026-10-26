@@ -5,7 +5,7 @@ import type { WorkIdentity } from "../tracker/identity.js";
 import { openSurvivorLedger } from "./ledger.js";
 
 /**
- * The liveness and the survivor ledger (epic #198, ticket #206): **which worker
+ * The liveness and the survivor ledger: **which worker
  * carries each Work** right now, and the occurrences of that observation the
  * cycle must announce EXACTLY once — never once per tick.
  *

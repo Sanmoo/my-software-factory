@@ -10,12 +10,12 @@ import {
 import { renderWaits } from "./waits.js";
 
 /**
- * The model provider failure budget of a work (issue 144; terms in GLOSSARY):
+ * The model provider failure budget of a work (terms in GLOSSARY):
  * an attempt whose stream ended in a model provider error is not an
  * interruption of the agent, so it retries on this dedicated allowance instead
- * of spending the interruption budget of issue 123. The ledger is an artifact
- * of the work (trabalhos/<repo>#<n>/provedor.json) — owned by the Work record
- * (issue 187), which keeps the file and its schema. This module keeps the
+ * of spending the interruption budget. The ledger is an artifact
+ * of the work (trabalhos/<repo>#<n>/provedor.json) — owned by the Work record,
+ * which keeps the file and its schema. This module keeps the
  * DECISIONS: idempotent settlement, the retry/await verdict and its reason.
  */
 
@@ -125,7 +125,8 @@ export async function markModelProviderHelpRequested(
 }
 
 /**
- * Whether the work is waiting for its model provider: the last settled failure of
+ * Whether the work is waiting for its model provider: the last settled failure
+ * of
  * THIS attempt was not granted a retry and the budget is still exhausted. The
  * budget argument keeps the operator's lever honest — raising it revives the
  * work instead of leaving it awaiting.
@@ -155,7 +156,7 @@ function ledgerForAttempt(ledger: ModelProviderLedger, attempt: number): ModelPr
 }
 
 /** Whether this failure of this attempt was already settled WITH a retry: the
- *  settlement that must not be granted a second one, whatever the count says. */
+ * settlement that must not be granted a second one, whatever the count says. */
 export function isModelProviderRetryGranted(
   ledger: ModelProviderLedger,
   attempt: number,
@@ -166,7 +167,8 @@ export function isModelProviderRetryGranted(
 }
 
 /** Whether this settled failure still owes its help request: awaiting, and
- *  the comment was not posted yet (a death between the ledger and the comment). */
+ * the comment was not posted yet (a death between the ledger and the comment).
+ * */
 export function isModelProviderHelpPending(
   ledger: ModelProviderLedger,
   attempt: number,

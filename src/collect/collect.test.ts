@@ -9,6 +9,7 @@ import {
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
   type Config,
 } from "../config.js";
 import { githubWork } from "../e2e/work-fixtures.js";
@@ -29,7 +30,7 @@ import { RECOVERY_FILENAME, readRecoveryLedger } from "../work-record/recovery.j
 import { openCollect, type CollectedEnd, type Collect, type CollectCycle } from "./collect.js";
 
 /**
- * The collection at its own seam (epic #198, ticket #208): one ended Attempt
+ * The collection at its own seam: one ended Attempt
  * collected through {@link Collect}, with FAKE ports and a REAL temporary work
  * dir — no factory, no launch, no container.
  *
@@ -41,7 +42,7 @@ import { openCollect, type CollectedEnd, type Collect, type CollectCycle } from 
  * condition and see what the verdict declared.
  *
  * Every verdict of the second reading is proven this way — done, the merge
- * fallback, the rejection of #203, the parked PR and the self-report, the
+ * fallback, the rejection, the parked PR and the self-report, the
  * interruption, the model provider retry, the requested-stop resume and both
  * members of the fall ruler.
  */
@@ -153,6 +154,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
       labels: { ...DEFAULT_LABELS },
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+      retro: { ...DEFAULT_RETRO },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
       workerAuthFile: null,
@@ -238,7 +240,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     writeFileSync(join(refOf(number).dir, `log-${attempt}.jsonl`), "{}\n", "utf8");
   }
 
-  /** A continuity pause persisted by an earlier attempt of this work (issue 119). */
+  /** A continuity pause persisted by an earlier attempt of this work. */
   function writePauseFile(number: number, attempt: number): void {
     const { work, dir } = refOf(number);
     writeFileSync(
@@ -283,7 +285,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     assert.deepEqual(notices, []);
   });
 
-  // ---- done-fallback: a merge that did not close the issue (issue 149) ----
+  // ---- done-fallback: a merge that did not close the issue  ----
 
   test("done-fallback — a PR merged mid-round: the issue is closed with the fallback comment, then archived", async () => {
     seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -304,7 +306,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     assert.deepEqual(notices, [], "a done notifies nobody");
   });
 
-  // ---- rejected: a PR closed without merge (epic #198's one delta, #203) ----
+  // ---- rejected: a PR closed without merge  ----
 
   test("rejected — a PR closed without merge blocks with the PR pointed out and holds the claim", async () => {
     seedIssue(tracker, { repo: REPO, number: 3, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -427,7 +429,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     ]);
   });
 
-  // ---- the model provider failure (issue 144): its own budget, never the fall ruler ----
+  // ---- the model provider failure: its own budget, never the fall ruler ----
 
   test("provider retry — a turn that ended in a provider error retries the SAME attempt on its own budget", async () => {
     seedIssue(tracker, { repo: REPO, number: 8, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -466,7 +468,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     assert.deepEqual(notices, []);
   });
 
-  // ---- the operator's requested stop (#146, ADR 0008) ----
+  // ---- the operator's requested stop (ADR 0008) ----
 
   test("stop resume — the recorded stop owns the end: the same attempt resumes spending no recovery", async () => {
     seedIssue(tracker, { repo: REPO, number: 9, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -505,7 +507,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     ]);
   });
 
-  // ---- the fall ruler: the 1st releases, the 2nd blocks (ticket 05 Q3) ----
+  // ---- the fall ruler: the 1st releases, the 2nd blocks  ----
 
   test("fall, first — the claim goes back to the pool and the written failure is persisted", async () => {
     seedIssue(tracker, { repo: REPO, number: 11, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -558,7 +560,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
 
   // ---- a repair round: settled by its own reconciliation, never relaunched here ----
 
-  test("a repair attempt that wrote no record is left to its reconciliation (issue 112)", async () => {
+  test("a repair attempt that wrote no record is left to its reconciliation ", async () => {
     seedIssue(tracker, { repo: REPO, number: 13, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
     writeAttemptLog(13, 1);
 

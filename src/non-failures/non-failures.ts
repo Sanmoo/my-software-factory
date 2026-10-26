@@ -9,7 +9,7 @@ import { openContinuityPause, type ContinuityPause } from "./continuity-pause.js
 import { openProviderFailure, type ProviderFailure } from "./provider-failure.js";
 
 /**
- * The two endings that are not a failure (epic #198, ticket #207): the
+ * The two endings that are not a failure: the
  * **Continuity pause** and the **model provider failure** (terms in GLOSSARY).
  *
  * An Attempt ends without an Outcome record and without being a Fall in more
@@ -36,7 +36,7 @@ import { openProviderFailure, type ProviderFailure } from "./provider-failure.js
  * it parks the continuation the module returns, blocks/holds the ticket and
  * delivers the notice through {@link NonFailureCycle}. Launching, capacity,
  * admission, the requested stop and the interruption's own recovery (ADR 0008,
- * issue 123) stay exactly where they were.
+ * stay exactly where they were.
  */
 
 /**

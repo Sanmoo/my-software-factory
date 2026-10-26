@@ -19,7 +19,7 @@ import { pauseOccurrence, reassertedPause, sameOccurrenceAnnounced } from "./cor
 import type { NonFailureDeps, PauseVerdict } from "./non-failures.js";
 
 /**
- * The Continuity pause (issue 119; epic #198, ticket #207): an Attempt that
+ * The Continuity pause: an Attempt that
  * cannot safely continue — its session is missing, unreadable or of the wrong
  * identity, or an external effect stayed ambiguous — is held instead of being
  * relaunched into a fresh session that would not be a continuation.
@@ -31,7 +31,7 @@ import type { NonFailureDeps, PauseVerdict } from "./non-failures.js";
  * NEW round, no answer continues the SAME attempt — without another human
  * answer. A pause whose cause never changes is said once; a changed cause is a
  * new fact and keeps the occurrence's identity, so the answers already on the
- * issue stay bound to their request (issue 174).
+ * issue stay bound to their request.
  *
  * Nothing here is inferred from an mtime, and a record this factory cannot read
  * is never read as the absence of a pause: its doubt IS the record, so it waits
@@ -83,7 +83,7 @@ async function recheckPause(
   const attempt = knownAttempt(paused.attempt) ?? planned;
   // A worker of this work may still be alive — one this process launched, or one
   // a reliable probe carried. Its journal is never written and no substitute is
-  // launched over it (issue 173).
+  // launched over it.
   if (deps.cycle.workerMayBeAlive(work)) {
     deps.log(
       `continuity of ${renderWorkIdentity(work)} is not re-evaluated: a worker of this work ` +
@@ -168,12 +168,12 @@ async function resolved(
 }
 
 /**
- * A continuity pause (issue 119): the interrupted attempt cannot be reopened
+ * A continuity pause: the interrupted attempt cannot be reopened
  * safely, so the work stops and asks for help instead of pretending a fresh
  * session is a continuation. The record is written FIRST and survives a restart;
  * the issue comment, the blocked label and the notice happen only once per
  * occurrence — a recheck that learned nothing new, a later sweep and a restart
- * never re-ask (issue 174), and neither does the first sweep after an upgrade for
+ * never re-ask, and neither does the first sweep after an upgrade for
  * a pause announced before occurrences had identities. Only a changed REASON is a
  * new fact worth a diagnostic, and it keeps the occurrence's identity, so the
  * answers already on the issue stay bound to it.

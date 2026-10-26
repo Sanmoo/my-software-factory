@@ -74,7 +74,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * The loop is the CYCLE (epic #198, tickets #205–#208): tick, capacity and
+ * The loop is the CYCLE: tick, capacity and
  * admission. It is the only module that knows the process is a loop — owner of
  * time (the fixed 60 s tick), of the --once boundary and of waking by event
  * (end of worker vs tick) — and it decides nothing of the domain. Each domain
@@ -96,7 +96,7 @@ import { join } from "node:path";
  *   facts on disk and no live worker carries is settled before the derivation
  *   reads the cycle, and the local-work/remote reads a round's material needs
  *   are its own;
- * - tracker/ + pool/ + git/ + runtime/ are the IO (ticket 07).
+ * - tracker/ + pool/ + git/ + runtime/ are the IO.
  *
  * What is left here is the cycle's own: the tick, the slot of each admission
  * (released even when a collection fails), the capacity read before admitting,
@@ -116,7 +116,7 @@ export interface LoopDeps {
   /** PR/code-host facts: linkage, feedback, checks, the branch. */
   pullRequests: PullRequestTracker;
   runtime: WorkerRuntime;
-  /** The git host side: one clone per target repo, work branch per work (ticket 15). */
+  /** The git host side: one clone per target repo, work branch per work. */
   git: GitWork;
   workspace: WorkspaceLayout;
   /** Where the loop reports progress (the cli wires stdout here). */
@@ -124,7 +124,7 @@ export interface LoopDeps {
   /** Host-side notice delivery; absent = silent. */
   notifier?: Notifier;
   /** The liveness probe the operational cycle reads before deciding anything
-   *  that could replace a worker (issue 118). The composition (wireRunDeps)
+   *  that could replace a worker. The composition (wireRunDeps)
    *  supplies the real read-only Docker probe; absent means this process sees
    *  only its own launches. Never a CLI flag — tests inject a fake probe. */
   probe?: LivenessProbe;
@@ -132,7 +132,7 @@ export interface LoopDeps {
   probeTimeoutMs?: number;
   /** The cycle's clock; tests inject one to exercise deadlines without waiting. */
   now?: () => number;
-  /** The backoff seam before a recovery relaunch (issue 123): production waits
+  /** The backoff seam before a recovery relaunch: production waits
    *  on a real timer; a test injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
 }
@@ -142,25 +142,25 @@ export interface CollectedWork {
   result: SessionResult;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
-  /** The decided transition, as the collection reports it (ticket 13, D5). */
+  /** The decided transition, as the collection reports it. */
   ruling: CollectedRulingReport;
 }
 
 export interface SweepResult {
   pool: PoolEntry[];
-  /** The states read for every reserved work this sweep (ticket 14), in the one
+  /** The states read for every reserved work this sweep, in the one
    *  vocabulary the engine decided in. */
   reserved: WorkStateReading[];
-  /** The tracker↔workspace reconciliation reported this sweep (issue 100). */
+  /** The tracker↔workspace reconciliation reported this sweep. */
   reconciliation: Reconciliation;
   launched: SessionResult[];
   collected: CollectedWork[];
-  /** What the operator's stop left behind (issue #146); null when none was requested. */
+  /** What the operator's stop left behind; null when none was requested. */
   stop: StopReport | null;
 }
 
 /**
- * The operator's stop as the run receives it (issue #146): the first signal and
+ * The operator's stop as the run receives it: the first signal and
  * the second (the escalation), plus the cooperative window — a seam the tests
  * shorten to observe the deadline deterministically.
  */
@@ -178,9 +178,10 @@ export interface StopOptions {
  * while liveness is unknown: both are DECLARED beside the state
  * (`STATE_DECLARATIONS`, ADR-0010), which is what makes a new state fail to
  * compile until it says so. The loop only asks; it keeps no list of its own.
- * (Issue #128: a hand-kept blacklist silently stranded a valid authorization on
- * `repair-fall-blocked`; consent answers the pause, so it outranks the round the
- * factory planned meanwhile.)
+ * A hand-kept blacklist silently stranded a valid authorization on
+ * `repair-fall-blocked`; consent answers the pause, so it outranks the round
+ * the
+ * factory planned meanwhile.
  */
 export function consentAppliesTo(state: WorkStateReading["state"]): boolean {
   return stateConsentAppliesTo(state);
@@ -263,7 +264,7 @@ function renderPoolSummary(
 }
 
 /**
- * One sweep engine, four phases (ticket 07) and nothing but the cycle: the
+ * One sweep engine, four phases and nothing but the cycle: the
  * derivation (the Work state read before a launch, its actions executed by the
  * module that owns them), the launches into free slots (parked reserved first,
  * then new claims by age), the collection of each worker's end by collect/
@@ -299,19 +300,19 @@ export class SweepEngine {
   private readonly announced = new Map<string, OperationalClass | null>();
   readonly launched: SessionResult[] = [];
   readonly collected: CollectedWork[] = [];
-  /** The retrospective round in flight (issue 141) — its own lane, never a slot. */
+  /** The retrospective round in flight  — its own lane, never a slot. */
   private retroRun: Promise<void> | null = null;
 
-  /** Liveness and the survivor ledger (issue 118; ticket #206): which worker
+  /** Liveness and the survivor ledger: which worker
    *  carries each Work, and every occurrence of that observation said once. */
   private readonly survivors: Survivors;
-  /** The two endings that are not a failure (ticket #207): the Continuity pause
+  /** The two endings that are not a failure: the Continuity pause
    *  and the model provider failure. */
   private readonly nonFailures: NonFailures;
-  /** The collection (ticket #208): an Attempt's end and the verdict applied,
+  /** The collection: an Attempt's end and the verdict applied,
    *  with every tracker and disk verb it triggers. The engine only asks. */
   private readonly collect: Collect;
-  /** The Repair reconciliation (ticket #207): every repair attempt on disk that
+  /** The Repair reconciliation: every repair attempt on disk that
    *  no live worker carries, settled before the derivation reads the cycle. */
   private readonly repair: RepairReconciler;
   /** The last reported capacity verdict, so the change is said once. */
@@ -336,7 +337,7 @@ export class SweepEngine {
         notice: (notification) => this.collect.notify(notification),
       },
     });
-    // The collection (ticket #208): what the factory DOES with an Attempt that
+    // The collection: what the factory DOES with an Attempt that
     // ended — the Work state's second reading applied, every write included.
     // The one process-wide fact it needs (whether this factory is stopping) and
     // the set of works it holds come back through the cycle's port.
@@ -354,8 +355,9 @@ export class SweepEngine {
         inFlight: () => this.liveInFlight,
       },
     });
-    // The two endings that are not a failure (ticket #207): the Continuity pause
-    // and the model provider failure. Their decisions live in non-failures/; the
+    // The two endings that are not a failure: the Continuity pause
+    // and the model provider failure. Their decisions live in non-failures/;
+    // the
     // engine executes the verdicts and keeps the cycle.
     this.nonFailures = openNonFailures({
       config: deps.config,
@@ -379,7 +381,7 @@ export class SweepEngine {
         workerMayBeAlive: (work) => this.workerMayBeAlive(work),
       },
     });
-    // The Repair reconciliation (ticket #207): the settlement of an attempt that
+    // The Repair reconciliation: the settlement of an attempt that
     // wrote its facts and no worker carries, before the derivation reads it.
     // The requested-stop boundary is the cycle's, so it comes back as a port.
     this.repair = openRepairReconciler({
@@ -409,10 +411,7 @@ export class SweepEngine {
       ...(deps.wait === undefined ? {} : { wait: deps.wait }),
       cycle: this.launchCycle(),
     });
-    // A round file left by a dead run is stale: this run holds the workspace
-    // lock, so nothing else is analysing it.
-    clearRetroInFlight(deps.workspace);
-    // The signals are listened to from the START of the run (issue #146): a
+    // The signals are listened to from the START of the run: a
     // stop requested during the derivation, before the first admission, is
     // honoured exactly like one during a worker.
     if (stop.signal?.aborted === true) {
@@ -441,17 +440,17 @@ export class SweepEngine {
   async deriveAndAct(): Promise<WorkStateReading[]> {
     const { config, workspace } = this.deps;
 
-    // The liveness facts come FIRST (issue 118): a decision that could
+    // The liveness facts come FIRST: a decision that could
     // substitute a worker or end its resources reads them, and the survivor
     // ledger keeps the executions that outlived a previous factory process.
     await this.survivors.observe(this.localWorkKeys());
     // WHO is reserved is what the reservation on disk says — a work's source is
-    // never reconstructed from the current selection configuration (issue 126).
+    // never reconstructed from the current selection configuration.
     const reservations = await scanReservations(workspace);
     // The guard is about the SOURCES the composed adapter serves, never about
     // the configured repos: a repo leaving the selection never strands a
-    // reserved Work — done, archive and recovery still apply to it (issue 126,
-    // AC4). A Work from a source the composition does not serve is held where
+    // reserved Work — done, archive and recovery still apply to it. A Work from
+    // a source the composition does not serve is held where
     // it is: no adapter is substituted, no tracker migration happens.
     const served = new Set(composedTicketSources().map(sourceKey));
     const serveable: IdentifiedReservation[] = [];
@@ -491,15 +490,15 @@ export class SweepEngine {
     // WHO is reserved: the registry's work dirs, minus what is in flight
     // right now (a running worker is its own state; the tick does not
     // re-launch it and does not act on a terminal state mid-flight). The
-    // in-flight set also goes INTO the derivation (ticket 18): a zero-
+    // in-flight set also goes INTO the derivation: a zero-
     // footprint claim inside it is a legit launch between the claim and the
     // worker's first write — held; outside it, an interruption to recover.
-    // Surviving workers (in the live set) and the works just settled join it
-    // (issue 118): a live worker keeps its work reserved, and a settled exit is
+    // Surviving workers (in the live set) and the works just settled join it: a
+    // live worker keeps its work reserved, and a settled exit is
     // not decided twice in the same sweep.
     const inFlight = new Set([...this.liveInFlight, ...settled]);
     // The pool is read from the configured selections — the same repos the
-    // operator names, never a second source of truth (issue 126).
+    // operator names, never a second source of truth.
     const selections = githubSelections(config.repos);
     const allReserved: WorkRef[] = serveable.map((entry) => ({
       work: entry.work,
@@ -507,11 +506,11 @@ export class SweepEngine {
     }));
     const reservedWorks = allReserved.filter((work) => !inFlight.has(workKeyOf(work.work)));
 
-    // The repair reconciliation runs BEFORE the derivation (issue 112): a
+    // The repair reconciliation runs BEFORE the derivation: a
     // repair attempt that fell is settled against the remote first, so the
     // derivation reads the verdict (resume, block, or uncertainty) instead of
-    // a charged round that never published. Unknown liveness holds it too
-    // (issue 118): a worker may still be writing the branch its verdict reads.
+    // a charged round that never published. Unknown liveness holds it too: a
+    // worker may still be writing the branch its verdict reads.
     if (!suspended && !this.stopping) {
       await processRecoveryRequests(config, {
         probe: this.deps.probe ?? (async () => []), inFlight,
@@ -521,7 +520,7 @@ export class SweepEngine {
     if (!suspended) await this.repair.reconcile(allReserved, inFlight);
 
     // A stop whose confirmation failed on the previous invocation is settled
-    // BEFORE the derivation (issue #146): the work only resumes once the
+    // BEFORE the derivation: the work only resumes once the
     // previous worker is known to be gone. The stop module re-reads the rule
     // the stop applied; this tick only says the verdicts.
     await this.settleUnconfirmedStops(allReserved, inFlight);
@@ -533,11 +532,12 @@ export class SweepEngine {
     const workState = this.workState(inFlight);
     const derived = await Promise.all(reservedWorks.map((ref) => workState.beforeLaunch(ref)));
 
-    // The actions the Work state decided — executed here, in the loop's IO duty.
+    // The actions the Work state decided — executed here, in the loop's IO
+    // duty.
     const parked: Launchable[] = [];
     const heldWhileUnknown: string[] = [];
     for (const decision of derived) {
-      // Liveness unknown means no worker can be ruled out (issue 118): a
+      // Liveness unknown means no worker can be ruled out: a
       // decision that would archive/clean, spend the attempt or its recovery
       // budget must wait for a reliable answer — never presume a stop.
       if (suspended && STATE_DECLARATIONS[decision.state].holdsWhileLivenessUnknown) {
@@ -573,7 +573,7 @@ export class SweepEngine {
         }
         case "fall": {
           // A WRITTEN failure the factory died before ruling: it consumes the
-          // attempt and the ruler applies as at collection (issue 123).
+          // attempt and the ruler applies as at collection.
           const dir = decision.dir;
           await this.collect.settleFailure(dir, decision.attempt, await readOutcomeRecord(dir));
           if (decision.decision === "release") {
@@ -597,7 +597,7 @@ export class SweepEngine {
         }
         case "interrupted": {
           // The same attempt continues within its budget; an exhausted budget
-          // pauses it and asks the operator for help (issue 123).
+          // pauses it and asks the operator for help.
           if (decision.recovery.decision === "pause-help") {
             await this.pauseInterrupted(decision.work, decision.dir, decision.attempt, decision.recovery);
           } else {
@@ -620,7 +620,7 @@ export class SweepEngine {
           break;
         }
         case "model-provider-failure": {
-          // A model provider outage is not an interruption of the agent (issue 144):
+          // A model provider outage is not an interruption of the agent:
           // it retries on its own budget, or awaits the operator when that
           // budget is exhausted — never the recovery budget, never a block.
           if (decision.modelProvider.decision === "awaiting-model-provider") {
@@ -645,7 +645,7 @@ export class SweepEngine {
           break;
         }
         case "stop-resume": {
-          // The operator's requested stop (issue #146): the same attempt
+          // The operator's requested stop: the same attempt
           // resumes on this invocation, without spending the budget.
           this.log(
             `derived ${key}: attempt ${decision.attempt} ended by the operator's ` +
@@ -669,7 +669,7 @@ export class SweepEngine {
           break;
         }
         case "continuity-paused": {
-          // The Attempt cannot safely continue (issue 119). The Continuity pause
+          // The Attempt cannot safely continue. The Continuity pause
           // decides at its own seam whether reliable evidence settles it — a
           // continuation of the SAME attempt, or a NEW round oriented by the
           // human answer — or whether the Work keeps waiting for the operator,
@@ -741,8 +741,10 @@ export class SweepEngine {
           break;
         }
         case "unreadable": {
-          // Never acted on: the ticket could not be read. A failed read is not a
-          // verdict, so no attempt, no archive and no block is invented from it.
+          // Never acted on: the ticket could not be read. A failed read is not
+          // a
+          // verdict, so no attempt, no archive and no block is invented from
+          // it.
           break;
         }
         case "not-planned": {
@@ -758,15 +760,15 @@ export class SweepEngine {
       );
     }
     parked.sort(byParkedPriority);
-    // A recovery for a survivor's ended attempt joins the queue (issue 118);
+    // A recovery for a survivor's ended attempt joins the queue;
     // while liveness is unknown the pending recoveries are preserved untouched
     // — the launch gate keeps them from starting.
     this.parkedQueue = suspended
       ? parked
       : [...this.survivors.takeRecoveries(), ...parked].sort(byParkedPriority);
 
-    // The pool AND the reconciliation from ONE open-issues read per repo
-    // (issue 100): the cached pool of the latest derivation (replenishment
+    // The pool AND the reconciliation from ONE open-issues read per repo: the
+    // cached pool of the latest derivation (replenishment
     // draws from it; a cache drained empty waits for the next tick) and the
     // leftovers the reconciliation reports. No action: the report touches
     // nothing, and the sweep continues normally.
@@ -786,7 +788,7 @@ export class SweepEngine {
     };
     this.reportReconciliation(this.lastReconciliation);
     this.observeOperationalState(this.lastPool, derived, inFlight);
-    // The retrospective trigger is checked at each sweep (issue 141): the
+    // The retrospective trigger is checked at each sweep: the
     // archived works are the pulse and the report is the marker — no separate
     // scheduler exists. The round runs on its own lane: it takes no slot and
     // the sweep never waits for it.
@@ -795,7 +797,7 @@ export class SweepEngine {
   }
 
   /**
-   * Start a retrospective round when the trigger asks for one (issue 141).
+   * Start a retrospective round when the trigger asks for one.
    * The round is fire-and-forget for the sweep — it never consumes a slot and
    * never delays a launch — but a failure is logged, never silent, and the
    * `--once` boundary waits for it (settle). One round at a time: this engine
@@ -823,7 +825,7 @@ export class SweepEngine {
     // The window's premise is that no live worker carries these works. An
     // unknown liveness cannot confirm it, so the round waits for a sweep that
     // can — the trigger stays armed, nothing is consumed.
-    if (this.liveness.state !== "known") {
+    if (this.survivors.observation().state !== "known") {
       this.log("retro: liveness is unknown — no round is launched; the window is analyzed once Docker answers");
       return;
     }
@@ -893,7 +895,7 @@ export class SweepEngine {
   }
 
   /** The works a live container carries, read from the latest answer: the launch
-   *  and capacity decisions never ask Docker a second question. Unknown liveness
+   * and capacity decisions never ask Docker a second question. Unknown liveness
    *  carries nobody — the ledger's empty answer, never the decided zero. */
   private get carriedKeys(): ReadonlySet<string> {
     return new Set(this.survivors.carriers().keys());
@@ -918,7 +920,7 @@ export class SweepEngine {
    * The Work state module, opened for one moment with that moment's in-flight
    * set. The caller hands over the Work — never a list of facts — and the state
    * comes back with the payload its action needs, in the one vocabulary the
-   * engine decides and executes in (ADR-0010; tickets #200–#202).
+   * engine decides and executes in.
    */
   private workState(inFlight: ReadonlySet<string>): WorkState {
     const { config, workspace } = this.deps;
@@ -936,7 +938,8 @@ export class SweepEngine {
 
   /**
    * What this process holds an admission for right now — the admission fact the
-   * survivor ledger is told, so a container of those works is a launch and never
+   * survivor ledger is told, so a container of those works is a launch and
+   * never
    * a survivor. Capacity and admittance stay here: the ledger is asked who
    * carries what, and the engine counts the slots it may take.
    */
@@ -946,7 +949,7 @@ export class SweepEngine {
 
   /**
    * The end of a survivor, ruled by the ordinary ruler over the attempt's own
-   * artifacts and the current tracker (issue 118) — the ledger read the facts
+   * artifacts and the current tracker  — the ledger read the facts
    * and asked; applying a verdict is the cycle's write.
    */
   private async survivorEnded(launchable: Launchable, attempt: number): Promise<Launchable | null> {
@@ -963,7 +966,7 @@ export class SweepEngine {
   }
 
   /**
-   * The capacity verdict (issue 118): survivors above the configured
+   * The capacity verdict: survivors above the configured
    * concurrency suspend launches and END NOBODY; when the live workforce drops
    * back below the limit, capacity returns without any human act.
    */
@@ -996,7 +999,7 @@ export class SweepEngine {
   fillSlots(): Promise<void>[] {
     const started: Promise<void>[] = [];
     // Unknown liveness suspends EVERY launch — including the replenishment a
-    // collection triggers (issue 118): without a reliable answer the factory
+    // collection triggers: without a reliable answer the factory
     // could put a substitute over a live worker.
     if (this.stopping || !this.survivors.isKnown()) return started;
     while (!this.slots.full && this.hasCapacity()) {
@@ -1009,7 +1012,7 @@ export class SweepEngine {
       // Bookkeeping only: the rejection belongs to the caller (runOnce awaits
       // it, runForever logs it). A `.finally` derivative would be a second,
       // unowned rejection — which kills the process on the very failure the
-      // next tick must retry (issue 98).
+      // next tick must retry.
       void run.then(
         () => this.pending.delete(run),
         () => this.pending.delete(run),
@@ -1020,7 +1023,7 @@ export class SweepEngine {
   }
 
   /** The parked reserved works first, then the cached pool — each by age. A
-   *  work a live container carries is never relaunched (issue 118): a survivor
+   *  work a live container carries is never relaunched: a survivor
    *  keeps its work reserved whatever the tracker's label says. */
   private takeNextLaunchable(): Launchable | undefined {
     for (;;) {
@@ -1045,7 +1048,7 @@ export class SweepEngine {
   }
 
   /**
-   * Free capacity for one more launch (issue 118): every live container counts
+   * Free capacity for one more launch: every live container counts
    * once — a local launch Docker already shows is not counted twice — and a
    * survivor set above the configured concurrency suspends launches without
    * ending anybody.
@@ -1068,7 +1071,8 @@ export class SweepEngine {
     if (!this.stopping) {
       this.stopping = true;
       // A backoff waiting to relaunch is a pending admission: it ends with the
-      // admission, never after it — the launch reads {@link LaunchCycle.stopped}.
+      // admission, never after it — the launch reads {@link
+      // LaunchCycle.stopped}.
       this.requestedStopBegan.resolve();
     }
     return this.operatorStop.begin({
@@ -1135,13 +1139,13 @@ export class SweepEngine {
   }
 
   /** One launch start to finish, releasing the slot even on failure — a leaked
-   *  slot would never retry the work (issue 98). The rejection belongs to the
+   *  slot would never retry the work. The rejection belongs to the
    *  caller (runOnce awaits it, runForever logs it as a failed launch). */
   private async launchAndCollect(launchable: Launchable): Promise<void> {
     const key = workKeyOf(launchable.work);
     try {
       // An interruption inside the session returns the SAME attempt as a
-      // recovery to launch next, in the same held slot (issue 123).
+      // recovery to launch next, in the same held slot.
       let next: Launchable | null = launchable;
       while (next !== null) next = await this.launch.attempt(next);
     } finally {
@@ -1155,7 +1159,7 @@ export class SweepEngine {
   }
 
   /**
-   * The engine's side of an admission (epic #198, ticket #205): the duties the
+   * The engine's side of an admission: the duties the
    * launch module asks the cycle to perform at the moments the domain decides
    * them. The pipeline decides WHEN; what each one writes stays here, so the
    * requested stop, the operational log, the report and the verdict application
@@ -1202,8 +1206,8 @@ export class SweepEngine {
   }
 
   /**
-   * Whether the operator's own requested stop owns the end of this attempt
-   * (issue #146): the persisted requested stop of exactly this attempt, or a
+   * Whether the operator's own requested stop owns the end of this attempt: the
+   * persisted requested stop of exactly this attempt, or a
    * stop-unconfirmed one of it, promoted here so the launch consumes it like
    * any other requested stop. A stop of another attempt, or a failure, never
    * answers yes.
@@ -1267,7 +1271,7 @@ export class SweepEngine {
   }
 
   /** The exhausted recovery budget: block the work and ask the operator for
-   *  help, naming the configured value and backoff — no attempt was consumed. */
+   * help, naming the configured value and backoff — no attempt was consumed. */
   private async pauseInterrupted(
     work: WorkIdentity,
     dir: string,
@@ -1295,8 +1299,8 @@ export class SweepEngine {
 
 
   /**
-   * A requested stop whose confirmation failed on a previous invocation
-   * (issue #146): the stop module re-derives the hold over the same rule it
+   * A requested stop whose confirmation failed on a previous invocation: the
+   * stop module re-derives the hold over the same rule it
    * applied — the persisted `lastStop` and the latest liveness observation —
    * and promotes a worker confirmed gone to the free resume. An unreadable
    * probe is uncertainty: the work stays held, said out loud, and no worker is
@@ -1371,7 +1375,7 @@ export class SweepEngine {
 type WakeEvent = "worker-end" | "tick" | "abort";
 
 /**
- * One sweep with the --once boundary (ticket 07 Q6): derive the pool AND the
+ * One sweep with the --once boundary: derive the pool AND the
  * reserved states through the port, act on what the derivation decided
  * (archive dones, close fallbacks, block rejections), claim and launch up to
  * `y` workers concurrently — parked reserved first, then new claims by age —
@@ -1402,7 +1406,7 @@ function logLaunchFailure(log: (message: string) => void, run: Promise<void>): v
 }
 
 /**
- * A failed sweep never takes the continuous factory down (issue 158): a
+ * A failed sweep never takes the continuous factory down: a
  * tracker read that GitHub did not answer — or any other error escaping the
  * derivation — ends the sweep, not the factory. Nothing of the sweep is
  * applied, so the pooled work and the parked queue still hold the PREVIOUS
@@ -1423,7 +1427,7 @@ async function sweepOrLog(
 }
 
 /**
- * The continuous run (ticket 14): the idle factory keeps sweeping on the
+ * The continuous run: the idle factory keeps sweeping on the
  * fixed tick forever — ending it is a human act (the signal below). The
  * wake is hybrid: end of worker ends the wait immediately (the collection
  * and the slot replenishment already happened at the act); the tick drives

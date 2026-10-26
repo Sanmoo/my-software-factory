@@ -22,7 +22,7 @@ import { readOutcomeRecord } from "../work-record/outcome.js";
 import { readRepairCycle, writeRepairCycle } from "../work-record/repair.js";
 
 /**
- * The settlement of one repair attempt, and the words for it (issue 112,
+ * The settlement of one repair attempt, and the words for it.
  * extended by 149/181).
  *
  * The VERDICT is `pool/repair-round.ts`'s; this file supplies its observations,
@@ -44,11 +44,10 @@ export interface RepairWork {
 /** What settling one attempt needs: the ports, the reads, and the two facts the
  *  cycle owns (the operator's stop, the operator's log). */
 export interface SettlementDeps {
-  /** The PR's facts, re-read now: the premise of the round (issue 149). */
+  /** The PR's facts, re-read now: the premise of the round. */
   pullRequests: PullRequestTracker;
-  /** Whether the operator's requested stop owns the end of this attempt
-   *  (issue #146). The requested-stop boundary stays the engine's; the
-   *  settlement only asks it. */
+  /** Whether the operator's requested stop owns the end of this attempt. The
+   * requested-stop boundary stays the engine's; the settlement only asks it. */
   operatorStopped: (dir: string, attempt: number) => Promise<boolean>;
   /** The work branch on disk; null when git cannot answer. */
   inspectLocalWork: (work: WorkIdentity) => Promise<LocalWorkFacts | null>;
@@ -86,7 +85,7 @@ export async function reconcileRepairAttempt(work: RepairWork, deps: SettlementD
     if (adopted === null || adoptedAttempt === null) return;
     cycle = adopted;
     // The adoption's registry gap says an attempt ran; the settlement re-reads
-    // that from the attempt's own artifacts (issue 181), so a legacy cycle the
+    // that from the attempt's own artifacts, so a legacy cycle the
     // artifacts do not back never blocks the work.
     observeRoundStart = () => observeRepairRoundStart(work.dir, adoptedAttempt.attempt);
     inspectLocalWork = async () => adoptedAttempt.localWork;
@@ -99,7 +98,7 @@ export async function reconcileRepairAttempt(work: RepairWork, deps: SettlementD
     readOutcomeRecord: () => readOutcomeRecord(work.dir),
     observeRemote: () => deps.observeRemote(work.work),
     inspectLocalWork,
-    // The premise is part of the verdict (issue 149): a remote the attempt did
+    // The premise is part of the verdict: a remote the attempt did
     // not produce is a concurrent change ONLY while the impediment the round
     // addressed still exists — a human's own resolution is never taken for a
     // reason to ask for help. Read once per settlement.
@@ -110,7 +109,7 @@ export async function reconcileRepairAttempt(work: RepairWork, deps: SettlementD
   logSettlement(key, decision, deps.log);
 }
 
-/** The cycle a legacy reparo.json implies (issue 112): the budget was charged
+/** The cycle a legacy reparo.json implies: the budget was charged
  *  and the registry shows an attempt after the last recorded outcome — the
  *  attempt whose observed head only the evidence signature names. */
 async function adoptLegacyCycle(

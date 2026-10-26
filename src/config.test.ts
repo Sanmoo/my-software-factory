@@ -50,7 +50,7 @@ describe("config", () => {
     assert.equal(config.concurrency, DEFAULT_CONCURRENCY);
     assert.equal(config.workspace, join(homedir(), ".local/share/msf"));
     assert.deepEqual(config.labels, DEFAULT_LABELS);
-    assert.equal(config.notifications, true, "local notifications are ON by default (issue 93)");
+    assert.equal(config.notifications, true, "local notifications are ON by default ");
   });
 
   test("missing worker-model is an error", () => {
@@ -185,7 +185,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the interruption-recovery budget (issue 123) ----
+  // ---- the interruption-recovery budget  ----
 
   test("the recovery budget defaults to 3 recoveries with waits of 1/4/16 s", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -245,7 +245,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the model provider failure budget (issue 144) ----
+  // ---- the model provider failure budget  ----
 
   test("the model provider budget defaults to 4 retries at 15/30/60/120 s — a dedicated outage backoff", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -308,7 +308,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the liveness policy (issue 118) ----
+  // ---- the liveness policy  ----
 
   test("the unavailability warning defaults to 60 s of continuous Docker silence", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -377,7 +377,7 @@ describe("config", () => {
   });
 });
 
-// ---- Jira Cloud selections (issue 128) ----
+// ---- Jira Cloud selections  ----
 
 describe("config: Jira Cloud selections", () => {
   let dir: string;

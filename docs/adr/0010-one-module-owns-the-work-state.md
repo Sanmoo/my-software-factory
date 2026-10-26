@@ -64,8 +64,7 @@ acted on, so no verdict changes and no operator-visible behaviour moves — the
 only thing that changes is which word names which fact.
 
 The epic's only behaviour delta — the only **new verdict** — is named here so
-that no difference enters underneath, and it is #203's: a PR closed without
-merge, seen at collection, becomes a **Block with the PR pointed at**, in place
+that no difference enters underneath: a PR closed without merge, seen at collection, becomes a **Block with the PR pointed at**, in place
 of the release or block-by-failure that happens today. Where the two verdicts of
 today diverge, the read before a launch wins, because it is the one that matches
 the Glossary's definition of Block; it gets a test of its own. No other delta:
@@ -75,8 +74,8 @@ the existing suite passes with no test edited, and a test that has to be
 rewritten is a policy regression.
 
 A second consequence is a *written* fact rather than a rule, and it is named here
-so that it stops being an accident: the ticket-14 reset of the consecutive-fall
-count after a human answers is now **persisted** in the recovery ledger
+so that it stops being an accident: the reset of the consecutive-fall count
+after a human answers is now **persisted** in the recovery ledger
 (`resetFallCount`), where before it lived in one launch's memory. The count is
 the Work record's fact — `lastFallAttempt` in `recuperacoes.jsonl` — and an
 in-memory reset cannot survive the next sweep or a restart. Leaving it unwritten
@@ -84,7 +83,7 @@ made the two readings disagree about the same Work: the derivation said release
 (the answered block forgot its count) while the collection, reading the ledger,
 could say block (the count was still there). The two readings now agree, on
 release. This **removes a contradiction; it does not add a rule** — the fall
-ruler is unchanged, and the reset is the decision ticket 14 already made. A test
+ruler is unchanged, and the reset is the decision already made. A test
 pins it at the seam where the launch writes and the collection reads.
 
 Supersedes, in [ADR 0009](0009-one-module-owns-the-work-record.md), only its

@@ -21,7 +21,7 @@ import {
 import { workKeyOf, workOfKey } from "./work-key.js";
 
 /**
- * The operator's requested stop of this run (issue #146): admissions close, the
+ * The operator's requested stop of this run: admissions close, the
  * evidence of the stop is persisted before any worker is asked to end, the
  * workers get one cooperative window (or the second signal's escalation) and
  * what remains is forced before the factory calls the stop safe. A cancelled
@@ -152,7 +152,7 @@ export interface OperatorStopOptions {
 }
 
 /**
- * Which attempt, if any, the persisted stop owns (issue #146). The derivation
+ * Which attempt, if any, the persisted stop owns. The derivation
  * that resumes a stop and the launch path that consumes it ask this one
  * reading instead of comparing kinds and numbers each in its own way; the
  * tolerance for an unnumbered next attempt belongs to the caller.
@@ -190,8 +190,8 @@ export type UnconfirmedStopVerdict =
   | { kind: "hold"; key: string; because: string };
 
 /**
- * Settle the stops a previous invocation could not confirm (issue #146, ADR
- * 0008): a worker the fresh observation confirms gone promotes the persisted
+ * Settle the stops a previous invocation could not confirm (ADR 0008): a worker
+ * the fresh observation confirms gone promotes the persisted
  * stop to the requested-stop resume it was meant to be; a hold never
  * relaunches. The caller only presents the verdicts; the recovery write is
  * decided here.
@@ -291,7 +291,7 @@ export class OperatorStop {
       `stop requested: no new worker is admitted; asking ${launches.length} in-flight launch(es) to stop ` +
         `(cooperative window ${formatDuration(this.cooperativeMs)})`,
     );
-    // The workers a previous factory process left (issue 118) are the
+    // The workers a previous factory process left are the
     // operator's workers too: this process has no session to ask, so they get
     // the same window to end on their own and are forced with the rest.
     if (knownSurvivors.length > 0) {
@@ -302,7 +302,8 @@ export class OperatorStop {
     }
 
     // The evidence of the requested stop is persisted BEFORE any worker is
-    // asked to end: a factory that dies inside the requested stop still lets the
+    // asked to end: a factory that dies inside the requested stop still lets
+    // the
     // next invocation resume the attempt without charging it. A recovery
     // granted but never launched is returned — the stop cancelled it.
     for (const entry of launches) {
@@ -364,9 +365,9 @@ export class OperatorStop {
   }
 
   /**
-   * Every worker this stop is answerable for (issue #146), with the attempt
+   * Every worker this stop is answerable for, with the attempt
    * already known when the caller has it: the launches this run carried, the
-   * survivors it recognised (issue 118) — which it knows were alive even when
+   * survivors it recognised  — which it knows were alive even when
    * the probe stops answering — and whatever a live container names right now.
    * An unreadable probe cannot LOSE a known worker, it only fails to add one.
    */
@@ -433,7 +434,8 @@ export class OperatorStop {
   /**
    * Wait out the cooperative phase: until every launch of this run settled,
    * the window ran out, or the second signal escalated it — whichever is first.
-   * Callers only need the wait to be over; why it ended is the deadline's or the
+   * Callers only need the wait to be over; why it ended is the deadline's or
+   * the
    * escalation's own fact, not a value to branch on.
    */
   private async awaitCooperativeWindow(settled: () => Promise<void>): Promise<void> {

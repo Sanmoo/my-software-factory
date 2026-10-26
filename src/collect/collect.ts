@@ -7,7 +7,7 @@ import { openWrites, type WorkWrites, type WriteDeps } from "./writes.js";
 import type { CollectedRulingReport } from "./ruling.js";
 
 /**
- * The collection (epic #198, ticket #208): what the factory DOES with an
+ * The collection: what the factory DOES with an
  * Attempt that ended, and with the verdict that end asks for.
  *
  * One module owns the second reading of the Work state applied — the tracker
@@ -28,7 +28,7 @@ import type { CollectedRulingReport } from "./ruling.js";
  * survivor whose exit Docker confirmed ("survivor").
  *
  * The projection in {@link CollectedEnd.ruling} is the OPERATOR's word for the
- * decided state (D5): computed once, where the decision is made, and read by
+ * decided state: computed once, where the decision is made, and read by
  * nobody on the decision path.
  */
 
@@ -46,13 +46,13 @@ export interface AttemptEnd {
 
 /** What applying the verdict produced. */
 export interface CollectedEnd {
-  /** The attempt the SAME admission continues — an interruption (issue 123), a
-   *  model provider retry (issue 144) or a requested-stop resume (#146) — or
+  /** The attempt the SAME admission continues — an interruption, a model
+   *  provider retry or a requested-stop resume — or
    *  null when the work needs nothing more from it. */
   next: Launchable | null;
   /** The PR of the work confirmed open through the port at collection time. */
   prConfirmed: boolean;
-  /** The decided state as the report names it (a pure projection, D5). */
+  /** The decided state as the report names it (a pure projection). */
   ruling: CollectedRulingReport;
 }
 

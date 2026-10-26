@@ -19,7 +19,7 @@ import {
 } from "./index.js";
 
 /**
- * The Work record's interface (issue 187): one owner for the complete on-disk
+ * The Work record's interface: one owner for the complete on-disk
  * record of a Work — its files, their schemas and the cross-references that
  * bind them. A part the record cannot read is reported as the doubt it is, and
  * a write that would break a cross-reference is refused before any file is

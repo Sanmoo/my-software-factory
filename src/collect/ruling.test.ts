@@ -7,7 +7,7 @@ import type { PullRequestRecord } from "../tracker/expanded-port.js";
 import type { AfterAttemptReading, WorkStateReading } from "../work-state/state.js";
 
 /**
- * `SweepResult.collected[].ruling` after ticket #202 (D5, epic #198).
+ * `SweepResult.collected[].ruling`.
  *
  * The engine decides in ONE vocabulary — the Work state the module answers with
  * — and the report keeps the shape the e2e suites have always asserted:
@@ -25,7 +25,7 @@ const REPO = "Sanmoo/a";
 const work = { ticket: githubTicket(REPO, 7), destination: githubRepository(REPO) };
 const dir = `/ws/trabalhos/${REPO}#7`;
 
-/** A PR closed without merge — the fact epic #198's one delta turns into a Block. */
+/** A PR closed without merge — the fact the state turns into a Block. */
 const pr: PullRequestRecord = {
   number: 12,
   state: "closed",
@@ -48,7 +48,7 @@ const collected = (fields: WorkStateBody<AfterAttemptReading>): AfterAttemptRead
 
 test("the collection report names what the state already decided — one word per state", () => {
   const table: Array<[AfterAttemptReading, CollectedRulingReport]> = [
-    // The terminal state, by the ticket (ticket 14) and by the merge (issue 149).
+    // The terminal state, by the ticket and by the merge.
     [collected({ state: "done", pr }), { decision: "done", because: "issue-closed" }],
     [
       collected({ state: "done-fallback", pr, comment: "the PR was merged without closing this issue" }),
@@ -84,7 +84,7 @@ test("the collection report names what the state already decided — one word pe
   }
 });
 
-test("a PR closed without merge is the Block the state declares — from both readings (D7, epic #198's delta)", () => {
+test("a PR closed without merge is the Block the state declares — from both readings", () => {
   const rejection = collected({
     state: "rejected",
     pr,

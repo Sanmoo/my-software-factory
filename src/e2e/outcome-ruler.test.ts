@@ -35,10 +35,11 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
  *
  * The six classes of the ruler (each produces its decided transition):
  *   1. outcome with PR open → stays reserved awaiting the human (claim held);
- *   2. fall without PR, 1st consecutive → release (claimed→ready; branch stays);
- *   3. fall without PR, 2nd consecutive → blocked + comment with the exact outcome;
+ * 2. fall without PR, 1st consecutive → release (claimed→ready; branch stays);
+ * 3. fall without PR, 2nd consecutive → blocked + comment with the exact
+ * outcome;
  *   4. NO outcome record → an interruption, absorbed by its recovery budget;
- *   5. PR already existing on the issue → reserved, no launch, no fall recorded;
+ * 5. PR already existing on the issue → reserved, no launch, no fall recorded;
  *   6. blocked self-report → the factory only records it.
  */
 
@@ -168,7 +169,8 @@ describe("e2e: the ruler of outcomes", () => {
     assert.equal(record.attempt, 1);
   });
 
-  // ---- class 2: fall without PR, 1st → release (claimed→ready; branch stays) ----
+  // ---- class 2: fall without PR, 1st → release (claimed→ready; branch stays)
+  // ----
 
   test("class 2 — the 1st fall releases the claim back to the pool (ready label returns)", async () => {
     const config = makeConfig(1);
@@ -230,14 +232,16 @@ describe("e2e: the ruler of outcomes", () => {
     }
   });
 
-  // ---- class 3: fall without PR, 2nd consecutive → blocked + exact comment ----
+  // ---- class 3: fall without PR, 2nd consecutive → blocked + exact comment
+  // ----
 
   test("class 3 — the 2nd consecutive fall blocks the work and comments the issue with the exact outcome", async () => {
     const config = makeConfig(1);
     const tracker = new FakeTrackerAdapter({ workerAccount: config.workerGhAccount });
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: NOW, labels: [DEFAULT_LABELS.ready] });
 
-    // Attempt 1 falls → release. Attempt 2 (from the disk of attempt 1) falls too → blocked.
+    // Attempt 1 falls → release. Attempt 2 (from the disk of attempt 1) falls
+    // too → blocked.
     const { deps, runtime, tracker: t } = makeFactory(config, tracker, ["clean-without-pr"]);
     await runOnce(deps);
     const second = await runOnce(deps);
@@ -306,7 +310,8 @@ describe("e2e: the ruler of outcomes", () => {
     assert.equal(onDisk.class, "pr-open");
   });
 
-  // ---- class 4: NO outcome record → an interruption, absorbed by its budget ----
+  // ---- class 4: NO outcome record → an interruption, absorbed by its budget
+  // ----
 
   test("class 4 — two interrupted sessions in a row: the SAME attempt continues, the work is never blocked", async () => {
     const config = makeConfig(1);
@@ -413,7 +418,8 @@ describe("e2e: the ruler of outcomes", () => {
     );
   });
 
-  // ---- class 5: PR already existing → reserved, no launch, no fall recorded ----
+  // ---- class 5: PR already existing → reserved, no launch, no fall recorded
+  // ----
 
   test("class 5 — a work whose issue already has an open PR is never launched and records no fall", async () => {
     const config = makeConfig(1);
@@ -464,7 +470,7 @@ describe("e2e: the ruler of outcomes", () => {
     assert.equal(record.class, "blocked-self-report");
   });
 
-  // ---- epic #198's ONE delta: a PR closed without merge, SEEN AT COLLECTION → Block ----
+  // ---- ONE delta: a PR closed without merge, SEEN AT COLLECTION → Block ----
 
   test("#203 — a PR closed without merge at collection blocks the work, pointing at the PR, never releasing it", async () => {
     const config = makeConfig(1);
@@ -474,7 +480,8 @@ describe("e2e: the ruler of outcomes", () => {
     const { deps, runtime, tracker: t } = makeFactory(config, tracker, ["pr-open"]);
     const log: string[] = [];
     deps.log = (line) => log.push(line);
-    // The worker opens its PR and the human closes it WITHOUT merging before the
+    // The worker opens its PR and the human closes it WITHOUT merging before
+    // the
     // factory collects the attempt: the fact is a COLLECTION fact, not a
     // derivation one. The doubles stay the two fakes of this suite.
     const launch = runtime.launch.bind(runtime);
@@ -486,7 +493,7 @@ describe("e2e: the ruler of outcomes", () => {
 
     const result = await runOnce(deps);
 
-    // The state's Block, executed (epic #198's delta): blocked with the PR pointed at.
+    // The state's Block, executed: blocked with the PR pointed at.
     assert.equal(result.launched.length, 1);
     const ruling = result.collected[0]?.ruling;
     assert.ok(ruling);
@@ -600,8 +607,8 @@ describe("e2e: msf status with the factory stopped (CLI, no IPC)", () => {
       "utf8",
     );
     // The one REST channel the run needs: the Work state reads each reserved
-    // work's ticket, its PR linkage and — with no PR — its conversation
-    // (ticket #204). Reads only; `repos: []` keeps the pool listing offline.
+    // work's ticket, its PR linkage and — with no PR — its conversation. Reads
+    // only; `repos: []` keeps the pool listing offline.
     const shim = installGhShim(dir, {
       rest: {
         "repos/Sanmoo/my-tasks/issues/1": {

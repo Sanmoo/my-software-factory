@@ -1,5 +1,5 @@
 /**
- * Reading a persisted Pi session (issue 119; Work record, issue 187): the file
+ * Reading a persisted Pi session: the file
  * the interrupted attempt owns, its identity, the intact prefix of entries, and
  * the tool calls the prefix records. Nothing here rewrites, truncates or
  * "repairs" the file — a corrupted session is evidence, not something to hide,

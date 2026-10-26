@@ -522,7 +522,7 @@ describe("repair-round — settling a non-finished round from direct observation
     assert.equal(startReads, 0);
   });
 
-  // ---- issue 181: a round no worker ever saw is not an attempt and not a fall ----
+  // ---- a round no worker ever saw is not an attempt and not a fall ----
 
   test("an already-recorded unpublished attempt with no runtime footprint never started", async () => {
     // The record an older version wrote: the round was charged and settled as

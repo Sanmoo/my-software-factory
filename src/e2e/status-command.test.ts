@@ -25,7 +25,8 @@ import { workspaceLayout, workDir, SESSIONS_SUBDIR, type WorkspaceLayout } from 
  *
  * Work #1 carries an ACTIVE continuity pause naming attempt 2 while the ledger
  * evidences only attempt 1 (the launch planned it and continuity refused before
- * the runtime spawned), so the report must name the cause, the work, the session
+ * the runtime spawned), so the report must name the cause, the work, the
+ * session
  * and both attempts. Work #2 carries the `pausa.json.resolved` of a pause that
  * is over: a resolved pause is never an active one.
  */
@@ -179,9 +180,9 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
       // Unreadable blockers: unknown is never "without impediment".
       [`repos/${REPO}/issues/13/dependencies/blocked_by`]: { notFound: true },
 
-      // The Work state reads every reserved Work of this workspace (ticket
-      // #204): its ticket, the PR linkage its timeline answers and — with no PR
-      // — the conversation. Reads only: the report writes nothing.
+      // The Work state reads every reserved Work of this workspace: its
+      // ticket, the PR linkage its timeline answers and — with no PR — the
+      // conversation. Reads only: the report writes nothing.
       // #1 waits on a continuity pause, #4 is an interrupted attempt with a
       // repair cycle, #2 carries a written outcome the factory never applied,
       // #3 is the bare reservation the reconciliation also names.
@@ -328,7 +329,7 @@ describe("e2e: msf status over the real adapter — complete report, read-only, 
         `repos/${REPO}/issues/11/dependencies/blocked_by`,
         `repos/${REPO}/issues/12/dependencies/blocked_by`,
         `repos/${REPO}/issues/13/dependencies/blocked_by`,
-        // The Work state's own reads (ticket #204): each reserved work's ticket,
+        // The Work state's own reads: each reserved work's ticket,
         // its PR linkage and — with no PR — its conversation. One read each.
         `repos/${REPO}/issues/1`,
         `repos/${REPO}/issues/1/comments`,

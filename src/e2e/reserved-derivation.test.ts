@@ -409,8 +409,8 @@ describe("e2e: the derivation of ALL reserved works", () => {
     const first = await runOnce(deps);
     assert.equal(launchedNumber(first.launched[0]!.request), 10, "the work was claimed and its PR opened");
 
-    // Now: a feedback round due on #10, plus two fresh eligibles — the older
-    // issue #1 first by age.
+    // Now: a feedback round due on #10, plus two fresh eligibles — the oldest
+    // first by age.
     seedIssue(tracker, { repo: REPO, number: 1, createdAt: "2026-01-01T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     seedIssue(tracker, { repo: REPO, number: 2, createdAt: "2026-01-02T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
     tracker.addPrComment({ repo: REPO, prNumber: 1 }, "humano", "feedback on #10's PR");

@@ -24,8 +24,8 @@ import {
 import { workKeyOf } from "./work-key.js";
 
 /**
- * The operator's stop, exercised through the module that owns the protocol
- * (issue #188): a fake liveness probe and an injected clock/wait make the
+ * The operator's stop, exercised through the module that owns the protocol: a
+ * fake liveness probe and an injected clock/wait make the
  * escalation, the confirmation and the cancelled admission's refund
  * deterministic without a sweep, a runtime or a real timer.
  */
@@ -51,7 +51,7 @@ class FakeStopRuntime {
 
 const liveWorker = (): LiveWorker => ({ key: KEY, containerId: "container-1", ageMs: 1_000 });
 
-describe("the operator's stop of this run (issue #188)", () => {
+describe("the operator's stop of this run ", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let dir: string;
@@ -239,7 +239,7 @@ describe("the operator's stop of this run (issue #188)", () => {
   });
 });
 
-describe("the next invocation's reconciliation of an unconfirmed stop (issue #190)", () => {
+describe("the next invocation's reconciliation of an unconfirmed stop ", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let dir: string;
@@ -317,7 +317,7 @@ describe("the next invocation's reconciliation of an unconfirmed stop (issue #19
   });
 });
 
-describe("the operator-stop claim shared by the derivation and the launch path (issue #190)", () => {
+describe("the operator-stop claim shared by the derivation and the launch path ", () => {
   const AT = NOW.toISOString();
 
   function ledger(lastStop: RecoveryStop | null): RecoveryLedger {

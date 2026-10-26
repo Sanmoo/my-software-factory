@@ -38,12 +38,13 @@ import { LinuxNotifier } from "./notify/linux.js";
 import type { Notifier } from "./notify/port.js";
 
 /**
- * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status [--all] [--config <path>]` — the minimal CLI
- * (fundação #9). The run loads msf.yaml from the cwd, reads the bot token
- * from the gh keyring (boot check, ticket 16: no token → clear failure),
+ * `msf run [--once] [--config <path>] [--runtime <name>]` and `msf status
+ * [--all] [--config <path>]` — the minimal CLI. The run loads msf.yaml from the
+ * cwd, reads the bot token
+ * from the gh keyring (boot check: no token → clear failure),
  * guarantees the workspace and hands the thin loop its four seams.
  *
- * Ticket 18: `msf run` (both --once and continuous) is wired with ALL REAL
+ * `msf run` (both --once and continuous) is wired with ALL REAL
  * components by default — the real GitHub adapter, the real Sandcastle
  * runtime (configured by worker-model), the real git host. The fake seams exist
  * ONLY for tests: `--runtime fake` keeps the placeholder that never launches,
@@ -66,7 +67,7 @@ export interface WiredSeams {
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
   /** The liveness probe; default is the real read-only Docker probe over the
-   *  workspace (issue 118) — tests pass a fake one, the binary has no flag. */
+   *  workspace  — tests pass a fake one, the binary has no flag. */
   probe?: LivenessProbe;
 }
 
@@ -96,7 +97,7 @@ export async function wireRunDeps(
   }
   if (tickets === undefined || pullRequests === undefined) {
     // The real adapter serves both expanded ports: GitHub owns the issues and
-    // the PRs of a GitHub-selected Work (issue 124/126).
+    // the PRs of a GitHub-selected Work.
     const githubTracker = await createGitHubAdapter({
       account: config.workerGhAccount,
       clonesDir: workspace.repos,
@@ -107,7 +108,7 @@ export async function wireRunDeps(
   const runtime = seams.runtime ?? (await sandcastleRuntime(config, workspace));
   const git = seams.git ?? localGitWork({ reposDir: workspace.repos });
   const notifier = seams.notifier ?? new LinuxNotifier();
-  // The operational liveness read (issue 118): the same read-only Docker probe
+  // The operational liveness read: the same read-only Docker probe
   // `msf status` uses, so the two never disagree about the same facts.
   const probe = seams.probe ?? workspaceLivenessProbe(workspace);
   return {
@@ -161,7 +162,7 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
-/** Jira execution is not part of this release (issue 128): the configuration is
+/** Jira execution is not part of this release: the configuration is
  *  read-only, and the refusal names the configured selections. */
 function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
@@ -173,7 +174,8 @@ function assertNoJiraExecution(config: Config): void {
 }
 
 /** The read-only Jira selections of `msf status`: one adapter per site (so the
- *  Acting account is identified once) and one reader per configured selection. */
+ * Acting account is identified once) and one reader per configured selection.
+ * */
 function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   const adapters = new Map<string, JiraTicketAdapter>();
   const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {
@@ -239,7 +241,7 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
   const overridePath = args.configPath;
 
   // The operator's stop is armed BEFORE any startup step that leaves a
-  // resource active (issue #146): config, run lock, workspace and reservation
+  // resource active: config, run lock, workspace and reservation
   // all live inside the handler's window, for the continuous run and for
   // `run --once` alike.
   const stop = installStopSignals();
@@ -255,14 +257,14 @@ async function runCommand(args: ReturnType<typeof parseCliArgs>): Promise<void> 
       process.exit(1);
     }
 
-    // One `run` per REAL config path (issue 90), established before ANY
+    // One `run` per REAL config path, established before ANY
     // operational activity — the workspace below included. A second run for the
     // same configuration is refused here and never touches the factory.
     const lock = await acquireRunLock(config.configPath);
     try {
       // A stop requested during the startup is honoured where it is observed:
       // the engine listens from its construction, so an already-aborted signal
-      // closes admission before the first reservation (issue #146).
+      // closes admission before the first reservation.
       report = await executeRun(config, once, runtimeName, stop);
     } finally {
       await lock.close();
@@ -328,8 +330,8 @@ async function executeRun(
     return null;
   }
 
-  // Ticket 14: ending the factory is a human act — Ctrl-C exits cleanly.
-  // Issue #146: the close of admission, the cooperative request and the
+  // Ending the factory is a human act — Ctrl-C exits cleanly.
+  // The close of admission, the cooperative request and the
   // confirmation of every worker's end now live in the loop's lifecycle; the
   // stop line below is still a proof of registration — a SIGINT sent right
   // after it can never land in the default-disposition window.
@@ -350,7 +352,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
     retros: join(config.workspace, WORKSPACE_SUBPATHS.retros),
   };
 
-  // Ticket 18: status reads the REAL tracker — the trail it shows is the
+  // Status reads the REAL tracker — the trail it shows is the
   // work's real trail (issue labels, PR, the works the registry holds on
   // disk). Only the keyring read at boot touches the machine; the reads
   // themselves are the same REST reads the sweep does, and the command
@@ -358,7 +360,8 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // `repos: []` (a Jira-only factory) reads no GitHub Issues, but its identity
   // is still verified before anything is shown.
   const github = await createGitHubAdapter({ account: config.workerGhAccount });
-  // The Jira selections are read through their own adapters — the same read-only
+  // The Jira selections are read through their own adapters — the same
+  // read-only
   // read and native Rank order the adapter contract suite proves. A selection
   // whose credential is missing is reported as unknown, never skipped.
   const view = await deriveStatus(
@@ -399,7 +402,8 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   // One round at a time, enforced by the lane's marker: it names the process
   // that owns the round in flight, so the exclusivity holds across processes —
   // including a `msf run` that is sweeping right now, which is exactly when the
-  // operator forces a round. A record left by a dead owner is cleared here, so a
+  // operator forces a round. A record left by a dead owner is cleared here, so
+  // a
   // crash never blocks the lane.
   const running = await liveRoundInFlight(workspace);
   if (running !== null) throw new RetroBusyError(running.round);

@@ -50,8 +50,7 @@ class SilentPullRequestTracker extends FakeTrackerAdapter {
  *
  * The rulings pinned here are the ones the collection has always made — plus the
  * one fact that had no word in the collection vocabulary at all: a PR closed
- * without merge is `rejected`, and the collection blocks with it (epic #198's
- * one behaviour delta).
+ * without merge is `rejected`, and the collection blocks with it.
  */
 describe("work state — the read after an attempt", () => {
   let adapter: FakeTrackerAdapter;
@@ -240,7 +239,7 @@ describe("work state — the read after an attempt", () => {
 
     const reading = await read(8, 1);
 
-    assert.equal(reading.state, "interrupted", "absence is an interruption, never a failure (issue 123)");
+    assert.equal(reading.state, "interrupted", "absence is an interruption, never a failure ");
     if (reading.state !== "interrupted") assert.fail("expected an interruption");
     assert.equal(reading.attempt, 1, "the attempt keeps its number");
     assert.equal(reading.recovery.decision, "recover", "the recovery budget answers it, not the fall ruler");
@@ -288,7 +287,7 @@ describe("work state — the read after an attempt", () => {
     assert.equal(
       stopping.state,
       "fall",
-      "the attempt ended with a verdict, so the stop's interpretation does not apply (issue #146)",
+      "the attempt ended with a verdict, so the stop's interpretation does not apply ",
     );
   });
 

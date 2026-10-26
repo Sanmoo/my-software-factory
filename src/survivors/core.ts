@@ -3,7 +3,7 @@ import type { DuplicateWorkers, LiveWorker } from "../state/liveness.js";
 import type { WorkIdentity } from "../tracker/identity.js";
 
 /**
- * The pure core of the survivor ledger (issue 118; epic #198, ticket #206): the
+ * The pure core of the survivor ledger: the
  * record of one surviving worker and the tables over it, decided without I/O.
  *
  * This is the module's INTERNAL seam — imported by `ledger.ts` and by the

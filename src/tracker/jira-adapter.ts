@@ -13,7 +13,7 @@ import { renderAdf } from "./jira-adf.js";
 import { withNativeRankOrdering } from "./jira-jql.js";
 
 /**
- * The real Jira Cloud ticket adapter (issue 128): reads over the REST API v3
+ * The real Jira Cloud ticket adapter: reads over the REST API v3
  * with a locally referenced Atlassian API token (HTTP Basic, `account:token`).
  * `/myself` identifies the authenticated account — the Acting account the
  * factory acts as; JQL's `currentUser()` means THAT account, never an

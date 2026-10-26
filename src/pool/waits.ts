@@ -1,6 +1,6 @@
 /**
- * The waits vocabulary shared by the recovery and model-provider decisions
- * (issue 192): both budgets render their configured backoff with the same
+ * The waits vocabulary shared by the recovery and model-provider decisions:
+ * both budgets render their configured backoff with the same
  * rule, so the two decisions never import each other — the edge that closed
  * the model-provider ↔ recovery cycle.
  */

@@ -5,8 +5,7 @@ import { workKeyOf } from "./work-key.js";
 
 /**
  * The confirmed impediments of an open PR — the ONE definition of "this PR
- * needs Repair", and of the evidence signature that makes a round attributable
- * (tickets 107/112).
+ * needs Repair", and of the evidence signature that makes a round attributable.
  *
  * It has one owner because it had two: the Work state carried a copy of the
  * type and applied the same trigger policy as the derivation did, and the
@@ -61,7 +60,7 @@ export type RepairPremiseReading =
   | { premise: "obsolete" }
   | { premise: "unknown" };
 
-/** The premise of a repair round read from the PR's current facts (issue 149):
+/** The premise of a repair round read from the PR's current facts:
  *  a confirmed trigger persists; only a mergeable PR with a known required set
  *  is obsolete (an unknown mergeability, or an undetermined required set,
  *  proves nothing); an unreadable read is unknown, never an invented clean

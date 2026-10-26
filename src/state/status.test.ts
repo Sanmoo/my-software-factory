@@ -43,7 +43,7 @@ import { fakeDocker, inspectedContainer } from "./fake-docker.js";
 import { dockerWorkerProbe, type LivenessProbe, type LiveWorker } from "./liveness.js";
 
 /**
- * `msf status` (ticket 07 Q7, issue 102): derivation on demand through the
+ * `msf status`: derivation on demand through the
  * port — works with the factory stopped — plus the local registry scan and the
  * read-only liveness probe. Running and Orphaned come from Docker + disk
  * together; the overlap (outcome written, worker still alive) is shown as two
@@ -62,7 +62,7 @@ const fakeProbe =
 
 /**
  * A tracker whose ticket read is slow, so the reserved-work readings overlap
- * observably (issue 147): `peakInFlight` is a fact of how many were in flight at
+ * observably: `peakInFlight` is a fact of how many were in flight at
  * once — never of how fast this machine ran them.
  */
 class SlowTicketTracker extends FakeTrackerAdapter {
@@ -111,9 +111,9 @@ describe("status — derivation on demand + local registry scan", () => {
       workspace: layout.root,
       labels: { ...DEFAULT_LABELS },
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      retro: { ...DEFAULT_RETRO },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
-      retro: { ...DEFAULT_RETRO },
       notifications: true,
       workerAuthFile: null,
       configPath: join(dir, "msf.yaml"),
@@ -130,7 +130,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
   /** The tracker's side of a reserved work: an open issue carrying the claim —
    *  what the Work state reads to name the state the registry's own facts
-   *  describe (ticket #204). A claim with a reservation on disk is not an
+   *  describe. A claim with a reservation on disk is not an
    *  unbacked claim, so no reconciliation line moves. */
   function claimIssue(tracker: FakeTrackerAdapter, number: number): void {
     seedIssue(tracker, { repo: REPO, number, labels: [DEFAULT_LABELS.claimed] });
@@ -154,7 +154,8 @@ describe("status — derivation on demand + local registry scan", () => {
 
     // Reserved without attempt: the claim landed, the worker has not.
     mkdirSync(workDir(layout, REPO, 1), { recursive: true });
-    // An attempt on disk, no outcome record — liveness decides running vs orphaned.
+    // An attempt on disk, no outcome record — liveness decides running vs
+    // orphaned.
     seedAttempt(4, 1);
     // Last outcome: a concluded attempt.
     mkdirSync(workDir(layout, REPO, 2), { recursive: true });
@@ -181,7 +182,7 @@ describe("status — derivation on demand + local registry scan", () => {
   test("a Work in two registry lists is ONE reserved Work — the grouped block counts it once", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 2);
-    // The overlap issue 112 preserves in the registry: a recorded outcome of
+    // The overlap the registry preserves: a recorded outcome of
     // attempt 1 while attempt 2 sits on disk with no outcome of its own. Both
     // lists carry the key; the reserved block is one line per Work.
     seedAttempt(2, 1, 2);
@@ -248,7 +249,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, new RegExp(`${REPO}#4 — 2 containers carry this work`), "the human sees the count");
   });
 
-  test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates (issue 160)", async () => {
+  test("a live worker of the previous image is running, not orphaned, and two of its containers are duplicates ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 6);
     seedAttempt(4, 1);
@@ -603,7 +604,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /attempt 0/, "a number the record never named is not printed");
   });
 
-  test("a fallen attempt is named even when an older outcome record sits on disk (issue 112)", async () => {
+  test("a fallen attempt is named even when an older outcome record sits on disk ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 20);
     const dir = seedAttempt(20, 1, 2);
@@ -658,7 +659,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(
       text,
       /#21 — parked[^\n]*repair cycle: rounds 1\/2; falls 1\/2; attempt 2: publication not verified yet \(reconciliation pending\); local work: 2 commits on the branch, HEAD def456789012, uncommitted changes, a rebase in progress; evidence: reservation trabalhos\/Sanmoo\/my-tasks#21\/ present, event log trabalhos\/Sanmoo\/my-tasks#21\/log-2\.jsonl present, sandcastle log trabalhos\/Sanmoo\/my-tasks#21\/sessao\/sandcastle-2\.log absent/,
-      "the diagnosis names the attempt's own evidence paths, present or absent (story 32)",
+      "the diagnosis names the attempt's own evidence paths, present or absent ",
     );
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
@@ -668,7 +669,8 @@ describe("status — derivation on demand + local registry scan", () => {
     claimIssue(tracker, 23);
     const dir = seedAttempt(23, 1, 2);
     // A file where the attempt's session dir should be: the probe cannot look
-    // inside it (ENOTDIR is absence; a permission error is "could not be verified").
+    // inside it (ENOTDIR is absence; a permission error is "could not be
+    // verified").
     writeFileSync(join(dir, "sessao"), "not a dir", "utf8");
     await writeRepairCycle(dir, {
       usedRounds: 1,
@@ -690,7 +692,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /sandcastle log trabalhos\/Sanmoo\/my-tasks#23\/sessao\/sandcastle-2\.log absent/);
   });
 
-  test("the state says whether an attempt was interrupted or fell, and the record facts stay (issue 123)", async () => {
+  test("the state says whether an attempt was interrupted or fell, and the record facts stay ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 30);
     claimIssue(tracker, 31);
@@ -733,7 +735,8 @@ describe("status — derivation on demand + local registry scan", () => {
     claimIssue(tracker, 41);
     const now = () => new Date("2026-01-01T00:00:00Z");
     // A reservation whose interrupted attempt left only its recovery ledger:
-    // the reading is `interrupted`, and the reserved block is where it is named.
+    // the reading is `interrupted`, and the reserved block is where it is
+    // named.
     const recovering = workDir(layout, REPO, 40);
     mkdirSync(recovering, { recursive: true });
     await consumeRecovery(recovering, DEFAULT_RECOVERY_BUDGET, 1, now);
@@ -755,7 +758,7 @@ describe("status — derivation on demand + local registry scan", () => {
     );
   });
 
-    test("many reservations cost a bounded burst, not one per reservation (issue 147)", async () => {
+    test("many reservations cost a bounded burst, not one per reservation ", async () => {
     const tracker = new SlowTicketTracker(100);
     const numbers = Array.from({ length: 12 }, (_, index) => 100 + index);
     for (const number of numbers) {
@@ -780,7 +783,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.equal(tracker.peakInFlight, RESERVED_STATE_READS_IN_FLIGHT);
   });
 
-    test("a PR closed without merge is blocked with the PR pointed at — the status reads the state that says so (ticket #203)", async () => {
+    test("a PR closed without merge is blocked with the PR pointed at — the status reads the state that says so ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 50);
     seedAttempt(50, 1);
@@ -824,7 +827,7 @@ describe("status — derivation on demand + local registry scan", () => {
     return new Date(at).toISOString();
   }
 
-  test("the model provider section names the failure and its message, and says retrying — never a block (issue 144)", async () => {
+  test("the model provider section names the failure and its message, and says retrying — never a block ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 40);
     const dir = seedAttempt(40, 1);
@@ -849,7 +852,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /blocked/, "a model provider failure is never rendered as a block");
   });
 
-  test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block (issue 144)", async () => {
+  test("awaiting model provider is a state of its own: the exhausted budget says the help request, not a block ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 41);
     const dir = seedAttempt(41, 1);
@@ -876,7 +879,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.doesNotMatch(text, /\/tmp\/|\/home\//, "the status never shows an absolute path");
   });
 
-  test("a later plain interruption is not read as 'retrying after the model provider' (issue 144)", async () => {
+  test("a later plain interruption is not read as 'retrying after the model provider' ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 42);
     const dir = seedAttempt(42, 1);
@@ -904,7 +907,7 @@ describe("status — derivation on demand + local registry scan", () => {
     assert.match(text, /#42 \(attempt 1 was interrupted/);
   });
 
-  test("the requested stop and the unconfirmed stop are states of their own (issue #146)", async () => {
+  test("the requested stop and the unconfirmed stop are states of their own ", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 33);
     claimIssue(tracker, 34);
@@ -1155,7 +1158,8 @@ describe("status — derivation on demand + local registry scan", () => {
   });
 });
 
-// ---- Jira candidates: read-only, native Rank order, per-selection unknown (issue 128) ----
+// ---- Jira candidates: read-only, native Rank order, per-selection unknown
+// ----
 
 describe("status: Jira candidates are read-only and each selection stands alone", () => {
   let dir: string;
@@ -1193,6 +1197,7 @@ describe("status: Jira candidates are read-only and each selection stands alone"
       labels: { ...DEFAULT_LABELS },
       workerAuthFile: null,
       recovery: { ...DEFAULT_RECOVERY_BUDGET },
+      retro: { ...DEFAULT_RETRO },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       notifications: true,
@@ -1284,7 +1289,8 @@ describe("status: Jira candidates are read-only and each selection stands alone"
   });
 
   test("one project feeds several destinations, and a ticket two selections promise is held as ambiguous", async () => {
-    // One site answers both selections: each sim is the site's reply to one query.
+    // One site answers both selections: each sim is the site's reply to one
+    // query.
     const frontend = new JiraSim();
     frontend.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend fix" });
     frontend.addIssue({ id: "10002", key: "ABC-2", summary: "Touches both layers" });

@@ -4,8 +4,8 @@ import { describe, test } from "node:test";
 import { renderWaits } from "./waits.js";
 
 /**
- * The waits vocabulary shared by the recovery and model-provider decisions
- * (issue 192): both render the configured backoff with the same rule, so one
+ * The waits vocabulary shared by the recovery and model-provider decisions:
+ * both render the configured backoff with the same rule, so one
  * ledger's decision never has to import the other's module.
  */
 describe("the waits in the operator's words", () => {

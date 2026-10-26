@@ -40,7 +40,7 @@ import {
 /**
  * `msf status`: derivation on demand through the port (it works with the
  * factory stopped — the tracker is the truth) plus the local registry scan
- * (ticket 07 Q7) and the read-only Docker probe (issue 102, ADR 0002). The
+ *  and the read-only Docker probe (ADR 0002). The
  * registry knows what was written to disk; only Docker knows what is alive
  * now, so the two together say Running (a live worker carries the work) or
  * Orphaned (no outcome record, no live worker). A work whose outcome is
@@ -65,7 +65,7 @@ export interface RunningWorker extends LiveWorker {
   attempt: number | null;
 }
 
-/** An interrupted attempt as the status names it (issues 112/123): the
+/** An interrupted attempt as the status names it: the
  *  registry's own fact, under the status vocabulary — the attempt with no
  *  record of its own, and the attempt the record on disk belongs to (history,
  *  never its result). */
@@ -78,7 +78,7 @@ export type Liveness =
       state: "known";
       /** One row per container: two workers of one work are two rows. */
       running: RunningWorker[];
-      /** The works carried by more than one container (issue 118). */
+      /** The works carried by more than one container. */
       duplicates: DuplicateWorkers[];
       orphaned: OrphanedAttempt[];
     };
@@ -90,14 +90,15 @@ export interface JiraTicketFacts {
 }
 
 /** One Jira candidate: the Work the ticket names, its title and its assignee(s).
- *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
+ * A candidate is NOT a reservation: nothing is claimed, commented or launched.
+ * */
 export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
 }
 
 /** A ticket the configured selections promise to more than one destination: its
  *  destination is ambiguous, so it is held with the reason and is never
- *  presented as a candidate (issue 128; spec #92 story 8). */
+ *  presented as a candidate. */
 export interface AmbiguousJiraTicket extends JiraTicketFacts {
   ticket: TicketIdentity;
   /** The destinations the conflicting readable selections name. */
@@ -114,14 +115,15 @@ export interface JiraSelectionReader {
 }
 
 /**
- * The GitHub adapter: it serves BOTH ports — the ticket facts and the PR facts —
+ * The GitHub adapter: it serves BOTH ports — the ticket facts and the PR facts
+ * —
  * through the one identity the factory verifies at boot. `msf status` reads the
- * Work state through it (ticket #204), so the reserved works are described in
+ * Work state through it, so the reserved works are described in
  * the vocabulary the engine acts on, from the same facts.
  */
 export type StatusGitHub = TicketTracker & PullRequestTracker;
 
-/** One reserved Work with the state the module reads for it (ticket #204):
+/** One reserved Work with the state the module reads for it:
  *  what happened to it, and what the factory may do now. The key is the dir's
  *  own name — the identity anchor, never reconstructed from configuration. */
 export interface ReservedWorkState {
@@ -158,13 +160,14 @@ export type JiraSelectionView =
 
 export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known" }>;
 
-/** The retrospective job as `msf status` names it (issue 141, ADR 0006): the
+/** The retrospective job as `msf status` names it (ADR 0006): the
  *  last report written, the boundary it advanced, and the round in flight. */
 export interface RetroStatus {
   /** The file name of the last report written; null before any. */
   lastReport: string | null;
   /** The finish time (epoch ms) of the newest work a window report covered; null
-   *  until a round covers a window — a single-work post-mortem never moves it. */
+   * until a round covers a window — a single-work post-mortem never moves it.
+   * */
   boundaryAt: number | null;
   /** Items the last report filed as needs-triage. */
   filed: number;
@@ -188,7 +191,7 @@ export interface StatusView {
   /** Running and Orphaned, or unknown when Docker could not answer. */
   liveness: Liveness;
   /** The state of every reserved Work, as the module the engine acts on reads
-   *  it (ticket #204) — the renderer names no state of its own. */
+   *  it  — the renderer names no state of its own. */
   reserved: ReservedWorkState[];
   /** Reserved dirs the state cannot be asked about: their registry key names no
    *  Work it may read (a Jira dir keeps its readable ticket key in the
@@ -197,7 +200,7 @@ export interface StatusView {
   unaddressedReservations: string[];
   /** The configured interruption budget, so the view can name what it costs. */
   recoveryBudget: RecoveryBudget;
-  /** The configured model provider budget (issue 144). */
+  /** The configured model provider budget. */
   modelProviderBudget: ModelProviderBudget;
   /** The retrospective job's visible state; null when the job is disabled. */
   retro: RetroStatus | null;
@@ -219,7 +222,7 @@ export async function deriveStatus(
   // The same list answers the pool's "is this issue already reserved" and the
   // Work state's "what is this Work's state now" — one read of the disk, and
   // one entry per Work: the registry keeps a Work whose record exists and whose
-  // attempt has no outcome of its own in TWO lists (issue 112, the overlap the
+  // attempt has no outcome of its own in TWO lists (the overlap the
   // registry view still shows), while the Work state, and the block that counts
   // it, are per Work.
   const reservedKeys = [
@@ -267,16 +270,16 @@ async function readRetroStatus(layout: WorkspaceLayout): Promise<RetroStatus> {
   };
 }
 
-/** How many reserved-work readings may be in flight at once (issue 147). Each
+/** How many reserved-work readings may be in flight at once. Each
  *  reading issues up to four tracker/PR round-trips (ticket, comments, linkage,
  *  repair facts), so an unbounded burst over every reservation would spend the
- *  tracker's rate budget on the first screen of the command. The same bound, and
+ * tracker's rate budget on the first screen of the command. The same bound, and
  *  the same reason, as the pool derivation's blocker reads. */
 export const RESERVED_STATE_READS_IN_FLIGHT = 8;
 
 /**
- * The state of every reserved Work, read by the module the engine acts on
- * (ticket #204). This is the ONE reading status makes of "what happened to this
+ * The state of every reserved Work, read by the module the engine acts on. This
+ * is the ONE reading status makes of "what happened to this
  * Work, and what may the factory do now": the renderer names no state of its
  * own, and cannot describe a world the engine is not acting on.
  *
@@ -335,7 +338,7 @@ function emptyTrackerState(): TrackerState {
 }
 
 /**
- * Every Jira selection read independently (issue 128): one unavailable read is
+ * Every Jira selection read independently: one unavailable read is
  * UNKNOWN, never an empty list, and says nothing about the healthy ones.
  */
 async function readJiraCandidates(readers: readonly JiraSelectionReader[]): Promise<JiraSelectionView[]> {
@@ -370,7 +373,7 @@ interface JiraHold {
 
 /**
  * A ticket two readable selections promise to different destinations has no
- * explicit destination (spec #92 story 8): it is held with the reason instead
+ * explicit destination: it is held with the reason instead
  * of being listed once per selection — the operator resolves the overlap in
  * the selections. The same Work selected by several selections is listed once.
  * An UNKNOWN sibling naming a different destination may hide a conflict; the
@@ -463,7 +466,7 @@ async function recordAttempt(workDir: string): Promise<number | null> {
 }
 
 /**
- * The two states, from the registry and the probe together (issue 102): a work
+ * The two states, from the registry and the probe together: a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
  * when nothing does. A bare reservation is neither — no attempt ended, so it
  * stays its own line. An unreachable probe is unknown, never "none": without
@@ -490,7 +493,7 @@ async function classifyLiveness(
     running,
     duplicates: duplicateWorkers(observation.workers),
     // A work whose attempt waits for the operator is not "orphaned, awaiting
-    // the factory's next reconciliation" (issue 119): it has its own section.
+    // the factory's next reconciliation": it has its own section.
     orphaned: registry.attemptsWithoutOwnOutcome.filter((entry) => !carried.has(entry.key) && !paused.has(entry.key)),
   };
 }

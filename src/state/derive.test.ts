@@ -26,7 +26,7 @@ const derivePool = async (
 ) => (await deriveTrackerState(port, githubSelections(repos), labels)).pool;
 
 /** A tracker whose blocker read costs real time, as the REST one does: the
- *  derivation must not await them one at a time (issue 147). `unreadable`
+ *  derivation must not await them one at a time. `unreadable`
  *  answers unknown for a work, pinning that unknown never unblocks. */
 class SlowBlockerTracker extends FakeTrackerAdapter {
   /** The most blocker reads this tracker ever had in flight at once. */
@@ -152,7 +152,8 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
   test("many candidates cost a few blocker round-trips, not their sum — with the same results", async () => {
     const candidates = 12;
     const DELAY_MS = 250;
-    // Issue 1 keeps an open blocker, issue 7's blockers are unreadable, and the
+    // The oldest keeps an open blocker, another's blockers are unreadable, and
+    // the
     // other ten are eligible: the reads must run concurrently while every
     // verdict stays what it was.
     const tracker = new SlowBlockerTracker(DELAY_MS, new Set([7]));
@@ -234,7 +235,7 @@ describe("derive — the pool of eligible works, stateless re-read", () => {
   });
 });
 
-describe("derive — the tracker↔workspace leftovers, from the same single read (issue 100)", () => {
+describe("derive — the tracker↔workspace leftovers, from the same single read ", () => {
   let adapter: FakeTrackerAdapter;
   const REPO = "Sanmoo/a";
   const repos = [REPO];
@@ -357,7 +358,7 @@ describe("derive — the tracker↔workspace leftovers, from the same single rea
   });
 });
 
-describe("issue 174 — a human answer stays bound to the pause it answered", () => {
+describe("a human answer stays bound to the pause it answered", () => {
   let adapter: FakeTrackerAdapter;
   let root: string;
   let layout: WorkspaceLayout;

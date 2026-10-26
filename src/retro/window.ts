@@ -6,13 +6,13 @@ import {
   ownOutcomeRecord,
   readOutcomeRecord,
   type OutcomeClass,
-} from "../state/outcome.js";
-import { readAttemptLedger } from "../pool/registry.js";
+} from "../work-record/outcome.js";
+import { readAttemptLedger } from "../work-record/attempts.js";
 import { anchorOfKey } from "../pool/work-key.js";
 import { scanReservations, workDirCandidates } from "../pool/reservation.js";
-import { readRepairCycle } from "../pool/repair.js";
-import { readRecoveryLedger } from "../pool/recovery.js";
-import { readModelProviderLedger } from "../pool/model-provider.js";
+import { readRepairCycle } from "../work-record/repair.js";
+import { readRecoveryLedger } from "../work-record/recovery.js";
+import { readModelProviderLedger } from "../work-record/model-provider.js";
 import {
   RETRO_MOUNT_PATHS,
   type WorkspaceLayout,
@@ -54,7 +54,8 @@ export interface FinishedWork {
 }
 
 /** The round id in the report's file name: an ISO instant, filename-safe and
- *  millisecond-precise, so two rounds can never overwrite each other's report. */
+ * millisecond-precise, so two rounds can never overwrite each other's report.
+ * */
 export function roundId(at: Date): string {
   return at.toISOString().replace(/[:.]/g, "-");
 }
@@ -210,7 +211,8 @@ async function operationalLogFacts(
 ): Promise<string> {
   let raw: string;
   try {
-    // The tail is enough for the anchor and bounds the read of a long-lived log.
+    // The tail is enough for the anchor and bounds the read of a long-lived
+    // log.
     raw = (await readFile(operationalLogPath(layout.root), "utf8")).slice(-1_000_000);
   } catch {
     return "Operational log: absent — the window's records are the only evidence of this round.";

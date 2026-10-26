@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * factory version pins, and `npm run build:image` refuses to stage a missing
  * build instead of shipping an unguarded worker.
  *
- * What to stage is not a list to maintain (issue 193): it is EXACTLY the
+ * What to stage is not a list to maintain: it is EXACTLY the
  * relative-import closure of the compiled extension, computed from dist/. The
  * staged tree mirrors the compiled layout under dist/ and the image copies it
  * to /opt/msf, so every relative import keeps its build-tree meaning. A

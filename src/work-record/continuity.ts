@@ -1,5 +1,5 @@
 /**
- * The continuity parts of a Work's record (issue 119; Work record, issue 187):
+ * The continuity parts of a Work's record:
  * the session <-> attempt association, the external-effect journal the
  * in-container guardrail writes, the verdicts handed back to the next session,
  * and the persisted continuity pause. The writers here are the record's only
@@ -129,7 +129,7 @@ export interface GuardrailState {
   at: string;
 }
 
-/** Why a work waits for the operator instead of being recovered (issue 119).
+/** Why a work waits for the operator instead of being recovered.
  *  The list is the source of both the type and the runtime validation, so a
  *  reason cannot exist in one and be missing from the other. */
 const PAUSE_REASONS = [

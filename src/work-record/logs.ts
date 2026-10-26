@@ -5,7 +5,7 @@ import { WorkRecordError } from "./errors.js";
 
 /**
  * The factory's own records of an attempt (issues 102/112/118/144; Work
- * record, issue 187), named once: the per-attempt event log (the JSONL the
+ * record), named once: the per-attempt event log (the JSONL the
  * loop and the runtime append to) and Sandcastle's stdout log. Both live under
  * the work dir, and both are DERIVED from the agent's output — which is why
  * the verifiable-activity observation excludes them (they would turn any line

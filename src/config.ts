@@ -137,7 +137,7 @@ export interface Labels {
 }
 
 /**
- * One Jira Cloud selection (issue 128): the site, the account the API token
+ * One Jira Cloud selection: the site, the account the API token
  * authenticates as, the local credential reference, the operator's JQL and the
  * GitHub repository the Work delivers to.
  *
@@ -166,7 +166,7 @@ export interface Config {
   workerModel: string;
   /** Target repos whose issues feed the pool. */
   repos: string[];
-  /** Jira Cloud selections, read-only in this slice (issue 128); [] = GitHub-only. */
+  /** Jira Cloud selections, read-only in this slice; [] = GitHub-only. */
   jira: JiraSelectionConfig[];
   /** The `y` — worker slots in process. */
   concurrency: number;
@@ -270,7 +270,7 @@ function requireString(doc: Record<string, unknown>, key: string): string {
 }
 
 /** The Jira selections, strictly shaped: an unknown field (notably a token
- *  value) is refused instead of silently ignored (issue 128). */
+ *  value) is refused instead of silently ignored. */
 function optionalJiraSelections(doc: Record<string, unknown>): JiraSelectionConfig[] {
   const value = doc["jira"];
   if (value === undefined) return [];
