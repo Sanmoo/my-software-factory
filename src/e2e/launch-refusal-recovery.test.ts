@@ -166,7 +166,7 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 17
     const view = await deriveStatus({ github: tracker }, config(), layout, async () => []);
     assert.match(
       renderStatus(view),
-      /#1 \(attempt 1: last stop was an interruption — no attempt consumed; 0\/3 recoveries/,
+      /#1 \(attempt 1 was interrupted — no outcome record on disk; 0\/3 recoveries consumed \(waits 0s\/0s\/0s\)/,
       "the operator sees the refund in the budget the ledger really holds",
     );
 

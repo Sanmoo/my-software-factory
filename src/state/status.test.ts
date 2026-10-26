@@ -823,7 +823,7 @@ describe("status — derivation on demand + local registry scan", () => {
 
     assert.match(
       text,
-      /#35 \(attempt 1: last stop was an interruption — no attempt consumed; 1\/3 recoveries \(waits 1s\/4s\/16s\)\)/,
+      /#35 \(attempt 1 was interrupted — no outcome record on disk; 1\/3 recoveries consumed \(waits 1s\/4s\/16s\) — the next interruption recovers on this budget\)/,
       "the section shows the budget the ledger really holds after the refund",
     );
   });
