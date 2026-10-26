@@ -30,7 +30,7 @@ One configured read from a Source for one Destination: the site, the JQL that se
 _Avoid_: Source, when the selection (a Source plus its JQL and Destination) is meant.
 
 **Repository identity**:
-Provider + site + the destination repository name; the code-host identity, never the ticket identity.
+Provider + site + the destination repository name; the code-host identity, never the ticket identity. Its components name case-insensitive things — a provider literal, a hostname and a GitHub repository name — so two spellings of one repository are one destination, and the operator's spelling stays presentation.
 
 **PR identity**:
 The destination repository plus the PR number; always distinct from the ticket identity.
