@@ -39,10 +39,10 @@ import {
 
 /**
  * `msf status`: derivation on demand through the port (it works with the
- * factory stopped — the tracker is the truth) plus the local registry scan
- *  and the read-only Docker probe (ADR 0002). The
- * registry knows what was written to disk; only Docker knows what is alive
- * now, so the two together say Running (a live worker carries the work) or
+ * factory stopped — the tracker is the truth) plus the local registry scan and
+ * the read-only Docker probe (ADR 0002). The registry knows what was written
+ * to disk; only Docker knows what is alive now, so the two together say
+ * Running (a live worker carries the work) or
  * Orphaned (no outcome record, no live worker). A work whose outcome is
  * already written while its worker still runs appears in running AND in last
  * outcomes: the overlap is honest, never fused into a third state. Without

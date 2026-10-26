@@ -402,8 +402,7 @@ async function retroCommand(args: ReturnType<typeof parseCliArgs>): Promise<void
   // that owns the round in flight, so the exclusivity holds across processes —
   // including a `msf run` that is sweeping right now, which is exactly when the
   // operator forces a round. A record left by a dead owner is cleared here, so
-  // a
-  // crash never blocks the lane.
+  // a crash never blocks the lane.
   const running = await liveRoundInFlight(workspace);
   if (running !== null) throw new RetroBusyError(running.round);
 
