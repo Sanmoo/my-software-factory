@@ -105,7 +105,8 @@ export interface JiraCandidate extends JiraTicketFacts {
  *  presented as a candidate (spec #92 story 8; issue 129). */
 export interface AmbiguousJiraTicket extends JiraTicketFacts {
   ticket: TicketIdentity;
-  /** The destinations the conflicting readable selections name. */
+  /** The destinations the selections promise it to, sorted: the ticket is held
+   *  because more than one of them is a candidate for it. */
   destinations: RepositoryIdentity[];
 }
 
@@ -113,7 +114,7 @@ export interface AmbiguousJiraTicket extends JiraTicketFacts {
  *  the candidates, while this says whether each selection contributed. */
 export type JiraSelectionView =
   | { selection: TicketSelection; state: "known"; selected: number; held: number }
-  | { selection: TicketSelection; state: "unknown"; reason: string };
+  | { selection: TicketSelection; state: "unreadable"; reason: string };
 
 /** One Jira site's candidates: ONE native Rank order across all its selections,
  *  never one queue per destination or per declared repository (issue 129). */
@@ -129,7 +130,7 @@ interface JiraSiteBase {
 
 export type JiraSiteView =
   | (JiraSiteBase & { state: "known" })
-  | (JiraSiteBase & { state: "unknown"; reason: string });
+  | (JiraSiteBase & { state: "unreadable"; reason: string });
 
 /** One configured Jira selection and the read-only adapter that reads it.
  *  Every selection of one site must carry the same tracker instance: one
@@ -327,14 +328,14 @@ function emptyTrackerState(): TrackerState {
 
 type SelectionRead =
   | { reader: JiraSelectionReader; state: "known"; tickets: OpenTicket[] }
-  | { reader: JiraSelectionReader; state: "unknown"; reason: string };
+  | { reader: JiraSelectionReader; state: "unreadable"; reason: string };
 
 type KnownSelectionRead = Extract<SelectionRead, { state: "known" }>;
-type UnknownSelectionRead = Extract<SelectionRead, { state: "unknown" }>;
+type UnreadableSelectionRead = Extract<SelectionRead, { state: "unreadable" }>;
 export type KnownJiraSiteView = Extract<JiraSiteView, { state: "known" }>;
 
 const isKnownRead = (entry: SelectionRead): entry is KnownSelectionRead => entry.state === "known";
-const isUnknownRead = (entry: SelectionRead): entry is UnknownSelectionRead => entry.state === "unknown";
+const isUnreadableRead = (entry: SelectionRead): entry is UnreadableSelectionRead => entry.state === "unreadable";
 
 /**
  * Every configured Jira site, grouped by site and read as ONE ordered set
@@ -361,11 +362,11 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   const destinations = distinctDestinations(readers.map((reader) => reader.selection.destination));
   if (new Set(readers.map((reader) => reader.tickets)).size > 1) {
     const reason = "the site's selections do not share one tracker";
-    return unknownSite(
+    return unreadableSite(
       site,
       destinations,
       reason,
-      readers.map((reader) => ({ reader, state: "unknown", reason })),
+      readers.map((reader) => ({ reader, state: "unreadable", reason })),
     );
   }
 
@@ -374,16 +375,16 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       try {
         return { reader, state: "known", tickets: await reader.tickets.listOpenTickets(reader.selection) };
       } catch (error) {
-        return { reader, state: "unknown", reason: describeError(error) };
+        return { reader, state: "unreadable", reason: describeError(error) };
       }
     }),
   );
   const known = readings.filter(isKnownRead);
   if (known.length === 0) {
-    return unknownSite(site, destinations, unreadableReason(readings), readings);
+    return unreadableSite(site, destinations, unreadableReason(readings), readings);
   }
-  if (readings.some(isUnknownRead)) {
-    return unknownSite(
+  if (readings.some(isUnreadableRead)) {
+    return unreadableSite(
       site,
       destinations,
       "a selection on this site could not be read, so no candidate's destination is exclusive",
@@ -401,7 +402,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     try {
       ordered = await known[0]!.reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection));
     } catch (error) {
-      return unknownSite(site, destinations, describeError(error), readings);
+      return unreadableSite(site, destinations, describeError(error), readings);
     }
   }
 
@@ -412,7 +413,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     [...destinationsByTicket.keys()].every((key) => orderedKeys.has(key));
   if (!sameTickets) {
     // Routing and order came from different reads: no site order can be trusted.
-    return unknownSite(site, destinations, "the site's ordered result and its selections disagree", readings);
+    return unreadableSite(site, destinations, "the site's ordered result and its selections disagree", readings);
   }
 
   const candidates: JiraCandidate[] = [];
@@ -480,13 +481,13 @@ function ticketDestinations(
 /** What a site whose every selection failed reports: each failure in its own
  *  words, never a made-up one. */
 function unreadableReason(readings: readonly SelectionRead[]): string {
-  const reasons = readings.flatMap((entry) => (entry.state === "unknown" ? [entry.reason] : []));
+  const reasons = readings.flatMap((entry) => (entry.state === "unreadable" ? [entry.reason] : []));
   return reasons.join("; ") || "no selection could be read";
 }
 
 /** One site that has no reliable order: its reason and selection reads survive,
  *  but no candidate is offered from a guessed or concatenated order. */
-function unknownSite(
+function unreadableSite(
   site: string,
   destinations: RepositoryIdentity[],
   reason: string,
@@ -495,7 +496,7 @@ function unknownSite(
   return {
     site,
     destinations,
-    state: "unknown",
+    state: "unreadable",
     reason,
     selections: readings.map((entry) => selectionViewOf(entry)),
     candidates: [],
@@ -504,10 +505,10 @@ function unknownSite(
 }
 
 /** One selection's report line: how many distinct tickets it selected, and how
- *  many of those are held as ambiguous. An unknown read keeps its reason. */
+ *  many of those are held as ambiguous. A read that failed keeps its reason. */
 function selectionViewOf(reading: SelectionRead, heldKeys: ReadonlySet<string> = new Set()): JiraSelectionView {
-  if (reading.state === "unknown") {
-    return { selection: reading.reader.selection, state: "unknown", reason: reading.reason };
+  if (reading.state === "unreadable") {
+    return { selection: reading.reader.selection, state: "unreadable", reason: reading.reason };
   }
   const keys = new Set(reading.tickets.map((ticket) => ticketIdentityKey(ticket.ticket)));
   return {

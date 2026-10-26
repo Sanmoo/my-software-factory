@@ -275,21 +275,18 @@ export class JiraTicketAdapter implements SiteTicketTracker {
     return jql;
   }
 
-  /** An unordered or re-ordered query is a configuration error, never a result
-   *  silently sorted by something other than the site's Rank. */
+  /** The one native Rank read. An unordered or re-ordered query is a
+   *  configuration error, never a result silently sorted by something other
+   *  than the site's Rank. */
   private async readRankOrdered(ordering: RankOrdering): Promise<OpenTicket[]> {
     if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
-    return this.readOrdered(ordering.jql);
-  }
-
-  private async readOrdered(jql: string): Promise<OpenTicket[]> {
     await this.actingAccount();
     const tickets: OpenTicket[] = [];
     const seenTokens = new Set<string>();
     let pageToken: string | undefined;
     for (;;) {
       const body: Record<string, unknown> = {
-        jql,
+        jql: ordering.jql,
         fields: LIST_FIELDS,
         maxResults: PAGE_SIZE,
         ...(pageToken === undefined ? {} : { nextPageToken: pageToken }),

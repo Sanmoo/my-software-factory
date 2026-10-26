@@ -1241,7 +1241,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
 
     const [alpha, beta] = view.jira;
-    if (alpha?.state !== "known" || beta?.state !== "unknown") assert.fail("one site reads, the other does not");
+    if (alpha?.state !== "known" || beta?.state !== "unreadable") assert.fail("one site reads, the other does not");
     assert.equal(alpha.site, "acme.atlassian.net");
     assert.deepEqual(
       alpha.candidates.map((candidate) => renderWorkIdentity(candidate.work)),
@@ -1451,18 +1451,18 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       NO_WORKERS,
     );
     const [site] = view.jira;
-    if (site?.state !== "unknown") assert.fail("the unreadable sibling leaves the site's routing unknown");
+    if (site?.state !== "unreadable") assert.fail("the unreadable sibling leaves the site's routing unreadable");
     assert.match(site.reason, /no candidate's destination is exclusive/);
     assert.deepEqual(site.candidates, [], "a readable selection alone cannot prove the ticket's destination");
     assert.deepEqual(
       site.selections.map((entry) => entry.state),
-      ["known", "unknown"],
+      ["known", "unreadable"],
       "the readable selection is not mistaken for the whole site",
     );
     const text = renderStatus(view);
 
-    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: unknown \(/);
-    assert.match(text, /selection \(project = XYZ\) → Sanmoo\/a: unknown \(/);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: unreadable \(/);
+    assert.match(text, /selection \(project = XYZ\) → Sanmoo\/a: unreadable \(/);
     assert.doesNotMatch(text, /^    \d+\. ABC-1 /m, "no candidate is offered while a destination is unknown");
   });
 
@@ -1486,7 +1486,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
 
     const [site] = view.jira;
-    if (site?.state !== "unknown") assert.fail("the site's identity is not one tracker");
+    if (site?.state !== "unreadable") assert.fail("the site's identity is not one tracker");
     assert.match(site.reason, /do not share one tracker/);
     assert.deepEqual(left.requests, [], "no selection read ran through a guessed adapter");
     assert.deepEqual(right.requests, [], "no selection read ran through a guessed adapter");
@@ -1533,7 +1533,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
 
     const [site] = view.jira;
-    if (site?.state !== "unknown") assert.fail("without the ordered union, the site is unknown");
+    if (site?.state !== "unreadable") assert.fail("without the ordered union, the site is unreadable");
     assert.deepEqual(site.candidates, [], "independent selection queues are never offered as the site order");
     assert.deepEqual(site.ambiguous, []);
     assert.match(site.reason, /could not read Jira site/);
@@ -1544,7 +1544,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       "the individual selections were readable; only the order is unknown",
     );
     const text = renderStatus(view);
-    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: unknown \(/);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/backend, Sanmoo\/frontend: unreadable \(/);
     assert.doesNotMatch(text, /^    \d+\. ABC-/m, "no candidate line is invented from a concatenated order");
   });
 
@@ -1700,7 +1700,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     );
 
     const [site] = view.jira;
-    if (site?.state !== "unknown") assert.fail("the disagreement leaves the site's order unknown");
+    if (site?.state !== "unreadable") assert.fail("the disagreement leaves the site's order unreadable");
     assert.match(site.reason, /ordered result and its selections disagree/);
     assert.deepEqual(site.candidates, [], "no candidate is offered from reads that disagree");
     assert.deepEqual(site.ambiguous, []);

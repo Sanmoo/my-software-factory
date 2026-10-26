@@ -221,8 +221,8 @@ function renderJiraSites(sites: readonly JiraSiteView[], cap: number): string[] 
   for (const site of sites) {
     const destinations = site.destinations.map(renderRepositoryIdentity).join(", ");
     const heading = `  ${site.site} (${plural(site.selections.length, "selection")}) → ${destinations}: `;
-    if (site.state === "unknown") {
-      lines.push(`${heading}unknown (${site.reason})`);
+    if (site.state === "unreadable") {
+      lines.push(`${heading}unreadable (${site.reason})`);
       renderSelections(lines, site.selections);
       continue;
     }
@@ -266,8 +266,8 @@ function renderSelections(lines: string[], selections: readonly JiraSelectionVie
   for (const view of selections) {
     const destination = renderRepositoryIdentity(view.selection.destination);
     const query = view.selection.jql ?? "no JQL";
-    if (view.state === "unknown") {
-      lines.push(`    selection (${query}) → ${destination}: unknown (${view.reason})`);
+    if (view.state === "unreadable") {
+      lines.push(`    selection (${query}) → ${destination}: unreadable (${view.reason})`);
       continue;
     }
     const held = view.held === 0 ? "" : `, ${view.held} held as ambiguous`;

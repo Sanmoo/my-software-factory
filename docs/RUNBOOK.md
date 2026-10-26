@@ -278,7 +278,7 @@ container and a **duplicate workers** line — the decision is yours.
 **Jira candidates** are read-only and grouped per site; the selection semantics
 that produce each site's order are in the README. Every candidate names its
 site and explicit destination. A site with a selection that cannot be read
-reads `unknown` with the reason instead of an empty list or a guessed
+reads `unreadable` with the reason instead of an empty list or a guessed
 destination; none of that site's candidates is offered until every selection
 can be read. A ticket several selections promise to the **same** destination
 is listed once; a ticket more than one selection promises to a **different**

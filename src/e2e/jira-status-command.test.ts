@@ -19,7 +19,7 @@ import {
  * through a canned Jira REST channel (fetch preload), with an isolated HOME and
  * no ambient credential. Status presents ONE site's candidates in native Rank
  * order across destinations and pages, without claiming anything; a selection
- * without its local credential is unknown while other sites still list; `run`
+ * without its local credential is unreadable while other sites still list; `run`
  * refuses a Jira configuration before any claim, launch or workspace write.
  */
 
@@ -175,7 +175,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
       result.stdout.indexOf("1. ABC-1") < result.stdout.indexOf("2. ABC-2"),
       "the returned Rank order is presented as-is, never re-sorted by creation age",
     );
-    assert.match(result.stdout, new RegExp(`${BETA} \\(1 selection\\) → ${REPO}: unknown`));
+    assert.match(result.stdout, new RegExp(`${BETA} \\(1 selection\\) → ${REPO}: unreadable`));
     assert.match(result.stdout, /MSF_JIRA_BETA_TOKEN/, "the missing credential is diagnosed by its variable name");
     assert.match(result.stdout, /pool \(eligible\): none/, "a Jira candidate is never offered as an eligible Work");
 
