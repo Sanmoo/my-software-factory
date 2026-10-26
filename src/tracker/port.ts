@@ -230,16 +230,26 @@ export interface TrackerPort {
    *  any other failure propagates. */
   claim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work re-enters the pool) or remove only the padlock when no ready label is given. Mirrored order: the pool label comes back first, the padlock leaves last. */
+  /** 5. Release: swap claimed→ready back (the ruler's 1st fall — the work
+   *  re-enters the pool) or remove only the padlock when no ready label is
+   *  given. Mirrored order: the pool label comes back first, the padlock leaves
+   *  last. */
   releaseClaim(ref: IssueRef, account: string, readyLabel?: string): Promise<WriteOutcome>;
 
-  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall — the claim is held until the terminal state, so the assignee stays. The blocked label lands first, the padlock leaves last. The 3-label vocabulary travels as ONE `Labels` object (config.labels), never as loose strings. */
+  /** 5b. Block: swap claimed→blocked on the 2nd consecutive fall — the claim is
+   *  held until the terminal state, so the assignee stays. The blocked label
+   *  lands first, the padlock leaves last. The 3-label vocabulary travels as
+   *  ONE `Labels` object (config.labels), never as loose strings. */
   blockClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the issue after the marker). The padlock returns first, the blocked mark leaves last. Same bundled `Labels`. */
+  /** 5c. Resume: swap blocked→claimed on the retomada (a human answered the
+   *  issue after the marker). The padlock returns first, the blocked mark
+   *  leaves last. Same bundled `Labels`. */
   resumeClaim(ref: IssueRef, labels: Labels): Promise<WriteOutcome>;
 
-  /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the same branch and reopens the SAME PR, never a new one. Tolerated when no PR exists. */
+  /** 5d. Reopen the issue's closed PR — the rejection's retomada pushes the
+   *  same branch and reopens the SAME PR, never a new one. Tolerated when no PR
+   *  exists. */
   reopenPr(ref: IssueRef): Promise<WriteOutcome>;
 
   /** 6. Done: close the issue as completed. */

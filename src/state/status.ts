@@ -90,8 +90,7 @@ export interface JiraTicketFacts {
 }
 
 /** One Jira candidate: the Work the ticket names, its title and its assignee(s).
- * A candidate is NOT a reservation: nothing is claimed, commented or launched.
- * */
+ *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
 export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
 }
@@ -165,9 +164,9 @@ export type KnownJiraSelectionView = Extract<JiraSelectionView, { state: "known"
 export interface RetroStatus {
   /** The file name of the last report written; null before any. */
   lastReport: string | null;
-  /** The finish time (epoch ms) of the newest work a window report covered; null
-   * until a round covers a window — a single-work post-mortem never moves it.
-   * */
+  /** The finish time (epoch ms) of the newest work a window report covered;
+   *  null until a round covers a window — a single-work post-mortem never moves
+   *  it. */
   boundaryAt: number | null;
   /** Items the last report filed as needs-triage. */
   filed: number;
@@ -191,7 +190,7 @@ export interface StatusView {
   /** Running and Orphaned, or unknown when Docker could not answer. */
   liveness: Liveness;
   /** The state of every reserved Work, as the module the engine acts on reads
-   *  it  — the renderer names no state of its own. */
+   *  it — the renderer names no state of its own. */
   reserved: ReservedWorkState[];
   /** Reserved dirs the state cannot be asked about: their registry key names no
    *  Work it may read (a Jira dir keeps its readable ticket key in the

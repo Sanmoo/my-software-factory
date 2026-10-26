@@ -35,7 +35,8 @@ export const DEFAULT_CONCURRENCY = 2;
 export const DEFAULT_WORKSPACE = "~/.local/share/msf";
 export const DEFAULT_NOTIFICATIONS = true;
 
-/** The "a/b" shape a model id ("provider/model-id") and a GitHub repo ("owner/name") share. */
+/** The "a/b" shape a model id ("provider/model-id") and a GitHub repo
+ *  ("owner/name") share. */
 const SLASH_PAIR = /^[^/\s]+\/[^/\s]+$/;
 export const DEFAULT_LABELS: Labels = {
   ready: "ready-for-agent",
@@ -110,15 +111,18 @@ export const DEFAULT_LIVENESS_POLICY: LivenessPolicy = {
  * to the repo concerned, never to a configured destination.
  */
 export interface RetroConfig {
-  /** The job's switch: when false no round ever starts — automatic or `msf retro`. */
+  /** The job's switch: when false no round ever starts — automatic or
+   *  `msf retro`. */
   enabled: boolean;
   /** Archived works since the last report that trigger a round. */
   threshold: number;
   /** Retrospective model; null inherits the worker model. */
   model: string | null;
-  /** The round's language (report and filed issues), BCP 47-ish tag; English by default. */
+  /** The round's language (report and filed issues), BCP 47-ish tag; English by
+   *  default. */
   language: string;
-  /** The "owner/name" destination for factory-axis items; required when enabled. */
+  /** The "owner/name" destination for factory-axis items; required when
+   *  enabled. */
   factoryItemsDestination: string | null;
 }
 

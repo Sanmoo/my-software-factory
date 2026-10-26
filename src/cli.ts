@@ -67,7 +67,7 @@ export interface WiredSeams {
   /** Host-side notice delivery; default is the Linux desktop backend. */
   notifier?: Notifier;
   /** The liveness probe; default is the real read-only Docker probe over the
-   *  workspace  — tests pass a fake one, the binary has no flag. */
+   *  workspace — tests pass a fake one, the binary has no flag. */
   probe?: LivenessProbe;
 }
 
@@ -174,8 +174,7 @@ function assertNoJiraExecution(config: Config): void {
 }
 
 /** The read-only Jira selections of `msf status`: one adapter per site (so the
- * Acting account is identified once) and one reader per configured selection.
- * */
+ *  Acting account is identified once) and one reader per configured selection. */
 function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   const adapters = new Map<string, JiraTicketAdapter>();
   const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {

@@ -1437,7 +1437,7 @@ describe("e2e: a repair attempt that fell before publishing", () => {
     assert.equal(cycle.usedRounds, 0, "its round stays returned: it did not publish");
   });
 
-  test("a legacy record of a ghost round no longer blocks the work on the next sweep", async () => {
+  test("a legacy record of a ghost round does not block the work on the next sweep", async () => {
     const { tracker, runtime, git, deps } = makeFactory();
     const pr = await seedFirstAttempt(tracker, runtime, deps, 128);
     // A legacy reparo.json: two ghost rounds and the last one recorded as

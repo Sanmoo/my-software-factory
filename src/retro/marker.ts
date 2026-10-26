@@ -23,7 +23,11 @@ export interface RetroState {
   boundaryAt: number | null;
   /** Works a forced single-work round analyzed without moving the boundary. */
   analyzed: string[];
-  /** Items filed by the last round — `status` names the triage queue's growth. */
+  /** Works the last full window covered: the tie-break at the boundary
+   *  instant. */
+  covered: string[];
+  /** Items filed by the last round — `status` names the triage queue's
+   *  growth. */
   lastFiled: number;
 }
 
@@ -31,6 +35,7 @@ export const EMPTY_RETRO_STATE: RetroState = {
   lastReport: null,
   boundaryAt: null,
   analyzed: [],
+  covered: [],
   lastFiled: 0,
 };
 
@@ -40,7 +45,8 @@ export interface RetroInFlight {
   startedAt: number;
   window: string[];
   manual: boolean;
-  /** The process that owns the round: the lane's exclusivity is its liveness. */
+  /** The process that owns the round: the lane's exclusivity is its
+   *  liveness. */
   pid: number;
 }
 
@@ -57,14 +63,14 @@ export async function readRetroState(layout: WorkspaceLayout): Promise<RetroStat
     const record = parsed as Record<string, unknown>;
     const lastReport = typeof record["lastReport"] === "string" ? record["lastReport"] : null;
     const boundaryAt = typeof record["boundaryAt"] === "number" ? record["boundaryAt"] : null;
-    const analyzed = Array.isArray(record["analyzed"])
-      ? record["analyzed"].filter((entry): entry is string => typeof entry === "string")
-      : [];
+    const analyzed = stringList(record["analyzed"]);
+    const covered = stringList(record["covered"]);
     const lastFiled = typeof record["lastFiled"] === "number" ? record["lastFiled"] : 0;
     return {
       lastReport,
       boundaryAt,
       analyzed,
+      covered,
       lastFiled: Math.max(0, Math.floor(lastFiled)),
     };
   } catch {
@@ -86,6 +92,10 @@ async function latestReport(layout: WorkspaceLayout): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 export async function writeRetroState(layout: WorkspaceLayout, state: RetroState): Promise<void> {

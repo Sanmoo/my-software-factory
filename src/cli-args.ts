@@ -9,9 +9,11 @@ export interface CliArgs {
   all: boolean;
   configPath?: string;
   runtime?: string;
-  /** `msf retro <work>`: the registry key (as `msf status` shows it) to analyze alone. */
+  /** `msf retro <work>`: the registry key (as `msf status` shows it) to analyze
+   *  alone. */
   work?: string;
-  /** `msf retro --language <tag>`: overrides `retro.language` for this round. */
+  /** `msf retro --language <tag>`: overrides `retro.language` for this
+   *  round. */
   language?: string;
 }
 

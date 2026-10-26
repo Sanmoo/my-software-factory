@@ -19,7 +19,7 @@ import type { RetroRequest, SessionResult, WorkRequest, WorkerRuntime } from "./
  *
  * Scripted outcomes, per launch, in order (the last repeats once exhausted):
  * pr-open — writes the record (class pr-open) and opens a PR via the tracker
- *   clean-without-pr    — writes the record (class clean-without-pr), no PR
+ *   clean-without-pr — writes the record (class clean-without-pr), no PR
  *   blocked-self-report — writes the record (class blocked-self-report), no PR
  * abrupt-death — writes nothing: the absence of the record is the class
  *
@@ -53,7 +53,8 @@ export interface RetroScript {
   report?: boolean;
   /** The items the round filed, by destination. */
   filed?: Array<{ repo: string; number: number; title?: string }>;
-  /** The candidates the round discarded, with the reason recorded in the report. */
+  /** The candidates the round discarded, with the reason recorded in the
+   *  report. */
   discarded?: Array<{ title: string; reason: string }>;
 }
 
@@ -105,7 +106,8 @@ export function launchOf(
 
 export class FakeWorkerRuntime implements WorkerRuntime {
   readonly launched: WorkRequest[] = [];
-  /** Every retrospective launch, in order — the retro launch shape as recorded. */
+  /** Every retrospective launch, in order — the retro launch shape as
+   *  recorded. */
   readonly retroLaunched: RetroRequest[] = [];
   /** The works a cooperative stop was requested for, in order. */
   readonly stopRequests: string[] = [];

@@ -2,7 +2,7 @@ import type { JiraTransport } from "./jira-adapter.js";
 
 /**
  * An in-memory Jira Cloud that speaks the REST dialect the real adapter uses
- * over HTTP  — the process-boundary double of the adapter's
+ * over HTTP — the process-boundary double of the adapter's
  * contract: `/rest/api/3/myself`, the token-paginated `/rest/api/3/search/jql`
  * and a single-issue read.
  *

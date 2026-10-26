@@ -32,7 +32,7 @@ export interface RecoveryEvent {
  * What ended the last attempt, as the factory settled it: an interruption
  * (absorbed by this budget), a failure (a written failure/abandon outcome,
  * which consumes the attempt and enters the fall ruler), or the operator's
- * requested stop  — a lifecycle condition that spends nothing and
+ * requested stop — a lifecycle condition that spends nothing and
  * resumes the same attempt. `stop-unconfirmed` means the requested stop could
  * not be confirmed: the next invocation must not relaunch the work until the
  * previous worker is known to be gone.

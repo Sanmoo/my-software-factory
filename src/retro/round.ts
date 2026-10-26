@@ -57,7 +57,8 @@ export interface RetroPlan {
   round: string;
   manual: boolean;
   works: FinishedWork[];
-  /** The newest finish time seen at planning — the boundary a full report advances. */
+  /** The newest finish time seen at planning — the boundary a full report
+   *  advances. */
   observedThrough: number | null;
   /** A forced single-work round never moves the boundary. */
   singleWork: boolean;
@@ -201,7 +202,12 @@ function plannedRound(
 }
 
 function isUnseen(work: FinishedWork, state: RetroState): boolean {
-  return state.boundaryAt === null || work.completedAt > state.boundaryAt;
+  if (state.boundaryAt === null) return true;
+  if (work.completedAt > state.boundaryAt) return true;
+  // The same instant as the boundary: the keys the window covered decide, so a
+  // work that finished in the boundary millisecond outside the window is not
+  // lost.
+  return work.completedAt === state.boundaryAt && !state.covered.includes(work.key);
 }
 
 /**
@@ -299,7 +305,8 @@ export async function runRetroRound(deps: RetroDeps, plan: RetroPlan): Promise<R
   }
 }
 
-/** Read the artifacts back: the report moves the marker, the result record says what was filed. */
+/** Read the artifacts back: the report moves the marker, the result record says
+ *  what was filed. */
 async function settleRound(
   deps: RetroDeps,
   plan: RetroPlan,
@@ -348,8 +355,11 @@ function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): R
     lastReport: reportName,
     boundaryAt,
     // Everything at or before the boundary is covered by reports; only works
-    // after it can ever enter a later window.
+    // after it can ever enter a later window. The window's own keys break a tie
+    // at the boundary instant, so two works finishing in the same millisecond
+    // are never dropped.
     analyzed: [],
+    covered: plan.works.map((work) => work.key),
     lastFiled: filedCount,
   };
 }

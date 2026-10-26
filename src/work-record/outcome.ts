@@ -11,7 +11,7 @@ import { writeAtomic } from "./fs.js";
  * same shape through this module, so one schema serves both sides.
  */
 
-/** Disk name is a taken decision  and stays in PT-BR. */
+/** Disk name is a taken decision and stays in PT-BR. */
 export const DESFECHO_FILENAME = "desfecho.json";
 
 /** The class field of the outcome record. */

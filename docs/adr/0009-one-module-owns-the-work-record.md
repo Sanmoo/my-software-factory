@@ -28,8 +28,8 @@ reads the artifacts read-only) and ADR 0005 (the recovery resumes the attempt's
 own session from its recorded association) already argue for a single owner;
 neither is reopened.
 
-Contract : the compatibility re-exports were deleted. Every record
-part is imported from `src/work-record/`; the container guardrail reaches
+Contract: there are no compatibility re-exports. Every record part is
+imported from `src/work-record/`; the container guardrail reaches
 `work-record/continuity.ts` directly, through the import closure the image
 staging and the launch preflight compute.
 

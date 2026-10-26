@@ -367,7 +367,7 @@ export class OperatorStop {
   /**
    * Every worker this stop is answerable for, with the attempt
    * already known when the caller has it: the launches this run carried, the
-   * survivors it recognised  — which it knows were alive even when
+   * survivors it recognised — which it knows were alive even when
    * the probe stops answering — and whatever a live container names right now.
    * An unreadable probe cannot LOSE a known worker, it only fails to add one.
    */
