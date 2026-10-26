@@ -1389,6 +1389,47 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.doesNotMatch(text, /^\s+\d+\. ABC-3 \(jira:[^)]*\) → /m, "the ambiguous ticket is never offered as a candidate");
   });
 
+  test("one site's Rank spans two Jira projects, so neither project's queue is concatenated", async () => {
+    const sim = new JiraSim();
+    // The site's Rank interleaves the two projects: concatenating them, in
+    // either declaration order, could never produce this sequence.
+    sim.addIssue({ id: "20001", key: "DEF-1", summary: "Platform first", labels: ["platform"] });
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Product first", labels: ["product"], created: "2026-02-01T00:00:00.000+0000" });
+    sim.addIssue({ id: "20002", key: "DEF-2", summary: "Platform second", labels: ["platform"], created: "2026-03-01T00:00:00.000+0000" });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Product second", labels: ["product"], created: "2026-04-01T00:00:00.000+0000" });
+    sim.select = selectBy({
+      "project = ABC": (issue) => issue.key.startsWith("ABC-"),
+      "project = DEF": (issue) => issue.key.startsWith("DEF-"),
+    });
+    const adapter = jiraAdapter(sim);
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/product"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "project = DEF", "Sanmoo/platform"), tickets: adapter },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    if (site?.state !== "known") assert.fail("the site is readable");
+    assert.deepEqual(
+      site.candidates.map((candidate) => `${candidate.work.ticket.key} -> ${candidate.work.destination.repo}`),
+      [
+        "DEF-1 -> Sanmoo/platform",
+        "ABC-1 -> Sanmoo/product",
+        "DEF-2 -> Sanmoo/platform",
+        "ABC-2 -> Sanmoo/product",
+      ],
+      "the site's Rank orders the two projects together; each keeps its own explicit destination",
+    );
+  });
+
   test("a site whose only tickets are held says so instead of 'none'", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One ticket, two selections", labels: ["a", "b"] });

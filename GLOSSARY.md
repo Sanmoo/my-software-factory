@@ -109,7 +109,7 @@ The Work state of waiting for the human with nothing to decide: an open PR the h
 _Avoid_: idle, the name this state carried before [ADR 0010](docs/adr/0010-one-module-owns-the-work-state.md), which read as the factory being idle.
 
 **Unreadable**:
-The Work state of a Work whose ticket could not be read. The factory acts on nothing and never calls the issue "not found": a failed read is not a verdict.
+The Work state of a Work whose ticket could not be read. The same word names any read the factory reports as failed: a Jira site whose selections could not be read reads `unreadable` too. The factory acts on nothing and never calls the issue "not found": a failed read is not a verdict.
 _Avoid_: unknown (it named this and not-planned at once), and "not found", which the factory cannot know.
 
 **Not-planned**:
