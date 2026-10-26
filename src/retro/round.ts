@@ -351,15 +351,19 @@ function advanceState(state: RetroState, plan: RetroPlan, filedCount: number): R
       : state.boundaryAt === null
         ? plan.observedThrough
         : Math.max(state.boundaryAt, plan.observedThrough);
+  // The keys at the boundary instant, carried across rounds that share it: a
+  // work finishing in the same millisecond but outside the window is analyzed
+  // next, and one already analyzed is never analyzed again when the window
+  // moves on.
+  const atBoundary = plan.works.filter((work) => work.completedAt === boundaryAt).map((work) => work.key);
+  const carried = boundaryAt !== null && state.boundaryAt === boundaryAt ? state.covered : [];
   return {
     lastReport: reportName,
     boundaryAt,
     // Everything at or before the boundary is covered by reports; only works
-    // after it can ever enter a later window. The window's own keys break a tie
-    // at the boundary instant, so two works finishing in the same millisecond
-    // are never dropped.
+    // after it can ever enter a later window.
     analyzed: [],
-    covered: plan.works.map((work) => work.key),
+    covered: [...new Set([...carried, ...atBoundary])].sort(),
     lastFiled: filedCount,
   };
 }

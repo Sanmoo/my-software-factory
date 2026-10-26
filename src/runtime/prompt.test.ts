@@ -4,9 +4,9 @@ import { test, describe } from "node:test";
 import { AGENT_MARKER } from "../tracker/port.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../work-record/outcome.js";
-import { buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
+import { buildRetroPrompt, buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
 import type { LoadedAgentResources } from "./inventory.js";
-import type { WorkRequest } from "./port.js";
+import type { RetroRequest, WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
 
 /**
@@ -716,5 +716,49 @@ describe("worker prompt — the ticket source and the code destination are separ
 
     assert.match(prompt, /`Closes #42`/);
     assert.match(prompt, /gh issue edit 42 --repo Sanmoo\/my-tasks --add-label agent-blocked/);
+  });
+});
+
+describe("retro prompt — the window, the one language and the two artifacts", () => {
+  const request: RetroRequest = {
+    round: "2026-03-01T00-00-00-000Z",
+    model: "anthropic/claude-opus-4.5",
+    language: "pt-BR",
+    account: "bot-do-samuca",
+    factoryItemsDestination: "Sanmoo/my-software-factory",
+    works: [
+      {
+        key: "Sanmoo/my-tasks#7",
+        repo: "Sanmoo/my-tasks",
+        evidencePath: "/msf-arquivo/Sanmoo/my-tasks#7-2026-02-01",
+        archived: true,
+        outcome: "pr-open",
+        attempt: 2,
+        completedAt: "2026-02-01T12:00:00.000Z",
+      },
+    ],
+    reportPath: "/ws/retros/2026-03-01T00-00-00-000Z-retro.md",
+    resultPath: "/ws/retros/2026-03-01T00-00-00-000Z-resultado.json",
+    reportContainerPath: "/msf-retros/2026-03-01T00-00-00-000Z-retro.md",
+    resultContainerPath: "/msf-retros/2026-03-01T00-00-00-000Z-resultado.json",
+    summary: "Window: 1 finished work(s) from 1 repo(s) — pr-open 1.",
+    instructions: "THE INSTRUCTIONS",
+    instructionsVersion: "7",
+  };
+
+  test("the prompt names the round, the language, the account, the window and the artifact paths", () => {
+    const prompt = buildRetroPrompt(request);
+
+    assert.match(prompt, /Retrospective round 2026-03-01T00-00-00-000Z/);
+    assert.match(prompt, /version 7/);
+    assert.match(prompt, /language: pt-BR/);
+    assert.match(prompt, /bot-do-samuca/);
+    assert.ok(prompt.includes("Sanmoo/my-tasks#7"));
+    assert.ok(prompt.includes("/msf-arquivo/Sanmoo/my-tasks#7-2026-02-01"));
+    assert.ok(prompt.includes("/msf-retros/2026-03-01T00-00-00-000Z-retro.md"));
+    assert.ok(prompt.includes("/msf-retros/2026-03-01T00-00-00-000Z-resultado.json"));
+    assert.ok(prompt.includes("Sanmoo/my-software-factory"));
+    assert.ok(prompt.includes("THE INSTRUCTIONS"), "the factory-owned instructions ride the prompt");
+    assert.match(prompt, /MSF-RESULT/, "the completion signal is stated");
   });
 });

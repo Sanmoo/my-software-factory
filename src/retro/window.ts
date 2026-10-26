@@ -55,7 +55,7 @@ export interface FinishedWork {
 }
 
 /** The round id in the report's file name: an ISO instant, filename-safe and
- *  millisecond-precise, so two rounds can never overwrite each other's report. */
+ *  millisecond-precise, so two rounds never overwrite each other's report. */
 export function roundId(at: Date): string {
   return at.toISOString().replace(/[:.]/g, "-");
 }
@@ -199,7 +199,7 @@ export async function renderWindowSummary(
       `pr-open ${count("pr-open")}, clean-without-pr ${count("clean-without-pr")}, ` +
       `blocked-self-report ${count("blocked-self-report")}.`,
     `Operational facts: ${attempts} attempt(s) across the window; ${repairRounds} automatic repair round(s) ` +
-      `(${repairFalls} ended without publishing); ${recoveries} interruption recoveries; ` +
+      `(${repairFalls} consecutive fall(s) in the cycle); ${recoveries} interruption recoveries; ` +
       `${modelProviderRetries} model provider retries.`,
     await operationalLogFacts(layout, works),
   ].join("\n");

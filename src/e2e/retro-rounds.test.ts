@@ -321,6 +321,13 @@ describe("e2e: the retrospective round — threshold, marker, window and filing"
       uncovered.sort(),
       "the works outside the window share the boundary instant and are analyzed next, never skipped",
     );
+
+    await runOnce(deps);
+    assert.equal(
+      runtime.retroLaunched.length,
+      2,
+      "the works the first round covered are not analyzed again: the boundary keys carry across the shared instant",
+    );
   });
 
   test("a round that writes no report advances nothing — the same window is retried", async () => {

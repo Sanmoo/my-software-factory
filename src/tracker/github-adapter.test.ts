@@ -477,9 +477,8 @@ describe("the 9 operations over gh", () => {
 
   test("9a. readPrFeedback: another Work's PR that mentions the issue never steals the linkage", async () => {
     // The timeline lists every cross-referenced PR, in order. The work saw its
-    // own PR (164) and later another Work's PR (184), which mentioned the issue
-    // —
-    // the newest cross-reference answered for the wrong Work.
+    // own PR (164) and later another Work's PR (184), which mentioned the
+    // issue — the newest cross-reference answered for the wrong Work.
     const { adapter } = await makeAdapter((call) => {
       const path = call.args.find((a) => a.startsWith("repos/"));
       if (path?.includes("/timeline")) {

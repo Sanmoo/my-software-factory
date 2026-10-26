@@ -114,8 +114,7 @@ export interface JiraSelectionReader {
 }
 
 /**
- * The GitHub adapter: it serves BOTH ports — the ticket facts and the PR facts
- * —
+ * The GitHub adapter: it serves BOTH ports — the ticket facts and the PR facts —
  * through the one identity the factory verifies at boot. `msf status` reads the
  * Work state through it, so the reserved works are described in
  * the vocabulary the engine acts on, from the same facts.

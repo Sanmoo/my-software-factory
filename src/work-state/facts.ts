@@ -82,7 +82,7 @@ export interface WorkFacts {
  * launch never asks them.
  */
 export interface AttemptEndFacts extends WorkFacts {
-  /** Which attempt, if any, the persisted requested stop owns .
+  /** Which attempt, if any, the persisted requested stop owns.
    *  Read only: promoting an unconfirmed stop to a requested one is a write the
    *  loop owns, never something a reading does to answer a question. */
   stopClaim(attempt: number): Promise<OperatorStopClaim>;
