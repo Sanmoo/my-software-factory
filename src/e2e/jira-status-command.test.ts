@@ -149,10 +149,12 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only, issues 128-129)
     for (const call of calls) {
       assert.match(call, /^(GET \/rest\/api\/3\/myself|POST \/rest\/api\/3\/search\/jql)$/);
     }
+    // A site authenticates once, whatever it reads; here only ALPHA can, so the
+    // whole report makes one identity read.
     assert.equal(
       calls.filter((call) => call.startsWith("GET /rest/api/3/myself")).length,
       1,
-      "one identity read per site, once for the whole read",
+      "one identity read for the site that authenticated",
     );
   }
 
