@@ -285,7 +285,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     assert.deepEqual(notices, []);
   });
 
-  // ---- done-fallback: a merge that did not close the issue  ----
+  // ---- done-fallback: a merge that did not close the issue ----
 
   test("done-fallback — a PR merged mid-round: the issue is closed with the fallback comment, then archived", async () => {
     seedIssue(tracker, { repo: REPO, number: 2, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -306,7 +306,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     assert.deepEqual(notices, [], "a done notifies nobody");
   });
 
-  // ---- rejected: a PR closed without merge  ----
+  // ---- rejected: a PR closed without merge ----
 
   test("rejected — a PR closed without merge blocks with the PR pointed out and holds the claim", async () => {
     seedIssue(tracker, { repo: REPO, number: 3, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });
@@ -507,7 +507,7 @@ describe("collect — an attempt's end, and the verdict applied", () => {
     ]);
   });
 
-  // ---- the fall ruler: the 1st releases, the 2nd blocks  ----
+  // ---- the fall ruler: the 1st releases, the 2nd blocks ----
 
   test("fall, first — the claim goes back to the pool and the written failure is persisted", async () => {
     seedIssue(tracker, { repo: REPO, number: 11, createdAt: NOW, labels: [DEFAULT_LABELS.claimed] });

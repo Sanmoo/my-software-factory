@@ -98,7 +98,7 @@ function hasAttemptEvidence(workDir: string, logs: readonly number[]): boolean {
   return logs.length > 0 || existsSync(join(workDir, SESSIONS_SUBDIR));
 }
 
-// ---- the done archive  ----
+// ---- the done archive ----
 
 /** The work key of a registry dir name: "<repo>#<n>" — the repo keeps its slash. */
 export function parseWorkKey(name: string): { repo: string; number: number } | null {

@@ -288,6 +288,17 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     }
   });
 
+  test("a launch that owns no attempt leaves the continuity guardrail off; a worker keeps it", () => {
+    const worker = workerFlagArgs(RESOURCES).join(" ");
+    assert.ok(worker.includes("guardrail"), "a worker journals its external effects");
+
+    const round = workerFlagArgs(RESOURCES, { guardrail: false }).join(" ");
+    assert.ok(!round.includes("guardrail"), "the retrospective owns no attempt and no journal to protect");
+    for (const flag of ["--no-skills", "--no-extensions", "--no-approve"]) {
+      assert.ok(round.includes(flag), `the declared resources still ride the round: ${flag}`);
+    }
+  });
+
   test("discovery is off: no skills/extensions from the host or target project, no project trust", async () => {
     await runtime.launch(request);
 

@@ -242,7 +242,7 @@ async function hasNoOpenBlocker(tickets: TicketTracker, ticket: OpenTicket["tick
   return blockers.value.every((blocker) => blocker.state === "closed");
 }
 
-// ---- the reserved states — the tick's full derivation  ----
+// ---- the reserved states — the tick's full derivation ----
 // The repair trigger and the premise it reads have one owner (pool/repair-trigger.ts):
 // the Work state, the derivation and the launch's durable signature all ask it.
 

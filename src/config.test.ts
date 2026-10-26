@@ -185,7 +185,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the interruption-recovery budget  ----
+  // ---- the interruption-recovery budget ----
 
   test("the recovery budget defaults to 3 recoveries with waits of 1/4/16 s", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -245,7 +245,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the model provider failure budget  ----
+  // ---- the model provider failure budget ----
 
   test("the model provider budget defaults to 4 retries at 15/30/60/120 s — a dedicated outage backoff", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -308,7 +308,7 @@ describe("config", () => {
     }
   });
 
-  // ---- the liveness policy  ----
+  // ---- the liveness policy ----
 
   test("the unavailability warning defaults to 60 s of continuous Docker silence", () => {
     const path = writeYaml(dir, "worker-gh-account: bot\nworker-model: opencode-go/glm-5.3-flash\nrepos: [Sanmoo/a]\n");
@@ -377,7 +377,7 @@ describe("config", () => {
   });
 });
 
-// ---- Jira Cloud selections  ----
+// ---- Jira Cloud selections ----
 
 describe("config: Jira Cloud selections", () => {
   let dir: string;
