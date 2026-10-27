@@ -11,9 +11,17 @@ import type {
 } from "./expanded-port.js";
 import type { IssueComment, Known, WriteOutcome } from "./port.js";
 import { known, notKnown } from "./port.js";
-import { jiraTicket, type JiraTicketIdentity, type TicketIdentity, type TicketSource } from "./identity.js";
-import { renderAdf } from "./jira-adf.js";
+import {
+  jiraTicket,
+  workIdentityKey,
+  type JiraTicketIdentity,
+  type TicketIdentity,
+  type TicketSource,
+  type WorkIdentity,
+} from "./identity.js";
+import { renderAdf, textToAdf } from "./jira-adf.js";
 import { withNativeRankOrdering, withSiteRankOrdering, type RankedQuery } from "./jira-jql.js";
+import type { JiraPublicationKind } from "../work-record/jira-mediation.js";
 
 /**
  * The real Jira Cloud ticket adapter: reads over the REST API v3
@@ -22,11 +30,14 @@ import { withNativeRankOrdering, withSiteRankOrdering, type RankedQuery } from "
  * factory acts as; JQL's `currentUser()` means THAT account, never an
  * implicitly different human operator.
  *
- * This slice is READ-ONLY: listing (native, token-paginated Rank order), one
- * ticket's usable content, and its direct prerequisite links. Every mutation
- * (and the comment/rank read this slice does not own) is refused before any
- * HTTP write; `msf run` also refuses a Jira configuration before any claim, so
- * no launch path pretends the missing operations exist.
+ * This slice reads the selection (native, token-paginated Rank order), one
+ * ticket's usable content, its direct prerequisite links and its conversation,
+ * and publishes a factory comment through the mediated contract: every factory
+ * comment carries structured Jira comment-property evidence, so authorship
+ * never depends on the author's login. Every other mutation (and the rank read
+ * this slice does not own) is refused before any HTTP write; `msf run` also
+ * refuses a Jira configuration before any claim, so no launch path pretends the
+ * missing operations exist.
  *
  * The credential is never stored in config, logs or messages: the config names
  * a local environment variable (`token-env`) and the adapter reads its value
@@ -188,11 +199,56 @@ export class JiraUnknownLinkTypeError extends Error {
 export class UnsupportedJiraOperationError extends Error {
   constructor(site: string, operation: string) {
     super(
-      `Jira ${operation} is not implemented yet for site "${site}": ` +
-        `this release reads Jira candidates only and refuses the operation before anything is sent`,
+      `Jira ${operation} is not implemented for site "${site}" in this release; ` +
+        `it is refused before anything is sent`,
     );
     this.name = "UnsupportedJiraOperationError";
   }
+}
+
+/** Jira answered, and the comment was definitively NOT created. */
+export class JiraPublishRejectedError extends Error {
+  constructor(site: string, detail: string) {
+    super(`Jira site "${site}" refused the comment (${detail}); nothing was published`);
+    this.name = "JiraPublishRejectedError";
+  }
+}
+
+/** The write may or may not have landed: the caller reconciles by correlation,
+ *  never by assuming success or by retrying blindly. */
+export class JiraPublishUnknownError extends Error {
+  constructor(site: string, detail: string) {
+    super(
+      `Jira site "${site}" did not answer the comment unambiguously (${detail}); ` +
+        `the publication may or may not have landed`,
+    );
+    this.name = "JiraPublishUnknownError";
+  }
+}
+
+/** The Jira comment property carrying factory speech and its correlation. */
+export const FACTORY_COMMENT_PROPERTY = "msf.factory";
+
+/** The schema version of the evidence carried in that property: the writer and
+ *  the reader below agree on it, and an unreadable version is unknown evidence,
+ *  never absent evidence. */
+export const FACTORY_EVIDENCE_VERSION = 1;
+
+export interface FactoryCommentPublication {
+  kind: JiraPublicationKind;
+  /** Plain worker text; the adapter renders it as ADF. */
+  text: string;
+  /** The request id that makes a retry/reconciliation the same publication. */
+  correlationId: string;
+  work: WorkIdentity;
+  sessionId: string;
+  attempt: number;
+}
+
+/** What the factory published: the provider's id and an inspectable link. */
+export interface JiraPublishedComment {
+  commentId: string;
+  url: string;
 }
 
 const MYSELF_PATH = "/rest/api/3/myself";
@@ -406,7 +462,76 @@ export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker
     return known(selectPrerequisites(this.site, parseIssueLinks(this.site, json), links));
   }
 
-  // ---- the operations this read-only slice refuses ----
+  /**
+   * The ticket's conversation in usable text: each comment's ADF meaning
+   * rendered, with the factory's structured evidence (comment property) as
+   * `agentSpeech`/`agentCorrelation`. A human and the factory can share the
+   * acting account: the author login is not the signal.
+   *
+   * The properties are asked for explicitly (`expand=properties`): Jira exposes
+   * a comment's properties on the comment resource only when the read expands
+   * them, so an unexpanded read would turn the factory's own speech into a
+   * human comment — and a retried publication into a second copy.
+   */
+  async readTicketComments(ticket: TicketIdentity): Promise<Known<IssueComment[]>> {
+    const source = this.assertTicket(ticket);
+    await this.actingAccount();
+    const comments: IssueComment[] = [];
+    let startAt = 0;
+    for (;;) {
+      const json = await this.requestJsonOrNull(
+        "GET",
+        `${issuePath(source.stableId)}/comment?startAt=${startAt}&maxResults=${PAGE_SIZE}&expand=properties`,
+      );
+      if (json === null) return notKnown;
+      const page = parseCommentPage(this.site, json);
+      for (const comment of page.comments) comments.push(parseComment(this.site, comment));
+      // `total` is Jira's own statement of completeness: without it a page
+      // would read as the whole conversation, which is unknown, not empty.
+      if (startAt + page.comments.length >= page.total) return known(comments);
+      if (page.comments.length === 0) {
+        throw new JiraProtocolError(this.site, "a comment page before the total carried no comments");
+      }
+      startAt += page.comments.length;
+    }
+  }
+
+  /**
+   * Publish factory speech with the correlation the mediation contract gave
+   * it. The property, not the ADF body, is the recoverable evidence: a human
+   * comment by the same account carries no property and is never factory
+   * speech.
+   */
+  async publishFactoryComment(
+    ticket: TicketIdentity,
+    publication: FactoryCommentPublication,
+  ): Promise<JiraPublishedComment> {
+    const source = this.assertTicket(ticket);
+    await this.actingAccount();
+    const evidence = {
+      version: FACTORY_EVIDENCE_VERSION,
+      kind: publication.kind,
+      correlationId: publication.correlationId,
+      work: workIdentityKey(publication.work),
+      sessionId: publication.sessionId,
+      attempt: publication.attempt,
+    };
+    const json = await this.writeJson(`${issuePath(source.stableId)}/comment`, {
+      body: textToAdf(publication.text),
+      properties: [{ key: FACTORY_COMMENT_PROPERTY, value: evidence }],
+    });
+    if (!isRecord(json) || typeof json["id"] !== "string" || json["id"] === "") {
+      // A 2xx without the comment id cannot prove which comment landed: the
+      // caller reconciles by the correlation instead of reporting success.
+      throw new JiraPublishUnknownError(this.site, "the created comment carries no id");
+    }
+    return {
+      commentId: json["id"],
+      url: `${jiraBrowseUrl(this.site, source.key)}?focusedCommentId=${encodeURIComponent(json["id"])}`,
+    };
+  }
+
+  // ---- the operations this slice refuses ----
 
   /** GitHub's native blocked_by read: its open/closed vocabulary is not Jira's
    *  Done category, so this slice refuses it instead of answering with it. */
@@ -435,11 +560,9 @@ export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker
   }
 
   commentOnTicket(_ticket: TicketIdentity, _body: string): Promise<WriteOutcome> {
-    return this.refuse("comment");
-  }
-
-  readTicketComments(_ticket: TicketIdentity): Promise<Known<IssueComment[]>> {
-    return this.refuse("comment read");
+    // An unmediated comment would carry no factory evidence and no correlation
+    // to reconcile a retry: publications travel through the mediated contract.
+    return this.refuse("unmediated comment");
   }
 
   rankTicket(_ticket: TicketIdentity): Promise<Known<number | null>> {
@@ -490,6 +613,40 @@ export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker
       }
     }
     throw this.httpError(response);
+  }
+
+  /** A write: a failure is either a definite refusal or an ambiguity the
+   *  caller must reconcile — never a silent retry at this layer. */
+  private async writeJson(path: string, body: unknown): Promise<unknown> {
+    const token = this.requiredToken();
+    let response: JiraResponse;
+    try {
+      response = await this.send("POST", path, token, body);
+    } catch (error) {
+      if (error instanceof JiraReadError) {
+        throw new JiraPublishUnknownError(this.site, error.message);
+      }
+      throw error;
+    }
+    if (response.status >= 200 && response.status < 300) {
+      try {
+        return JSON.parse(response.text) as unknown;
+      } catch {
+        throw new JiraPublishUnknownError(this.site, "the response is not JSON");
+      }
+    }
+    const detail = jiraErrorDetail(response.text);
+    // The site may have applied the write before answering: these statuses do
+    // not prove absence, so the result is unknown, never a retry invitation.
+    if (response.status >= 500 || response.status === 408 || response.status === 429) {
+      throw new JiraPublishUnknownError(this.site, `HTTP ${response.status}${detail === "" ? "" : `: ${detail}`}`);
+    }
+    if (response.status === 401) throw new JiraAuthenticationError(this.site, detail);
+    if (response.status === 403) throw new JiraPermissionError(this.site, detail);
+    throw new JiraPublishRejectedError(
+      this.site,
+      `HTTP ${response.status}${detail === "" ? "" : `: ${detail}`}`,
+    );
   }
 
   private async send(
@@ -553,6 +710,91 @@ class JiraNotFoundError extends Error {
 }
 
 // ---- REST shapes the adapter reads ----
+
+interface ParsedCommentPage {
+  comments: unknown[];
+  total: number;
+}
+
+function parseCommentPage(site: string, body: unknown): ParsedCommentPage {
+  if (!isRecord(body) || !Array.isArray(body["comments"])) {
+    throw new JiraProtocolError(site, "the comment response carries no comments array");
+  }
+  const total = body["total"];
+  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) {
+    throw new JiraProtocolError(site, "the comment page carries no total");
+  }
+  return { comments: body["comments"] as unknown[], total };
+}
+
+/** One comment: ADF rendered as text, and the factory's structured evidence. */
+function parseComment(site: string, value: unknown): IssueComment {
+  if (!isRecord(value)) throw new JiraProtocolError(site, "a comment is not an object");
+  const id = value["id"];
+  const created = value["created"];
+  if (typeof id !== "string" || id === "") throw new JiraProtocolError(site, "a comment carries no id");
+  if (typeof created !== "string" || created === "") {
+    throw new JiraProtocolError(site, `comment ${id} carries no creation date`);
+  }
+  const evidence = factoryEvidence(value["properties"]);
+  return {
+    id,
+    author: commentAuthorName(value["author"]),
+    body: renderAdf(value["body"]),
+    createdAt: created,
+    // The provider's own fact: only a comment with NO factory property is human
+    // speech, even when the author is the acting account. A property we cannot
+    // read is still the factory's — reported as factory speech whose
+    // correlation is unknown, never silently handed back to the human.
+    agentSpeech: evidence.state !== "none",
+    ...(evidence.state === "factory" ? { agentCorrelation: evidence.correlationId } : {}),
+  };
+}
+
+function commentAuthorName(value: unknown): string {
+  if (!isRecord(value)) return "unknown";
+  for (const field of ["displayName", "emailAddress", "accountId"]) {
+    const candidate = value[field];
+    if (typeof candidate === "string" && candidate !== "") return candidate;
+  }
+  return "unknown";
+}
+
+/**
+ * The factory evidence a comment carries. Jira exposes comment properties as
+ * `[{key, value}]` (create shape); the reader accepts a keyed object too.
+ *
+ * `none` is the provider saying "no factory property": human speech. `factory`
+ * carries the correlation a retry is reconciled by. `unreadable` is a property
+ * that IS the factory's but whose value this version cannot read — evidence
+ * whose correlation is unknown, which is never the same thing as no evidence.
+ */
+function factoryEvidence(
+  properties: unknown,
+):
+  | { state: "none" }
+  | { state: "unreadable" }
+  | { state: "factory"; correlationId: string } {
+  let record: Record<string, unknown> | null = null;
+  let present = false;
+  if (Array.isArray(properties)) {
+    const entry = properties.find(
+      (candidate) => isRecord(candidate) && candidate["key"] === FACTORY_COMMENT_PROPERTY,
+    );
+    present = entry !== undefined;
+    if (isRecord(entry) && isRecord(entry["value"])) record = entry["value"];
+  } else if (isRecord(properties) && properties[FACTORY_COMMENT_PROPERTY] !== undefined) {
+    present = true;
+    const candidate = properties[FACTORY_COMMENT_PROPERTY];
+    if (isRecord(candidate)) record = candidate;
+  }
+  if (!present) return { state: "none" };
+  if (record === null) return { state: "unreadable" };
+  if (record["version"] !== FACTORY_EVIDENCE_VERSION) return { state: "unreadable" };
+  const correlationId = record["correlationId"];
+  if (typeof correlationId !== "string" || correlationId === "") return { state: "unreadable" };
+  return { state: "factory", correlationId };
+}
 
 function parseSearchPage(site: string, body: unknown): {
   issues: unknown[];

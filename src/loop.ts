@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { SessionResult, WorkerRuntime } from "./runtime/port.js";
+import type { JiraMediationComposition } from "./tracker/jira-mediation.js";
 import type { GitWork } from "./git/port.js";
 import { helpNotice, type Notifier } from "./notify/port.js";
 import { SESSIONS_SUBDIR, workDirOfKey, type WorkspaceLayout } from "./layout.js";
@@ -134,6 +135,11 @@ export interface LoopDeps {
   /** The backoff seam before a recovery relaunch: production waits
    *  on a real timer; a test injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
+  /** Factory-mediated Jira access: the composition opens a handler per Jira
+   *  launch, so a Jira Work has the interaction its worker needs. Supplying it
+   *  is what makes a Jira Work launchable; absent, the launch is refused
+   *  instead of starting a worker that could not reach its ticket. */
+  jiraMediation?: JiraMediationComposition;
 }
 
 export interface CollectedWork {
@@ -408,6 +414,7 @@ export class SweepEngine {
       workspace: deps.workspace,
       log: this.log,
       ...(deps.wait === undefined ? {} : { wait: deps.wait }),
+      ...(deps.jiraMediation === undefined ? {} : { jiraMediation: deps.jiraMediation }),
       cycle: this.launchCycle(),
     });
     // The signals are listened to from the START of the run: a

@@ -20,8 +20,11 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import {
+  IMAGE_ROOT,
+  JIRA_CLIENT_ENTRY_MODULE,
   RETRO_MOUNT_PATHS,
   SESSIONS_SUBDIR,
+  WORK_MOUNT_PATH,
   WORKSPACE_SUBPATHS,
   workspaceLayout,
 } from "../layout.js";
@@ -32,7 +35,7 @@ import { clearWorkerStop, requestWorkerStop } from "./stop-request.js";
 import { describeForeignRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
-import { buildRetroPrompt, buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
+import { buildRetroPrompt, buildWorkerPrompt, COMPLETION_SIGNAL } from "./prompt.js";
 import {
   AGENT_DIR,
   agentExtensionEntry,
@@ -57,9 +60,9 @@ import { ownOutcomeRecord } from "../work-record/outcome.js";
 import { openWorkRecord } from "../work-record/record.js";
 import {
   GUARDRAIL_ENTRY_MODULE,
-  GUARDRAIL_IMAGE_ROOT,
+  containerModules,
   guardrailContainerModules,
-} from "./guardrail/staging.js";
+} from "./image-staging.js";
 import {
   LaunchPreconditionError,
   type RetroRequest,
@@ -316,7 +319,7 @@ export function workerFlagArgs(
  *  `npm run build:image` (not a distributed package), and the staged tree
  *  mirrors `dist/` so the extension's relative imports resolve; the preflight
  *  refuses an image without it rather than running the session unguarded. */
-export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
+export const GUARDRAIL_CONTAINER_FILE = `${IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
 
 /** Every module the in-container guardrail loads, computed from the compiled
  *  extension's own relative imports: the image must carry all of
@@ -324,6 +327,37 @@ export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENT
  *  stale image is refused by the exact missing names and a dissolved
  *  compatibility re-export cannot be demanded as a dead file. */
 export const GUARDRAIL_CONTAINER_MODULES: readonly string[] = guardrailContainerModules();
+
+/** The compiled worker client of the mediated Jira interaction. A Jira Work
+ *  cannot read or answer its ticket without it, so the image must carry the
+ *  client's whole import closure — the same closure `npm run build:image`
+ *  stages. */
+export const JIRA_CLIENT_CONTAINER_MODULES: readonly string[] = containerModules(JIRA_CLIENT_ENTRY_MODULE);
+
+/** The factory-owned tools the image must carry, each with what its absence
+ *  would cost the round: the preflight checks them in one container and names
+ *  every missing module. */
+const IMAGE_REQUIREMENTS: ReadonlyArray<{
+  what: string;
+  modules: readonly string[];
+  consequence: string;
+}> = [
+  {
+    what: "continuity guardrail",
+    modules: GUARDRAIL_CONTAINER_MODULES,
+    consequence: "A resumed session could repeat an external effect",
+  },
+  {
+    what: "mediated Jira client",
+    modules: JIRA_CLIENT_CONTAINER_MODULES,
+    consequence: "A Jira session could not read or answer its ticket",
+  },
+];
+
+/** Every module the image must hold, checked in ONE throwaway container. */
+export const IMAGE_MODULES: readonly string[] = IMAGE_REQUIREMENTS.flatMap(
+  (requirement) => requirement.modules,
+);
 
 const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
@@ -665,8 +699,8 @@ export class SandcastleRuntime implements WorkerRuntime {
         env: {
           GH_TOKEN: this.token,
           DOCKER_HOST: `unix://${dockerSocket.hostPath}`,
-          MSF_WORK_MOUNT: WORK_MOUNT,
-          PI_SUBAGENTS_TEMP_ROOT: `${WORK_MOUNT}/delegations`,
+          MSF_WORK_MOUNT: WORK_MOUNT_PATH,
+          PI_SUBAGENTS_TEMP_ROOT: `${WORK_MOUNT_PATH}/delegations`,
         },
         // The socket's own group, as a supplementary gid: the container user
         // is the host user, not root, and the socket is root-owned 0660.
@@ -676,7 +710,7 @@ export class SandcastleRuntime implements WorkerRuntime {
           ...(agentFilesDir === undefined
             ? []
             : [{ hostPath: agentFilesDir, sandboxPath: AGENT_FILES_MOUNT_DIR, readonly: true }]),
-          { hostPath: request.workDir, sandboxPath: WORK_MOUNT, readonly: false },
+          { hostPath: request.workDir, sandboxPath: WORK_MOUNT_PATH, readonly: false },
           { hostPath: sessionsDir, sandboxPath: SESSIONS_CONTAINER_DIR, readonly: false },
           ...this.toolchainBinds(),
           // The daemon socket bind (ADR 0003), at the path the host has it:
@@ -1077,18 +1111,19 @@ export async function dockerAuthProbe(deps: {
 /** The guardrail modules the image does not carry, read in ONE throwaway
  *  container (no network, no artifact). An unreadable answer counts every
  *  module as missing: the preflight refuses, it never assumes presence. */
-async function missingGuardrailModules(
+async function missingImageModules(
+  modules: readonly string[],
   image: string,
   run: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>,
 ): Promise<string[]> {
-  const script = GUARDRAIL_CONTAINER_MODULES.map((path) => `test -f ${path} || echo ${path}`).join("; ");
+  const script = modules.map((path) => `test -f ${path} || echo ${path}`).join("; ");
   const answer = await run("docker", [
     "run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c", script,
   ]).catch(() => null);
   const reported = new Set(
     answer === null ? [] : answer.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== ""),
   );
-  return GUARDRAIL_CONTAINER_MODULES.filter((path) => answer === null || reported.has(path));
+  return modules.filter((path) => answer === null || reported.has(path));
 }
 
 /**
@@ -1181,11 +1216,16 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     // no network, no artifact — and it names EVERY missing module: `test -f`
     // chained with `-a` reports only its own failure, which once pointed at a
     // file that was present while another was absent.
-    const missing = await missingGuardrailModules(deps.image, run);
-    if (missing.length > 0) {
+    // The Jira client the worker's Jira session reaches its ticket through is
+    // part of the same requirement: one throwaway container checks both
+    // closures, and every missing module is named.
+    const missing = new Set(await missingImageModules(IMAGE_MODULES, deps.image, run));
+    for (const requirement of IMAGE_REQUIREMENTS) {
+      const gone = requirement.modules.filter((path) => missing.has(path));
+      if (gone.length === 0) continue;
       throw new Error(
-        `worker image ${deps.image} carries no continuity guardrail — missing ${missing.join(", ")}. ` +
-          `A resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} carries no ${requirement.what} — missing ${gone.join(", ")}. ` +
+          `${requirement.consequence}. Rebuild it with: npm run build:image`,
       );
     }
 

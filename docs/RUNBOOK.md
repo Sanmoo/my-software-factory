@@ -15,7 +15,8 @@ Docker socket riding inside it (ADR 0003). Factory speech is the
 ```sh
 # 1. the worker image (npm run build:image) — rebuild after upgrading: the
 #    boot also refuses an image without the continuity guardrail (a resumed
-#    session could repeat an external effect)
+#    session could repeat an external effect) or without the worker's Jira
+#    client (the tool that asks the factory for Jira reads and comments)
 npm run build:image
 
 # 2. model credentials, separate from the image and from any personal profile:

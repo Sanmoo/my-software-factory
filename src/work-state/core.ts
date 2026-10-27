@@ -1,7 +1,7 @@
 import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { ExpandedPrFeedback, PullRequestRecord, TicketSnapshot } from "../tracker/expanded-port.js";
 import type { IssueComment, PrRepairFacts } from "../tracker/port.js";
-import { isAgentSpeech } from "../tracker/port.js";
+import { commentIsAgentSpeech } from "../tracker/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { operatorStopClaim } from "../pool/stop.js";
 import { modelProviderDecision } from "../pool/model-provider.js";
@@ -13,7 +13,7 @@ import type { WorkRecordSnapshot } from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import { confirmedRepairTrigger, repairSignature } from "../pool/repair-trigger.js";
-import { humanCommentsAfterLastMarker, humanCommentsForPause } from "../tracker/speech.js";
+import { humanCommentsAfterLastFactorySpeech, humanCommentsForPause } from "../tracker/speech.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
 import type { AfterAttemptReading, RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 
@@ -89,7 +89,7 @@ async function blocked(ref: WorkRef, issue: TicketSnapshot, facts: WorkFacts): P
   const issueReplies =
     comments.reading === "known"
       ? pause === null
-        ? humanCommentsAfterLastMarker(comments.value)
+        ? humanCommentsAfterLastFactorySpeech(comments.value)
         : humanCommentsForPause(comments.value, pause.pause)
       : NO_REPLIES;
 
@@ -201,7 +201,7 @@ async function withPullRequest(
   // The worker just opened the PR (or ended the round commenting on it): the
   // ball is with the human — parked, nothing to decide.
   const last = lastPrComment(feedback);
-  if (last !== null && !isAgentSpeech(last.body)) {
+  if (last !== null && !commentIsAgentSpeech(last)) {
     return { work: ref.work, dir: ref.dir, state: "feedback", pr, createdAt: issue.createdAt };
   }
   return parked(ref);
@@ -425,7 +425,7 @@ async function modelProviderFailureOf(
     // it,
     // the same channel a blocked work listens to.
     const comments = await facts.comments();
-    const issueReplies = comments.reading === "known" ? humanCommentsAfterLastMarker(comments.value) : NO_REPLIES;
+    const issueReplies = comments.reading === "known" ? humanCommentsAfterLastFactorySpeech(comments.value) : NO_REPLIES;
     if (issueReplies.length > 0) return resumable(ref, issue, issueReplies, facts);
   }
   return {

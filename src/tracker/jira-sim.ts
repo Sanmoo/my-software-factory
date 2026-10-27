@@ -3,8 +3,8 @@ import type { JiraTransport } from "./jira-adapter.js";
 /**
  * An in-memory Jira Cloud that speaks the REST dialect the real adapter uses
  * over HTTP — the process-boundary double of the adapter's
- * contract: `/rest/api/3/myself`, the token-paginated `/rest/api/3/search/jql`
- * and a single-issue read.
+ * contract: `/rest/api/3/myself`, the token-paginated `/rest/api/3/search/jql`,
+ * a single-issue read, and the comment conversation/publication.
  *
  * It models what the adapter's decisions depend on: the Basic credential, the
  * native Rank order (independent of creation date and Priority), opaque
@@ -18,6 +18,16 @@ export interface SimJiraAccount {
   accountId: string;
   emailAddress: string;
   displayName: string;
+}
+
+export interface SimJiraComment {
+  id: string;
+  author: SimJiraAccount | null;
+  /** An ADF document, as Jira stores it. */
+  body: unknown;
+  created: string;
+  /** Jira comment properties: the factory's structured speech evidence. */
+  properties?: Array<{ key: string; value: unknown }>;
 }
 
 export interface SimJiraIssue {
@@ -40,6 +50,8 @@ export interface SimJiraIssue {
   parentKey?: string;
   /** The issue's own links, as the site reports them. */
   links: SimJiraLink[];
+  /** The issue's conversation, oldest first. */
+  comments?: SimJiraComment[];
 }
 
 /** The link types a Jira Cloud site starts with: the vocabulary a configured
@@ -76,6 +88,8 @@ export interface SimJiraFaults {
   linkTypes?: SimJiraFault;
   search?: SimJiraFault;
   issue?: SimJiraFault;
+  commentRead?: SimJiraFault;
+  commentCreate?: SimJiraFault;
 }
 
 export class JiraSim {
@@ -96,6 +110,7 @@ export class JiraSim {
   pageSize = 100;
   readonly requests: SimJiraRequest[] = [];
   faults: SimJiraFaults = {};
+  private nextCommentId = 50_000;
 
   constructor(options: { site?: string; token?: string; account?: SimJiraAccount } = {}) {
     this.site = options.site ?? "acme.atlassian.net";
@@ -124,9 +139,25 @@ export class JiraSim {
       created: input.created ?? "2026-01-01T00:00:00.000+0000",
       links: input.links ?? [],
       ...(input.parentKey === undefined ? {} : { parentKey: input.parentKey }),
+      comments: input.comments ?? [],
     };
     this.issues.push(issue);
     return issue;
+  }
+
+  /** Seed one comment; `properties` is how the factory's speech is marked. */
+  addComment(key: string, input: Partial<SimJiraComment> & { body: unknown }): SimJiraComment {
+    const issue = this.issue(key);
+    if (issue === undefined) throw new Error(`the sim holds no issue ${key}`);
+    const comment: SimJiraComment = {
+      id: input.id ?? String(this.nextCommentId++),
+      author: input.author === undefined ? this.account : input.author,
+      body: input.body,
+      created: input.created ?? "2026-01-02T00:00:00.000+0000",
+      ...(input.properties === undefined ? {} : { properties: input.properties }),
+    };
+    (issue.comments ??= []).push(comment);
+    return comment;
   }
 
   /** The transport the real adapter runs against. */
@@ -161,7 +192,7 @@ export class JiraSim {
       return answer(401, { errorMessages: ["Unauthorized"] });
     }
 
-    const faulted = this.faultFor(path);
+    const faulted = this.faultFor(path, init.method);
     if (faulted !== undefined) return answer(faulted.status, { errorMessages: faulted.messages });
 
     if (init.method === "GET" && path === "/rest/api/3/myself") {
@@ -173,18 +204,83 @@ export class JiraSim {
     if (init.method === "POST" && path === "/rest/api/3/search/jql") {
       return this.search(init.body ?? "", record);
     }
+    const commentPath = /^\/rest\/api\/3\/issue\/([^/]+)\/comment$/.exec(path);
+    if (commentPath !== null) {
+      const idOrKey = decodeURIComponent(commentPath[1]!);
+      if (init.method === "GET") return this.readComments(parsed, idOrKey);
+      if (init.method === "POST") return this.createComment(idOrKey, init.body ?? "");
+    }
     if (init.method === "GET" && path.startsWith("/rest/api/3/issue/")) {
       return this.readIssue(decodeURIComponent(path.slice("/rest/api/3/issue/".length)));
     }
     return answer(404, { errorMessages: [`the sim has no endpoint ${init.method} ${path}`] });
   }
 
-  private faultFor(path: string): SimJiraFault | undefined {
+  private faultFor(path: string, method: string): SimJiraFault | undefined {
     if (path === "/rest/api/3/myself") return this.faults.myself;
     if (path === "/rest/api/3/issueLinkType") return this.faults.linkTypes;
     if (path === "/rest/api/3/search/jql") return this.faults.search;
+    if (/\/comment$/.test(path)) {
+      return method === "POST" ? this.faults.commentCreate : this.faults.commentRead;
+    }
     if (path.startsWith("/rest/api/3/issue/")) return this.faults.issue;
     return undefined;
+  }
+
+  private issue(idOrKey: string): SimJiraIssue | undefined {
+    return this.issues.find((entry) => entry.id === idOrKey || entry.key === idOrKey);
+  }
+
+  /** Jira exposes comment properties only when the read expands them, which is
+   *  the dialect the adapter asks for: without `expand=properties` the evidence
+   *  the factory recognises its own speech by is simply not in the answer. */
+  private readComments(url: URL, idOrKey: string) {
+    const issue = this.issue(idOrKey);
+    if (issue === undefined) {
+      return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
+    }
+    const comments = issue.comments ?? [];
+    const expand = url.searchParams.get("expand") ?? "";
+    const withProperties = expand.split(",").map((entry) => entry.trim()).includes("properties");
+    const startAt = Number(url.searchParams.get("startAt") ?? "0");
+    const maxResults = Number(url.searchParams.get("maxResults") ?? "100");
+    const page = comments.slice(startAt, startAt + Math.max(1, Math.min(maxResults, this.pageSize)));
+    return answer(200, {
+      startAt,
+      maxResults: page.length,
+      total: comments.length,
+      comments: page.map((comment) => commentRest(comment, withProperties)),
+    });
+  }
+
+  private createComment(idOrKey: string, raw: string) {
+    const issue = this.issue(idOrKey);
+    if (issue === undefined) {
+      return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
+    }
+    let parsed: { body?: unknown; properties?: unknown };
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      return answer(400, { errorMessages: ["the comment body is not JSON"] });
+    }
+    if (parsed.body === null || typeof parsed.body !== "object" || Array.isArray(parsed.body)) {
+      return answer(400, { errorMessages: ["the comment body is not an ADF document"] });
+    }
+    if (!Array.isArray(parsed.properties)) {
+      return answer(400, { errorMessages: ["the comment carries no properties"] });
+    }
+    const comment: SimJiraComment = {
+      id: String(this.nextCommentId++),
+      author: this.account,
+      body: parsed.body,
+      created: "2026-01-03T00:00:00.000+0000",
+      properties: parsed.properties as Array<{ key: string; value: unknown }>,
+    };
+    (issue.comments ??= []).push(comment);
+    // A create answers with the comment it made, properties included: the
+    // caller can inspect the evidence it just published.
+    return answer(201, commentRest(comment, true));
   }
 
   private search(raw: string, record: SimJiraRequest) {
@@ -217,7 +313,7 @@ export class JiraSim {
   }
 
   private readIssue(idOrKey: string) {
-    const issue = this.issues.find((entry) => entry.id === idOrKey || entry.key === idOrKey);
+    const issue = this.issue(idOrKey);
     if (issue === undefined) {
       return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
     }
@@ -289,6 +385,23 @@ function basicCredential(header: string | null): { account: string; token: strin
   const separator = decoded.indexOf(":");
   if (separator < 0) return null;
   return { account: decoded.slice(0, separator), token: decoded.slice(separator + 1) };
+}
+
+function commentRest(comment: SimJiraComment, withProperties: boolean) {
+  return {
+    id: comment.id,
+    author:
+      comment.author === null
+        ? null
+        : {
+            accountId: comment.author.accountId,
+            emailAddress: comment.author.emailAddress,
+            displayName: comment.author.displayName,
+          },
+    body: comment.body,
+    created: comment.created,
+    ...(withProperties && comment.properties !== undefined ? { properties: comment.properties } : {}),
+  };
 }
 
 function answer(status: number, body: unknown): { status: number; text: string } {

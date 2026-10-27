@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, test } from "node:test";
 
-import { GUARDRAIL_CONTAINER_FILE, GUARDRAIL_CONTAINER_MODULES } from "../sandcastle.js";
+import { GUARDRAIL_CONTAINER_FILE, GUARDRAIL_CONTAINER_MODULES } from "./sandcastle.js";
 import {
   COMPILED_ROOT,
   GUARDRAIL_ENTRY_MODULE,
-  GUARDRAIL_IMAGE_ROOT,
   guardrailContainerModules,
   relativeImportClosure,
-} from "./staging.js";
+} from "./image-staging.js";
+import { IMAGE_ROOT } from "../layout.js";
 
 /**
  * The image-side half of the continuity guardrail: the staging
@@ -89,16 +89,16 @@ describe("the guardrail's image closure ", () => {
     assert.deepEqual(closure.missing, [], "the built tree carries every module the extension imports");
     assert.deepEqual(
       GUARDRAIL_CONTAINER_MODULES,
-      closure.modules.map((module) => `${GUARDRAIL_IMAGE_ROOT}/${module}`),
+      closure.modules.map((module) => `${IMAGE_ROOT}/${module}`),
     );
-    assert.equal(GUARDRAIL_CONTAINER_FILE, `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`);
+    assert.equal(GUARDRAIL_CONTAINER_FILE, `${IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`);
     assert.ok(
-      GUARDRAIL_CONTAINER_MODULES.includes(`${GUARDRAIL_IMAGE_ROOT}/work-record/continuity.js`),
+      GUARDRAIL_CONTAINER_MODULES.includes(`${IMAGE_ROOT}/work-record/continuity.js`),
       "the in-container guardrail reads the Work record through its own module",
     );
     for (const reexport of ["runtime/continuity-artifacts.js", "runtime/session-log.js", "runtime/attempt-logs.js"]) {
       assert.ok(
-        !GUARDRAIL_CONTAINER_MODULES.includes(`${GUARDRAIL_IMAGE_ROOT}/${reexport}`),
+        !GUARDRAIL_CONTAINER_MODULES.includes(`${IMAGE_ROOT}/${reexport}`),
         `${reexport} is a compatibility re-export and is not part of the guardrail`,
       );
     }

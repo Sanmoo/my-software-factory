@@ -4,7 +4,7 @@ import { join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 
-import { posixPath, relativeSpecifiers } from "../runtime/guardrail/staging.js";
+import { posixPath, relativeSpecifiers } from "../runtime/image-staging.js";
 
 /**
  * The pool's side of the Work record contract: the ledgers read

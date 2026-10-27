@@ -12,6 +12,7 @@ import { ensureWorkspace, WORKSPACE_SUBPATHS, type WorkspaceLayout } from "./lay
 import { localGitWork } from "./git/local.js";
 import { createGitHubAdapter } from "./tracker/github-adapter.js";
 import { JiraTicketAdapter } from "./tracker/jira-adapter.js";
+import { ConfiguredJiraMediation } from "./tracker/jira-mediation.js";
 import { runForever, runOnce, type LoopDeps } from "./loop.js";
 import { stopConfirmed, type StopReport } from "./pool/stop.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
@@ -120,6 +121,7 @@ export async function wireRunDeps(
     workspace,
     notifier,
     probe,
+    jiraMediation: jiraMediationOf(config),
     log: (message) => writeOperationalLog(workspace, message),
   };
 }
@@ -162,22 +164,23 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
-/** Jira execution is not part of this release: the configuration is
- *  read-only, and the refusal names the configured selections. */
+/** A sweep does not bring Jira work in: the configuration is refused before a
+ *  claim, and the refusal names the configured selections. */
 function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
   const selections = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
   throw new Error(
-    `Jira execution is not implemented yet: msf.yaml configures ${selections}. ` +
-      `This release reads Jira candidates in \`msf status\` only; refusing before any claim, comment or launch`,
+    `a sweep does not bring Jira work in yet: msf.yaml configures ${selections}. ` +
+      `\`msf status\` reads the selections and the factory mediates a launched Jira session's reads and ` +
+      `comments at the ticket's site (ADR 0011); refusing before any claim, comment or launch`,
   );
 }
 
-/** The read-only Jira selections of `msf status`: one adapter per site (so the
- *  Acting account is identified once) and one reader per configured selection. */
-function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
+/** One adapter per configured site, so the Acting account is identified once
+ *  and no selection re-authenticates. */
+function jiraAdapterFactory(config: Config): (entry: Config["jira"][number]) => JiraTicketAdapter {
   const adapters = new Map<string, JiraTicketAdapter>();
-  const adapterFor = (entry: Config["jira"][number]): JiraTicketAdapter => {
+  return (entry) => {
     const known = adapters.get(entry.site);
     if (known !== undefined) return known;
     const created = new JiraTicketAdapter({
@@ -188,11 +191,28 @@ function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
     adapters.set(entry.site, created);
     return created;
   };
+}
+
+/** A configured selection with the adapter of its site: the status reader's
+ *  view of it plus the operations the mediated access needs, so one shape
+ *  serves both and they name the same source the same way. */
+type ConfiguredJiraSelection = JiraSelectionReader & { tickets: JiraTicketAdapter };
+
+/** The configured selections, each with the adapter of its site. */
+function jiraSelectionEntries(config: Config): ConfiguredJiraSelection[] {
+  const adapterFor = jiraAdapterFactory(config);
   return config.jira.map((entry) => ({
     selection: jiraSelectionOf(entry),
     tickets: adapterFor(entry),
     prerequisites: entry.prerequisites,
   }));
+}
+
+/** The factory side of the controlled Jira interaction, one entry per
+ *  configured selection: the launch path asks it for a handler for each Jira
+ *  Work, and no other party performs the API calls. */
+function jiraMediationOf(config: Config): ConfiguredJiraMediation {
+  return new ConfiguredJiraMediation(jiraSelectionEntries(config));
 }
 
 /** The CLI's log: the console plus the workspace record a round reads. */
@@ -365,7 +385,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // read and native Rank order the adapter contract suite proves. A selection
   // whose credential is missing is reported as unknown, never skipped.
   const view = await deriveStatus(
-    { github, jira: jiraSelectionReaders(config) },
+    { github, jira: jiraSelectionEntries(config) },
     config,
     layout,
     workspaceLivenessProbe(layout),

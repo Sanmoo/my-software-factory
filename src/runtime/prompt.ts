@@ -1,8 +1,8 @@
-import { AGENT_MARKER, isAgentSpeech } from "../tracker/port.js";
+import { AGENT_MARKER, commentIsAgentSpeech } from "../tracker/port.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../work-record/outcome.js";
-import { RETRO_MOUNT_PATHS } from "../layout.js";
+import { JIRA_CLIENT_CONTAINER_FILE, RETRO_MOUNT_PATHS, WORK_MOUNT_PATH } from "../layout.js";
 import { agentLayout, type AgentLayout } from "./agent-paths.js";
 import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
 import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
@@ -36,13 +36,6 @@ import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
  * artifact schema, never the text.
  */
 
-/**
- * Container paths are layout, not prose: where the host binds the work's
- * artifacts inside the container. Kept here so the prompt and the runtime
- * agree on the contract without runtime importing sandcastle internals.
- */
-export const WORK_MOUNT = "/msf-work";
-
 /** The completion signal: when the agent prints it, the iteration loop ends. */
 export const COMPLETION_SIGNAL = "<promise>MSF-RESULT</promise>";
 
@@ -58,7 +51,7 @@ export interface PromptOptions {
   agentResources?: LoadedAgentResources;
 }
 
-const desfechoPath = `${WORK_MOUNT}/${DESFECHO_FILENAME}`;
+const desfechoPath = `${WORK_MOUNT_PATH}/${DESFECHO_FILENAME}`;
 
 /**
  * The record schema the worker must write, rendered as the example the
@@ -188,7 +181,7 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
       `  - \`${check.name}\` — ${check.conclusion ?? "unknown"}${check.detailsUrl ? ` (${check.detailsUrl})` : ""}`,
   );
   const humanComments = (request.material.pr?.comments ?? []).filter(
-    (comment) => !isAgentSpeech(comment.body),
+    (comment) => !commentIsAgentSpeech(comment),
   );
   const localWork = repair.localWork;
   const resuming = repair.resuming;
@@ -236,6 +229,32 @@ function repairProcedure(repair: RepairMaterial, request: WorkRequest, prNumber:
     `   Never use plain \`--force\`. If the lease is rejected, the remote changed concurrently: keep your local commits, do NOT retry with a refreshed lease and do NOT overwrite the other work — self-report blocked so a human reconciles both sides.`,
     ``,
   ];
+}
+
+/** The mediated Jira contract, in the worker's words: the factory holds the
+ *  credential, the worker asks through a structured request, and the answer
+ *  is a fact — never an invitation to guess authorization or state. */
+function jiraMediationSection(contractPath: string): string {
+  return [
+    `## Jira: the factory performs the API calls`,
+    ``,
+    `This ticket lives in Jira, and the Jira API token is never in this container, this prompt,`,
+    `the launch environment or the work dir. Do not look for it and do not call Jira directly.`,
+    `The factory mediates reads and authorized publications through a request/response channel:`,
+    ``,
+    `- read the ticket's current content and conversation again:`,
+    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} read --contract ${contractPath}\``,
+    `- publish an authorized factory comment (a help request is \`--kind help\`; an update is \`--kind update\`):`,
+    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} publish --kind help --text-file ${WORK_MOUNT_PATH}/jira-pedido.txt --contract ${contractPath}\``,
+    ``,
+    `The command prints one JSON answer. Its \`status\` is a structured fact: \`ok\`, \`partial\`,`,
+    `\`rejected\`, \`failed\` or \`unknown\`. ONLY \`ok\` on a publish says the comment landed. A`,
+    `\`partial\` or \`unknown\` answer names what is unknown — report it as such, never as`,
+    `authorization, success or state. If a publish is \`unknown\`, retry the same command with`,
+    `the same \`--request-id\` (the id is printed in the answer) so the factory can reconcile it`,
+    `instead of publishing a second copy.`,
+    ``,
+  ].join("\n");
 }
 
 export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions): string {
@@ -296,6 +315,7 @@ export function buildWorkerPrompt(request: WorkRequest, options: PromptOptions):
     ...(ticketLink === undefined ? [] : [`Ticket link: ${ticketLink}`, ``]),
     material.ticket.body,
     ``,
+    ...(material.jira === undefined ? [] : [jiraMediationSection(material.jira.contractPath), ``]),
     ...(ticketReplies.length === 0
       ? []
       : [
@@ -405,7 +425,13 @@ End the round with one consolidated reply on the PR (marked, obligation 2): what
         ]
       : [
           `   - do NOT edit or comment on any GitHub issue for this ticket: its source is ${ticket.provider}:${ticket.site}, and the factory owns publication on that tracker — inventing a GitHub issue would address the wrong surface,`,
-          `   - name the blockage in your final message: the factory records it from the outcome record; this session does not publish on the ticket's tracker,`,
+          ...(material.jira === undefined
+            ? [
+                `   - name the blockage in your final message: the factory records it from the outcome record; this session does not publish on the ticket's tracker,`,
+              ]
+            : [
+                `   - publish your help request on the ticket through the factory (\`--kind help\`, section above) and report the answer it gave you — an \`unknown\` or \`failed\` answer is reported as such, never as a request that landed,`,
+              ]),
         ]),
     `   - write the outcome record with "class": "blocked-self-report",`,
     `   - then end the session. A human resumes from there.`,
