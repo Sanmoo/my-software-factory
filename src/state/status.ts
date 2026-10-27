@@ -436,7 +436,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     }
   }
 
-  const claimedBy = readable.map((entry) => ({
+  const selectedBy = readable.map((entry) => ({
     reader: entry.reader,
     keys: new Set(entry.tickets.map((ticket) => ticketIdentityKey(ticket.ticket))),
   }));
@@ -450,7 +450,7 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     return unreadableSite(site, destinations, "the site's ordered result and its selections disagree", readings);
   }
 
-  const candidates: JiraCandidate[] = [];
+  const routed: Array<{ ticket: OpenTicket; destination: RepositoryIdentity }> = [];
   const ambiguous: AmbiguousJiraTicket[] = [];
   const heldKeys = new Set<string>();
   const seen = new Set<string>();
@@ -471,30 +471,29 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     }
     const destination = destinationsForTicket[0];
     if (destination === undefined) continue;
-    candidates.push({
-      work: workIdentity(ticket.ticket, destination),
-      title: ticket.title,
-      assignees: ticket.assignees,
-      // Filled in below, once every offered ticket is known.
-      prerequisites: { state: "met", configured: false, satisfied: [] },
-    });
+    routed.push({ ticket, destination });
   }
 
-  // One bounded link read per candidate, shared by the selections that
-  // configure the same rule for it: the verdicts are read only for the tickets
-  // this site actually offers.
+  // One bounded link read per candidate, shared by the selections that configure
+  // the same rule for it: only the tickets this site offers are read.
   const reads = new Map<string, Promise<PrerequisiteVerdict>>();
-  const offered = await mapBounded(candidates, PREREQUISITE_READS_IN_FLIGHT, async (candidate) => ({
-    ...candidate,
-    prerequisites: await prerequisiteVerdictOf(candidate.work.ticket, claimedBy, reads),
-  }));
+  const candidates = await mapBounded(
+    routed,
+    PREREQUISITE_READS_IN_FLIGHT,
+    async (entry): Promise<JiraCandidate> => ({
+      work: workIdentity(entry.ticket.ticket, entry.destination),
+      title: entry.ticket.title,
+      assignees: entry.ticket.assignees,
+      prerequisites: await prerequisiteVerdictOf(entry.ticket.ticket, selectedBy, reads),
+    }),
+  );
 
   return {
     site,
     destinations,
     state: "known",
     selections: readings.map((entry) => selectionViewOf(entry, heldKeys)),
-    candidates: offered,
+    candidates,
     ambiguous,
   };
 }
@@ -506,11 +505,11 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
  */
 function prerequisiteVerdictOf(
   ticket: TicketIdentity,
-  claimedBy: readonly { reader: JiraSelectionReader; keys: ReadonlySet<string> }[],
+  selectedBy: readonly { reader: JiraSelectionReader; keys: ReadonlySet<string> }[],
   reads: Map<string, Promise<PrerequisiteVerdict>>,
 ): Promise<PrerequisiteVerdict> {
   const key = ticketIdentityKey(ticket);
-  const rules = claimedBy
+  const rules = selectedBy
     .filter((entry) => entry.keys.has(key))
     .map((entry) => entry.reader)
     .filter((reader) => reader.prerequisites.length > 0);
