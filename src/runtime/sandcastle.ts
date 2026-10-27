@@ -36,7 +36,6 @@ import { describeForeignRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildRetroPrompt, buildWorkerPrompt, COMPLETION_SIGNAL } from "./prompt.js";
-
 import {
   AGENT_DIR,
   agentExtensionEntry,
