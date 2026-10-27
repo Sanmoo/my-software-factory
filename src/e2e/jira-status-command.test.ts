@@ -229,7 +229,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
     const result = runCli(dir, ["run", "--once"], cliEnv({ ready }));
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /Jira execution is not implemented yet/);
+    assert.match(result.stderr, /a sweep does not bring Jira work in yet/);
     assert.match(result.stderr, new RegExp(`${ALPHA} → ${REPO}`));
     assert.match(result.stderr, /refusing before any claim, comment or launch/);
     assert.equal(existsSync(ready), false, "the refusal happens before the GitHub keyring boot check");

@@ -13,7 +13,7 @@ import type { WorkRecordSnapshot } from "../work-record/record.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { RepairAttempt, RepairCycle } from "../work-record/repair.js";
 import { confirmedRepairTrigger, repairSignature } from "../pool/repair-trigger.js";
-import { humanCommentsAfterLastMarker, humanCommentsForPause } from "../tracker/speech.js";
+import { humanCommentsAfterLastFactorySpeech, humanCommentsForPause } from "../tracker/speech.js";
 import type { AttemptEndFacts, WorkFacts } from "./facts.js";
 import type { AfterAttemptReading, RepairTrigger, WorkRef, WorkStateReading } from "./state.js";
 
@@ -89,7 +89,7 @@ async function blocked(ref: WorkRef, issue: TicketSnapshot, facts: WorkFacts): P
   const issueReplies =
     comments.reading === "known"
       ? pause === null
-        ? humanCommentsAfterLastMarker(comments.value)
+        ? humanCommentsAfterLastFactorySpeech(comments.value)
         : humanCommentsForPause(comments.value, pause.pause)
       : NO_REPLIES;
 
@@ -425,7 +425,7 @@ async function modelProviderFailureOf(
     // it,
     // the same channel a blocked work listens to.
     const comments = await facts.comments();
-    const issueReplies = comments.reading === "known" ? humanCommentsAfterLastMarker(comments.value) : NO_REPLIES;
+    const issueReplies = comments.reading === "known" ? humanCommentsAfterLastFactorySpeech(comments.value) : NO_REPLIES;
     if (issueReplies.length > 0) return resumable(ref, issue, issueReplies, facts);
   }
   return {

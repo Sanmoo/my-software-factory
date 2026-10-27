@@ -176,7 +176,7 @@ export class JiraMediator {
     operation: JiraMediationRejected["operation"],
     reason: string,
   ): JiraMediationRejected {
-    return { version: 1, id, operation, status: "rejected", reason, at: this.nowIso() };
+    return { version: JIRA_MEDIATION_VERSION, id, operation, status: "rejected", reason, at: this.nowIso() };
   }
 
   private nowIso(): string {
@@ -250,23 +250,23 @@ export class JiraMediator {
       context.ticket = mediatedTicket(target.ticket, ticket.value.value);
     } else {
       unknown.push("ticket");
-      reasons.push(ticketReason(ticket));
+      reasons.push(unavailableReason("ticket", ticket));
     }
     if (comments.status === "fulfilled" && comments.value.known) {
       context.comments = comments.value.value.map(mediatedComment);
     } else {
       unknown.push("comments");
-      reasons.push(commentsReason(comments));
+      reasons.push(unavailableReason("comments", comments));
     }
 
     const reason = bounded(reasons.join("; ") || "the source did not answer");
     if (unknown.length === 0) {
-      return { version: 1, id, operation: "read", status: "ok", context, at: this.nowIso() };
+      return { version: JIRA_MEDIATION_VERSION, id, operation: "read", status: "ok", context, at: this.nowIso() };
     }
     if (Object.keys(context).length > 0) {
-      return { version: 1, id, operation: "read", status: "partial", context, unknown, reason, at: this.nowIso() };
+      return { version: JIRA_MEDIATION_VERSION, id, operation: "read", status: "partial", context, unknown, reason, at: this.nowIso() };
     }
-    return { version: 1, id, operation: "read", status: "unknown", unknown, reason, at: this.nowIso() };
+    return { version: JIRA_MEDIATION_VERSION, id, operation: "read", status: "unknown", unknown, reason, at: this.nowIso() };
   }
 
   private async publish(target: JiraTarget, request: JiraPublishRequest): Promise<JiraPublishResponse> {
@@ -402,7 +402,7 @@ export class JiraMediator {
 
   private publishOk(id: string, commentId: string, url: string | null, reconciled: boolean): JiraPublishOk {
     return {
-      version: 1,
+      version: JIRA_MEDIATION_VERSION,
       id,
       operation: "publish",
       status: "ok",
@@ -414,11 +414,11 @@ export class JiraMediator {
   }
 
   private publishFailed(id: string, reason: string): JiraPublishResponse {
-    return { version: 1, id, operation: "publish", status: "failed", reason, at: this.nowIso() };
+    return { version: JIRA_MEDIATION_VERSION, id, operation: "publish", status: "failed", reason, at: this.nowIso() };
   }
 
   private publishUnknown(id: string, reason: string): JiraPublishUnknown {
-    return { version: 1, id, operation: "publish", status: "unknown", reason, at: this.nowIso() };
+    return { version: JIRA_MEDIATION_VERSION, id, operation: "publish", status: "unknown", reason, at: this.nowIso() };
   }
 }
 
@@ -482,14 +482,11 @@ function mediatedComment(comment: IssueComment): JiraMediatedComment {
   };
 }
 
-function ticketReason(result: PromiseSettledResult<Known<TicketSnapshot>>): string {
-  if (result.status === "rejected") return `ticket: ${bounded(describeError(result.reason))}`;
-  return "ticket: the source did not answer";
-}
-
-function commentsReason(result: PromiseSettledResult<Known<IssueComment[]>>): string {
-  if (result.status === "rejected") return `comments: ${bounded(describeError(result.reason))}`;
-  return "comments: the source did not answer";
+/** Why one fact of a read is unknown, said with the fact's own name: a source
+ *  that answered `unknown` is not the same thing as a source that threw. */
+function unavailableReason(fact: JiraUnknownFact, result: PromiseSettledResult<unknown>): string {
+  if (result.status === "rejected") return `${fact}: ${bounded(describeError(result.reason))}`;
+  return `${fact}: the source did not answer`;
 }
 
 function bounded(reason: string): string {

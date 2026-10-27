@@ -170,8 +170,9 @@ function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
   const selections = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
   throw new Error(
-    `Jira execution is not implemented yet: msf.yaml configures ${selections}. ` +
-      `This release reads Jira candidates in \`msf status\` only; refusing before any claim, comment or launch`,
+    `a sweep does not bring Jira work in yet: msf.yaml configures ${selections}. ` +
+      `\`msf status\` reads the selections and the factory mediates a launched Jira session's reads and ` +
+      `comments at the ticket's site (ADR 0011); refusing before any claim, comment or launch`,
   );
 }
 

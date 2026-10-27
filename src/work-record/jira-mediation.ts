@@ -299,7 +299,7 @@ export function parseJiraMediationRequest(
     return {
       ok: true,
       request: {
-        version: 1,
+        version: JIRA_MEDIATION_VERSION,
         id: expectedId,
         operation: "read",
         work: value["work"],
@@ -329,7 +329,7 @@ export function parseJiraMediationRequest(
     return {
       ok: true,
       request: {
-        version: 1,
+        version: JIRA_MEDIATION_VERSION,
         id: expectedId,
         operation: "publish",
         work: value["work"],

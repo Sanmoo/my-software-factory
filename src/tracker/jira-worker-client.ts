@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { isWorkIdentity, workIdentityKey } from "./identity.js";
+import { isWorkIdentity } from "./identity.js";
 import {
+  JIRA_MEDIATION_VERSION,
   isJiraMediationContract,
   mediationWorkDirOf,
   parseJiraMediationRequest,
@@ -82,7 +83,7 @@ export class JiraWorkerClient {
     const id = options.requestId ?? randomUUID();
     const response = await this.exchange(
       {
-        version: 1,
+        version: JIRA_MEDIATION_VERSION,
         id,
         operation: "read",
         work: contract.work,
@@ -110,7 +111,7 @@ export class JiraWorkerClient {
     const id = input.requestId ?? randomUUID();
     const response = await this.exchange(
       {
-        version: 1,
+        version: JIRA_MEDIATION_VERSION,
         id,
         operation: "publish",
         work: contract.work,
@@ -127,13 +128,7 @@ export class JiraWorkerClient {
 
   /** One request/response exchange; the only file-protocol implementation. */
   private async exchange(request: JiraMediationRequest, id: string): Promise<JiraMediationResponse> {
-    const contract = this.readContract();
-    if (workIdentityKey(request.work) !== workIdentityKey(contract.work)) {
-      throw new Error("the request names a Work other than the contract's");
-    }
-    if (request.sessionId !== contract.sessionId) {
-      throw new Error("the request names a session other than the contract's");
-    }
+    this.readContract();
     const validated = parseJiraMediationRequest(request, id);
     if (!validated.ok) throw new Error(`the Jira request is not valid: ${validated.reason}`);
 
@@ -156,7 +151,7 @@ export class JiraWorkerClient {
       `with the same id (${id})`;
     if (operation === "read") {
       return {
-        version: 1,
+        version: JIRA_MEDIATION_VERSION,
         id,
         operation: "read",
         status: "unknown",
@@ -166,7 +161,7 @@ export class JiraWorkerClient {
       };
     }
     return {
-      version: 1,
+      version: JIRA_MEDIATION_VERSION,
       id,
       operation: "publish",
       status: "unknown",

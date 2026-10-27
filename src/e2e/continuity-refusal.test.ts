@@ -63,12 +63,12 @@ describe("e2e: a refused call is reconciled from the real session", { skip: skip
     "a refusal a probe extension makes AFTER the guardrail's intent is closed from the session, with nobody asked",
     { timeout: 10 * 60 * 1000 },
     async () => {
-      // The journal gap of the reported incident, reproduced in the real
-      // lifecycle: the guardrail journals the intent, a second extension refuses
-      // the call BEFORE it runs (Pi calls no tool_result hook for a refused
-      // call, so the guardrail never records a result), and the terminal error
-      // exists only in the persisted session. The host must close the journal
-      // from that evidence and let continuity proceed — no operator, no replay.
+      // The journal gap, in the real lifecycle: the guardrail journals the
+      // intent, a second extension refuses the call BEFORE it runs (Pi calls no
+      // tool_result hook for a refused call, so the guardrail never records a
+      // result), and the terminal error exists only in the persisted session.
+      // The host closes the journal from that evidence and lets continuity
+      // proceed — no operator, no replay.
       const repo = "Sanmoo/prova-recuperacao";
       const branch = "agent-issue-172";
       const workspace = ensureWorkspace(join(root, "fabrica-recuperacao"));

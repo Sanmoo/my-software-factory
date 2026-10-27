@@ -5,7 +5,7 @@ import { githubRepository, jiraTicket, workIdentity, type TicketIdentity } from 
 import type { PrerequisiteLink, TicketSelection } from "./expanded-port.js";
 import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount, type SimJiraIssue, type SimJiraLink } from "./jira-sim.js";
-import { humanCommentsAfterLastMarker } from "./speech.js";
+import { humanCommentsAfterLastFactorySpeech } from "./speech.js";
 
 /**
  * The real Jira adapter over the simulated REST: native Rank
@@ -833,7 +833,7 @@ describe("Jira adapter: the conversation and the mediated factory comment", () =
       "only the absence of the property makes a comment human speech",
     );
     assert.deepEqual(
-      humanCommentsAfterLastMarker(comments.value).map((comment) => comment.id),
+      humanCommentsAfterLastFactorySpeech(comments.value).map((comment) => comment.id),
       [],
       "a human answer cannot be read into a comment the factory owns",
     );

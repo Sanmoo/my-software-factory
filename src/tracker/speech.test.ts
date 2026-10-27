@@ -4,8 +4,8 @@ import { describe, test } from "node:test";
 import type { PauseRecord } from "../work-record/continuity.js";
 import { AGENT_MARKER, pauseMarker, type IssueComment } from "./port.js";
 import {
-  hasHumanCommentAfterLastMarker,
-  humanCommentsAfterLastMarker,
+  hasHumanCommentAfterLastFactorySpeech,
+  humanCommentsAfterLastFactorySpeech,
   humanCommentsForPause,
 } from "./speech.js";
 
@@ -40,17 +40,17 @@ describe("speech, not login — the comments that are the human's answer", () =>
     const comments = [human("before the request"), factory("blocked"), human("answer one"), factory("re-asserted"), human("answer two")];
 
     assert.deepEqual(
-      humanCommentsAfterLastMarker(comments).map((comment) => comment.body),
+      humanCommentsAfterLastFactorySpeech(comments).map((comment) => comment.body),
       ["answer two"],
       "a previous answer is never consumed twice",
     );
-    assert.equal(hasHumanCommentAfterLastMarker(comments), true);
+    assert.equal(hasHumanCommentAfterLastFactorySpeech(comments), true);
   });
 
   test("with no factory comment at all, every human comment is an answer — and nothing is, when the factory spoke last", () => {
-    assert.deepEqual(humanCommentsAfterLastMarker([human("hello")]).map((c) => c.body), ["hello"]);
-    assert.deepEqual(humanCommentsAfterLastMarker([factory("the factory's last word")]), []);
-    assert.equal(hasHumanCommentAfterLastMarker([factory("the factory's last word")]), false);
+    assert.deepEqual(humanCommentsAfterLastFactorySpeech([human("hello")]).map((c) => c.body), ["hello"]);
+    assert.deepEqual(humanCommentsAfterLastFactorySpeech([factory("the factory's last word")]), []);
+    assert.equal(hasHumanCommentAfterLastFactorySpeech([factory("the factory's last word")]), false);
   });
 
   test("an answer belongs to the pause it answered: a later comment about the same pause never displaces it", () => {

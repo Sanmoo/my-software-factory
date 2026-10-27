@@ -229,6 +229,11 @@ export class JiraPublishUnknownError extends Error {
 /** The Jira comment property carrying factory speech and its correlation. */
 export const FACTORY_COMMENT_PROPERTY = "msf.factory";
 
+/** The schema version of the evidence carried in that property: the writer and
+ *  the reader below agree on it, and an unreadable version is unknown evidence,
+ *  never absent evidence. */
+export const FACTORY_EVIDENCE_VERSION = 1;
+
 export interface FactoryCommentPublication {
   kind: JiraPublicationKind;
   /** Plain worker text; the adapter renders it as ADF. */
@@ -504,7 +509,7 @@ export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker
     const source = this.assertTicket(ticket);
     await this.actingAccount();
     const evidence = {
-      version: 1,
+      version: FACTORY_EVIDENCE_VERSION,
       kind: publication.kind,
       correlationId: publication.correlationId,
       work: workIdentityKey(publication.work),
@@ -785,7 +790,7 @@ function factoryEvidence(
   }
   if (!present) return { state: "none" };
   if (record === null) return { state: "unreadable" };
-  if (record["version"] !== 1) return { state: "unreadable" };
+  if (record["version"] !== FACTORY_EVIDENCE_VERSION) return { state: "unreadable" };
   const correlationId = record["correlationId"];
   if (typeof correlationId !== "string" || correlationId === "") return { state: "unreadable" };
   return { state: "factory", correlationId };
