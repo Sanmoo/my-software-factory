@@ -20,6 +20,7 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import {
+  IMAGE_ROOT,
   JIRA_CLIENT_ENTRY_MODULE,
   RETRO_MOUNT_PATHS,
   SESSIONS_SUBDIR,
@@ -60,7 +61,6 @@ import { ownOutcomeRecord } from "../work-record/outcome.js";
 import { openWorkRecord } from "../work-record/record.js";
 import {
   GUARDRAIL_ENTRY_MODULE,
-  GUARDRAIL_IMAGE_ROOT,
   containerModules,
   guardrailContainerModules,
 } from "./image-staging.js";
@@ -320,7 +320,7 @@ export function workerFlagArgs(
  *  `npm run build:image` (not a distributed package), and the staged tree
  *  mirrors `dist/` so the extension's relative imports resolve; the preflight
  *  refuses an image without it rather than running the session unguarded. */
-export const GUARDRAIL_CONTAINER_FILE = `${GUARDRAIL_IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
+export const GUARDRAIL_CONTAINER_FILE = `${IMAGE_ROOT}/${GUARDRAIL_ENTRY_MODULE}`;
 
 /** Every module the in-container guardrail loads, computed from the compiled
  *  extension's own relative imports: the image must carry all of
@@ -335,8 +335,6 @@ export const GUARDRAIL_CONTAINER_MODULES: readonly string[] = guardrailContainer
  *  stages. */
 export const JIRA_CLIENT_CONTAINER_MODULES: readonly string[] = containerModules(JIRA_CLIENT_ENTRY_MODULE);
 
-/** Every factory-owned module the launch requires inside the image, checked in
- *  one throwaway container. */
 /** The factory-owned tools the image must carry, each with what its absence
  *  would cost the round: the preflight checks them in one container and names
  *  every missing module. */

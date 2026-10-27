@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 
+import { JIRA_CLIENT_CONTAINER_FILE } from "../layout.js";
 import { JiraWorkerClient } from "./jira-worker-client.js";
 import type { JiraMediationResponse, JiraPublicationKind } from "../work-record/jira-mediation.js";
 
 /**
- * The command the worker runs to ask the factory for Jira access:
- *
- *   node /opt/msf/tracker/jira-client-cli.js read --contract <path>
- *   node /opt/msf/tracker/jira-client-cli.js publish --kind help --text-file <path> --contract <path>
- *
- * It prints the factory's structured answer as JSON and holds no Jira
- * credential. The exit status reports whether an answer was OBTAINED, never
- * whether the requested operation succeeded: a `rejected`, `failed` or
- * `unknown` answer is still an answer the worker must read.
+ * The command the worker runs to ask the factory for Jira access. It prints the
+ * factory's structured answer as JSON and holds no Jira credential. The exit
+ * status reports whether an answer was OBTAINED, never whether the requested
+ * operation succeeded: a `rejected`, `failed` or `unknown` answer is still an
+ * answer the worker must read.
  */
 
 interface Args {
@@ -27,8 +24,8 @@ interface Args {
 }
 
 const USAGE =
-  "usage: jira-client-cli.js read --contract PATH [--request-id ID] [--timeout-ms N]\n" +
-  "       jira-client-cli.js publish --contract PATH --kind help|update (--text TEXT | --text-file PATH) " +
+  `usage: ${JIRA_CLIENT_CONTAINER_FILE} read --contract PATH [--request-id ID] [--timeout-ms N]\n` +
+  `       ${JIRA_CLIENT_CONTAINER_FILE} publish --contract PATH --kind help|update (--text TEXT | --text-file PATH) ` +
   "[--request-id ID] [--timeout-ms N]";
 
 function parseArgs(argv: readonly string[]): Args {

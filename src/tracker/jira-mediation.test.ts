@@ -317,6 +317,33 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     assert.equal(harness.sim.issues[0]?.comments?.length, 1);
   });
 
+  test("a ledger that cannot be trusted forces a reconciliation read before anything is published", async () => {
+    // The comment landed, but the ledger can no longer say so: the correlation
+    // the comment carries is what keeps the retry from publishing a second copy.
+    harness.sim.addComment("ABC-1", {
+      id: "c-landed",
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "please unblock" }] }] },
+      properties: [
+        {
+          key: "msf.factory",
+          value: { version: 1, correlationId: "retry-landed", kind: "help", work: "w", sessionId: SESSION, attempt: ATTEMPT },
+        },
+      ],
+    });
+    writeFileSync(mediationPaths(harness.workDir).operations, "{ not json\n", "utf8");
+
+    const response = await harness.client.publish({
+      kind: "help",
+      text: "please unblock",
+      requestId: "retry-landed",
+    });
+
+    assert.ok(response.status === "ok");
+    assert.equal(response.reconciled, true, "the answer is the publication already on the ticket");
+    assert.equal(response.commentId, "c-landed");
+    assert.equal(harness.sim.issues[0]?.comments?.length, 1, "nothing was published twice");
+  });
+
   test("the Jira token present in the host environment reaches no worker artifact or request", async () => {
     process.env[TOKEN_ENV] = SECRET;
     const read = await harness.client.read();

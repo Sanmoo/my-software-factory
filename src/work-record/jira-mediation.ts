@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { WORK_MOUNT_PATH } from "../layout.js";
-import { isWorkIdentity, type WorkIdentity } from "../tracker/identity.js";
+import { isWorkIdentity, workIdentityKey, type WorkIdentity } from "../tracker/identity.js";
 import { appendDurable, readIfExists, writeAtomic } from "./fs.js";
 
 /**
@@ -378,9 +378,24 @@ export function readMediationContract(workDir: string): MediationFileRead<JiraMe
 /**
  * One request, durable before the worker waits for its answer. A request id is
  * its retry identity: the same id must carry the same content, so a retry can
- * never become a different request under the same correlation.
+ * never become a different request under the same correlation. The request also
+ * has to belong to the contract on disk — the Work and the session the factory
+ * wrote — before it is persisted: a request that would break that reference is
+ * refused here, not answered later.
  */
 export function writeMediationRequest(workDir: string, request: JiraMediationRequest): void {
+  const contract = readMediationContract(workDir);
+  if (contract.state !== "ready") {
+    throw new Error(
+      `the record holds no usable mediation contract (${contract.state}); a request cannot be issued`,
+    );
+  }
+  if (
+    workIdentityKey(contract.value.work) !== workIdentityKey(request.work) ||
+    contract.value.sessionId !== request.sessionId
+  ) {
+    throw new Error("the request names a Work or a session the record's contract does not bind");
+  }
   const path = join(mediationPaths(workDir).requests, `${request.id}.json`);
   const existing = readIfExists(path);
   if (existing !== null && canonical(existing) !== JSON.stringify(request)) {

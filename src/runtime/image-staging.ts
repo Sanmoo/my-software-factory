@@ -16,10 +16,6 @@ import { IMAGE_ROOT } from "../layout.js";
 /** The compiled guardrail entry, relative to `dist/` and to the image's /opt/msf. */
 export const GUARDRAIL_ENTRY_MODULE = "runtime/guardrail/extension.js";
 
-/** Where the image carries the staged compiled tree (the image root every
- *  factory-owned tool shares). */
-export const GUARDRAIL_IMAGE_ROOT = IMAGE_ROOT;
-
 /** `dist/` of the running build: this module lives at dist/runtime/. */
 export const COMPILED_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -90,7 +86,7 @@ export function containerModules(entryModule: string, rootDir: string = COMPILED
       .join(", ");
     throw new Error(`the compiled image tool ${entryModule} is incomplete — missing ${details}; run npm run build`);
   }
-  return closure.modules.map((module) => `${GUARDRAIL_IMAGE_ROOT}/${module}`);
+  return closure.modules.map((module) => `${IMAGE_ROOT}/${module}`);
 }
 
 export function posixPath(path: string): string {

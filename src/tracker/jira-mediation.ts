@@ -296,7 +296,12 @@ export class JiraMediator {
       return this.publishOk(request.id, published.commentId, published.url, true);
     }
 
-    if (ledger.intents.some(own)) {
+    // An intent (or a ledger that cannot be trusted) means this request may
+    // already have reached Jira: the conversation is read for the correlation
+    // before anything is published. An intact ledger with no intent is the one
+    // case where a publish is the first attempt.
+    const mayHaveLanded = !ledger.intact || ledger.intents.some(own);
+    if (mayHaveLanded) {
       const reconciled = await this.reconcile(target, request.id);
       if (reconciled.state === "found") {
         this.recordPublished(request.id, reconciled.commentId, null);
@@ -305,7 +310,8 @@ export class JiraMediator {
       if (reconciled.state === "unknown") {
         return this.publishUnknown(request.id, reconciled.reason);
       }
-    } else {
+    }
+    if (!ledger.intents.some(own)) {
       appendMediationIntent(this.options.workDir, {
         type: "intent",
         at: this.nowIso(),

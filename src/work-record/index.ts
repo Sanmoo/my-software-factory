@@ -1,6 +1,7 @@
 export * from "./record.js";
 export * from "./outcome.js";
 export * from "./continuity.js";
+export * from "./jira-mediation.js";
 export * from "./recovery.js";
 export * from "./model-provider.js";
 export * from "./repair.js";

@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadAgentDeclaration } from "../../scripts/agent-declaration.mjs";
+import { IMAGE_ROOT } from "../layout.js";
 import {
   AGENT_DECLARATION_FILE,
   AgentResourcesError,
@@ -20,7 +21,7 @@ import {
 
 /** Where the image records what it provisioned (root-owned, outside the
  *  writable agent directory). */
-export const IMAGE_INVENTORY_PATH = "/opt/msf/agent-inventory.json";
+export const IMAGE_INVENTORY_PATH = `${IMAGE_ROOT}/agent-inventory.json`;
 
 /** The declaration committed next to the compiled factory. */
 export const AGENT_DECLARATION_PATH = fileURLToPath(new URL(`../../${AGENT_DECLARATION_FILE}`, import.meta.url));

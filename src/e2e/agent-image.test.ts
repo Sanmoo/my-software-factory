@@ -162,7 +162,11 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
       "test -z \"${MSF_JIRA_TOKEN:-}\" && echo TOKEN=absent",
     ].join("\n");
     const output = docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", WORKER_IMAGE, "-c", script]);
-    assert.match(output, /usage: jira-client-cli\.js read --contract PATH/);
+    assert.match(
+      output,
+      new RegExp(`usage: ${JIRA_CLIENT_CONTAINER_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} read --contract PATH`),
+      "the client runs inside the image and names itself by its container path",
+    );
     assert.match(output, /TOKEN=absent/);
   });
 

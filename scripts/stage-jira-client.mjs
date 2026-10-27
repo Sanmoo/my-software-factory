@@ -18,7 +18,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dist = join(root, "dist");
 const stage = join(root, "docker", "jira-client");
-const ENTRY = "tracker/jira-client-cli.js";
 
 let staging;
 try {
@@ -30,7 +29,8 @@ try {
   process.exit(1);
 }
 
-const closure = staging.relativeImportClosure(dist, [ENTRY]);
+const layout = await import(pathToFileURL(join(dist, "layout.js")).href);
+const closure = staging.relativeImportClosure(dist, [layout.JIRA_CLIENT_ENTRY_MODULE]);
 if (closure.missing.length > 0) {
   process.stderr.write("stage-jira-client: the compiled client names modules dist does not carry:\n");
   for (const entry of closure.missing) {

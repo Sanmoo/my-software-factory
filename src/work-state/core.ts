@@ -1,7 +1,7 @@
 import type { Labels, ModelProviderBudget, RecoveryBudget } from "../config.js";
 import type { ExpandedPrFeedback, PullRequestRecord, TicketSnapshot } from "../tracker/expanded-port.js";
 import type { IssueComment, PrRepairFacts } from "../tracker/port.js";
-import { isAgentSpeech } from "../tracker/port.js";
+import { commentIsAgentSpeech } from "../tracker/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { operatorStopClaim } from "../pool/stop.js";
 import { modelProviderDecision } from "../pool/model-provider.js";
@@ -201,7 +201,7 @@ async function withPullRequest(
   // The worker just opened the PR (or ended the round commenting on it): the
   // ball is with the human — parked, nothing to decide.
   const last = lastPrComment(feedback);
-  if (last !== null && !isAgentSpeech(last.body)) {
+  if (last !== null && !commentIsAgentSpeech(last)) {
     return { work: ref.work, dir: ref.dir, state: "feedback", pr, createdAt: issue.createdAt };
   }
   return parked(ref);
