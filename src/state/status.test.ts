@@ -1160,6 +1160,12 @@ describe("status — derivation on demand + local registry scan", () => {
 
 // ---- Jira candidates: read-only, one native Rank order per site ----
 
+/** Does this JQL name the configured query (with or without the native ordering
+ *  the adapter appends)? The one reading of "this request is a selection's". */
+function namesQuery(jql: string, query: string): boolean {
+  return jql === query || jql === `${query} ORDER BY Rank ASC`;
+}
+
 describe("status: Jira candidates are read-only, and one site has one native Rank order", () => {
   let dir: string;
   let layout: WorkspaceLayout;
@@ -1216,7 +1222,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
    *  issues; any other read (the site's ordered result) sees the whole site. */
   function selectBy(members: Record<string, (issue: SimJiraIssue) => boolean>): NonNullable<JiraSim["select"]> {
     return (jql, issues) => {
-      const direct = Object.entries(members).find(([query]) => jql === query || jql === `${query} ORDER BY Rank ASC`);
+      const direct = Object.entries(members).find(([query]) => namesQuery(jql, query));
       return direct === undefined ? issues : issues.filter(direct[1]);
     };
   }
@@ -1302,11 +1308,12 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     const sim = new JiraSim();
     sim.pageSize = 2;
     // The site's Rank order deliberately disagrees with both creation age and
-    // Jira Priority; neither may reorder the candidates.
-    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend", "shared"], created: "2026-06-01T00:00:00.000+0000", priority: "Low" });
-    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend first", labels: ["backend"], created: "2026-05-01T00:00:00.000+0000", priority: "Highest" });
-    sim.addIssue({ id: "10003", key: "ABC-3", summary: "Touches both layers", labels: ["frontend", "backend"], created: "2026-04-01T00:00:00.000+0000", priority: "Medium", assignee: null });
-    sim.addIssue({ id: "10004", key: "ABC-4", summary: "Frontend second", labels: ["frontend"], created: "2026-03-01T00:00:00.000+0000", priority: "Lowest" });
+    // Jira Priority: neither may reorder the candidates. The ages are not even
+    // monotone, so no age sort — ascending or descending — can reproduce Rank.
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "Frontend first", labels: ["frontend", "shared"], created: "2026-03-01T00:00:00.000+0000", priority: "Low" });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Backend first", labels: ["backend"], created: "2026-06-01T00:00:00.000+0000", priority: "Highest" });
+    sim.addIssue({ id: "10003", key: "ABC-3", summary: "Touches both layers", labels: ["frontend", "backend"], created: "2026-01-01T00:00:00.000+0000", priority: "Medium", assignee: null });
+    sim.addIssue({ id: "10004", key: "ABC-4", summary: "Frontend second", labels: ["frontend"], created: "2026-05-01T00:00:00.000+0000", priority: "Lowest" });
     sim.addIssue({ id: "10005", key: "ABC-5", summary: "Backend second", labels: ["backend"], created: "2026-02-01T00:00:00.000+0000", priority: "High" });
     sim.select = selectBy({
       "project = ABC AND labels = frontend": (issue) => issue.labels.includes("frontend"),
@@ -1542,11 +1549,11 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       "labels = frontend": (issue) => issue.labels.includes("frontend"),
       "labels = backend": (issue) => issue.labels.includes("backend"),
     });
-    const directQueries = new Set(["labels = frontend", "labels = backend"]);
+    const directQueries = ["labels = frontend", "labels = backend"];
     const transport = async (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }) => {
       if (url.endsWith("/rest/api/3/search/jql")) {
         const body = JSON.parse(init.body ?? "{}") as { jql?: string };
-        const direct = [...directQueries].some((query) => body.jql === query || body.jql === `${query} ORDER BY Rank ASC`);
+        const direct = directQueries.some((query) => namesQuery(body.jql ?? "", query));
         if (!direct) {
           return { status: 503, text: JSON.stringify({ errorMessages: ["The service is unavailable"] }) };
         }

@@ -245,9 +245,8 @@ export async function deriveStatus(
   // acts on. The probe stays exactly what it was (ADR 0002): a read.
   const liveness = await classifyLiveness(registry, layout, probe);
   const reserved = await readReservedStates(sources.github, config, layout, liveness, reservedKeys);
-  // Each site's selections are read as ONE native Rank order.
-  // Nothing here claims: like every other read status makes, it changes no
-  // tracker fact and creates no reservation.
+  // Like every read status makes, the Jira read claims nothing: no tracker
+  // fact changes and no reservation is created.
   const jira = await readJiraSites(sources.jira ?? []);
   return {
     pool: tracker.pool,
@@ -394,8 +393,8 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       }
     }),
   );
-  const known = readings.filter(isKnownRead);
-  if (known.length === 0) {
+  const readable = readings.filter(isKnownRead);
+  if (readable.length === 0) {
     return unreadableSite(site, destinations, unreadableReason(readings), readings);
   }
   if (readings.some(isUnreadableRead)) {
@@ -411,17 +410,17 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
   // own union query: only the site can say how its selections' tickets rank
   // against each other.
   let ordered: OpenTicket[];
-  if (known.length === 1) {
-    ordered = known[0]!.tickets;
+  if (readable.length === 1) {
+    ordered = readable[0]!.tickets;
   } else {
     try {
-      ordered = await known[0]!.reader.tickets.listSiteTickets(known.map((entry) => entry.reader.selection));
+      ordered = await readable[0]!.reader.tickets.listSiteTickets(readable.map((entry) => entry.reader.selection));
     } catch (error) {
       return unreadableSite(site, destinations, describeError(error), readings);
     }
   }
 
-  const destinationsByTicket = ticketDestinations(known, destinations);
+  const destinationsByTicket = ticketDestinations(readable, destinations);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
   const sameTickets =
     orderedKeys.size === destinationsByTicket.size &&
@@ -473,14 +472,14 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
  *  The site's own destination list is the only source of spelling: one
  *  repository never appears twice, and no spelling follows declaration order. */
 function ticketDestinations(
-  known: readonly KnownSelectionRead[],
+  readable: readonly KnownSelectionRead[],
   destinations: readonly RepositoryIdentity[],
 ): Map<string, RepositoryIdentity[]> {
   const canonical = new Map(
     destinations.map((destination) => [repositoryIdentityKey(destination), destination] as const),
   );
   const byTicket = new Map<string, Map<string, RepositoryIdentity>>();
-  for (const reading of known) {
+  for (const reading of readable) {
     // Configured selections built the site's list, so every destination is in it.
     const destination = canonical.get(repositoryIdentityKey(reading.reader.selection.destination))!;
     for (const ticket of reading.tickets) {
@@ -553,6 +552,11 @@ function destinationOrder(left: RepositoryIdentity, right: RepositoryIdentity): 
   return repositoryIdentityKey(left).localeCompare(repositoryIdentityKey(right));
 }
 
+/** The attempt the Work record numbers on disk, or null when nothing does. */
+async function recordAttempt(workDir: string): Promise<number | null> {
+  return readLastAttempt(workDir);
+}
+
 /**
  * The two states, from the registry and the probe together: a work
  * whose attempt is on disk is Running when a live worker carries it, Orphaned
@@ -571,7 +575,7 @@ async function classifyLiveness(
   const running = await Promise.all(
     observation.workers.map(async (worker) => ({
       ...worker,
-      attempt: await readLastAttempt(workDirOfKey(layout, worker.key)),
+      attempt: await recordAttempt(workDirOfKey(layout, worker.key)),
     })),
   );
   const carried = new Set(running.map((worker) => worker.key));
