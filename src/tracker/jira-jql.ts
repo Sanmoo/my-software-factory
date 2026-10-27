@@ -63,7 +63,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
 }
 
 /**
- * One query for a whole Jira site's selections (issue 129): the union of the
+ * One query for a whole Jira site's selections: the union of the
  * selections' filters, ordered ONLY by the site's native Rank. Each selection
  * was already validated on its own; its own ordering clause is removed before
  * the union, because independent selection orders cannot be concatenated into

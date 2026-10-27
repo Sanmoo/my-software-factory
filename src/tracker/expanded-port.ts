@@ -75,7 +75,7 @@ export interface TicketTracker {
 
 /**
  * A tracker that can read several selections of ONE site as a single native
- * ordered result (issue 129). Concatenating each selection's own order would
+ * ordered result. Concatenating each selection's own order would
  * pretend independent queues are the site's Rank; only the site as a whole
  * can answer that.
  */

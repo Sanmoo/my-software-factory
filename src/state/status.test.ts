@@ -1158,7 +1158,7 @@ describe("status — derivation on demand + local registry scan", () => {
   });
 });
 
-// ---- Jira candidates: read-only, one native Rank order per site (issue 129) ----
+// ---- Jira candidates: read-only, one native Rank order per site ----
 
 describe("status: Jira candidates are read-only, and one site has one native Rank order", () => {
   let dir: string;
