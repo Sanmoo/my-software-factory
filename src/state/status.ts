@@ -102,7 +102,7 @@ export interface JiraCandidate extends JiraTicketFacts {
 
 /** A ticket the configured selections promise to more than one destination: its
  *  destination is ambiguous, so it is held with the reason and is never
- *  presented as a candidate (spec #92 story 8; issue 129). */
+ *  presented as a candidate. */
 export interface AmbiguousJiraTicket extends JiraTicketFacts {
   ticket: TicketIdentity;
   /** The destinations the selections promise it to, sorted: the ticket is held
@@ -117,7 +117,7 @@ export type JiraSelectionView =
   | { selection: TicketSelection; state: "unreadable"; reason: string };
 
 /** One Jira site's candidates: ONE native Rank order across all its selections,
- *  never one queue per destination or per declared repository (issue 129). */
+ *  never one queue per destination or per declared repository. */
 interface JiraSiteBase {
   site: string;
   /** Every explicitly configured destination, sorted so declaration order
@@ -162,6 +162,21 @@ export interface ReservedWorkState {
 export interface StatusSources {
   github: StatusGitHub;
   jira?: readonly JiraSelectionReader[];
+}
+
+/** The retrospective job as `msf status` names it (ADR 0006): the
+ *  last report written, the boundary it advanced, and the round in flight. */
+export interface RetroStatus {
+  /** The file name of the last report written; null before any. */
+  lastReport: string | null;
+  /** The finish time (epoch ms) of the newest work a window report covered;
+   *  null until a round covers a window — a single-work post-mortem never moves
+   *  it. */
+  boundaryAt: number | null;
+  /** Items the last report filed as needs-triage. */
+  filed: number;
+  /** The round in flight, or null when the lane is idle. */
+  inFlight: RetroInFlight | null;
 }
 
 export interface StatusView {
@@ -230,7 +245,7 @@ export async function deriveStatus(
   // acts on. The probe stays exactly what it was (ADR 0002): a read.
   const liveness = await classifyLiveness(registry, layout, probe);
   const reserved = await readReservedStates(sources.github, config, layout, liveness, reservedKeys);
-  // Each site's selections are read as ONE native Rank order (issue 129).
+  // Each site's selections are read as ONE native Rank order.
   // Nothing here claims: like every other read status makes, it changes no
   // tracker fact and creates no reservation.
   const jira = await readJiraSites(sources.jira ?? []);
@@ -338,8 +353,8 @@ const isKnownRead = (entry: SelectionRead): entry is KnownSelectionRead => entry
 const isUnreadableRead = (entry: SelectionRead): entry is UnreadableSelectionRead => entry.state === "unreadable";
 
 /**
- * Every configured Jira site, grouped by site and read as ONE ordered set
- * (issue 129). Sites are sorted by name so the report never inherits the order
+ * Every configured Jira site, grouped by site and read as ONE ordered set.
+ * Sites are sorted by name so the report never inherits the order
  * the repositories were declared in. The order inside a site comes only from
  * Jira's native Rank — never from the first-listed selection or a merged list of
  * independently ordered queues.
