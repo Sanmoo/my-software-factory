@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { WORK_MOUNT_PATH } from "../layout.js";
 import { isWorkIdentity, workIdentityKey, type WorkIdentity } from "../tracker/identity.js";
-import { appendDurable, readIfExists, writeAtomic } from "./fs.js";
+import { appendDurable, writeAtomic } from "./fs.js";
 
 /**
  * The Work record's mediated-tracker part: the contract the factory hands the
@@ -398,7 +398,7 @@ export function writeMediationRequest(workDir: string, request: JiraMediationReq
     throw new Error("the request names a Work or a session the record's contract does not bind");
   }
   const path = join(mediationPaths(workDir).requests, `${request.id}.json`);
-  const existing = readIfExists(path);
+  const existing = readRequestBytes(path, request.id);
   if (existing !== null && canonical(existing) !== JSON.stringify(request)) {
     throw new Error(
       `request ${request.id} already exists with different content; a retry must reuse the same request`,
@@ -469,7 +469,15 @@ export interface MediationLedger {
  *  A corrupt line is history that authorizes nothing; the comment property
  *  remains the authoritative evidence. */
 export function readMediationLedger(workDir: string): MediationLedger {
-  const raw = readIfExists(mediationPaths(workDir).operations);
+  const operations = mediationPaths(workDir).operations;
+  // A ledger that exists but cannot be read is not an empty ledger: it may hold
+  // the intent of a write that landed, so nothing may be published on it.
+  let raw: string | null;
+  try {
+    raw = existsSync(operations) ? readFileSync(operations, "utf8") : null;
+  } catch {
+    return { intact: false, intents: [], results: [] };
+  }
   if (raw === null) return { intact: true, intents: [], results: [] };
   const intents: JiraOperationIntent[] = [];
   const results: JiraOperationResult[] = [];
@@ -524,9 +532,37 @@ function isOperationLine(value: unknown): value is JiraOperationLine {
   return false;
 }
 
+/** A request file already on disk, null when there is none. A file that exists
+ *  but cannot be read refuses the retry instead of being mistaken for free
+ *  space: the same id with content nobody has read could relabel a request. */
+function readRequestBytes(path: string, id: string): string | null {
+  if (!existsSync(path)) return null;
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    throw new Error(
+      `request ${id} exists but cannot be read (${error instanceof Error ? error.message : String(error)}); ` +
+        "refusing to overwrite it",
+    );
+  }
+}
+
+/**
+ * One record file as this schema reads it. A file that exists but cannot be
+ * read is `invalid`, never `absent`: a failed read must not become the claim
+ * that there was nothing there.
+ */
 function readJson<T>(path: string, problem: (value: unknown) => string | null): MediationFileRead<T> {
-  const raw = readIfExists(path);
-  if (raw === null) return { state: "absent" };
+  if (!existsSync(path)) return { state: "absent" };
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    return {
+      state: "invalid",
+      reason: `the file could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;

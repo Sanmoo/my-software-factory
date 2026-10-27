@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -185,6 +185,29 @@ describe("the Work record's mediated-tracker part", () => {
     const contractPath = mediationPaths(dir).contract;
     assert.equal(mediationWorkDirOf(contractPath), dir, "the contract path is the address the worker holds");
     assert.equal(readMediationContract(dir).state, "ready");
+  });
+
+  test("a record file that exists but cannot be read is invalid, never absent", () => {
+    // The path a request's answer would occupy, as something no read can open:
+    // a failed read must never be reported as the file not being there.
+    mkdirSync(mediationPaths(dir).responses, { recursive: true });
+    mkdirSync(join(mediationPaths(dir).responses, "request-1.json"), { recursive: true });
+    const unreadable = readMediationResponse(dir, "request-1");
+    assert.equal(unreadable.state, "invalid");
+    assert.match(unreadable.state === "invalid" ? unreadable.reason : "", /could not be read/);
+  });
+
+  test("a ledger that exists but cannot be read is untrustworthy, never empty, and its request is not overwritten", () => {
+    // Both files exist and neither can be read: the factory may not publish on
+    // a ledger it has not read, and it may not replace a request it has not
+    // read either.
+    rmSync(mediationPaths(dir).operations, { force: true });
+    mkdirSync(mediationPaths(dir).operations, { recursive: true });
+    assert.equal(readMediationLedger(dir).intact, false);
+
+    rmSync(join(mediationPaths(dir).requests, "request-1.json"), { force: true });
+    mkdirSync(join(mediationPaths(dir).requests, "request-1.json"), { recursive: true });
+    assert.throws(() => writeMediationRequest(dir, request()), /cannot be read/);
   });
 
   test("the request validator refuses an operation, a field or a kind outside the contract", () => {
