@@ -22,6 +22,15 @@ export const SESSIONS_SUBDIR = "sessao";
  *  prompt, the runtime and the factory's mediated artifacts agree on. */
 export const WORK_MOUNT_PATH = "/msf-work";
 
+/** Where the image carries the factory-owned code the worker runs: the
+ *  guardrail extension and the mediated-tracker client. Read-only. */
+export const IMAGE_ROOT = "/opt/msf";
+
+/** The worker's mediated-tracker client, relative to `dist/` and the image. */
+export const JIRA_CLIENT_ENTRY_MODULE = "tracker/jira-client-cli.js";
+
+export const JIRA_CLIENT_CONTAINER_FILE = `${IMAGE_ROOT}/${JIRA_CLIENT_ENTRY_MODULE}`;
+
 /** The PT-BR subpath names as decided on disk. */
 export const WORKSPACE_SUBPATHS = {
   repos: "repos",

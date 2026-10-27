@@ -13,8 +13,8 @@ import { githubRepository, jiraTicket, workIdentity, type WorkIdentity } from ".
 import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
 import { JiraSim } from "../tracker/jira-sim.js";
 import { ConfiguredJiraMediation } from "../tracker/jira-mediation.js";
-import { JiraWorkerClient, jiraContractPath } from "../tracker/jira-worker-client.js";
-import { JIRA_CONTRACT_CONTAINER_PATH, JIRA_MEDIATION_DIRNAME } from "../tracker/jira-mediation-protocol.js";
+import { JiraWorkerClient } from "../tracker/jira-worker-client.js";
+import { JIRA_CONTRACT_CONTAINER_PATH, JIRA_MEDIATION_DIRNAME, mediationPaths } from "../work-record/jira-mediation.js";
 import type { TicketSelection } from "../tracker/expanded-port.js";
 
 /**
@@ -94,7 +94,7 @@ describe("e2e: a scripted worker session asks the factory for Jira", () => {
         const client = new JiraWorkerClient({
           // The worker reads the contract at its container path; the test
           // process reaches the same file through the host work dir.
-          contractPath: jiraContractPath(request.workDir),
+          contractPath: mediationPaths(request.workDir).contract,
           pollMs: 1,
           timeoutMs: 2000,
         });
@@ -134,7 +134,7 @@ describe("e2e: a scripted worker session asks the factory for Jira", () => {
     assert.equal(runtime.launched[0]?.material.jira !== undefined, true, "the launch carried the mediation contract");
     assert.equal(JSON.stringify(runtime.launched[0]).includes(SECRET), false, "the token never rides the launch");
     assert.equal(
-      JSON.stringify(runtime.launched[0]).includes(jiraContractPath(workDir)),
+      JSON.stringify(runtime.launched[0]).includes(mediationPaths(workDir).contract),
       false,
       "the worker is told the container path, never a host path",
     );
@@ -165,7 +165,7 @@ describe("e2e: a scripted worker session asks the factory for Jira", () => {
     const runtime = new FakeWorkerRuntime({
       outcomes: ["blocked-self-report"],
       hold: async (request) => {
-        const client = new JiraWorkerClient({ contractPath: jiraContractPath(request.workDir), pollMs: 1 });
+        const client = new JiraWorkerClient({ contractPath: mediationPaths(request.workDir).contract, pollMs: 1 });
         sim.faults.commentCreate = { status: 503, messages: ["Jira is unavailable"] };
         const answer = await client.publish({ kind: "help", text: "the migration needs the staging URL" });
         status = answer.status;

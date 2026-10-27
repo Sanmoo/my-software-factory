@@ -21,7 +21,8 @@ import {
 } from "./identity.js";
 import { renderAdf, textToAdf } from "./jira-adf.js";
 import { withNativeRankOrdering, withSiteRankOrdering, type RankedQuery } from "./jira-jql.js";
-import type { JiraPublicationKind } from "./jira-mediation-protocol.js";
+import type { JiraPublicationKind } from "../work-record/jira-mediation.js";
+
 /**
  * The real Jira Cloud ticket adapter: reads over the REST API v3
  * with a locally referenced Atlassian API token (HTTP Basic, `account:token`).
@@ -461,6 +462,11 @@ export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker
    * rendered, with the factory's structured evidence (comment property) as
    * `agentSpeech`/`agentCorrelation`. A human and the factory can share the
    * acting account: the author login is not the signal.
+   *
+   * The properties are asked for explicitly (`expand=properties`): Jira exposes
+   * a comment's properties on the comment resource only when the read expands
+   * them, so an unexpanded read would turn the factory's own speech into a
+   * human comment — and a retried publication into a second copy.
    */
   async readTicketComments(ticket: TicketIdentity): Promise<Known<IssueComment[]>> {
     const source = this.assertTicket(ticket);

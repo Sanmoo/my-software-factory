@@ -14,15 +14,13 @@ import { JiraSim } from "./jira-sim.js";
 import { ConfiguredJiraMediation, JiraMediator } from "./jira-mediation.js";
 import {
   JIRA_CONTRACT_CONTAINER_PATH,
-  JIRA_MEDIATION_DIRNAME,
-  JIRA_REQUESTS_DIRNAME,
-  JIRA_RESPONSES_DIRNAME,
+  mediationPaths,
   type JiraMediatedContext,
   type JiraMediationRequest,
   type JiraMediationResponse,
   type JiraReadResponse,
-} from "./jira-mediation-protocol.js";
-import { JiraWorkerClient, jiraContractPath } from "./jira-worker-client.js";
+} from "../work-record/jira-mediation.js";
+import { JiraWorkerClient } from "./jira-worker-client.js";
 import { githubRepository, jiraTicket, workIdentity, type WorkIdentity } from "./identity.js";
 import type { TicketSelection } from "./expanded-port.js";
 
@@ -274,7 +272,7 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     });
     mediator.start();
     try {
-      const client = new JiraWorkerClient({ contractPath: jiraContractPath(harness.workDir), pollMs: 1, timeoutMs: 2000 });
+      const client = new JiraWorkerClient({ contractPath: mediationPaths(harness.workDir).contract, pollMs: 1, timeoutMs: 2000 });
       const response = await client.publish({ kind: "update", text: "the migration is ready" });
       assert.ok(response.status === "ok");
       assert.equal(response.reconciled, true);
@@ -324,13 +322,14 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     const read = await harness.client.read();
     assert.equal(read.status, "ok");
 
-    const requestFile = join(harness.workDir, JIRA_MEDIATION_DIRNAME, JIRA_REQUESTS_DIRNAME, `${read.id}.json`);
-    const responseFile = join(harness.workDir, JIRA_MEDIATION_DIRNAME, JIRA_RESPONSES_DIRNAME, `${read.id}.json`);
+    const paths = mediationPaths(harness.workDir);
+    const requestFile = join(paths.requests, `${read.id}.json`);
+    const responseFile = join(paths.responses, `${read.id}.json`);
     const prompt = buildWorkerPrompt(launchRequest(harness.work, harness.workDir), { blockedLabel: "agent-blocked" });
     for (const artifact of [
       readFileSync(requestFile, "utf8"),
       readFileSync(responseFile, "utf8"),
-      readFileSync(jiraContractPath(harness.workDir), "utf8"),
+      readFileSync(mediationPaths(harness.workDir).contract, "utf8"),
       prompt,
     ]) {
       assert.equal(artifact.includes(SECRET), false, "the host token never rides a worker artifact");
@@ -344,7 +343,7 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
       cli,
       "read",
       "--contract",
-      jiraContractPath(harness.workDir),
+      mediationPaths(harness.workDir).contract,
       "--timeout-ms",
       "5000",
     ]);
@@ -431,7 +430,7 @@ function setup(): Harness {
   });
   mediator.start();
   const client = new JiraWorkerClient({
-    contractPath: jiraContractPath(reserved.dir),
+    contractPath: mediationPaths(reserved.dir).contract,
     pollMs: 1,
     timeoutMs: 2000,
   });
@@ -453,8 +452,9 @@ async function sendRaw(
   id: string,
   value: JiraMediationRequest | Record<string, unknown>,
 ): Promise<JiraMediationResponse> {
-  const requestFile = join(harness.workDir, JIRA_MEDIATION_DIRNAME, JIRA_REQUESTS_DIRNAME, `${id}.json`);
-  const responseFile = join(harness.workDir, JIRA_MEDIATION_DIRNAME, JIRA_RESPONSES_DIRNAME, `${id}.json`);
+  const paths = mediationPaths(harness.workDir);
+  const requestFile = join(paths.requests, `${id}.json`);
+  const responseFile = join(paths.responses, `${id}.json`);
   writeFileSync(requestFile, `${JSON.stringify({ ...value, id })}\n`, "utf8");
   // The harness's own mediator is serving; wait for its response file.
   for (let attempt = 0; attempt < 200; attempt += 1) {

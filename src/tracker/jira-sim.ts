@@ -231,12 +231,17 @@ export class JiraSim {
     return this.issues.find((entry) => entry.id === idOrKey || entry.key === idOrKey);
   }
 
+  /** Jira exposes comment properties only when the read expands them, which is
+   *  the dialect the adapter asks for: without `expand=properties` the evidence
+   *  the factory recognises its own speech by is simply not in the answer. */
   private readComments(url: URL, idOrKey: string) {
     const issue = this.issue(idOrKey);
     if (issue === undefined) {
       return answer(404, { errorMessages: ["Issue does not exist or you do not have permission to see it."] });
     }
     const comments = issue.comments ?? [];
+    const expand = url.searchParams.get("expand") ?? "";
+    const withProperties = expand.split(",").map((entry) => entry.trim()).includes("properties");
     const startAt = Number(url.searchParams.get("startAt") ?? "0");
     const maxResults = Number(url.searchParams.get("maxResults") ?? "100");
     const page = comments.slice(startAt, startAt + Math.max(1, Math.min(maxResults, this.pageSize)));
@@ -244,7 +249,7 @@ export class JiraSim {
       startAt,
       maxResults: page.length,
       total: comments.length,
-      comments: page.map(commentRest),
+      comments: page.map((comment) => commentRest(comment, withProperties)),
     });
   }
 
@@ -273,7 +278,9 @@ export class JiraSim {
       properties: parsed.properties as Array<{ key: string; value: unknown }>,
     };
     (issue.comments ??= []).push(comment);
-    return answer(201, commentRest(comment));
+    // A create answers with the comment it made, properties included: the
+    // caller can inspect the evidence it just published.
+    return answer(201, commentRest(comment, true));
   }
 
   private search(raw: string, record: SimJiraRequest) {
@@ -380,7 +387,7 @@ function basicCredential(header: string | null): { account: string; token: strin
   return { account: decoded.slice(0, separator), token: decoded.slice(separator + 1) };
 }
 
-function commentRest(comment: SimJiraComment) {
+function commentRest(comment: SimJiraComment, withProperties: boolean) {
   return {
     id: comment.id,
     author:
@@ -393,7 +400,7 @@ function commentRest(comment: SimJiraComment) {
           },
     body: comment.body,
     created: comment.created,
-    ...(comment.properties === undefined ? {} : { properties: comment.properties }),
+    ...(withProperties && comment.properties !== undefined ? { properties: comment.properties } : {}),
   };
 }
 

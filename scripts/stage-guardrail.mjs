@@ -29,7 +29,7 @@ const stage = join(root, "docker", "guardrail");
 
 let staging;
 try {
-  staging = await import(pathToFileURL(join(dist, "runtime", "guardrail", "staging.js")).href);
+  staging = await import(pathToFileURL(join(dist, "runtime", "image-staging.js")).href);
 } catch {
   process.stderr.write(
     "stage-guardrail: the compiled staging module is missing — run `npm run build` first (npm run build:image does it).\n",

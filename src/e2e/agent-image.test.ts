@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
-import { JIRA_CLIENT_CONTAINER_FILE } from "../tracker/jira-mediation-protocol.js";
+import { JIRA_CLIENT_CONTAINER_FILE } from "../layout.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources, verifyAgentInventory } from "../runtime/inventory.js";
 import { agentGuidancePath } from "../runtime/agent-paths.js";
 import { workerFlagArgs } from "../runtime/sandcastle.js";

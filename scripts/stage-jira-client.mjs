@@ -22,7 +22,7 @@ const ENTRY = "tracker/jira-client-cli.js";
 
 let staging;
 try {
-  staging = await import(pathToFileURL(join(dist, "runtime", "guardrail", "staging.js")).href);
+  staging = await import(pathToFileURL(join(dist, "runtime", "image-staging.js")).href);
 } catch {
   process.stderr.write(
     "stage-jira-client: the compiled staging module is missing — run `npm run build` first (npm run build:image does it).\n",

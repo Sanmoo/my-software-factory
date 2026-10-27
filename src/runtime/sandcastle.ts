@@ -20,6 +20,7 @@ import { run as sandcastleRun, pi, type AgentProvider, type AgentStreamEvent, ty
 import { docker, type DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import {
+  JIRA_CLIENT_ENTRY_MODULE,
   RETRO_MOUNT_PATHS,
   SESSIONS_SUBDIR,
   WORK_MOUNT_PATH,
@@ -34,7 +35,7 @@ import { describeForeignRecord } from "../state/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 import { describeError } from "../format.js";
 import { buildRetroPrompt, buildWorkerPrompt, COMPLETION_SIGNAL } from "./prompt.js";
-import { JIRA_CLIENT_ENTRY_MODULE } from "../tracker/jira-mediation-protocol.js";
+
 import {
   AGENT_DIR,
   agentExtensionEntry,
@@ -62,7 +63,7 @@ import {
   GUARDRAIL_IMAGE_ROOT,
   containerModules,
   guardrailContainerModules,
-} from "./guardrail/staging.js";
+} from "./image-staging.js";
 import {
   LaunchPreconditionError,
   type RetroRequest,
@@ -336,7 +337,30 @@ export const JIRA_CLIENT_CONTAINER_MODULES: readonly string[] = containerModules
 
 /** Every factory-owned module the launch requires inside the image, checked in
  *  one throwaway container. */
-export const IMAGE_MODULES: readonly string[] = [...GUARDRAIL_CONTAINER_MODULES, ...JIRA_CLIENT_CONTAINER_MODULES];
+/** The factory-owned tools the image must carry, each with what its absence
+ *  would cost the round: the preflight checks them in one container and names
+ *  every missing module. */
+const IMAGE_REQUIREMENTS: ReadonlyArray<{
+  what: string;
+  modules: readonly string[];
+  consequence: string;
+}> = [
+  {
+    what: "continuity guardrail",
+    modules: GUARDRAIL_CONTAINER_MODULES,
+    consequence: "A resumed session could repeat an external effect",
+  },
+  {
+    what: "mediated Jira client",
+    modules: JIRA_CLIENT_CONTAINER_MODULES,
+    consequence: "A Jira session could not read or answer its ticket",
+  },
+];
+
+/** Every module the image must hold, checked in ONE throwaway container. */
+export const IMAGE_MODULES: readonly string[] = IMAGE_REQUIREMENTS.flatMap(
+  (requirement) => requirement.modules,
+);
 
 const AUTH_SETUP_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_LIMIT_MS / 1000;
@@ -1198,19 +1222,13 @@ export function defaultPreflight(deps: PreflightDeps): () => Promise<void> {
     // The Jira client the worker's Jira session reaches its ticket through is
     // part of the same requirement: one throwaway container checks both
     // closures, and every missing module is named.
-    const missing = await missingImageModules(IMAGE_MODULES, deps.image, run);
-    const missingGuardrail = missing.filter((path) => GUARDRAIL_CONTAINER_MODULES.includes(path));
-    if (missingGuardrail.length > 0) {
+    const missing = new Set(await missingImageModules(IMAGE_MODULES, deps.image, run));
+    for (const requirement of IMAGE_REQUIREMENTS) {
+      const gone = requirement.modules.filter((path) => missing.has(path));
+      if (gone.length === 0) continue;
       throw new Error(
-        `worker image ${deps.image} carries no continuity guardrail — missing ${missingGuardrail.join(", ")}. ` +
-          `A resumed session could repeat an external effect. Rebuild it with: npm run build:image`,
-      );
-    }
-    const missingClient = missing.filter((path) => JIRA_CLIENT_CONTAINER_MODULES.includes(path));
-    if (missingClient.length > 0) {
-      throw new Error(
-        `worker image ${deps.image} carries no mediated Jira client — missing ${missingClient.join(", ")}. ` +
-          `A Jira session could not read or answer its ticket. Rebuild it with: npm run build:image`,
+        `worker image ${deps.image} carries no ${requirement.what} — missing ${gone.join(", ")}. ` +
+          `${requirement.consequence}. Rebuild it with: npm run build:image`,
       );
     }
 

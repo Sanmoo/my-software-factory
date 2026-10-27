@@ -1,32 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 import { isWorkIdentity, workIdentityKey } from "./identity.js";
 import {
-  JIRA_CONTRACT_FILENAME,
-  JIRA_MEDIATION_DIRNAME,
-  JIRA_REQUESTS_DIRNAME,
-  JIRA_RESPONSES_DIRNAME,
   isJiraMediationContract,
-  isJiraMediationResponse,
+  mediationWorkDirOf,
   parseJiraMediationRequest,
+  readMediationResponse,
+  writeMediationRequest,
   type JiraMediationContract,
   type JiraMediationRequest,
   type JiraMediationResponse,
   type JiraPublicationKind,
   type JiraPublishResponse,
   type JiraReadResponse,
-} from "./jira-mediation-protocol.js";
+} from "../work-record/jira-mediation.js";
 
 /**
- * The worker side of the mediated Jira interaction.
+ * The worker side of the mediated tracker interaction.
  *
- * It holds NO Jira credential and reads none from the environment: it writes a
- * request into the Work's own directory and waits for the factory's structured
- * answer. The client validates the contract and the request with the SAME
- * validator the factory applies, so a test helper has no path a production
- * worker does not cross.
+ * It holds NO tracker credential and reads none from the environment: it
+ * writes a request into the Work's own record and waits for the factory's
+ * structured answer. The client validates the contract and the request with
+ * the SAME validator the factory applies — both sides import the record's
+ * schema — so a test helper has no path a production worker does not cross.
  *
  * A timeout is `unknown`, never success and never a fabricated rejection: the
  * request stays on disk and can be retried with the same id, which is what
@@ -140,34 +137,23 @@ export class JiraWorkerClient {
     const validated = parseJiraMediationRequest(request, id);
     if (!validated.ok) throw new Error(`the Jira request is not valid: ${validated.reason}`);
 
-    const directory = dirname(this.contractPath);
-    const requestFile = join(directory, JIRA_REQUESTS_DIRNAME, `${id}.json`);
-    const responseFile = join(directory, JIRA_RESPONSES_DIRNAME, `${id}.json`);
-    // This call REPEATS a request id: clear the previous answer so the factory
-    // answers this occurrence (its ledger still reconciles the operation).
-    if (existsSync(requestFile)) rmSync(responseFile, { force: true });
-    writeRequest(requestFile, validated.request);
+    const workDir = mediationWorkDirOf(this.contractPath);
+    writeMediationRequest(workDir, validated.request);
 
     const deadline = Date.now() + this.timeoutMs;
     for (;;) {
-      const response = readResponse(responseFile);
-      if (response !== null) {
-        if (response.id !== id) {
-          throw new Error(`the factory answered request ${id} with the id ${response.id}`);
-        }
-        return response;
-      }
-      if (Date.now() >= deadline) {
-        return this.timedOut(id, validated.request.operation);
-      }
+      const response = readMediationResponse(workDir, id);
+      if (response.state === "invalid") throw new Error(`the factory's answer to ${id} is unusable: ${response.reason}`);
+      if (response.state === "ready") return response.value;
+      if (Date.now() >= deadline) return this.timedOut(id, validated.request.operation);
       await sleep(this.pollMs);
     }
   }
 
   private timedOut(id: string, operation: "read" | "publish"): JiraMediationResponse {
     const reason =
-      `the factory did not answer within ${this.timeoutMs}ms; the request stays at ` +
-      `${join(dirname(this.contractPath), JIRA_REQUESTS_DIRNAME, `${id}.json`)} and may be retried with the same id`;
+      `the factory did not answer within ${this.timeoutMs}ms; the request stays in the work record and may be retried ` +
+      `with the same id (${id})`;
     if (operation === "read") {
       return {
         version: 1,
@@ -188,45 +174,6 @@ export class JiraWorkerClient {
       at: this.now().toISOString(),
     };
   }
-}
-
-/** The contract file of a host work dir (the worker's own view is the mount). */
-export function jiraContractPath(workDir: string): string {
-  return join(workDir, JIRA_MEDIATION_DIRNAME, JIRA_CONTRACT_FILENAME);
-}
-
-function writeRequest(file: string, request: JiraMediationRequest): void {
-  mkdirSync(dirname(file), { recursive: true });
-  const content = `${JSON.stringify(request)}\n`;
-  if (existsSync(file) && readFileSync(file, "utf8") !== content) {
-    throw new Error(`request ${request.id} already exists with different content; a retry must reuse the same request`);
-  }
-  // A retry with the same id re-writes the request (same bytes, newer mtime):
-  // the factory then answers THIS occurrence instead of the cached answer of
-  // the previous one, and its ledger keeps the publication from duplicating.
-  const temporary = `${file}.${process.pid}.tmp`;
-  const fd = openSync(temporary, "w", 0o600);
-  try {
-    writeFileSync(fd, content, "utf8");
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(temporary, file);
-}
-
-function readResponse(file: string): JiraMediationResponse | null {
-  if (!existsSync(file)) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
-  } catch {
-    return null; // a half-written answer is not an answer; the next tick reads it
-  }
-  if (!isJiraMediationResponse(parsed)) {
-    throw new Error(`the factory's answer at ${file} is not a response of this version`);
-  }
-  return parsed;
 }
 
 function sleep(ms: number): Promise<void> {

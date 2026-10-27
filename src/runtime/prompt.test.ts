@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import { AGENT_MARKER } from "../tracker/port.js";
-import { JIRA_CLIENT_CONTAINER_FILE, JIRA_CONTRACT_CONTAINER_PATH } from "../tracker/jira-mediation-protocol.js";
+import { JIRA_CONTRACT_CONTAINER_PATH } from "../work-record/jira-mediation.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../work-record/outcome.js";
 import { buildRetroPrompt, buildWorkerPrompt, reviewReportPath } from "./prompt.js";
-import { WORK_MOUNT_PATH } from "../layout.js";
+import { JIRA_CLIENT_CONTAINER_FILE, WORK_MOUNT_PATH } from "../layout.js";
 import type { LoadedAgentResources } from "./inventory.js";
 import type { RetroRequest, WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";

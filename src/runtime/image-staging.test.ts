@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, test } from "node:test";
 
-import { GUARDRAIL_CONTAINER_FILE, GUARDRAIL_CONTAINER_MODULES } from "../sandcastle.js";
+import { GUARDRAIL_CONTAINER_FILE, GUARDRAIL_CONTAINER_MODULES } from "./sandcastle.js";
 import {
   COMPILED_ROOT,
   GUARDRAIL_ENTRY_MODULE,
   GUARDRAIL_IMAGE_ROOT,
   guardrailContainerModules,
   relativeImportClosure,
-} from "./staging.js";
+} from "./image-staging.js";
 
 /**
  * The image-side half of the continuity guardrail: the staging

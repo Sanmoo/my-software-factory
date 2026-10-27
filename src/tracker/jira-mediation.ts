@@ -1,9 +1,29 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { describeError } from "../format.js";
 import { readReservation } from "../pool/reservation.js";
 import { readSessionLinks } from "../work-record/continuity.js";
+import {
+  JIRA_MEDIATION_VERSION,
+  appendMediationIntent,
+  appendMediationResult,
+  ensureMediationDirs,
+  pendingMediationRequests,
+  readMediationLedger,
+  writeMediationContract,
+  writeMediationResponse,
+  type JiraMediatedComment,
+  type JiraMediatedContext,
+  type JiraMediatedTicket,
+  type JiraMediationContract,
+  type JiraMediationRejected,
+  type JiraMediationRequest,
+  type JiraMediationResponse,
+  type JiraOperationLine,
+  type JiraPublishOk,
+  type JiraPublishRequest,
+  type JiraPublishResponse,
+  type JiraReadResponse,
+  type JiraUnknownFact,
+} from "../work-record/jira-mediation.js";
 import type { TicketSnapshot, TicketSelection } from "./expanded-port.js";
 import {
   repositoryIdentityKey,
@@ -18,28 +38,6 @@ import {
   type FactoryCommentPublication,
   type JiraPublishedComment,
 } from "./jira-adapter.js";
-import {
-  JIRA_CONTRACT_FILENAME,
-  JIRA_MEDIATION_DIRNAME,
-  JIRA_MEDIATION_VERSION,
-  JIRA_OPERATIONS_FILENAME,
-  JIRA_REQUESTS_DIRNAME,
-  JIRA_RESPONSES_DIRNAME,
-  isJiraRequestId,
-  parseJiraMediationRequest,
-  type JiraMediatedComment,
-  type JiraMediatedContext,
-  type JiraMediatedTicket,
-  type JiraMediationContract,
-  type JiraMediationRejected,
-  type JiraMediationRequest,
-  type JiraMediationResponse,
-  type JiraPublishOk,
-  type JiraPublishRequest,
-  type JiraPublishResponse,
-  type JiraReadResponse,
-  type JiraUnknownFact,
-} from "./jira-mediation-protocol.js";
 import type { IssueComment, Known } from "./port.js";
 
 /**
@@ -105,30 +103,6 @@ export interface JiraMediatorOptions extends JiraMediationOpenInput {
 
 const DEFAULT_POLL_MS = 25;
 
-interface OperationIntent {
-  type: "intent";
-  at: string;
-  id: string;
-  work: string;
-  sessionId: string;
-  attempt: number;
-  kind: string;
-}
-
-interface OperationResult {
-  type: "result";
-  at: string;
-  id: string;
-  work: string;
-  sessionId: string;
-  attempt: number;
-  status: "published";
-  commentId: string;
-  url: string;
-}
-
-type OperationLine = OperationIntent | OperationResult;
-
 /** The ticket this handler may read and answer, and the surface it does it
  *  through. Both are fixed before the session starts: a request never chooses
  *  a target. */
@@ -140,10 +114,6 @@ interface JiraTarget {
 export class JiraMediator {
   readonly contract: JiraMediationContract;
   private readonly options: JiraMediatorOptions;
-  private readonly directory: string;
-  private readonly requestsDir: string;
-  private readonly responsesDir: string;
-  private readonly operationsFile: string;
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
 
@@ -152,10 +122,6 @@ export class JiraMediator {
       throw new Error("the Jira mediator only serves a Jira ticket");
     }
     this.options = options;
-    this.directory = join(options.workDir, JIRA_MEDIATION_DIRNAME);
-    this.requestsDir = join(this.directory, JIRA_REQUESTS_DIRNAME);
-    this.responsesDir = join(this.directory, JIRA_RESPONSES_DIRNAME);
-    this.operationsFile = join(this.directory, JIRA_OPERATIONS_FILENAME);
     this.contract = { version: JIRA_MEDIATION_VERSION, work: options.work, sessionId: options.sessionId };
   }
 
@@ -164,9 +130,8 @@ export class JiraMediator {
   start(): JiraMediationHandle {
     const problem = this.preflightProblem();
     if (problem !== null) throw new Error(problem);
-    mkdirSync(this.requestsDir, { recursive: true });
-    mkdirSync(this.responsesDir, { recursive: true });
-    writeJsonAtomic(join(this.directory, JIRA_CONTRACT_FILENAME), this.contract);
+    ensureMediationDirs(this.options.workDir);
+    writeMediationContract(this.options.workDir, this.contract);
     // A failed tick (a transient disk read, a response write) is retried on
     // the next one; it must never become an unhandled rejection in the factory.
     const timer = setInterval(() => void this.tick().catch(() => {}), this.options.pollMs ?? DEFAULT_POLL_MS);
@@ -189,43 +154,27 @@ export class JiraMediator {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      for (const name of readdirSync(this.requestsDir).sort()) {
-        if (!name.endsWith(".json")) continue;
-        const id = name.slice(0, -".json".length);
-        if (!isJiraRequestId(id)) continue;
-        const requestFile = join(this.requestsDir, name);
-        const responseFile = join(this.responsesDir, name);
-        // A retry re-writes the request with the SAME id: a response older than
-        // the request is the previous occurrence, not the answer to this one.
-        if (existsSync(responseFile) && statSync(responseFile).mtimeMs >= statSync(requestFile).mtimeMs) continue;
-        await this.handleFile(requestFile, id);
+      for (const { id, request } of pendingMediationRequests(this.options.workDir)) {
+        // A request that cannot be trusted as this schema is answered with the
+        // rejection it deserves; it is never acted on.
+        const response =
+          request.state === "ready"
+            ? await this.handle(request.value, id)
+            : this.rejected(id, "unknown", request.state === "invalid" ? request.reason : "the request vanished");
+        writeMediationResponse(this.options.workDir, response);
       }
     } finally {
       this.ticking = false;
     }
   }
 
-  /** One request file: read, validate, answer, write the answer atomically. */
-  async handleFile(file: string, id: string): Promise<void> {
-    let value: unknown;
-    try {
-      value = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    } catch {
-      value = null;
-    }
-    const response = await this.handle(value, id);
-    writeJsonAtomic(join(this.responsesDir, `${id}.json`), response);
-  }
-
   /** The whole decision for one request occurrence. */
-  async handle(value: unknown, id: string): Promise<JiraMediationResponse> {
-    const parsed = parseJiraMediationRequest(value, id);
-    if (!parsed.ok) return this.rejected(id, "unknown", parsed.reason);
-    const problem = this.correlationProblem(parsed.request);
-    if (problem !== null) return this.rejected(id, parsed.request.operation, problem);
+  async handle(request: JiraMediationRequest, id: string): Promise<JiraMediationResponse> {
+    const problem = this.correlationProblem(request);
+    if (problem !== null) return this.rejected(id, request.operation, problem);
     const target = this.target();
-    if (parsed.request.operation === "read") return this.read(target, id);
-    return this.publish(target, parsed.request);
+    if (request.operation === "read") return this.read(target, id);
+    return this.publish(target, request);
   }
 
   private rejected(
@@ -334,23 +283,20 @@ export class JiraMediator {
   }
 
   private async publish(target: JiraTarget, request: JiraPublishRequest): Promise<JiraPublishResponse> {
-    const operations = readOperations(this.operationsFile);
+    const ledger = readMediationLedger(this.options.workDir);
     // The ledger entry belongs to the Work, attempt and session that wrote it:
     // a reused request id from another session is not this publication.
-    const own = (entry: OperationLine): boolean =>
+    const own = (entry: JiraOperationLine): boolean =>
       entry.id === request.id &&
       entry.work === workIdentityKey(this.options.work) &&
       entry.sessionId === request.sessionId &&
       entry.attempt === this.options.attempt;
-    const published = operations.find(
-      (entry): entry is OperationResult => entry.type === "result" && own(entry),
-    );
+    const published = ledger.results.find(own);
     if (published !== undefined) {
       return this.publishOk(request.id, published.commentId, published.url, true);
     }
 
-    const hadIntent = operations.some((entry) => entry.type === "intent" && own(entry));
-    if (hadIntent) {
+    if (ledger.intents.some(own)) {
       const reconciled = await this.reconcile(target, request.id);
       if (reconciled.state === "found") {
         this.recordPublished(request.id, reconciled.commentId, null);
@@ -360,7 +306,7 @@ export class JiraMediator {
         return this.publishUnknown(request.id, reconciled.reason);
       }
     } else {
-      appendOperation(this.operationsFile, {
+      appendMediationIntent(this.options.workDir, {
         type: "intent",
         at: this.nowIso(),
         id: request.id,
@@ -403,6 +349,15 @@ export class JiraMediator {
     return this.publishUnknown(request.id, lastReason || "the publication stayed ambiguous after a retry");
   }
 
+  /**
+   * The conversation read that settles an ambiguous write. A `found` comment is
+   * the publication itself (its property carries the request id); only an
+   * `absent` answer — the site answered, and the correlation is not there —
+   * allows the one retry. The read follows the failed write, so a site that had
+   * not yet exposed a landed comment would answer `absent` and the retry would
+   * publish a second copy; the correlation property is what makes such a
+   * duplicate recognisable and reconcilable afterwards, never silent.
+   */
   private async reconcile(
     target: JiraTarget,
     id: string,
@@ -422,7 +377,7 @@ export class JiraMediator {
   }
 
   private recordPublished(id: string, commentId: string, url: string | null): void {
-    appendOperation(this.operationsFile, {
+    appendMediationResult(this.options.workDir, {
       type: "result",
       at: this.nowIso(),
       id,
@@ -532,70 +487,3 @@ function bounded(reason: string): string {
   return oneLine.length > 300 ? `${oneLine.slice(0, 297)}...` : oneLine;
 }
 
-/** One JSON file, written so a reader never sees a partial answer. */
-function writeJsonAtomic(file: string, value: unknown): void {
-  mkdirSync(dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  const fd = openSync(temporary, "w", 0o600);
-  try {
-    writeFileSync(fd, `${JSON.stringify(value)}\n`, "utf8");
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(temporary, file);
-}
-
-/** The append-only operation ledger: an intent is on disk before the write, so
- *  an interruption leaves the correlation the next request reconciles with. */
-function readOperations(file: string): OperationLine[] {
-  if (!existsSync(file)) return [];
-  const entries: OperationLine[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      if (isOperationLine(parsed)) entries.push(parsed);
-    } catch {
-      // A corrupt line is history that cannot authorize anything; the comment
-      // property remains the authoritative evidence for reconciliation.
-    }
-  }
-  return entries;
-}
-
-function appendOperation(file: string, entry: OperationLine): void {
-  mkdirSync(dirname(file), { recursive: true });
-  const fd = openSync(file, "a", 0o600);
-  try {
-    writeSync(fd, `${JSON.stringify(entry)}\n`);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function isOperationLine(value: unknown): value is OperationLine {
-  if (value === null || typeof value !== "object") return false;
-  const entry = value as Record<string, unknown>;
-  if (typeof entry["at"] !== "string" || typeof entry["id"] !== "string" || !isJiraRequestId(entry["id"])) return false;
-  if (entry["type"] === "intent") {
-    return (
-      typeof entry["work"] === "string" &&
-      typeof entry["sessionId"] === "string" &&
-      typeof entry["attempt"] === "number" &&
-      typeof entry["kind"] === "string"
-    );
-  }
-  if (entry["type"] === "result") {
-    return (
-      typeof entry["work"] === "string" &&
-      typeof entry["sessionId"] === "string" &&
-      typeof entry["attempt"] === "number" &&
-      entry["status"] === "published" &&
-      typeof entry["commentId"] === "string" &&
-      typeof entry["url"] === "string"
-    );
-  }
-  return false;
-}

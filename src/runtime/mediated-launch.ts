@@ -1,4 +1,4 @@
-import { JIRA_CONTRACT_CONTAINER_PATH } from "../tracker/jira-mediation-protocol.js";
+import { JIRA_CONTRACT_CONTAINER_PATH } from "../work-record/jira-mediation.js";
 import type { JiraMediationComposition } from "../tracker/jira-mediation.js";
 import type { SessionResult, WorkRequest, WorkerRuntime } from "./port.js";
 

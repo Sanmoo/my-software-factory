@@ -1,9 +1,8 @@
 import { AGENT_MARKER, commentIsAgentSpeech } from "../tracker/port.js";
-import { JIRA_CLIENT_CONTAINER_FILE } from "../tracker/jira-mediation-protocol.js";
 import { renderTicketIdentity, ticketUrl } from "../tracker/identity.js";
 import { renderLocalWork } from "../state/repair-view.js";
 import { DESFECHO_FILENAME, type OutcomeClass } from "../work-record/outcome.js";
-import { RETRO_MOUNT_PATHS, WORK_MOUNT_PATH } from "../layout.js";
+import { JIRA_CLIENT_CONTAINER_FILE, RETRO_MOUNT_PATHS, WORK_MOUNT_PATH } from "../layout.js";
 import { agentLayout, type AgentLayout } from "./agent-paths.js";
 import { loadAgentResources, type LoadedAgentResources } from "./inventory.js";
 import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
@@ -251,7 +250,7 @@ function jiraMediationSection(contractPath: string): string {
     `- read the ticket's current content and conversation again:`,
     `  \`node ${JIRA_CLIENT_CONTAINER_FILE} read --contract ${contractPath}\``,
     `- publish an authorized factory comment (a help request is \`--kind help\`; an update is \`--kind update\`):`,
-    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} publish --kind help --text-file /msf-work/jira-pedido.txt --contract ${contractPath}\``,
+    `  \`node ${JIRA_CLIENT_CONTAINER_FILE} publish --kind help --text-file ${WORK_MOUNT_PATH}/jira-pedido.txt --contract ${contractPath}\``,
     ``,
     `The command prints one JSON answer. Its \`status\` is a structured fact: \`ok\`, \`partial\`,`,
     `\`rejected\`, \`failed\` or \`unknown\`. ONLY \`ok\` on a publish says the comment landed. A`,

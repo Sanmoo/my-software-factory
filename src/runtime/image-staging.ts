@@ -2,23 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { IMAGE_ROOT } from "../layout.js";
+
 /**
- * What the worker image must carry for the continuity guardrail.
- * The compiled extension and every module it loads through a relative import
+ * What the worker image must carry of the factory-owned code the worker runs.
+ * A tool's compiled entry and every module it loads through a relative import
  * are one closure: the image provisions exactly it, and the launch preflight
- * requires exactly it inside the image. A module the extension imports cannot
- * be missing from the image, and a dissolved compatibility re-export cannot be
+ * requires exactly it inside the image. A module the tool imports cannot be
+ * missing from the image, and a dissolved compatibility re-export cannot be
  * staged as dead weight.
  */
 
 /** The compiled guardrail entry, relative to `dist/` and to the image's /opt/msf. */
 export const GUARDRAIL_ENTRY_MODULE = "runtime/guardrail/extension.js";
 
-/** Where the image carries the staged compiled tree. */
-export const GUARDRAIL_IMAGE_ROOT = "/opt/msf";
+/** Where the image carries the staged compiled tree (the image root every
+ *  factory-owned tool shares). */
+export const GUARDRAIL_IMAGE_ROOT = IMAGE_ROOT;
 
-/** `dist/` of the running build: this module lives at dist/runtime/guardrail/. */
-export const COMPILED_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+/** `dist/` of the running build: this module lives at dist/runtime/. */
+export const COMPILED_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export interface MissingModule {
   /** The module that names the import, or "." for an entry the tree lacks. */

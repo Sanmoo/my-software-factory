@@ -13,18 +13,33 @@ import {
   type Config,
   type Labels,
 } from "../config.js";
-import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
+import { ensureWorkspace, workDir, workDirOfKey, type WorkspaceLayout } from "../layout.js";
 import { withPullRequestIdentity } from "../tracker/expanded-port.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime, type ScriptedOutcome } from "../runtime/fake-runtime.js";
 import { workBranchName, type GitWork, type LocalWorkFacts, type PreparedWork } from "../git/port.js";
-import { githubRepository, type TicketIdentity, type WorkIdentity } from "../tracker/identity.js";
-import type { WriteOutcome } from "../tracker/port.js";
+import {
+  githubRepository,
+  jiraTicket,
+  workIdentity,
+  type TicketIdentity,
+  type WorkIdentity,
+} from "../tracker/identity.js";
+import type { WriteOutcome, IssueComment, Known } from "../tracker/port.js";
 import type { WorkRequest, WorkerRuntime } from "../runtime/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
 import type { Launch, Launchable, LaunchCycle } from "./launch.js";
 import { openPipeline } from "./pipeline.js";
+import {
+  ConfiguredJiraMediation,
+  type JiraMediationComposition,
+  type JiraMediationTracker,
+} from "../tracker/jira-mediation.js";
+import { JiraWorkerClient } from "../tracker/jira-worker-client.js";
+import type { FactoryCommentPublication, JiraPublishedComment } from "../tracker/jira-adapter.js";
+import type { TicketSelection, TicketSnapshot } from "../tracker/expanded-port.js";
+import { JIRA_CONTRACT_CONTAINER_PATH, mediationPaths } from "../work-record/jira-mediation.js";
 import { openWorkState } from "../work-state/state.js";
 import { recordFailure } from "../pool/recovery.js";
 import { readLaunchFacts } from "../pool/registry.js";
@@ -124,6 +139,46 @@ class ProbeTracker extends FakeTrackerAdapter {
   }
 }
 
+/** The Jira surface the real handler calls, recording what it asked for: this
+ *  test observes the launch hop, not the REST dialect (the adapter's own suite
+ *  owns that). */
+class ProbeJiraTracker implements JiraMediationTracker {
+  readonly published: FactoryCommentPublication[] = [];
+  readonly snapshot: TicketSnapshot;
+
+  constructor(ticket: TicketIdentity) {
+    this.snapshot = {
+      ticket,
+      title: "Fix the login flow",
+      body: "The login flow must survive a restart.",
+      state: "open",
+      stateReason: null,
+      labels: ["to-do"],
+      assignees: ["Factory Bot"],
+      createdAt: CREATED,
+    };
+  }
+
+  async readTicket(): Promise<Known<TicketSnapshot>> {
+    return { known: true, value: this.snapshot };
+  }
+
+  async readTicketComments(): Promise<Known<IssueComment[]>> {
+    return { known: true, value: [] };
+  }
+
+  async publishFactoryComment(
+    _ticket: TicketIdentity,
+    publication: FactoryCommentPublication,
+  ): Promise<JiraPublishedComment> {
+    this.published.push(publication);
+    return {
+      commentId: String(900 + this.published.length),
+      url: `https://acme.atlassian.net/browse/ABC-1?focusedCommentId=${900 + this.published.length}`,
+    };
+  }
+}
+
 /** A runtime whose session dies before it starts: the launch fails after the
  *  claim, and nothing is collected. */
 class FailingRuntime implements WorkerRuntime {
@@ -168,6 +223,10 @@ interface HarnessOptions {
   outcomes?: ScriptedOutcome[];
   /** The issues seeded ready for a claim. */
   issues?: number[];
+  /** The Work the harness launches; a GitHub issue on the default repository. */
+  work?: WorkIdentity;
+  /** Factory-mediated tracker access, when the Work's source needs it. */
+  jiraMediation?: JiraMediationComposition;
   /** A runtime replacing the fake one (a session that dies before it starts). */
   runtime?: WorkerRuntime;
   /** A cycle duty the test overrides (the collection, the stop, ...). */
@@ -225,8 +284,8 @@ describe("the launch — the pipeline from the claim to the collected end", () =
     const events: string[] = [];
     const calls: Calls = { announced: [], launched: [], collected: [], cancelled: [], pauses: [] };
     const config = configOf(layout);
-    const work = githubWork(REPO, ISSUE);
-    const dir = workDir(layout, REPO, ISSUE);
+    const work = options.work ?? githubWork(REPO, ISSUE);
+    const dir = workDirOfKey(layout, workKeyOf(work));
     mkdirSync(dir, { recursive: true });
     const tracker = new ProbeTracker(config.workerGhAccount, events, dir);
     for (const number of options.issues ?? [ISSUE]) {
@@ -278,6 +337,7 @@ describe("the launch — the pipeline from the claim to the collected end", () =
         workspace: layout,
         log: (message) => logs.push(message),
         wait: async () => {},
+        ...(options.jiraMediation === undefined ? {} : { jiraMediation: options.jiraMediation }),
         cycle,
       }),
       tracker,
@@ -558,4 +618,90 @@ describe("the launch — the pipeline from the claim to the collected end", () =
     );
     assert.equal(h.runtime.launched.length, 2, "the launches themselves still ran");
   });
+  test("a Jira Work launches through the mediated contract: the session reads and publishes against the real handler", async () => {
+    const jiraWork = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      githubRepository(REPO),
+    );
+    const jira = new ProbeJiraTracker(jiraWork.ticket);
+    const observed: string[] = [];
+    const runtime = new FakeWorkerRuntime({
+      outcomes: ["clean-without-pr"],
+      hold: async (request) => {
+        assert.equal(
+          request.material.jira?.contractPath,
+          JIRA_CONTRACT_CONTAINER_PATH,
+          "the worker is told the container's contract path",
+        );
+        const client = new JiraWorkerClient({
+          contractPath: mediationPaths(request.workDir).contract,
+          pollMs: 1,
+          timeoutMs: 2_000,
+        });
+        const read = await client.read();
+        observed.push(`read:${read.status}`);
+        const published = await client.publish({ kind: "help", text: "which staging environment?" });
+        observed.push(`publish:${published.status}`);
+      },
+    });
+    const selection: TicketSelection = {
+      source: { provider: "jira", site: "acme.atlassian.net" },
+      destination: githubRepository(REPO),
+      jql: "project = ABC",
+    };
+    const h = makeHarness({
+      work: jiraWork,
+      issues: [],
+      runtime,
+      jiraMediation: new ConfiguredJiraMediation([{ selection, tickets: jira }], { pollMs: 1 }),
+    });
+    // The ticket facts reach the launch material from the Jira side while the
+    // claim itself is the tracker's (a Jira claim belongs to its own slice).
+    h.tracker.claimTicket = async () => ({ performed: [] });
+    h.tracker.readTicket = async () => ({ known: true, value: jira.snapshot });
+    h.tracker.readPullRequestFeedback = async () => ({
+      known: true,
+      value: { pr: null, comments: [], reviews: [] },
+    });
+
+    await h.launch.attempt({
+      work: jiraWork,
+      dir: workDirOfKey(h.layout, workKeyOf(jiraWork)),
+      kind: "claim",
+      createdAt: CREATED,
+      pr: null,
+    });
+
+    assert.deepEqual(observed, ["read:ok", "publish:ok"], "the session's requests reached the real handler");
+    assert.equal(jira.published.length, 1, "the factory made the publication as the acting account");
+    assert.equal(jira.published[0]?.kind, "help");
+    assert.equal(runtime.launched[0]?.material.ticket.title, "Fix the login flow");
+  });
+
+  test("a Jira Work is refused before any worker when the launch has no mediated access", async () => {
+    const jiraWork = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      githubRepository(REPO),
+    );
+    const h = makeHarness({ work: jiraWork, issues: [] });
+    h.tracker.claimTicket = async () => ({ performed: [] });
+    h.tracker.readTicket = async () => ({ known: false });
+    h.tracker.readPullRequestFeedback = async () => ({
+      known: true,
+      value: { pr: null, comments: [], reviews: [] },
+    });
+
+    await assert.rejects(
+      h.launch.attempt({
+        work: jiraWork,
+        dir: workDirOfKey(h.layout, workKeyOf(jiraWork)),
+        kind: "claim",
+        createdAt: CREATED,
+        pr: null,
+      }),
+      /factory-mediated Jira access/,
+    );
+    assert.equal(h.runtime.launched.length, 0, "no worker starts into a Jira it could not reach");
+  });
+
 });

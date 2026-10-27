@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 
 import { JiraWorkerClient } from "./jira-worker-client.js";
-import type { JiraMediationResponse, JiraPublicationKind } from "./jira-mediation-protocol.js";
+import type { JiraMediationResponse, JiraPublicationKind } from "../work-record/jira-mediation.js";
 
 /**
  * The command the worker runs to ask the factory for Jira access:
