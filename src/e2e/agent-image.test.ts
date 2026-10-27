@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
 
 import { WORKER_IMAGE } from "../worker-image.js";
+import { JIRA_CLIENT_CONTAINER_FILE } from "../tracker/jira-mediation-protocol.js";
 import { IMAGE_INVENTORY_PATH, loadAgentResources, verifyAgentInventory } from "../runtime/inventory.js";
 import { agentGuidancePath } from "../runtime/agent-paths.js";
 import { workerFlagArgs } from "../runtime/sandcastle.js";
@@ -147,6 +148,22 @@ describe("the provisioned worker image — what Pi actually loads", { skip: skip
     assert.equal(line(output, "SKILLS="), `${expectedDirs},`);
     assert.equal(line(output, "GUIDANCE="), "present", "the extension's operating guidance ships inside its package");
     assert.equal(line(output, "INSTALL="), "no", "the session installs no skill or extension");
+  });
+
+  test("the image carries the mediated Jira client, and it holds no credential", () => {
+    const script = [
+      "set -e",
+      // The client the prompt names: present, executable by the agent user, and
+      // able to answer its own usage without any Jira configuration.
+      `test -f ${JIRA_CLIENT_CONTAINER_FILE}`,
+      "node " + JIRA_CLIENT_CONTAINER_FILE + " 2>&1 | head -1",
+      // The image itself carries no token: the factory holds it, and the
+      // worker's environment has none.
+      "test -z \"${MSF_JIRA_TOKEN:-}\" && echo TOKEN=absent",
+    ].join("\n");
+    const output = docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", WORKER_IMAGE, "-c", script]);
+    assert.match(output, /usage: jira-client-cli\.js read --contract PATH/);
+    assert.match(output, /TOKEN=absent/);
   });
 
   test("the image's own inventory matches the committed declaration", () => {

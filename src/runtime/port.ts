@@ -37,9 +37,16 @@ export interface RepairMaterial {
  * on a feedback round, and the diff of the work branch — every session starts
  * from the relevant context, never from session memory.
  */
+export interface JiraMediationMaterial {
+  /** Where the worker's client reads the factory's contract (container path). */
+  contractPath: string;
+}
+
 export interface WorkerMaterial {
   /** The request's ticket content: the ticket's title and body as usable text. */
   ticket: { title: string; body: string };
+  /** Present only when the factory mediates this Work's Jira access. */
+  jira?: JiraMediationMaterial;
   /** Human replies on a blocked ticket after the last agent marker; present only on retomada. */
   ticketReplies?: IssueComment[];
   /** The open PR linked to the work and its conversation; absent on a first launch. */

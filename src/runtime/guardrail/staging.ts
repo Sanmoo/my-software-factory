@@ -72,12 +72,20 @@ export function relativeImportClosure(rootDir: string, entryModules: readonly st
 /** The `/opt/msf/...` files the image must hold for the built guardrail. Throws
  *  when the compiled tree is incomplete: a launch cannot be guarded by it. */
 export function guardrailContainerModules(rootDir: string = COMPILED_ROOT): string[] {
-  const closure = relativeImportClosure(rootDir, [GUARDRAIL_ENTRY_MODULE]);
+  return containerModules(GUARDRAIL_ENTRY_MODULE, rootDir);
+}
+
+/** The `/opt/msf/...` files the image must hold for one factory-owned tool: its
+ *  compiled entry and every module its relative imports load. Throws when the
+ *  compiled tree is incomplete — the image would otherwise fail at the tool
+ *  call, when the launch can only see the files that ARE there. */
+export function containerModules(entryModule: string, rootDir: string = COMPILED_ROOT): string[] {
+  const closure = relativeImportClosure(rootDir, [entryModule]);
   if (closure.missing.length > 0) {
     const details = closure.missing
       .map((entry) => `${entry.module}${entry.from === "." ? " (the entry)" : ` (imported by ${entry.from})`}`)
       .join(", ");
-    throw new Error(`the compiled guardrail is incomplete — missing ${details}; run npm run build`);
+    throw new Error(`the compiled image tool ${entryModule} is incomplete — missing ${details}; run npm run build`);
   }
   return closure.modules.map((module) => `${GUARDRAIL_IMAGE_ROOT}/${module}`);
 }

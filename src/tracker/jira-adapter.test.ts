@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { githubRepository, jiraTicket, type TicketIdentity } from "./identity.js";
+import { githubRepository, jiraTicket, workIdentity, type TicketIdentity } from "./identity.js";
 import type { PrerequisiteLink, TicketSelection } from "./expanded-port.js";
 import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount, type SimJiraIssue, type SimJiraLink } from "./jira-sim.js";
@@ -721,6 +721,132 @@ describe("Jira adapter: direct prerequisites come from the configured links and 
         .known,
       false,
       "a ticket the site does not expose is unknown, never without prerequisites",
+    );
+  });
+});
+/**
+ * The conversation and the factory's own publication, over the same simulated
+ * REST: the ADF meaning of every comment is rendered, and factory speech is
+ * recognised by Jira's structured evidence alone — a human and the factory can
+ * share the acting account.
+ */
+describe("Jira adapter: the conversation and the mediated factory comment", () => {
+  const TICKET_ADF = {
+    type: "doc",
+    version: 1,
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "keep the retry bounded", marks: [{ type: "strong" }] },
+          { type: "text", text: " — see " },
+          { type: "text", text: "the runbook", marks: [{ type: "link", attrs: { href: "https://example.test/rb" } }] },
+        ],
+      },
+    ],
+  };
+
+  function workOf(sim: JiraSim) {
+    return workIdentity(ticketOf(sim, "10001"), githubRepository(REPO));
+  }
+
+  test("comments are read page by page, rendered from ADF, and only the property makes a comment factory speech", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    sim.pageSize = 1;
+    sim.addComment("ABC-1", { id: "c1", body: TICKET_ADF });
+    sim.addComment("ABC-1", {
+      id: "c2",
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
+      properties: [{ key: "msf.factory", value: { version: 1, correlationId: "req-1" } }],
+    });
+
+    const comments = await adapterFor(sim).readTicketComments(ticketOf(sim, "10001"));
+
+    if (!comments.known) assert.fail("the conversation is readable");
+    assert.deepEqual(
+      comments.value.map((comment) => [comment.id, comment.agentSpeech, comment.agentCorrelation ?? null]),
+      [
+        ["c1", false, null],
+        ["c2", true, "req-1"],
+      ],
+      "the author is the shared acting account for both; only the property speaks",
+    );
+    assert.match(comments.value[0]!.body, /keep the retry bounded — see the runbook \(https:\/\/example\.test\/rb\)/);
+    assert.equal(comments.value[0]!.author, sim.account.displayName);
+    assert.ok(
+      sim.requests.filter((request) => request.path === "/rest/api/3/issue/10001/comment").length >= 2,
+      "the conversation really came from Jira, one page at a time",
+    );
+  });
+
+  test("the factory comment is published as ADF carrying the correlation as a Jira comment property", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    const adapter = adapterFor(sim);
+
+    const published = await adapter.publishFactoryComment(ticketOf(sim, "10001"), {
+      kind: "help",
+      text: "Which staging URL?",
+      correlationId: "req-2",
+      work: workOf(sim),
+      sessionId: "session-1",
+      attempt: 1,
+    });
+
+    const comment = sim.issues[0]?.comments?.at(-1);
+    assert.equal(published.commentId, comment?.id);
+    assert.match(published.url, /focusedCommentId=/);
+    assert.equal(comment?.author?.emailAddress, sim.account.emailAddress);
+    const property = comment?.properties?.[0];
+    assert.equal(property?.key, "msf.factory");
+    assert.equal((property?.value as Record<string, unknown>)["correlationId"], "req-2");
+    assert.deepEqual((comment?.body as { type: string }).type, "doc");
+  });
+
+  test("a write failure is either a definite refusal or an ambiguity, never a silent retry", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    const adapter = adapterFor(sim);
+    const publication = {
+      kind: "update" as const,
+      text: "ready",
+      correlationId: "req-3",
+      work: workOf(sim),
+      sessionId: "session-1",
+      attempt: 1,
+    };
+
+    sim.faults.commentCreate = { status: 400, messages: ["the body is not a valid document"] };
+    await assert.rejects(adapter.publishFactoryComment(ticketOf(sim, "10001"), publication), /refused the comment/);
+
+    sim.faults.commentCreate = { status: 403, messages: ["no permission"] };
+    await assert.rejects(
+      adapter.publishFactoryComment(ticketOf(sim, "10001"), publication),
+      /insufficient Jira permissions/,
+      "a permission failure is a definite refusal: nothing was published",
+    );
+
+    sim.faults.commentCreate = { status: 503, messages: ["unavailable"] };
+    await assert.rejects(
+      adapter.publishFactoryComment(ticketOf(sim, "10001"), publication),
+      /may or may not have landed/,
+    );
+
+    delete sim.faults.commentCreate;
+    // The site is reachable, but the answer to the write never arrives: the
+    // adapter must call that unknown, not failure and not success.
+    const unreachable = new JiraTicketAdapter({
+      site: sim.site,
+      account: sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env: { [TOKEN_ENV]: sim.token },
+      transport: (url, init) =>
+        init.method === "POST" ? Promise.reject(new Error("socket hang up")) : sim.transport(url, init),
+    });
+    await assert.rejects(
+      unreachable.publishFactoryComment(ticketOf(sim, "10001"), publication),
+      /may or may not have landed/,
     );
   });
 });

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { GUARDRAIL_CONTAINER_MODULES } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 
@@ -191,3 +191,28 @@ export function killContainer(id: string): void {
   execFileSync("docker", ["kill", id], { stdio: "ignore" });
 }
 
+/**
+ * The session file of one id under the workspace's sessions dir, or null when
+ * the launch left none. The tree is walked for the id, so the provider's own
+ * directory layout is not a contract of the proof.
+ */
+export function findSession(sessionsDir: string, sessionId: string): string | null {
+  const stack = [sessionsDir];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: string[];
+    try {
+      entries = execFileSync("find", [dir, "-type", "f", "-name", `*_${sessionId}.jsonl`], { encoding: "utf8" })
+        .split("\n")
+        .filter((entry) => entry !== "");
+    } catch {
+      continue;
+    }
+    if (entries.length > 0) return entries[0]!;
+    for (const entry of entries) {
+      const parent = dirname(entry);
+      if (parent !== dir) stack.push(parent);
+    }
+  }
+  return null;
+}

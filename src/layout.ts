@@ -18,6 +18,10 @@ import { OPERATIONAL_LOG_FILENAME } from "./log.js";
 /** The work's session subdir, on disk as decided: <work dir>/sessao. */
 export const SESSIONS_SUBDIR = "sessao";
 
+/** Where the work dir is bound inside the worker container: the layout the
+ *  prompt, the runtime and the factory's mediated artifacts agree on. */
+export const WORK_MOUNT_PATH = "/msf-work";
+
 /** The PT-BR subpath names as decided on disk. */
 export const WORKSPACE_SUBPATHS = {
   repos: "repos",

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test, describe } from "node:test";
 
 import { AGENT_MARKER } from "../tracker/port.js";
+import { JIRA_CLIENT_CONTAINER_FILE, JIRA_CONTRACT_CONTAINER_PATH } from "../tracker/jira-mediation-protocol.js";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME } from "../work-record/outcome.js";
-import { buildRetroPrompt, buildWorkerPrompt, reviewReportPath, WORK_MOUNT } from "./prompt.js";
+import { buildRetroPrompt, buildWorkerPrompt, reviewReportPath } from "./prompt.js";
+import { WORK_MOUNT_PATH } from "../layout.js";
 import type { LoadedAgentResources } from "./inventory.js";
 import type { RetroRequest, WorkRequest } from "./port.js";
 import { githubWork, launchedNumber } from "../e2e/work-fixtures.js";
@@ -162,7 +164,7 @@ describe("worker prompt — the three obligations (the worker's ruler)", () => {
   const prompt = buildWorkerPrompt(baseRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
 
   test("obligation 1: the structured outcome record, always, before ending — with the schema", () => {
-    assert.match(prompt, new RegExp(`${WORK_MOUNT}/${DESFECHO_FILENAME}`));
+    assert.match(prompt, new RegExp(`${WORK_MOUNT_PATH}/${DESFECHO_FILENAME}`));
     assert.match(prompt, /pr-open/);
     assert.match(prompt, /blocked-self-report/);
     assert.match(prompt, /clean-without-pr/);
@@ -709,6 +711,30 @@ describe("worker prompt — the ticket source and the code destination are separ
 
     assert.match(prompt, /ABC-42/);
     assert.doesNotMatch(prompt, /https?:\/\/[^\s]*ABC-42/);
+  });
+
+  test("a mediated Jira ticket names the factory's client and reads the answer as a fact, never as authorization", () => {
+    const request = jiraRequest("https://acme.atlassian.net/browse/ABC-42");
+    request.material.jira = { contractPath: JIRA_CONTRACT_CONTAINER_PATH };
+    const prompt = buildWorkerPrompt(request, { blockedLabel: DEFAULT_LABELS.blocked });
+
+    assert.match(prompt, /the factory performs the API calls/i);
+    assert.match(prompt, new RegExp(`node ${JIRA_CLIENT_CONTAINER_FILE} read`));
+    assert.match(prompt, new RegExp(`--kind help`));
+    assert.match(prompt, new RegExp(JIRA_CONTRACT_CONTAINER_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(prompt, /ONLY `ok` on a publish says the comment landed/);
+    assert.match(prompt, /`partial` or `unknown` answer names what is unknown/);
+    assert.match(prompt, /retry the same command with\n`?\s*the same `--request-id`/);
+    assert.match(prompt, /--kind help.*section above/, "the blocked self-report asks the ticket through the factory");
+    assert.match(prompt, /the Jira API token is never in this container/);
+    assert.doesNotMatch(prompt, /api[_-]?token\s*[:=]/i, "no credential is ever rendered");
+  });
+
+  test("a Jira ticket without mediation carries no client section and no invented channel", () => {
+    const prompt = buildWorkerPrompt(jiraRequest(), { blockedLabel: DEFAULT_LABELS.blocked });
+    assert.doesNotMatch(prompt, /the factory performs the API calls/);
+    assert.doesNotMatch(prompt, /jira-client-cli/);
+    assert.match(prompt, /name the blockage in your final message/);
   });
 
   test("the GitHub prompt keeps its closing syntax and issue-editing self-report", () => {

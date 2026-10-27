@@ -14,9 +14,11 @@ import { seedSession } from "./session-fixtures.js";
 import { localGitWork } from "../git/local.js";
 import { cleanupFixture, seedFixtureRemote, type FixtureRemote } from "../git/local-fixtures.js";
 import { readOutcomeRecord } from "../work-record/outcome.js";
-import { RESERVATION_FILENAME, readReservation } from "../pool/reservation.js";
+import { RESERVATION_FILENAME, readReservation, reservationRecordOf, reserveWork } from "../pool/reservation.js";
 import { PR_ASSOCIATIONS_FILENAME, activePullRequest, readPrAssociations } from "../pool/pr-association.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
+import { githubRepository, jiraTicket, workIdentity } from "../tracker/identity.js";
+import { appendSessionLink } from "../work-record/continuity.js";
 
 /**
  * End-to-end of the default wiring: the full pipeline through the REAL cli
@@ -86,6 +88,72 @@ describe("e2e: msf run through the real cli wiring", () => {
       },
     });
   }
+
+  /** The config with one Jira selection: the same file seam, one more source. */
+  function writeJiraConfig(): void {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        "concurrency: 1",
+        `workspace: ${join(dir, "ws")}`,
+        "jira:",
+        "  - site: acme.atlassian.net",
+        "    account: bot@acme.example",
+        "    token-env: MSF_JIRA_ACME_TOKEN",
+        "    jql: project = ABC",
+        `    destination: ${REPO}`,
+      ].join("\n"),
+      "utf8",
+    );
+  }
+
+  test("the configured Jira selection is wired into the factory's mediated access; another destination gets none", async () => {
+    writeJiraConfig();
+    const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    const deps = await wiredDeps(tracker, new FakeWorkerRuntime({ tracker, outcomes: ["clean-without-pr"] }));
+    assert.ok(deps.jiraMediation, "the configuration reaches the launch path as one composition");
+
+    const work = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
+      githubRepository(REPO),
+    );
+    const reserved = reserveWork(layout, reservationRecordOf(work));
+    appendSessionLink(reserved.dir, {
+      version: 1,
+      work,
+      attempt: 1,
+      round: 1,
+      sessionId: "session-1",
+      at: NOW,
+    });
+
+    const served = deps.jiraMediation.open({
+      work,
+      workDir: reserved.dir,
+      attempt: 1,
+      sessionId: "session-1",
+    });
+    assert.ok(served, "the configured source and destination serve the Work");
+    served.close();
+
+    const elsewhere = workIdentity(
+      jiraTicket({ site: "acme.atlassian.net", stableId: "10002", key: "ABC-2" }),
+      githubRepository("Sanmoo/other"),
+    );
+    assert.equal(
+      deps.jiraMediation.open({
+        work: elsewhere,
+        workDir: reserved.dir,
+        attempt: 1,
+        sessionId: "session-1",
+      }),
+      null,
+      "a destination the configuration does not promise is never served",
+    );
+  });
 
   async function labelsOf(tracker: FakeTrackerAdapter, number: number): Promise<string[]> {
     const issue = await tracker.readIssue({ repo: REPO, number });

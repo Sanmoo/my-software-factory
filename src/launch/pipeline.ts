@@ -18,6 +18,7 @@ import { recheckPausedEffects, planContinuity, type ContinuityDeps } from "../ru
 import { describeRemoteChange, shortSha } from "../state/repair-view.js";
 import { repairSignature, type RepairTrigger } from "../pool/repair-trigger.js";
 import { workPullRequest } from "../state/derive.js";
+import { launchWithJiraMediation } from "../runtime/mediated-launch.js";
 import { renderWorkIdentity, ticketUrl, type WorkIdentity } from "../tracker/identity.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { refundHeldGrant, type StopLaunch } from "../pool/stop.js";
@@ -456,6 +457,11 @@ class LaunchPipeline implements Launch {
    * worker existed — refunds the admission's grant; a requested stop
    * this launch consumed keeps its record either way; any other failure may
    * have left a worker behind and keeps the grant consumed.
+   *
+   * A Jira Work goes out through the factory's mediated handler
+   * (`launchWithJiraMediation`): the contract exists before the session and the
+   * handler outlives it. A Jira Work with no configured mediation is refused
+   * there as a Launch refusal — no worker existed, so the grant is refunded.
    */
   private async launchWorker(
     request: WorkRequest,
@@ -463,7 +469,7 @@ class LaunchPipeline implements Launch {
     attempt: number,
   ): Promise<SessionResult> {
     try {
-      return await this.deps.runtime.launch(request);
+      return await launchWithJiraMediation(this.deps.runtime, request, this.deps.jiraMediation);
     } catch (error) {
       if (error instanceof LaunchPreconditionError) await this.refundRefusedLaunch(entry, attempt, error);
       // The refund lands first: a failed stop-record write must never cost the

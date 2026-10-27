@@ -14,6 +14,7 @@ import type { IssueComment } from "../tracker/port.js";
 import type { PauseRecord } from "../work-record/continuity.js";
 import type { ModelProviderFailure } from "../work-record/model-provider-error.js";
 import type { RepairAttempt } from "../work-record/repair.js";
+import type { JiraMediationComposition } from "../tracker/jira-mediation.js";
 import type { OperationalClass } from "../work-state/state.js";
 
 /**
@@ -135,6 +136,9 @@ export interface LaunchDeps {
   /** The backoff before a relaunch; production waits on a real timer, a test
    *  injects one to observe the configured schedule. */
   wait?: (ms: number) => Promise<void>;
+  /** Factory-mediated Jira access: a Jira Work goes out through the handler
+   *  this composition opens (the launch module owns WHEN it opens and closes). */
+  jiraMediation?: JiraMediationComposition;
   cycle: LaunchCycle;
 }
 

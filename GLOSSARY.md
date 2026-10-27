@@ -60,6 +60,10 @@ The image's own record of the agent resources it provisioned; a launch compares 
 The account authenticated by the factory on an issue tracker, receiving claim assignment and authoring the factory's comments there.
 _Avoid_: Current user, when it could mean either the operator or the authenticated account.
 
+**Mediated ticket access**:
+The controlled interaction through which a worker obtains additional reads of its Ticket and authorized publications on the tracker: the worker writes a structured request, the factory validates it against the Work, its Reservation and its Session, and performs the call as the Acting account. The worker never holds the tracker credential.
+_Avoid_: Proxy, when the point is that the factory owns the authority and the worker holds no credential.
+
 **Pool**:
 The set of work currently available for the factory to pick up.
 

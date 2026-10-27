@@ -10,7 +10,8 @@ import type { DockerOptions } from "@ai-hero/sandcastle/sandboxes/docker";
 import { DEFAULT_LABELS } from "../config.js";
 import { DESFECHO_FILENAME, readOutcomeRecord, type OutcomeRecord } from "../work-record/outcome.js";
 import { WORKER_IMAGE } from "../worker-image.js";
-import { buildWorkerPrompt, COMPLETION_SIGNAL, WORK_MOUNT } from "./prompt.js";
+import { buildWorkerPrompt, COMPLETION_SIGNAL } from "./prompt.js";
+import { WORK_MOUNT_PATH } from "../layout.js";
 import {
   SandcastleRuntime,
   SESSIONS_CONTAINER_DIR,
@@ -19,8 +20,7 @@ import {
   MISE_CONTAINER_DIR,
   SANDBOX_BACKSTOP_FACTOR,
   TOOLCHAIN_SUBPATHS,
-  GUARDRAIL_CONTAINER_FILE,
-  GUARDRAIL_CONTAINER_MODULES,
+  IMAGE_MODULES,
   defaultPreflight,
   dockerSocketFromHost,
   retroAnchorDir,
@@ -177,7 +177,7 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.deepEqual(
       mounts.map((mount: { sandboxPath: string; readonly?: boolean }) => [mount.sandboxPath, mount.readonly ?? false]),
       [
-        [WORK_MOUNT, false],
+        [WORK_MOUNT_PATH, false],
         [SESSIONS_CONTAINER_DIR, false],
         [MISE_CONTAINER_DIR, false],
         [SOCKET.hostPath, false],
@@ -332,6 +332,22 @@ describe("sandcastle runtime — the launch it hands to Sandcastle", () => {
     assert.equal(env["GH_TOKEN"], "gh-token-for-the-container");
     assert.equal(dockerOptions?.network, undefined, "the provider default is the default bridge network");
     assert.equal(dockerOptions?.imageName, WORKER_IMAGE);
+  });
+
+  test("a Jira token in the host environment rides neither the container env, the agent env nor the prompt", async () => {
+    const secret = "host-only-jira-api-token";
+    process.env["MSF_JIRA_TOKEN"] = secret;
+    try {
+      await runtime.launch(request);
+    } finally {
+      delete process.env["MSF_JIRA_TOKEN"];
+    }
+
+    const containerEnv = dockerOptions?.env ?? {};
+    assert.equal(Object.values(containerEnv).includes(secret), false, "no ambient value is inherited by the container");
+    const agent = runOptions?.agent as unknown as { env: Record<string, string> };
+    assert.equal(Object.values(agent.env).includes(secret), false, "the agent env carries only the supplied auth");
+    assert.equal((runOptions?.prompt ?? "").includes(secret), false, "the prompt never renders a credential");
   });
 
   test("the work branch strategy: named branch, born from the base the git host reported", async () => {
@@ -819,7 +835,7 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
     assert.ok(!existsSync(request.workDir), "the half-staged guardrail leaves no footprint");
   });
 
-  test("the default preflight checks Docker, the image inventory, the token, the git helper, Docker inside and the model auth", async () => {
+  test("the default preflight checks Docker, the image inventory, the token, the git helper, the guardrail, the Jira client, Docker inside and the model auth", async () => {
     const checks: string[][] = [];
     const recorded = defaultPreflight({
       token: "present",
@@ -873,7 +889,7 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
         "sh",
         WORKER_IMAGE,
         "-c",
-        GUARDRAIL_CONTAINER_MODULES.map((path) => `test -f ${path} || echo ${path}`).join("; "),
+        IMAGE_MODULES.map((path) => `test -f ${path} || echo ${path}`).join("; "),
       ],
       [
         "docker",

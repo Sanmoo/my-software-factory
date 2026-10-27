@@ -1,5 +1,5 @@
 import type { PauseRecord } from "../work-record/continuity.js";
-import { isAgentSpeech, pauseMarkerId, type IssueComment } from "./port.js";
+import { commentIsAgentSpeech, pauseMarkerId, type IssueComment } from "./port.js";
 
 /**
  * Which comments are the HUMAN's answer, read from the marker alone — the
@@ -18,9 +18,9 @@ import { isAgentSpeech, pauseMarkerId, type IssueComment } from "./port.js";
 export function humanCommentsAfterLastMarker(comments: IssueComment[]): IssueComment[] {
   let lastMarkerIndex = -1;
   for (const [index, comment] of comments.entries()) {
-    if (isAgentSpeech(comment.body)) lastMarkerIndex = index;
+    if (commentIsAgentSpeech(comment)) lastMarkerIndex = index;
   }
-  return comments.slice(lastMarkerIndex + 1).filter((comment) => !isAgentSpeech(comment.body));
+  return comments.slice(lastMarkerIndex + 1).filter((comment) => !commentIsAgentSpeech(comment));
 }
 
 export function hasHumanCommentAfterLastMarker(comments: IssueComment[]): boolean {
@@ -41,5 +41,5 @@ export function humanCommentsForPause(comments: IssueComment[], pause: PauseReco
   if (pause.id === undefined) return humanCommentsAfterLastMarker(comments);
   const request = comments.findIndex((comment) => pauseMarkerId(comment.body) === pause.id);
   if (request < 0) return [];
-  return comments.slice(request + 1).filter((comment) => !isAgentSpeech(comment.body));
+  return comments.slice(request + 1).filter((comment) => !commentIsAgentSpeech(comment));
 }
