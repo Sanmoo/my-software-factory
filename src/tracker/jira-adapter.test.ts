@@ -488,12 +488,11 @@ describe("Jira adapter: native Rank selection over the simulated REST ", () => {
       ["block", () => adapter.blockTicketClaim(ticket, { ready: "ready", claimed: "claimed", blocked: "blocked" })],
       ["resume", () => adapter.resumeTicketClaim(ticket, { ready: "ready", claimed: "claimed", blocked: "blocked" })],
       ["mark done", () => adapter.markTicketDone(ticket)],
-      ["comment", () => adapter.commentOnTicket(ticket, "hello")],
-      ["comment read", () => adapter.readTicketComments(ticket)],
+      ["unmediated comment", () => adapter.commentOnTicket(ticket, "hello")],
       ["rank read", () => adapter.rankTicket(ticket)],
     ];
     for (const [operation, call] of refused) {
-      await assert.rejects(call(), new RegExp(`Jira ${operation} is not implemented yet`), operation);
+      await assert.rejects(call(), new RegExp(`Jira ${operation} is not implemented for`), operation);
     }
     assert.equal(sim.requests.length, 0, "nothing reaches the tracker, no write is attempted");
   });

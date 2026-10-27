@@ -193,10 +193,13 @@ function jiraAdapterFactory(config: Config): (entry: Config["jira"][number]) => 
   };
 }
 
-/** The configured selections, each with the adapter of its site: one shape
- *  serves the read-only listing of `msf status` and the factory's mediated
- *  access, so both name the same source the same way. */
-function jiraSelectionEntries(config: Config): Array<{ selection: TicketSelection; tickets: JiraTicketAdapter }> {
+/** A configured selection with the adapter of its site: the status reader's
+ *  view of it plus the operations the mediated access needs, so one shape
+ *  serves both and they name the same source the same way. */
+type ConfiguredJiraSelection = JiraSelectionReader & { tickets: JiraTicketAdapter };
+
+/** The configured selections, each with the adapter of its site. */
+function jiraSelectionEntries(config: Config): ConfiguredJiraSelection[] {
   const adapterFor = jiraAdapterFactory(config);
   return config.jira.map((entry) => ({
     selection: jiraSelectionOf(entry),
@@ -206,7 +209,7 @@ function jiraSelectionEntries(config: Config): Array<{ selection: TicketSelectio
 }
 
 /** The read-only Jira selections of `msf status`. */
-function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
+function jiraSelectionReaders(config: Config): ConfiguredJiraSelection[] {
   return jiraSelectionEntries(config);
 }
 
