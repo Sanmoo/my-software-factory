@@ -522,7 +522,7 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     const response = await harness.client.read();
 
     assert.ok(response.status === "rejected");
-    assert.match(String(response.reason), /session/);
+    assert.match(String(response.reason), /not the one recorded/);
     assert.equal(harness.sim.requests.length, before, "a request the record cannot correlate calls no Jira endpoint");
   });
 
