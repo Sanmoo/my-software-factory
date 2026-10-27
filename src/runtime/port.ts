@@ -95,10 +95,9 @@ export interface SessionResult {
 
 /**
  * The **Launch refusal** of GLOSSARY.md: a precondition of the environment
- * (Docker, the image and its inventory, the git credential helper, the model
- * credential) rejected the launch before the attempt's footprint was written,
- * so no worker existed. Any other failure may have left a worker behind and is
- * never this type.
+ * rejected the launch before the attempt's footprint was written, so no worker
+ * existed. Any other failure may have left a worker behind and is never this
+ * type.
  */
 export class LaunchPreconditionError extends Error {
   constructor(message: string, cause?: unknown) {

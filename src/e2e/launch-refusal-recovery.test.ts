@@ -29,12 +29,11 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
- * A launch the runtime refuses BEFORE any worker existed — a precondition of
- * the environment: Docker, the image's inventory, the git helper, the model
- * credential — refunds the recovery grant the factory persisted before the
- * launch. The work stays reserved with its budget intact and the next tick
- * relaunches the same attempt; an ambiguous failure, one that may have left a
- * worker behind, keeps the grant consumed.
+ * A Launch refusal — the runtime proving no worker existed — refunds the
+ * recovery grant the factory persisted before the launch. The work stays
+ * reserved with its budget intact and the next tick relaunches the same
+ * attempt; an ambiguous failure, one that may have left a worker behind, keeps
+ * the grant consumed.
  */
 
 const REPO = "Sanmoo/my-tasks";

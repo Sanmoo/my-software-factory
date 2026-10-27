@@ -508,7 +508,7 @@ class LaunchPipeline implements Launch {
     }
     this.log(
       `the launch of ${workKeyOf(entry.work)} was refused before any worker existed ` +
-        `(Launch refusal: ${describeError(error)}) — ${note}`,
+        `(launch refusal: ${describeError(error)}) — ${note}`,
     );
   }
 
