@@ -4,4 +4,4 @@ Accepted. For Jira-backed work, a confirmed GitHub PR merge establishes delivery
 
 Consequently, a delivered work can still block its dependents, and an issue in Done can satisfy them without factory delivery. Entering Done or leaving the selection query does not cancel an existing reservation; cancellation remains explicit. Reexecution of delivered or cancelled work requires an operator command and preserves history, rather than following comments, status changes or removal of a mark.
 
-This decision applies to Jira-backed work, not a rewrite of the existing GitHub Issues completion policy. It records the agreed lifecycle, not already shipped behavior.
+This decision applies to Jira-backed work, not a rewrite of the existing GitHub Issues completion policy. The delivery lifecycle beyond the dependency rule remains agreed, not shipped.

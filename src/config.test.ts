@@ -421,7 +421,49 @@ describe("config: Jira Cloud selections", () => {
       tokenEnv: "MSF_JIRA_ACME_TOKEN",
       jql: "project = ABC AND assignee = currentUser() ORDER BY Rank ASC",
       destination: "Sanmoo/my-tasks",
+      prerequisites: [],
     });
+  });
+
+  test("the configured link types and directions are the only prerequisites, and their default is none", () => {
+    const config = loadConfig(
+      jiraYaml(
+        [
+          oneEntry(),
+          "    prerequisites:",
+          "      - type: Blocks",
+          "        direction: inward",
+          "      - type: Depends on",
+          "        direction: outward",
+        ].join("\n"),
+      ),
+    );
+
+    assert.deepEqual(config.jira[0]?.prerequisites, [
+      { type: "Blocks", direction: "inward" },
+      { type: "Depends on", direction: "outward" },
+    ]);
+  });
+
+  test("a prerequisite direction must be the link side, never a guess from the link's wording", () => {
+    for (const direction of ["in", "out", "blocks", ""]) {
+      const path = jiraYaml(
+        [oneEntry(), "    prerequisites:", `      - type: Blocks`, `        direction: ${JSON.stringify(direction)}`].join("\n"),
+      );
+      assert.throws(() => loadConfig(path), /direction.*inward.*outward/, `rejected: ${direction}`);
+    }
+  });
+
+  test("a malformed prerequisite rule is refused instead of read as no rule", () => {
+    const cases: Array<[string, RegExp]> = [
+      ["    prerequisites: Blocks", /prerequisites.*list/],
+      ["    prerequisites:\n      - Blocks", /prerequisites\[0\].*mapping/],
+      ["    prerequisites:\n      - direction: inward", /prerequisites\[0\]\.type/],
+      ["    prerequisites:\n      - type: Blocks\n        direction: inward\n        infer: text", /infer/],
+    ];
+    for (const [block, expected] of cases) {
+      assert.throws(() => loadConfig(jiraYaml([oneEntry(), block].join("\n"))), expected, block);
+    }
   });
 
   test("a GitHub-only config stays valid and has no Jira selection", () => {

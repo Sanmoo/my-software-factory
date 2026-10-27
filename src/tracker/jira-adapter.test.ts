@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { githubRepository, jiraTicket, type TicketIdentity } from "./identity.js";
-import type { TicketSelection } from "./expanded-port.js";
+import type { PrerequisiteLink, TicketSelection } from "./expanded-port.js";
 import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
-import { basic, JiraSim, type SimJiraAccount } from "./jira-sim.js";
+import { basic, JiraSim, type SimJiraAccount, type SimJiraIssue, type SimJiraLink } from "./jira-sim.js";
 
 /**
  * The real Jira adapter over the simulated REST: native Rank
@@ -481,7 +481,7 @@ describe("Jira adapter: native Rank selection over the simulated REST ", () => {
     const ticket = jiraTicket({ site: sim.site, stableId: "10001", key: "ABC-1" });
 
     const refused: Array<[string, () => Promise<unknown>]> = [
-      ["dependency read", () => adapter.readTicketBlockers(ticket)],
+      ["native blocked_by read", () => adapter.readTicketBlockers(ticket)],
       ["claim", () => adapter.claimTicket(ticket, "bot@acme.example")],
       ["claim release", () => adapter.releaseTicketClaim(ticket, "bot@acme.example")],
       ["block", () => adapter.blockTicketClaim(ticket, { ready: "ready", claimed: "claimed", blocked: "blocked" })],
@@ -495,5 +495,232 @@ describe("Jira adapter: native Rank selection over the simulated REST ", () => {
       await assert.rejects(call(), new RegExp(`Jira ${operation} is not implemented yet`), operation);
     }
     assert.equal(sim.requests.length, 0, "nothing reaches the tracker, no write is attempted");
+  });
+});
+
+// ---- configured prerequisite links and the Done status category ----
+
+describe("Jira adapter: direct prerequisites come from the configured links and Jira's Done category", () => {
+  const BLOCKS_INWARD: PrerequisiteLink[] = [{ type: "Blocks", direction: "inward" }];
+
+  function dependent(sim: JiraSim, links: SimJiraLink[], id = "10001", key = "ABC-1"): SimJiraIssue {
+    return sim.addIssue({ id, key, summary: "The dependent", assignee: null, links });
+  }
+
+  test("only the configured link type and side names a prerequisite", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [
+      { type: "Blocks", side: "inward", key: "ABC-5" },
+      { type: "Blocks", side: "outward", key: "ABC-6" },
+      { type: "Relates", side: "inward", key: "ABC-7" },
+    ]);
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Waits for review", status: { name: "In Review", categoryKey: "indeterminate" } });
+    sim.addIssue({ id: "10006", key: "ABC-6", summary: "Blocked by the dependent" });
+    sim.addIssue({ id: "10007", key: "ABC-7", summary: "Merely related" });
+    const adapter = adapterFor(sim);
+
+    const read = await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+
+    if (!read.known) assert.fail("the link read succeeded");
+    assert.deepEqual(
+      read.value.map((entry) => [entry.ticket.key, entry.status, entry.completion]),
+      [["ABC-5", "In Review", "not-done"]],
+      "the outward side and the unconfigured type are no prerequisite, whatever their text",
+    );
+    assert.equal(
+      sim.requests.at(-1)?.path,
+      "/rest/api/3/issue/10001",
+      "the immutable id reads the links; the key is presentation only",
+    );
+
+    const outward = await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), [
+      { type: "Blocks", direction: "outward" },
+    ]);
+    if (!outward.known) assert.fail("the link read succeeded");
+    assert.deepEqual(
+      outward.value.map((entry) => [entry.ticket.key, entry.status, entry.completion]),
+      [["ABC-6", "To Do", "not-done"]],
+      "the configured side decides: the outward link is the prerequisite, and the inward one is not",
+    );
+  });
+
+  test("the Done status CATEGORY decides — a status name or a resolution never does", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [
+      { type: "Blocks", side: "inward", key: "ABC-5" },
+      { type: "Blocks", side: "inward", key: "ABC-6" },
+    ]);
+    // Cancelled inside the Done category satisfies the prerequisite (ADR 0004).
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Withdrawn", status: { name: "Cancelled", categoryKey: "done" } });
+    // A status literally called "Done", or a business resolution, outside the
+    // category does not.
+    sim.addIssue({
+      id: "10006",
+      key: "ABC-6",
+      summary: "Claimed done",
+      status: { name: "Done", categoryKey: "indeterminate" },
+      resolution: "Done",
+    });
+    const adapter = adapterFor(sim);
+
+    const read = await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+
+    if (!read.known) assert.fail("the link read succeeded");
+    assert.deepEqual(
+      read.value.map((entry) => [entry.ticket.key, entry.status, entry.completion]),
+      [
+        ["ABC-5", "Cancelled", "done"],
+        ["ABC-6", "Done", "not-done"],
+      ],
+    );
+  });
+
+  test("a prerequisite whose state the site does not show is unknown, never satisfied", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [{ type: "Blocks", side: "inward", key: "ABC-5" }]);
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Restricted", status: { name: "Done", categoryKey: "done" } });
+    sim.hidden.add("ABC-5");
+    const adapter = adapterFor(sim);
+
+    const read = await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+
+    if (!read.known) assert.fail("the link itself was read");
+    assert.deepEqual(
+      read.value.map((entry) => [entry.ticket.key, entry.status, entry.completion]),
+      [["ABC-5", null, null]],
+      "the link is listed, its completion is unknown — not done, not absent",
+    );
+  });
+
+  test("a status whose category Jira's completion model does not define is unknown, never satisfied", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [{ type: "Blocks", side: "inward", key: "ABC-5" }]);
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Uncategorised" });
+    // The site names the status but sends no category the adapter can read.
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.includes("/rest/api/3/issue/10001")) return response;
+      return {
+        status: 200,
+        text: JSON.stringify({
+          id: "10001",
+          key: "ABC-1",
+          fields: {
+            issuelinks: [
+              { id: "1", type: { name: "Blocks" }, inwardIssue: { id: "10005", key: "ABC-5", fields: { status: { name: "Waiting" } } } },
+            ],
+          },
+        }),
+      };
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    const read = await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+
+    if (!read.known) assert.fail("the link read succeeded");
+    assert.deepEqual(
+      read.value.map((entry) => [entry.ticket.key, entry.status, entry.completion]),
+      [["ABC-5", "Waiting", null]],
+      "the status name was read, its category was not — an unread completion, never done",
+    );
+  });
+
+  test("a link the site cannot identify is a read failure, never zero prerequisites", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [{ type: "Blocks", side: "inward", key: "ABC-404" }]);
+    const adapter = adapterFor(sim);
+
+    await assert.rejects(
+      adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD),
+      /names no identifiable issue/,
+    );
+  });
+
+  test("an issue without the requested links field is a read failure too", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [{ type: "Blocks", side: "inward", key: "ABC-5" }]);
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Blocker" });
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.includes("/rest/api/3/issue/10001")) return response;
+      return { status: 200, text: JSON.stringify({ id: "10001", key: "ABC-1", fields: {} }) };
+    };
+    const adapter = adapterFor(sim, { transport });
+
+    await assert.rejects(
+      adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD),
+      /carries no issuelinks array/,
+    );
+  });
+
+  test("a configured link type the site does not have holds the candidate instead of reading zero prerequisites", async () => {
+    const sim = new JiraSim();
+    dependent(sim, []);
+    const adapter = adapterFor(sim);
+
+    await assert.rejects(
+      adapter.readTicketPrerequisites(ticketOf(sim, "10001"), [{ type: "Blokcs", direction: "inward" }]),
+      (error: Error) => {
+        assert.match(error.message, /does not have/);
+        assert.match(error.message, /"Blokcs"/, "the mistyped rule is named");
+        assert.match(error.message, /Blocks/, "the site's own vocabulary is offered");
+        return true;
+      },
+    );
+    assert.deepEqual(
+      sim.requests.map((request) => `${request.method} ${request.path}`),
+      ["GET /rest/api/3/myself", "GET /rest/api/3/issueLinkType"],
+      "the ticket's links are not read for a rule the site cannot evaluate",
+    );
+  });
+
+  test("the site's link types are read once per adapter, and a failed read is a read failure", async () => {
+    const sim = new JiraSim();
+    dependent(sim, [{ type: "Blocks", side: "inward", key: "ABC-5" }]);
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Blocker" });
+    const adapter = adapterFor(sim);
+
+    await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+    await adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD);
+    assert.equal(
+      sim.requests.filter((request) => request.path === "/rest/api/3/issueLinkType").length,
+      1,
+      "the site's vocabulary is one fact per adapter",
+    );
+
+    const failing = new JiraSim();
+    failing.addIssue({ id: "10001", key: "ABC-1", summary: "The dependent", links: [] });
+    failing.faults.linkTypes = { status: 503, messages: ["The service is unavailable"] };
+    const recovering = adapterFor(failing);
+    await assert.rejects(
+      recovering.readTicketPrerequisites(ticketOf(failing, "10001"), BLOCKS_INWARD),
+      /could not read Jira site/,
+    );
+
+    // The site comes back: the failed vocabulary is not remembered, so the next
+    // read asks again instead of holding the candidate on a stale failure.
+    delete failing.faults.linkTypes;
+    const read = await recovering.readTicketPrerequisites(ticketOf(failing, "10001"), BLOCKS_INWARD);
+    if (!read.known) assert.fail("the retried read succeeded");
+    assert.deepEqual(read.value, [], "the recovered read answers for the ticket's own links");
+  });
+
+  test("a failed link read propagates; a missing ticket is unknown", async () => {
+    const sim = new JiraSim();
+    dependent(sim, []);
+    sim.faults.issue = { status: 503, messages: ["The service is unavailable"] };
+    const adapter = adapterFor(sim);
+
+    await assert.rejects(
+      adapter.readTicketPrerequisites(ticketOf(sim, "10001"), BLOCKS_INWARD),
+      /could not read Jira site/,
+    );
+    delete sim.faults.issue;
+    assert.equal(
+      (await adapter.readTicketPrerequisites(jiraTicket({ site: sim.site, stableId: "99999", key: "ABC-99" }), BLOCKS_INWARD))
+        .known,
+      false,
+      "a ticket the site does not expose is unknown, never without prerequisites",
+    );
   });
 });

@@ -287,6 +287,15 @@ offered as a candidate for either, and the other candidates on that site remain
 usable. Jira candidates carry no claim and no reservation, so they never appear
 in the pool.
 
+Each candidate line ends with its own prerequisites: `none configured for this
+selection`, `none on the ticket`, the keys it satisfies, or `held by
+prerequisites` with the prerequisite (or the link read) that keeps it waiting.
+One candidate's unreadable link or prerequisite state holds that candidate
+alone; a link type the site does not have — or the site's link types themselves
+cannot be read — holds the affected candidates with the diagnosis instead of
+reading as no prerequisite. The rule a selection configures is the
+`prerequisites` block of `msf.yaml`, described in the README.
+
 ## (d) Local desktop notifications
 
 `msf run` (continuous and `--once`) shows a Linux desktop notice when a new

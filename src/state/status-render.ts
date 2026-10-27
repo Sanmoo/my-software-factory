@@ -22,6 +22,7 @@ import type {
   RunningWorker,
   StatusView,
 } from "./status.js";
+import type { PrerequisiteVerdict } from "./jira-prerequisites.js";
 import type { DuplicateWorkers } from "./liveness.js";
 import type { RecoveryBudget } from "../config.js";
 import type { RecoveryDecision } from "../pool/recovery.js";
@@ -242,12 +243,15 @@ function describeSite(site: KnownJiraSiteView): string {
   if (site.candidates.length === 0 && site.ambiguous.length === 0) return "none";
   const facts = [plural(site.candidates.length, "candidate")];
   if (site.ambiguous.length > 0) facts.push(`${site.ambiguous.length} held as ambiguous`);
+  const waiting = site.candidates.filter((candidate) => candidate.prerequisites.state === "unmet").length;
+  if (waiting > 0) facts.push(`${waiting} held by prerequisites`);
   return facts.join(", ");
 }
 
 function renderCandidate(candidate: JiraCandidate, index: number): string {
   const assignee = candidate.assignees.length === 0 ? "" : ` [assignee: ${candidate.assignees.join(", ")}]`;
-  return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee}`;
+  const prerequisites = describePrerequisites(candidate.prerequisites);
+  return `    ${index + 1}. ${renderWorkIdentity(candidate.work)} — ${candidate.title}${assignee} — ${prerequisites}`;
 }
 
 /** One held ticket: every conflicting destination is named, never chosen. */
@@ -273,6 +277,15 @@ function renderSelections(lines: string[], selections: readonly JiraSelectionVie
     const held = view.held === 0 ? "" : `, ${view.held} held as ambiguous`;
     lines.push(`    selection (${query}) → ${destination}: ${view.selected} selected${held}`);
   }
+}
+
+/** Why a candidate may or may not advance, past what the JQL selected it for. */
+function describePrerequisites(verdict: PrerequisiteVerdict): string {
+  if (verdict.state === "unmet") return `held by prerequisites: ${verdict.reason}`;
+  if (!verdict.configured) return "prerequisites: none configured for this selection";
+  if (verdict.satisfied.length === 0) return "prerequisites: none on the ticket";
+  const satisfied = verdict.satisfied.map((ticket) => ticket.key).join(", ");
+  return `prerequisites in the Done status category: ${satisfied}`;
 }
 
 function plural(count: number, noun: string): string {

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
-import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
+import { JiraTicketAdapter, type JiraTransport } from "../tracker/jira-adapter.js";
 import { JiraSim, type SimJiraIssue } from "../tracker/jira-sim.js";
 import type { TicketSelection, TicketSnapshot } from "../tracker/expanded-port.js";
 import type { Known } from "../tracker/port.js";
@@ -1237,8 +1237,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net"), tickets: jiraAdapter(healthy) },
-          { selection: selection("beta.atlassian.net"), tickets: jiraAdapter(broken, {}) },
+          { selection: selection("acme.atlassian.net"), tickets: jiraAdapter(healthy), prerequisites: [] },
+          { selection: selection("beta.atlassian.net"), tickets: jiraAdapter(broken, {}), prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1281,7 +1281,7 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     const view = await deriveStatus(
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
-        jira: [{ selection: selection("acme.atlassian.net"), tickets: jiraAdapter(sim) }],
+        jira: [{ selection: selection("acme.atlassian.net"), tickets: jiraAdapter(sim), prerequisites: [] }],
       },
       statusConfig(),
       layout,
@@ -1299,7 +1299,10 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       text,
       /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix login \[assignee: Ana Silva\]/,
     );
-    assert.match(text, /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout$/m);
+    assert.match(
+      text,
+      /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout — prerequisites: none configured for this selection$/m,
+    );
     assert.match(text, /pool \(eligible\): none/, "a Jira candidate is not presented as an eligible Work");
     assert.doesNotMatch(text, /acme\.atlassian\.net → Sanmoo\/my-tasks: 1 candidate/, "no per-selection queues");
   });
@@ -1330,14 +1333,17 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = backend", "Sanmoo/backend"),
             tickets: adapter,
+            prerequisites: [],
           },
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = frontend", "Sanmoo/frontend"),
             tickets: adapter,
+            prerequisites: [],
           },
           {
             selection: selection("acme.atlassian.net", "project = ABC AND labels = shared", "Sanmoo/frontend"),
             tickets: adapter,
+            prerequisites: [],
           },
         ],
       },
@@ -1415,8 +1421,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/product"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "project = DEF", "Sanmoo/platform"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/product"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "project = DEF", "Sanmoo/platform"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1451,8 +1457,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/a"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = b", "Sanmoo/b"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/a"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = b", "Sanmoo/b"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1491,8 +1497,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = abc", "Sanmoo/a"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/a"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = abc", "Sanmoo/a"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "project = XYZ", "Sanmoo/a"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1525,8 +1531,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = left", "Sanmoo/a"), tickets: jiraAdapter(left) },
-          { selection: selection("acme.atlassian.net", "labels = right", "Sanmoo/b"), tickets: jiraAdapter(right) },
+          { selection: selection("acme.atlassian.net", "labels = left", "Sanmoo/a"), tickets: jiraAdapter(left), prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = right", "Sanmoo/b"), tickets: jiraAdapter(right), prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1572,8 +1578,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1597,6 +1603,41 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     assert.doesNotMatch(text, /^    \d+\. ABC-/m, "no candidate line is invented from a concatenated order");
   });
 
+  test("an unreadable selection that configures a rule holds the whole site, so no candidate claims a verdict", async () => {
+    // The site's rule is all-or-nothing: a selection whose own requirement
+    // cannot be applied could overturn any verdict here, so none is offered.
+    const readable = new JiraSim();
+    readable.addIssue({ id: "10001", key: "ABC-1", summary: "One", assignee: null });
+    const blind = new JiraSim();
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          {
+            selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"),
+            tickets: jiraAdapter(readable),
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+          {
+            selection: selection("acme.atlassian.net", "labels = shared", "Sanmoo/a"),
+            tickets: jiraAdapter(blind, {}),
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    assert.equal(site?.state, "unreadable", "one unreadable selection holds the whole site");
+    const text = renderStatus(view);
+    assert.match(text, /acme\.atlassian\.net \(2 selections\) → Sanmoo\/a: unreadable \(/);
+    assert.doesNotMatch(text, /prerequisites/, "no candidate line claims a verdict the unapplied rule could overturn");
+  });
+
   test("the same Work selected by two selections for one destination is listed once", async () => {
     const sim = new JiraSim();
     sim.addIssue({ id: "10001", key: "ABC-1", summary: "One Work", labels: ["ready"] });
@@ -1606,8 +1647,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = ready", "Sanmoo/a"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1641,8 +1682,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("beta.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(beta) },
-          { selection: selection("alpha.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(alpha) },
+          { selection: selection("beta.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(beta), prerequisites: [] },
+          { selection: selection("alpha.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(alpha), prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1686,8 +1727,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
         jira: [
           // GitHub repository names are case-insensitive: the same repository,
           // so the repetition is the same Work and not a conflict.
-          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1705,8 +1746,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = a", "Sanmoo/my-tasks"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = b", "sanmoo/My-Tasks"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1739,8 +1780,8 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
       {
         github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
         jira: [
-          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter },
-          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter },
+          { selection: selection("acme.atlassian.net", "labels = frontend", "Sanmoo/frontend"), tickets: adapter, prerequisites: [] },
+          { selection: selection("acme.atlassian.net", "labels = backend", "Sanmoo/backend"), tickets: adapter, prerequisites: [] },
         ],
       },
       statusConfig(),
@@ -1766,7 +1807,9 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
     const view = await deriveStatus(
       {
         github,
-        jira: [{ selection: selection("acme.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(sim) }],
+        jira: [
+          { selection: selection("acme.atlassian.net", "project = ABC", REPO), tickets: jiraAdapter(sim), prerequisites: [] },
+        ],
       },
       { ...statusConfig(), repos: [REPO] },
       layout,
@@ -1792,6 +1835,258 @@ describe("status: Jira candidates are read-only, and one site has one native Ran
         "https://acme.atlassian.net/browse/ABC-42",
       ],
       "each Work links to its own provider's ticket",
+    );
+  });
+
+  test("a candidate waits for its configured prerequisites in the Done category while the others advance", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({
+      id: "10001",
+      key: "ABC-1",
+      summary: "Waits for its prerequisite",
+      assignee: null,
+      links: [{ type: "Blocks", side: "inward", key: "ABC-5" }],
+    });
+    sim.addIssue({ id: "10002", key: "ABC-2", summary: "Nothing to wait for", assignee: null });
+    sim.addIssue({
+      id: "10005",
+      key: "ABC-5",
+      summary: "Still in review",
+      status: { name: "In Review", categoryKey: "indeterminate" },
+    });
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          {
+            selection: selection("acme.atlassian.net"),
+            tickets: jiraAdapter(sim),
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [listed] = view.jira;
+    if (listed?.state !== "known") assert.fail("the selection is readable");
+    assert.deepEqual(
+      listed.candidates.map((candidate) => [candidate.work.ticket.key, candidate.prerequisites.state]),
+      [
+        ["ABC-1", "unmet"],
+        ["ABC-2", "met"],
+        // The sim does not model JQL, so the prerequisite is selected too.
+        ["ABC-5", "met"],
+      ],
+      "a prerequisite outside Done holds its dependent, and only it",
+    );
+
+    const text = renderStatus(view);
+    // The sim's JQL is not modelled, so the prerequisite itself is selected too.
+    assert.match(text, /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: 3 candidates, 1 held by prerequisites/);
+    assert.match(
+      text,
+      /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Waits for its prerequisite — held by prerequisites: prerequisite ABC-5 \("In Review", outside the Done status category\)/,
+      "the report says why the ticket cannot advance, past the JQL that selected it",
+    );
+    assert.match(text, /2\. ABC-2 .* — prerequisites: none on the ticket/);
+    assert.deepEqual(
+      sim.requests.map((request) => `${request.method} ${request.path}`),
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "GET /rest/api/3/issueLinkType",
+        "GET /rest/api/3/issue/10001",
+        "GET /rest/api/3/issue/10002",
+        "GET /rest/api/3/issue/10005",
+      ],
+      "the site's link types once, one link read per candidate, and no transitive read of the prerequisite",
+    );
+    assert.deepEqual(readdirSync(join(layout.works)), [], "status stays read-only");
+  });
+
+  test("a prerequisite whose status category is unknown names the fact that is missing", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({
+      id: "10001",
+      key: "ABC-1",
+      summary: "Waits for ABC-5",
+      assignee: null,
+      links: [{ type: "Blocks", side: "inward", key: "ABC-5" }],
+    });
+    sim.addIssue({ id: "10005", key: "ABC-5", summary: "Uncategorised", assignee: null });
+    // The site names the prerequisite's status but sends no category the
+    // adapter can read: the ticket is known, its completion is not.
+    const transport: JiraTransport = async (url, init) => {
+      const response = await sim.transport(url, init);
+      if (!url.includes("/rest/api/3/issue/10001")) return response;
+      return {
+        status: 200,
+        text: JSON.stringify({
+          id: "10001",
+          key: "ABC-1",
+          fields: {
+            issuelinks: [
+              {
+                id: "1",
+                type: { name: "Blocks" },
+                inwardIssue: { id: "10005", key: "ABC-5", fields: { status: { name: "Waiting" } } },
+              },
+            ],
+          },
+        }),
+      };
+    };
+    const tickets = new JiraTicketAdapter({
+      site: sim.site,
+      account: sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env: { [TOKEN_ENV]: sim.token },
+      transport,
+    });
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          {
+            selection: selection("acme.atlassian.net"),
+            tickets,
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    assert.match(
+      renderStatus(view),
+      /held by prerequisites: prerequisite ABC-5 \("Waiting", whose status category is unknown\)/,
+      "the diagnosis names the missing category instead of claiming the whole status was unreadable",
+    );
+    assert.doesNotMatch(renderStatus(view), /ABC-5 \(its status could not be read\)/);
+  });
+
+  test("a Work two selections promise to one destination obeys the strictest of their rules", async () => {
+    // One site, one tracker, two selections for the same destination: the one
+    // that configures no rule must not hide the other's prerequisite.
+    const sim = new JiraSim();
+    sim.addIssue({
+      id: "10001",
+      key: "ABC-1",
+      summary: "Shared by two selections",
+      assignee: null,
+      links: [{ type: "Blocks", side: "inward", key: "ABC-5" }],
+    });
+    sim.addIssue({
+      id: "10005",
+      key: "ABC-5",
+      summary: "Still open",
+      status: { name: "To Do", categoryKey: "new" },
+    });
+    const adapter = jiraAdapter(sim);
+
+    const view = await deriveStatus(
+      {
+        github: new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" }),
+        jira: [
+          {
+            selection: selection("acme.atlassian.net", "project = ABC", "Sanmoo/a"),
+            tickets: adapter,
+            prerequisites: [],
+          },
+          {
+            selection: selection("acme.atlassian.net", "labels = shared", "Sanmoo/a"),
+            tickets: adapter,
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+        ],
+      },
+      statusConfig(),
+      layout,
+      NO_WORKERS,
+    );
+
+    const [site] = view.jira;
+    if (site?.state !== "known") assert.fail("the site is readable");
+    assert.deepEqual(
+      site.candidates.map((candidate) => [candidate.work.ticket.key, candidate.prerequisites.state]),
+      [
+        ["ABC-1", "unmet"],
+        ["ABC-5", "met"],
+      ],
+      "the shared Work is listed once and carries the stricter selection's verdict",
+    );
+    assert.match(renderStatus(view), /held by prerequisites: prerequisite ABC-5 \("To Do", outside the Done status category\)/);
+  });
+
+  test("a merged PR and the factory's archived history do not satisfy a Jira prerequisite still in QA", async () => {
+    const github = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
+    seedIssue(github, { repo: REPO, number: 5, labels: [DEFAULT_LABELS.claimed] });
+    mkdirSync(workDir(layout, REPO, 5), { recursive: true });
+    writeFileSync(join(workDir(layout, REPO, 5), "log-1.jsonl"), "{}\n", "utf8");
+    // A merged PR whose issue is still open: the factory's own delivery fact.
+    github.seedPullRequest({ repo: REPO, number: 5 });
+    github.closePr({ repo: REPO, prNumber: 5 }, { merged: true });
+    // And the factory already archived a delivered Work.
+    mkdirSync(join(layout.archive, `${REPO}#6-2026-02-01`), { recursive: true });
+
+    const sim = new JiraSim();
+    sim.addIssue({
+      id: "10001",
+      key: "ABC-1",
+      summary: "Waits for ABC-5",
+      assignee: null,
+      links: [{ type: "Blocks", side: "inward", key: "ABC-5" }],
+    });
+    sim.addIssue({
+      id: "10005",
+      key: "ABC-5",
+      summary: "Still in QA",
+      status: { name: "In Review", categoryKey: "indeterminate" },
+      resolution: "Done",
+    });
+
+    const view = await deriveStatus(
+      {
+        github,
+        jira: [
+          {
+            selection: selection("acme.atlassian.net"),
+            tickets: jiraAdapter(sim),
+            prerequisites: [{ type: "Blocks", direction: "inward" }],
+          },
+        ],
+      },
+      { ...statusConfig(), repos: [REPO] },
+      layout,
+      NO_WORKERS,
+    );
+
+    const reading = view.reserved.find((entry) => entry.key === `${REPO}#5`)?.reading;
+    assert.equal(
+      reading?.state,
+      "done-fallback",
+      "the factory sees the merge of its own PR while the GitHub issue is still open",
+    );
+    assert.match(renderStatus(view), /archived \(dones\): 1/);
+
+    const [listed] = view.jira;
+    if (listed?.state !== "known") assert.fail("the selection is readable");
+    assert.deepEqual(
+      listed.candidates.map((candidate) => [candidate.work.ticket.key, candidate.prerequisites.state]),
+      [["ABC-1", "unmet"], ["ABC-5", "met"]],
+      "the Jira prerequisite in QA still holds its dependent, whatever the factory merged",
+    );
+    assert.match(
+      renderStatus(view),
+      /1\. ABC-1 .* — held by prerequisites: prerequisite ABC-5 \("In Review", outside the Done status category\)/,
+      "neither the merge nor the archive is the Jira issue's Done category",
     );
   });
 });

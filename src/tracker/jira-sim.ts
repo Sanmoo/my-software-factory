@@ -8,9 +8,10 @@ import type { JiraTransport } from "./jira-adapter.js";
  *
  * It models what the adapter's decisions depend on: the Basic credential, the
  * native Rank order (independent of creation date and Priority), opaque
- * pagination tokens, cancel-free reads and Jira's `errorMessages` error shape.
- * Tests drive the REAL adapter against it; the CLI suite patches `fetch` with
- * the same answers through the e2e harness. No network, no Atlassian.
+ * pagination tokens, cancel-free reads, the issue's typed/directional links
+ * with the linked issue's status category, and Jira's `errorMessages` error
+ * shape. Tests drive the REAL adapter against it; the CLI suite patches `fetch`
+ * with the same answers through the e2e harness. No network, no Atlassian.
  */
 
 export interface SimJiraAccount {
@@ -26,6 +27,9 @@ export interface SimJiraIssue {
   /** An Atlassian Document Format document, or null for no description. */
   description: unknown;
   status: { name: string; categoryKey: "new" | "indeterminate" | "done" };
+  /** Jira's resolution name, when the issue carries one: business success,
+   *  which is never this adapter's completion fact. */
+  resolution?: string;
   assignee: SimJiraAccount | null;
   labels: string[];
   issueType: string;
@@ -34,6 +38,21 @@ export interface SimJiraIssue {
   priority?: string;
   created: string;
   parentKey?: string;
+  /** The issue's own links, as the site reports them. */
+  links: SimJiraLink[];
+}
+
+/** The link types a Jira Cloud site starts with: the vocabulary a configured
+ *  rule must name (a site may add its own). */
+export const DEFAULT_LINK_TYPES = ["Blocks", "Cloners", "Duplicate", "Relates"] as const;
+
+/** One link of an issue: the site's link type and the side the OTHER issue is on. */
+export interface SimJiraLink {
+  type: string;
+  /** The side the linked issue sits on, as the link object lists it
+   *  (`inwardIssue`/`outwardIssue`). */
+  side: "inward" | "outward";
+  key: string;
 }
 
 export interface SimJiraRequest {
@@ -54,6 +73,7 @@ export interface SimJiraFault {
 
 export interface SimJiraFaults {
   myself?: SimJiraFault;
+  linkTypes?: SimJiraFault;
   search?: SimJiraFault;
   issue?: SimJiraFault;
 }
@@ -67,6 +87,11 @@ export class JiraSim {
   /** Test-side stand-in for Jira's JQL evaluation; absent means "select all",
    *  which keeps the one-selection suites concise. */
   select: ((jql: string, issues: readonly SimJiraIssue[]) => readonly SimJiraIssue[]) | null = null;
+  /** Issues whose state the site will not show: their links arrive without the
+   *  linked issue's fields — an unknown prerequisite, never a satisfied one. */
+  hidden = new Set<string>();
+  /** The site's own link type names, as `/issueLinkType` reports them. */
+  linkTypes: string[] = [...DEFAULT_LINK_TYPES];
   /** The page size the sim caps answers at, whatever the request asks. */
   pageSize = 100;
   readonly requests: SimJiraRequest[] = [];
@@ -91,11 +116,13 @@ export class JiraSim {
       summary: input.summary,
       description: input.description ?? null,
       status: input.status ?? { name: "To Do", categoryKey: "new" },
+      ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
       assignee: input.assignee === undefined ? this.account : input.assignee,
       labels: input.labels ?? [],
       issueType: input.issueType ?? "Task",
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       created: input.created ?? "2026-01-01T00:00:00.000+0000",
+      links: input.links ?? [],
       ...(input.parentKey === undefined ? {} : { parentKey: input.parentKey }),
     };
     this.issues.push(issue);
@@ -140,6 +167,9 @@ export class JiraSim {
     if (init.method === "GET" && path === "/rest/api/3/myself") {
       return answer(200, this.account);
     }
+    if (init.method === "GET" && path === "/rest/api/3/issueLinkType") {
+      return answer(200, { issueLinkTypes: this.linkTypes.map((name, index) => ({ id: String(index + 1), name })) });
+    }
     if (init.method === "POST" && path === "/rest/api/3/search/jql") {
       return this.search(init.body ?? "", record);
     }
@@ -151,6 +181,7 @@ export class JiraSim {
 
   private faultFor(path: string): SimJiraFault | undefined {
     if (path === "/rest/api/3/myself") return this.faults.myself;
+    if (path === "/rest/api/3/issueLinkType") return this.faults.linkTypes;
     if (path === "/rest/api/3/search/jql") return this.faults.search;
     if (path.startsWith("/rest/api/3/issue/")) return this.faults.issue;
     return undefined;
@@ -202,6 +233,7 @@ export class JiraSim {
         summary: issue.summary,
         description: issue.description,
         status: { name: issue.status.name, statusCategory: { key: issue.status.categoryKey } },
+        ...(issue.resolution === undefined ? {} : { resolution: { name: issue.resolution } }),
         assignee:
           issue.assignee === null
             ? null
@@ -214,7 +246,32 @@ export class JiraSim {
         issuetype: { name: issue.issueType, subtask: issue.parentKey !== undefined },
         priority: { name: issue.priority ?? "Medium" },
         created: issue.created,
+        issuelinks: issue.links.map((link, index) => ({
+          id: String(index + 1),
+          type: { name: link.type },
+          ...(link.side === "inward"
+            ? { inwardIssue: this.linkedIssue(link.key) }
+            : { outwardIssue: this.linkedIssue(link.key) }),
+        })),
         ...(issue.parentKey === undefined ? {} : { parent: { key: issue.parentKey } }),
+      },
+    };
+  }
+
+  /** The linked issue as Jira includes it in a link: its identity always, its
+   *  fields only when the site shows its state. A key the sim does not hold is
+   *  a link the site cannot identify — no id, no key. */
+  private linkedIssue(key: string) {
+    const other = this.issues.find((entry) => entry.key === key);
+    if (other === undefined) return { key, self: `https://${this.site}/rest/api/3/issue/${key}` };
+    const identity = { id: other.id, key: other.key, self: `https://${this.site}/rest/api/3/issue/${other.id}` };
+    if (this.hidden.has(key)) return identity;
+    return {
+      ...identity,
+      fields: {
+        summary: other.summary,
+        status: { name: other.status.name, statusCategory: { key: other.status.categoryKey } },
+        ...(other.resolution === undefined ? {} : { resolution: { name: other.resolution } }),
       },
     };
   }

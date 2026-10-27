@@ -43,6 +43,9 @@ repos:
 #     token-env: MSF_JIRA_ACME_TOKEN  # the NAME of the local variable holding the token
 #     jql: project = ABC AND assignee = currentUser()
 #     destination: Sanmoo/my-tasks   # explicit GitHub destination, never guessed
+#     prerequisites:                 # the direct links that hold a candidate
+#       - type: Blocks               # the site's link type name, as written there
+#         direction: inward          # the side the prerequisite sits on
 #   - site: acme.atlassian.net
 #     account: bot@acme.example
 #     token-env: MSF_JIRA_ACME_TOKEN
@@ -65,8 +68,9 @@ implicit operator. One site may feed several repositories through several
 selections. This release only reads Jira: `msf status` lists candidates (no
 claim, comment or launch) and `msf run` refuses a Jira configuration before any
 claim; a Jira-only factory writes `repos: []` and still verifies its GitHub
-identity at boot. The report's Jira section, including the `ambiguous` hold, is
-described in `docs/RUNBOOK.md`.
+identity at boot. The report's Jira section, including the `ambiguous` hold and
+each candidate's **Prerequisite** verdict, is described in `docs/RUNBOOK.md`;
+`GLOSSARY.md` defines the term.
 
 ## Usage
 

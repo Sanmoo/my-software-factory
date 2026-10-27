@@ -191,6 +191,7 @@ function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   return config.jira.map((entry) => ({
     selection: jiraSelectionOf(entry),
     tickets: adapterFor(entry),
+    prerequisites: entry.prerequisites,
   }));
 }
 
