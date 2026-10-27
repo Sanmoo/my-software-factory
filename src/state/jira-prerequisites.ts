@@ -22,6 +22,9 @@ export type PrerequisiteVerdict =
    *  keep it from advancing. */
   | { state: "unmet"; reason: string };
 
+/** A candidate the selection applies no rule to: nothing to wait for. */
+export const NO_PREREQUISITES: PrerequisiteVerdict = { state: "met", configured: false, satisfied: [] };
+
 /**
  * The verdict on one candidate. EVERY identified prerequisite must be in the
  * Done category; a prerequisite whose state could not be read is unknown, never
@@ -32,7 +35,7 @@ export async function readPrerequisiteVerdict(
   ticket: TicketIdentity,
   links: readonly PrerequisiteLink[],
 ): Promise<PrerequisiteVerdict> {
-  if (links.length === 0) return { state: "met", configured: false, satisfied: [] };
+  if (links.length === 0) return NO_PREREQUISITES;
 
   let prerequisites: TicketPrerequisite[];
   try {

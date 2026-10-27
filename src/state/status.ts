@@ -29,7 +29,12 @@ import {
 } from "../tracker/identity.js";
 import { describeError } from "../format.js";
 import { readRetroInFlight, readRetroState, type RetroInFlight } from "../retro/marker.js";
-import { readPrerequisiteVerdict, stricterVerdict, type PrerequisiteVerdict } from "./jira-prerequisites.js";
+import {
+  NO_PREREQUISITES,
+  readPrerequisiteVerdict,
+  stricterVerdict,
+  type PrerequisiteVerdict,
+} from "./jira-prerequisites.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -513,7 +518,7 @@ function prerequisiteVerdictOf(
     .filter((entry) => entry.keys.has(key))
     .map((entry) => entry.reader)
     .filter((reader) => reader.prerequisites.length > 0);
-  if (rules.length === 0) return Promise.resolve({ state: "met", configured: false, satisfied: [] });
+  if (rules.length === 0) return Promise.resolve(NO_PREREQUISITES);
 
   const verdicts = rules.map((reader) => {
     const signature = `${key}|${reader.prerequisites.map((link) => `${link.type}:${link.direction}`).join(",")}`;
