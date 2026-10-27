@@ -26,8 +26,8 @@ The Jira Cloud installation a Source names.
 The GitHub repository that receives a Work's code and PR.
 
 **Selection**:
-One configured read from a Source for one Destination: the site, the JQL that selects its tickets and the destination their Work delivers to — one `jira:` entry. Several selections may read one Source, each with its own JQL and Destination.
-_Avoid_: Source, when the selection (a Source plus its JQL and Destination) is meant.
+One configured read from a Source for one Destination: the site, the JQL that selects its tickets, the destination their Work delivers to and the links it treats as Prerequisites — one `jira:` entry. Several selections may read one Source, each with its own JQL, Destination and links.
+_Avoid_: Source, when the selection (a Source plus its JQL, Destination and prerequisite links) is meant.
 
 **Repository identity**:
 Provider + site + the destination repository name; the code-host identity, never the ticket identity. Its components name case-insensitive things — a provider literal, a hostname and a GitHub repository name — so two spellings of one repository are one destination, and the operator's spelling stays presentation.
@@ -64,8 +64,12 @@ _Avoid_: Current user, when it could mean either the operator or the authenticat
 The set of work currently available for the factory to pick up.
 
 **Jira candidate**:
-A ticket the configured JQL selects for an explicit destination, presented by `msf status` in the site's native Rank order; it carries no Claim and no Reservation, so it is never available Work by itself.
+A ticket the configured JQL selects for an explicit destination, presented by `msf status` in the site's native Rank order; it carries no Claim and no Reservation, so it is never available Work by itself. It may advance only when every Prerequisite its Selection configures is satisfied; otherwise it is held with the reason. A Jira candidate more than one Selection promises to the same Destination is listed once and obeys every one of those rules.
 _Avoid_: Pool, when the ticket is only selected.
+
+**Prerequisite**:
+A ticket one of a Selection's configured direct links names as something a Jira candidate waits for — the link type and the side of the link are configuration, never inferred from link text, from every linked issue or from a parent–child relation. A Prerequisite is satisfied only by Jira's native Done status category (whatever the status is called); a merge, a Delivery, a resolution or the factory's archive never substitutes for it (ADR 0004).
+_Avoid_: Blocker, when a Jira Prerequisite is meant — a GitHub issue's native blocked_by is a different fact.
 
 **Ambiguous Jira ticket**:
 A ticket more than one configured selection promises to a different destination; `msf status` holds it with the reason instead of presenting it as a candidate for either destination.

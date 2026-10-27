@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { withNativeRankOrdering } from "./tracker/jira-jql.js";
+import type { PrerequisiteLink } from "./tracker/expanded-port.js";
 
 /**
  * Config of the factory (msf.yaml):
@@ -23,6 +24,9 @@ import { withNativeRankOrdering } from "./tracker/jira-jql.js";
  *       token-env: MSF_JIRA_ACME_TOKEN    # the NAME of the local variable holding the API token
  *       jql: project = ABC AND assignee = currentUser()
  *       destination: Sanmoo/my-tasks      # the GitHub repository the Work delivers to
+ *       prerequisites:                    # direct links that hold a candidate
+ *         - type: Blocks
+ *           direction: inward             # the linked issue is this one's prerequisite
  *
  * `worker-gh-account`, `worker-model` and `repos` are required (a Jira-only
  * factory writes `repos: []`). Every optional field defaults in the factory — a
@@ -141,9 +145,9 @@ export interface Labels {
 }
 
 /**
- * One Jira Cloud selection: the site, the account the API token
- * authenticates as, the local credential reference, the operator's JQL and the
- * GitHub repository the Work delivers to.
+ * One Jira Cloud selection: the site, the account the API token authenticates
+ * as, the local credential reference, the operator's JQL, the GitHub repository
+ * the Work delivers to and the direct links it calls prerequisites.
  *
  * `tokenEnv` is the NAME of the local environment variable carrying the API
  * token — the token value never enters this file, a log or a message. Two
@@ -161,6 +165,8 @@ export interface JiraSelectionConfig {
   jql: string;
   /** The GitHub repository (`owner/name`) receiving the Work's code. */
   destination: string;
+  /** Empty = this selection has no dependency rule. */
+  prerequisites: PrerequisiteLink[];
 }
 
 export interface Config {
@@ -286,7 +292,7 @@ function optionalJiraSelections(doc: Record<string, unknown>): JiraSelectionConf
   return selections;
 }
 
-const JIRA_SELECTION_FIELDS = ["site", "account", "token-env", "jql", "destination"] as const;
+const JIRA_SELECTION_FIELDS = ["site", "account", "token-env", "jql", "destination", "prerequisites"] as const;
 
 /** Keys that would carry the credential itself — never a config value. */
 const JIRA_SECRET_FIELDS = ["token", "api-token", "apiToken", "apitoken", "password", "secret"];
@@ -353,7 +359,42 @@ function parseJiraSelection(value: unknown, index: number): JiraSelectionConfig 
     throw new ConfigError(`config field "${label}.destination" must be a GitHub repository as "owner/name"`);
   }
 
-  return { site, account, tokenEnv, jql: ordering.jql, destination };
+  return { site, account, tokenEnv, jql: ordering.jql, destination, prerequisites: parsePrerequisites(given, label) };
+}
+
+/** The configured prerequisite links, strictly shaped: the factory never infers
+ *  a dependency, so a malformed rule is refused instead of read as no rule. */
+function parsePrerequisites(given: Record<string, unknown>, label: string): PrerequisiteLink[] {
+  const value = given["prerequisites"];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new ConfigError(
+      `config field "${label}.prerequisites" must be a list of direct prerequisite links when given`,
+    );
+  }
+  return value.map((entry, index) => {
+    const at = `${label}.prerequisites[${index}]`;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ConfigError(`config field "${at}" must be a mapping with "type" and "direction"`);
+    }
+    const link = entry as Record<string, unknown>;
+    for (const key of Object.keys(link)) {
+      if (key !== "type" && key !== "direction") {
+        throw new ConfigError(`config field "${at}.${key}" is not a prerequisite field (type, direction)`);
+      }
+    }
+    const type = link["type"];
+    if (typeof type !== "string" || type.trim() === "") {
+      throw new ConfigError(`config field "${at}.type" is required and must be the site's link type name`);
+    }
+    const direction = link["direction"];
+    if (direction !== "inward" && direction !== "outward") {
+      throw new ConfigError(
+        `config field "${at}.direction" must be "inward" or "outward" — the side of the link the prerequisite sits on`,
+      );
+    }
+    return { type: type.trim(), direction };
+  });
 }
 
 function requireJiraString(given: Record<string, unknown>, label: string, key: string): string {

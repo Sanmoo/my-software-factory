@@ -83,6 +83,41 @@ export interface SiteTicketTracker extends TicketTracker {
   listSiteTickets(selections: readonly TicketSelection[]): Promise<OpenTicket[]>;
 }
 
+/**
+ * One configured direct prerequisite link: the site's link type
+ * name and the side of the link the prerequisite sits on. Only these
+ * configured facts make a linked issue a prerequisite — never link text, never
+ * every linked issue, never a parent/epic relation.
+ */
+export interface PrerequisiteLink {
+  /** Matched exactly as the site spells it: a typo matches no link, and the
+   *  rule it configures is refused instead of reading as no rule. */
+  type: string;
+  /** Which side of the link holds the prerequisite — the operator's choice, so
+   *  the site's own link wording never decides it. */
+  direction: "inward" | "outward";
+}
+
+export interface TicketPrerequisite {
+  ticket: TicketIdentity;
+  /** The prerequisite's status as the tracker names it; null when unread. */
+  status: string | null;
+  /** null = unknown, which is never a satisfied prerequisite. */
+  completion: "done" | "not-done" | null;
+}
+
+/**
+ * The direct prerequisite read of a tracker that models dependencies as typed,
+ * directional links (Jira, whose Done status category is the sole completion
+ * criterion — ADR 0004). Unknown is never an empty list.
+ */
+export interface PrerequisiteTracker {
+  readTicketPrerequisites(
+    ticket: TicketIdentity,
+    links: readonly PrerequisiteLink[],
+  ): Promise<Known<TicketPrerequisite[]>>;
+}
+
 /** A PR read: the Work plus the PR already associated with it, when known. */
 export interface WorkPullRequest {
   work: WorkIdentity;

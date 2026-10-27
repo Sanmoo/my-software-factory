@@ -8,6 +8,8 @@ import {
 import { readLastAttempt } from "../work-record/attempts.js";
 import type {
   OpenTicket,
+  PrerequisiteLink,
+  PrerequisiteTracker,
   PullRequestTracker,
   SiteTicketTracker,
   TicketSelection,
@@ -27,6 +29,7 @@ import {
 } from "../tracker/identity.js";
 import { describeError } from "../format.js";
 import { readRetroInFlight, readRetroState, type RetroInFlight } from "../retro/marker.js";
+import { readPrerequisiteVerdict, stricterVerdict, type PrerequisiteVerdict } from "./jira-prerequisites.js";
 import {
   deriveTrackerState,
   type PoolEntry,
@@ -94,10 +97,12 @@ export interface JiraTicketFacts {
   assignees: string[];
 }
 
-/** One Jira candidate: the Work the ticket names, its title and its assignee(s).
- *  A candidate is NOT a reservation: nothing is claimed, commented or launched. */
+/** One Jira candidate: the Work the ticket names, its title, its assignee(s) and
+ *  whether it may advance past its own tracker's dependencies. A candidate is
+ *  NOT a reservation: nothing is claimed, commented or launched. */
 export interface JiraCandidate extends JiraTicketFacts {
   work: WorkIdentity;
+  prerequisites: PrerequisiteVerdict;
 }
 
 /** A ticket the configured selections promise to more than one destination: its
@@ -137,7 +142,10 @@ export type JiraSiteView =
  *  identity, one credential and one site-wide ordered read. */
 export interface JiraSelectionReader {
   selection: TicketSelection;
-  tickets: SiteTicketTracker;
+  tickets: SiteTicketTracker & PrerequisiteTracker;
+  /** The direct links this selection treats as prerequisites; empty = the
+   *  selection has no dependency rule. */
+  prerequisites: readonly PrerequisiteLink[];
 }
 
 /**
@@ -352,6 +360,14 @@ const isKnownRead = (entry: SelectionRead): entry is KnownSelectionRead => entry
 const isUnreadableRead = (entry: SelectionRead): entry is UnreadableSelectionRead => entry.state === "unreadable";
 
 /**
+ * How many prerequisite reads may be in flight at once, per site. Each is a
+ * tracker round-trip, so an unbounded burst over a page of candidates would
+ * spend the site's rate budget before the report is printed — the same bound the
+ * pool and reserved-work reads keep, per seam.
+ */
+const PREREQUISITE_READS_IN_FLIGHT = 8;
+
+/**
  * Every configured Jira site, grouped by site and read as ONE ordered set.
  * Sites are sorted by name so the report never inherits the order
  * the repositories were declared in. The order inside a site comes only from
@@ -420,6 +436,10 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
     }
   }
 
+  const claimedBy = readable.map((entry) => ({
+    reader: entry.reader,
+    keys: new Set(entry.tickets.map((ticket) => ticketIdentityKey(ticket.ticket))),
+  }));
   const destinationsByTicket = ticketDestinations(readable, destinations);
   const orderedKeys = new Set(ordered.map((ticket) => ticketIdentityKey(ticket.ticket)));
   const sameTickets =
@@ -455,17 +475,56 @@ async function readJiraSite(site: string, readers: readonly JiraSelectionReader[
       work: workIdentity(ticket.ticket, destination),
       title: ticket.title,
       assignees: ticket.assignees,
+      // Filled in below, once every offered ticket is known.
+      prerequisites: { state: "met", configured: false, satisfied: [] },
     });
   }
+
+  // One bounded link read per candidate, shared by the selections that
+  // configure the same rule for it: the verdicts are read only for the tickets
+  // this site actually offers.
+  const reads = new Map<string, Promise<PrerequisiteVerdict>>();
+  const offered = await mapBounded(candidates, PREREQUISITE_READS_IN_FLIGHT, async (candidate) => ({
+    ...candidate,
+    prerequisites: await prerequisiteVerdictOf(candidate.work.ticket, claimedBy, reads),
+  }));
 
   return {
     site,
     destinations,
     state: "known",
     selections: readings.map((entry) => selectionViewOf(entry, heldKeys)),
-    candidates,
+    candidates: offered,
     ambiguous,
   };
+}
+
+/**
+ * The verdict on one candidate. Every readable selection that promised this
+ * ticket applies its own configured rule, so the strictest verdict wins: a
+ * laxer selection never hides a stricter one's prerequisite.
+ */
+function prerequisiteVerdictOf(
+  ticket: TicketIdentity,
+  claimedBy: readonly { reader: JiraSelectionReader; keys: ReadonlySet<string> }[],
+  reads: Map<string, Promise<PrerequisiteVerdict>>,
+): Promise<PrerequisiteVerdict> {
+  const key = ticketIdentityKey(ticket);
+  const rules = claimedBy
+    .filter((entry) => entry.keys.has(key))
+    .map((entry) => entry.reader)
+    .filter((reader) => reader.prerequisites.length > 0);
+  if (rules.length === 0) return Promise.resolve({ state: "met", configured: false, satisfied: [] });
+
+  const verdicts = rules.map((reader) => {
+    const signature = `${key}|${reader.prerequisites.map((link) => `${link.type}:${link.direction}`).join(",")}`;
+    const cached = reads.get(signature);
+    if (cached !== undefined) return cached;
+    const read = readPrerequisiteVerdict(reader.tickets, ticket, reader.prerequisites);
+    reads.set(signature, read);
+    return read;
+  });
+  return Promise.all(verdicts).then((all) => all.reduce(stricterVerdict));
 }
 
 /** Which canonical destinations select each ticket, by stable ticket identity.

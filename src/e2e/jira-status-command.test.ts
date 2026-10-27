@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test, describe, beforeEach, afterEach } from "node:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { DEFAULT_LINK_TYPES } from "../tracker/jira-sim.js";
 import {
   installGhShim,
   installJiraFetchShim,
@@ -11,6 +12,7 @@ import {
   runCli,
   type GhShim,
   type JiraFetchShim,
+  type JiraRestAnswer,
 } from "./cli-harness.js";
 
 /**
@@ -178,7 +180,7 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
     );
     assert.match(
       result.stdout,
-      /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout \(subtask\)$/m,
+      /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Fix logout \(subtask\) — prerequisites: none configured for this selection$/m,
     );
     assert.ok(
       result.stdout.indexOf("1. ABC-1") < result.stdout.indexOf("2. ABC-2"),
@@ -427,4 +429,380 @@ describe("e2e: Jira Cloud selections at the CLI seam (read-only)", () => {
     assert.equal(existsSync(workspace), false, "no execution workspace");
   });
 
+});
+
+// ---- configured prerequisites and Jira's Done status category ----
+
+describe("e2e: Jira candidates wait for their configured prerequisites", () => {
+  let dir: string;
+  let gh: GhShim;
+  let workspace: string;
+
+  const SITE = "acme.atlassian.net";
+  const REPO = "Sanmoo/my-tasks";
+  const TOKEN_ENV = "MSF_JIRA_ALPHA_TOKEN";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "msf-e2e-jira-deps-"));
+    workspace = join(dir, "ws");
+    gh = installGhShim(dir);
+    installUnreachableDocker(gh.binDir);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** One selection on one site; `prerequisites` is the block under test. */
+  function writeConfig(prerequisites: string[] = ["    prerequisites:", "      - type: Blocks", "        direction: inward"]): void {
+    writeFileSync(
+      join(dir, "msf.yaml"),
+      [
+        "worker-gh-account: bot-do-samuca",
+        "worker-model: opencode-go/glm-5.3-flash",
+        "repos: []",
+        `workspace: ${workspace}`,
+        "jira:",
+        `  - site: ${SITE}`,
+        "    account: bot@acme.example",
+        `    token-env: ${TOKEN_ENV}`,
+        "    jql: project = ABC",
+        `    destination: ${REPO}`,
+        ...prerequisites,
+      ].join("\n"),
+      "utf8",
+    );
+  }
+
+  /** One ticket of the JQL result. */
+  function ticket(id: string, key: string, summary: string): unknown {
+    return { id, key, fields: { summary, labels: [], created: "2026-01-01T00:00:00.000+0000", assignee: null } };
+  }
+
+  /** One link as Jira lists it on the ticket: the type, the side and the state. */
+  function link(
+    type: string,
+    side: "inward" | "outward",
+    other: {
+      id: string;
+      key: string;
+      status?: string;
+      category?: "new" | "indeterminate" | "done";
+      resolution?: string;
+      shown?: boolean;
+    },
+  ): unknown {
+    const identity = { id: other.id, key: other.key, self: `https://${SITE}/rest/api/3/issue/${other.id}` };
+    const linked =
+      other.shown === false
+        ? identity
+        : {
+            ...identity,
+            fields: {
+              summary: `prerequisite ${other.key}`,
+              status: { name: other.status, statusCategory: { key: other.category } },
+              ...(other.resolution === undefined ? {} : { resolution: { name: other.resolution } }),
+            },
+          };
+    return {
+      id: `link-${other.id}`,
+      type: { name: type },
+      [side === "inward" ? "inwardIssue" : "outwardIssue"]: linked,
+    };
+  }
+
+  /** The `issuelinks` read of one ticket. */
+  function links(id: string, key: string, entries: unknown[]): JiraRestAnswer {
+    return { body: { id, key, fields: { issuelinks: entries } } };
+  }
+
+  /** The whole site answer: identity, its link types, the selection's page and
+   *  the link reads. */
+  function site(
+    issues: unknown[],
+    reads: Record<string, JiraRestAnswer>,
+    linkTypes: readonly string[] = DEFAULT_LINK_TYPES,
+  ): Record<string, JiraRestAnswer> {
+    return {
+      "GET /rest/api/3/myself": {
+        body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
+      },
+      "GET /rest/api/3/issueLinkType": {
+        body: { issueLinkTypes: linkTypes.map((name, index) => ({ id: String(index + 1), name })) },
+      },
+      "POST /rest/api/3/search/jql :: project = ABC ORDER BY Rank ASC": { body: { isLast: true, issues } },
+      ...reads,
+    };
+  }
+
+  function cliEnv(jira: JiraFetchShim): NodeJS.ProcessEnv {
+    return { ...gh.env(), ...jira.env, [TOKEN_ENV]: "alpha-local-token" };
+  }
+
+  test("a candidate waits for every configured prerequisite in Done, and advances once they land", () => {
+    writeConfig();
+    const issues = [ticket("10001", "ABC-1", "Ship the API"), ticket("10002", "ABC-2", "Independent fix")];
+    const first = site(issues, {
+      "GET /rest/api/3/issue/10001": links("10001", "ABC-1", [
+        link("Blocks", "inward", { id: "10005", key: "ABC-5", status: "In Review", category: "indeterminate" }),
+        link("Blocks", "inward", { id: "10006", key: "ABC-6", status: "Cancelled", category: "done" }),
+      ]),
+      "GET /rest/api/3/issue/10002": links("10002", "ABC-2", []),
+    });
+    let jira = installJiraFetchShim(dir, first);
+
+    const blocked = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(blocked.status, 0, blocked.stderr);
+    assert.match(blocked.stdout, /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: 2 candidates, 1 held by prerequisites/);
+    assert.match(
+      blocked.stdout,
+      /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Ship the API — held by prerequisites: prerequisite ABC-5 \("In Review", outside the Done status category\)/,
+      "one unfinished prerequisite holds the candidate, even though ABC-6 is already in Done",
+    );
+    assert.match(
+      blocked.stdout,
+      /2\. ABC-2 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — Independent fix — prerequisites: none on the ticket/,
+      "a candidate with nothing to wait for keeps its place in Rank order",
+    );
+    assert.match(blocked.stdout, /pool \(eligible\): none/, "a Jira candidate is still never executable work");
+    assert.deepEqual(
+      jira.calls(),
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "GET /rest/api/3/issueLinkType",
+        "GET /rest/api/3/issue/10001",
+        "GET /rest/api/3/issue/10002",
+      ],
+      "the site's link types once, then one link read per candidate — no claim, no comment, no transition",
+    );
+    assert.equal(existsSync(workspace), false, "status stays read-only");
+
+    // ABC-5 lands in Done — under the name the team uses; the dependent advances.
+    jira = installJiraFetchShim(
+      dir,
+      site(issues, {
+        "GET /rest/api/3/issue/10001": links("10001", "ABC-1", [
+          link("Blocks", "inward", { id: "10005", key: "ABC-5", status: "Cancelled", category: "done" }),
+          link("Blocks", "inward", { id: "10006", key: "ABC-6", status: "Cancelled", category: "done" }),
+        ]),
+        "GET /rest/api/3/issue/10002": links("10002", "ABC-2", []),
+      }),
+    );
+
+    const advanced = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(advanced.status, 0, advanced.stderr);
+    assert.match(advanced.stdout, /2 candidates$/m, "nothing is held once every prerequisite is Done");
+    assert.match(
+      advanced.stdout,
+      /1\. ABC-1 .* — prerequisites in the Done status category: ABC-5, ABC-6/,
+      "Cancelled inside the Done category satisfies the prerequisite — the policy, not an error",
+    );
+    assert.equal(existsSync(workspace), false, "still read-only");
+  });
+
+  test("the factory's archived history and a business resolution do not satisfy a prerequisite still in QA", () => {
+    writeConfig();
+    // The prerequisite's ticket is in QA and even carries a business resolution;
+    // the factory already delivered and archived a Work of this destination. A
+    // resolution is the team's business fact, the archive is the factory's own
+    // history: neither is the Jira ticket's Done status category (ADR 0004). The
+    // merged-PR case has its own test in status.test.ts, where the GitHub tracker
+    // can carry a real merge.
+    mkdirSync(join(workspace, "arquivo", `${REPO}#42-2026-02-01`), { recursive: true });
+    const jira = installJiraFetchShim(
+      dir,
+      site([ticket("10001", "ABC-1", "Ship the API")], {
+        "GET /rest/api/3/issue/10001": links("10001", "ABC-1", [
+          link("Blocks", "inward", {
+            id: "10005",
+            key: "ABC-5",
+            status: "In Review",
+            category: "indeterminate",
+            resolution: "Done",
+          }),
+        ]),
+      }),
+    );
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /1\. ABC-1 .* — held by prerequisites: prerequisite ABC-5 \("In Review", outside the Done status category\)/,
+      "a prerequisite in QA keeps its dependents waiting, whatever the factory delivered",
+    );
+    assert.match(result.stdout, /archived \(dones\): 1/, "the factory's own delivered history is right there");
+    assert.match(result.stdout, /Sanmoo\/my-tasks#42-2026-02-01/);
+    assert.deepEqual(
+      gh.restCalls(),
+      [],
+      "no GitHub PR or merge fact is consulted: only the Jira status category decides",
+    );
+  });
+
+  test("an unreadable link or prerequisite state holds only the affected candidate", () => {
+    writeConfig();
+    const jira = installJiraFetchShim(
+      dir,
+      site(
+        [ticket("10001", "ABC-1", "Unreadable links"), ticket("10002", "ABC-2", "Unknown prerequisite"), ticket("10003", "ABC-3", "Free")],
+        {
+          "GET /rest/api/3/issue/10001": { status: 503, body: { errorMessages: ["The service is unavailable"] } },
+          "GET /rest/api/3/issue/10002": links("10002", "ABC-2", [
+            link("Blocks", "inward", { id: "10005", key: "ABC-5", shown: false }),
+          ]),
+          "GET /rest/api/3/issue/10003": links("10003", "ABC-3", []),
+        },
+      ),
+    );
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: 3 candidates, 2 held by prerequisites/);
+    assert.match(
+      result.stdout,
+      /1\. ABC-1 .* — held by prerequisites: the prerequisite links could not be read \(could not read Jira site "acme\.atlassian\.net": HTTP 503: The service is unavailable\)/,
+      "a failed link read is diagnosed on the candidate, never read as zero prerequisites",
+    );
+    assert.match(
+      result.stdout,
+      /2\. ABC-2 .* — held by prerequisites: prerequisite ABC-5 \(its status could not be read\)/,
+      "a listed link whose issue state is hidden is unknown, never satisfied",
+    );
+    assert.match(result.stdout, /3\. ABC-3 .* — prerequisites: none on the ticket/, "the healthy candidate still advances");
+  });
+
+  test("the JQL still selects the types; a parent link and an unconfigured link are no prerequisite", () => {
+    writeConfig();
+    const subtask = {
+      ...(ticket("10001", "ABC-1", "A subtask") as Record<string, unknown>),
+      fields: {
+        ...((ticket("10001", "ABC-1", "A subtask") as { fields: unknown }).fields as object),
+        issuetype: { name: "Sub-task", subtask: true },
+        parent: { key: "ABC-9" },
+      },
+    };
+    const jira = installJiraFetchShim(
+      dir,
+      site([subtask], {
+        "GET /rest/api/3/issue/10001": links("10001", "ABC-1", [
+          // The epic/parent relation above is no prerequisite, and neither is a
+          // link type or side the selection did not configure.
+          link("Relates", "inward", { id: "10007", key: "ABC-7", status: "In Progress", category: "indeterminate" }),
+          link("Blocks", "outward", { id: "10008", key: "ABC-8", status: "To Do", category: "new" }),
+          link("Blocks", "inward", { id: "10005", key: "ABC-5", status: "Done", category: "done" }),
+        ]),
+      }),
+    );
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /1\. ABC-1 \(jira:acme\.atlassian\.net\) → Sanmoo\/my-tasks — A subtask — prerequisites in the Done status category: ABC-5/,
+      "only the configured direct link counts: not the parent, not the outward side, not another type",
+    );
+    assert.deepEqual(
+      jira.calls(),
+      [
+        "GET /rest/api/3/myself",
+        "POST /rest/api/3/search/jql",
+        "GET /rest/api/3/issueLinkType",
+        "GET /rest/api/3/issue/10001",
+      ],
+      "the subtask was selected by the JQL itself and no transitive prerequisite was read",
+    );
+  });
+
+  test("a search page that does not state its end is unknown, never zero prerequisites", () => {
+    writeConfig();
+    const jira = installJiraFetchShim(dir, {
+      "GET /rest/api/3/myself": {
+        body: { accountId: "acct-1", emailAddress: "bot@acme.example", displayName: "Factory Bot", active: true },
+      },
+      // A half answer: neither the end of the result nor a token for the next page.
+      "POST /rest/api/3/search/jql :: project = ABC ORDER BY Rank ASC": {
+        body: { issues: [ticket("10001", "ABC-1", "Ship the API")] },
+      },
+    });
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: unreadable \(.*neither ends the result nor carries a page token.*\)/,
+      "an incomplete listing says unknown instead of reporting a candidate list with no dependencies",
+    );
+    assert.doesNotMatch(result.stdout, /→ Sanmoo\/my-tasks: none/, "a truncated page is never an empty selection");
+  });
+
+  test("a configured link type the site does not have holds the candidate with the diagnosis", () => {
+    writeConfig(["    prerequisites:", "      - type: Blokcs", "        direction: inward"]);
+    const jira = installJiraFetchShim(
+      dir,
+      site([ticket("10001", "ABC-1", "Ship the API")], {
+        "GET /rest/api/3/issue/10001": links("10001", "ABC-1", [
+          link("Blocks", "inward", { id: "10005", key: "ABC-5", status: "Done", category: "done" }),
+        ]),
+      }),
+    );
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /1\. ABC-1 .* — held by prerequisites: the prerequisite links could not be read \(the selection configures the link type "Blokcs", which Jira site "acme\.atlassian\.net" does not have/,
+      "a rule the site cannot evaluate holds the candidate instead of reading zero prerequisites",
+    );
+    assert.match(result.stdout, /its link types: Blocks, Cloners, Duplicate, Relates/, "the diagnosis offers the site's vocabulary");
+  });
+
+  test("a site whose link types cannot be read holds every affected candidate with the diagnosis", () => {
+    writeConfig();
+    const jira = installJiraFetchShim(
+      dir,
+      site(
+        [ticket("10001", "ABC-1", "Ship the API"), ticket("10002", "ABC-2", "Ship the UI")],
+        {
+          "GET /rest/api/3/issueLinkType": { status: 503, body: { errorMessages: ["The service is unavailable"] } },
+        },
+      ),
+    );
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /acme\.atlassian\.net \(1 selection\) → Sanmoo\/my-tasks: 2 candidates, 2 held by prerequisites/);
+    assert.match(
+      result.stdout,
+      /1\. ABC-1 .* — held by prerequisites: the prerequisite links could not be read \(could not read Jira site "acme\.atlassian\.net": HTTP 503/,
+      "the rule's own vocabulary is unreadable, so the candidate is held instead of advancing",
+    );
+    assert.match(result.stdout, /2\. ABC-2 .* — held by prerequisites: the prerequisite links could not be read/);
+    assert.equal(
+      jira.calls().filter((call) => call.startsWith("GET /rest/api/3/issue/")).length,
+      0,
+      "no ticket link is read when the site cannot even name its link types",
+    );
+  });
+
+  test("a malformed prerequisite rule fails before any Jira read", () => {
+    writeConfig(["    prerequisites:", "      - type: Blocks", "        direction: sideways"]);
+    const jira = installJiraFetchShim(dir, {});
+
+    const result = runCli(dir, ["status"], cliEnv(jira));
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /jira\[0\]\.prerequisites\[0\]\.direction/);
+    assert.match(result.stderr, /inward.*outward/);
+    assert.deepEqual(jira.calls(), [], "the invalid config never reaches the tracker");
+  });
 });

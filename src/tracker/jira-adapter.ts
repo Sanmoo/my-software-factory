@@ -1,8 +1,11 @@
 import type { Labels } from "../config.js";
 import type {
   OpenTicket,
+  PrerequisiteLink,
+  PrerequisiteTracker,
   SiteTicketTracker,
   TicketBlocker,
+  TicketPrerequisite,
   TicketSelection,
   TicketSnapshot,
 } from "./expanded-port.js";
@@ -19,11 +22,11 @@ import { withNativeRankOrdering, withSiteRankOrdering, type RankedQuery } from "
  * factory acts as; JQL's `currentUser()` means THAT account, never an
  * implicitly different human operator.
  *
- * This slice is READ-ONLY: listing (native, token-paginated Rank order) and
- * one ticket's usable content. Every mutation (and dependency/comment/rank
- * read this slice does not own) is refused before any HTTP write; `msf run`
- * also refuses a Jira configuration before any claim, so no launch path
- * pretends the missing operations exist.
+ * This slice is READ-ONLY: listing (native, token-paginated Rank order), one
+ * ticket's usable content, and its direct prerequisite links. Every mutation
+ * (and the comment/rank read this slice does not own) is refused before any
+ * HTTP write; `msf run` also refuses a Jira configuration before any claim, so
+ * no launch path pretends the missing operations exist.
  *
  * The credential is never stored in config, logs or messages: the config names
  * a local environment variable (`token-env`) and the adapter reads its value
@@ -165,6 +168,22 @@ export class JiraReadError extends Error {
   }
 }
 
+/**
+ * A configured prerequisite link type the site does not have: the
+ * rule cannot be evaluated, so the candidate is held — a typo must never read as
+ * "no prerequisites".
+ */
+export class JiraUnknownLinkTypeError extends Error {
+  constructor(site: string, type: string, known: readonly string[]) {
+    super(
+      `the selection configures the link type "${type}", which Jira site "${site}" does not have ` +
+        `(its link types: ${known.length === 0 ? "none" : known.join(", ")}). ` +
+        `The prerequisite rule cannot be evaluated, so the candidate is held`,
+    );
+    this.name = "JiraUnknownLinkTypeError";
+  }
+}
+
 /** An operation this slice does not implement: refused before any write. */
 export class UnsupportedJiraOperationError extends Error {
   constructor(site: string, operation: string) {
@@ -177,10 +196,13 @@ export class UnsupportedJiraOperationError extends Error {
 }
 
 const MYSELF_PATH = "/rest/api/3/myself";
+const LINK_TYPES_PATH = "/rest/api/3/issueLinkType";
 const SEARCH_PATH = "/rest/api/3/search/jql";
 /** The listing requests only the facts a candidate needs; the JQL decides selection. */
 const LIST_FIELDS = ["summary", "labels", "assignee", "created"];
 const READ_FIELDS = ["summary", "description", "labels", "assignee", "created"];
+/** The one field the prerequisite read asks for: the ticket's own links. */
+const LINK_FIELDS = "issuelinks";
 /** The page the listing asks for; Jira caps it at its own maximum. */
 const PAGE_SIZE = 100;
 
@@ -188,7 +210,7 @@ const PAGE_SIZE = 100;
 const RANK_UNAVAILABLE =
   /rank[^.;]{0,80}(?:not\s+(?:exist|searchable|supported|available)|unavailable|invalid|unsupported)|(?:not\s+(?:exist|searchable|supported|available)|invalid|unsupported)[^.;]{0,40}rank/i;
 
-export class JiraTicketAdapter implements SiteTicketTracker {
+export class JiraTicketAdapter implements SiteTicketTracker, PrerequisiteTracker {
   readonly site: string;
   readonly account: string;
   readonly tokenEnv: string;
@@ -196,6 +218,8 @@ export class JiraTicketAdapter implements SiteTicketTracker {
   private readonly transport: JiraTransport;
   /** `/myself` runs once per adapter; a failure is retried on the next call. */
   private identity: Promise<JiraActingAccount> | null = null;
+  /** The site's link type names, read once: a configured rule must exist. */
+  private linkTypes: Promise<ReadonlySet<string>> | null = null;
 
   constructor(options: JiraAdapterOptions) {
     this.site = options.site;
@@ -215,6 +239,30 @@ export class JiraTicketAdapter implements SiteTicketTracker {
       });
     }
     return this.identity;
+  }
+
+  /**
+   * A configured link type the site does not have makes the rule unevaluable:
+   * the candidate is held with the type named instead of advancing on an empty
+   * prerequisite list. The site's own names are read once per adapter.
+   */
+  private async assertKnownLinkTypes(links: readonly PrerequisiteLink[]): Promise<void> {
+    if (links.length === 0) return;
+    if (this.linkTypes === null) {
+      const pending = this.readLinkTypes();
+      this.linkTypes = pending;
+      pending.catch(() => {
+        if (this.linkTypes === pending) this.linkTypes = null;
+      });
+    }
+    const known = await this.linkTypes;
+    const unknown = links.find((link) => !known.has(link.type));
+    if (unknown !== undefined) throw new JiraUnknownLinkTypeError(this.site, unknown.type, [...known]);
+  }
+
+  private async readLinkTypes(): Promise<ReadonlySet<string>> {
+    const json = await this.requestJson("GET", LINK_TYPES_PATH);
+    return new Set(parseLinkTypeNames(this.site, json));
   }
 
   private async identify(): Promise<JiraActingAccount> {
@@ -333,10 +381,37 @@ export class JiraTicketAdapter implements SiteTicketTracker {
     });
   }
 
+  /**
+   * The ticket's DIRECT prerequisites: only the linked issues sitting on the
+   * configured side of a configured link type, each with its Done status
+   * category. The link descriptions Jira sends are never read — the config
+   * decides the direction, so a site's own link wording cannot change it — and
+   * a parent/epic relation is no prerequisite.
+   *
+   * A link or prerequisite whose state the site does not show is UNKNOWN, never
+   * a satisfied prerequisite and never a shorter list.
+   */
+  async readTicketPrerequisites(
+    ticket: TicketIdentity,
+    links: readonly PrerequisiteLink[],
+  ): Promise<Known<TicketPrerequisite[]>> {
+    const source = this.assertTicket(ticket);
+    await this.actingAccount();
+    await this.assertKnownLinkTypes(links);
+    const json = await this.requestJsonOrNull(
+      "GET",
+      `${issuePath(source.stableId)}?fields=${LINK_FIELDS}`,
+    );
+    if (json === null) return notKnown;
+    return known(selectPrerequisites(this.site, parseIssueLinks(this.site, json), links));
+  }
+
   // ---- the operations this read-only slice refuses ----
 
+  /** GitHub's native blocked_by read: its open/closed vocabulary is not Jira's
+   *  Done category, so this slice refuses it instead of answering with it. */
   readTicketBlockers(_ticket: TicketIdentity): Promise<Known<TicketBlocker[]>> {
-    return this.refuse("dependency read");
+    return this.refuse("native blocked_by read");
   }
 
   claimTicket(_ticket: TicketIdentity, _account: string, _readyLabel?: string): Promise<WriteOutcome> {
@@ -567,6 +642,118 @@ function identityOf(site: string, issue: ParsedIssue): JiraTicketIdentity {
     key: issue.key,
     url: jiraBrowseUrl(site, issue.key),
   });
+}
+
+/** The site's link type names: the vocabulary a configured rule must name. */
+function parseLinkTypeNames(site: string, body: unknown): string[] {
+  if (!isRecord(body) || !Array.isArray(body["issueLinkTypes"])) {
+    throw new JiraProtocolError(site, "the link type response carries no issueLinkTypes array");
+  }
+  return body["issueLinkTypes"].map((entry) => {
+    const name = isRecord(entry) ? entry["name"] : undefined;
+    if (typeof name !== "string" || name === "") {
+      throw new JiraProtocolError(site, "a link type carries no name");
+    }
+    return name;
+  });
+}
+
+/** One link as the ticket sees it: its type and the linked issue on one side. */
+interface LinkedIssue {
+  type: string;
+  side: "inward" | "outward";
+  stableId: string;
+  key: string;
+  status: string | null;
+  completion: "done" | "not-done" | null;
+}
+
+/**
+ * The `issuelinks` of one issue read. The field was explicitly requested, so a
+ * response without it cannot be read as "no links" — that is a read failure,
+ * and a candidate that could not have its links read never advances.
+ */
+function parseIssueLinks(site: string, body: unknown): LinkedIssue[] {
+  if (!isRecord(body)) throw new JiraProtocolError(site, "the issue response is not an object");
+  const key = body["key"];
+  if (typeof key !== "string" || key === "") throw new JiraProtocolError(site, "the issue carries no key");
+  const fields = body["fields"];
+  if (!isRecord(fields)) throw new JiraProtocolError(site, `issue ${key} carries no fields`);
+  const links = fields["issuelinks"];
+  if (!Array.isArray(links)) {
+    throw new JiraProtocolError(site, `issue ${key} carries no issuelinks array`);
+  }
+  return links.map((link) => parseLink(site, key, link));
+}
+
+function parseLink(site: string, issueKey: string, link: unknown): LinkedIssue {
+  if (!isRecord(link)) throw new JiraProtocolError(site, `a link of issue ${issueKey} is not an object`);
+  const type = isRecord(link["type"]) ? link["type"]["name"] : undefined;
+  if (typeof type !== "string" || type === "") {
+    throw new JiraProtocolError(site, `a link of issue ${issueKey} carries no type name`);
+  }
+  const inward = link["inwardIssue"];
+  const outward = link["outwardIssue"];
+  const side: LinkedIssue["side"] = isRecord(inward) ? "inward" : "outward";
+  const linked = isRecord(inward) ? inward : outward;
+  if (!isRecord(linked)) {
+    throw new JiraProtocolError(site, `the "${type}" link of issue ${issueKey} names no issue`);
+  }
+  const id = linked["id"];
+  const key = linked["key"];
+  if (typeof id !== "string" || id === "" || typeof key !== "string" || key === "") {
+    throw new JiraProtocolError(site, `the "${type}" link of issue ${issueKey} names no identifiable issue`);
+  }
+  const status = linkedStatus(linked);
+  return { type, side, stableId: id, key, ...status };
+}
+
+/** The linked issue's status and its native category; both unknown when the
+ *  site lists the link but does not show the issue's state. */
+function linkedStatus(linked: Record<string, unknown>): {
+  status: string | null;
+  completion: TicketPrerequisite["completion"];
+} {
+  const fields = linked["fields"];
+  const status = isRecord(fields) ? fields["status"] : undefined;
+  if (!isRecord(status)) return { status: null, completion: null };
+  const name = typeof status["name"] === "string" && status["name"] !== "" ? status["name"] : null;
+  const category = isRecord(status["statusCategory"]) ? status["statusCategory"]["key"] : undefined;
+  // The category KEY is the fact: a status merely named "Done" is not Done,
+  // and a Cancelled/Duplicate status inside the category is (ADR 0004).
+  if (category === "done") return { status: name, completion: "done" };
+  if (category === "new" || category === "indeterminate") return { status: name, completion: "not-done" };
+  return { status: name, completion: null };
+}
+
+/**
+ * The links the configured types and directions select, one entry per linked
+ * issue: a repeated issue keeps the strictest completion, so a second link can
+ * never turn an unfinished prerequisite into a satisfied one.
+ */
+function selectPrerequisites(
+  site: string,
+  linked: readonly LinkedIssue[],
+  configured: readonly PrerequisiteLink[],
+): TicketPrerequisite[] {
+  const selected = new Map<string, TicketPrerequisite>();
+  for (const link of linked) {
+    if (!configured.some((entry) => entry.type === link.type && entry.direction === link.side)) continue;
+    const previous = selected.get(link.stableId);
+    if (previous === undefined || completionRank(link.completion) > completionRank(previous.completion)) {
+      selected.set(link.stableId, {
+        ticket: jiraTicket({ site, stableId: link.stableId, key: link.key }),
+        status: link.status,
+        completion: link.completion,
+      });
+    }
+  }
+  return [...selected.values()];
+}
+
+/** Unknown outranks not-done, which outranks done. */
+function completionRank(completion: TicketPrerequisite["completion"]): number {
+  return completion === null ? 2 : completion === "not-done" ? 1 : 0;
 }
 
 /** One assignee, named for presentation: display name, then email, then id. */
