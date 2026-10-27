@@ -128,7 +128,7 @@ export class JiraMediator {
   /** Write the contract and begin serving; refuses a launch that cannot be
    *  correlated with the reservation and the session on disk. */
   start(): JiraMediationHandle {
-    const problem = this.preflightProblem();
+    const problem = this.mismatchProblem({ work: this.options.work, sessionId: this.options.sessionId });
     if (problem !== null) throw new Error(problem);
     ensureMediationDirs(this.options.workDir);
     writeMediationContract(this.options.workDir, this.contract);
@@ -170,7 +170,7 @@ export class JiraMediator {
 
   /** The whole decision for one request occurrence. */
   async handle(request: JiraMediationRequest, id: string): Promise<JiraMediationResponse> {
-    const problem = this.correlationProblem(request);
+    const problem = this.mismatchProblem({ work: request.work, sessionId: request.sessionId });
     if (problem !== null) return this.rejected(id, request.operation, problem);
     const target = this.target();
     if (request.operation === "read") return this.read(target, id);
@@ -195,15 +195,29 @@ export class JiraMediator {
     return { tickets: this.options.tickets, ticket };
   }
 
-  /** The correlation every request must satisfy, independent of the request. */
-  private preflightProblem(): string | null {
+  /**
+   * One correlation check for both moments: the launcher asks it before a
+   * session starts (a Work whose mediated access cannot be correlated is never
+   * launched), and every request is asked against its OWN claims. The facts are
+   * read from disk both times — a reservation or a session link that changed
+   * mid-session is caught at the request, never assumed from the launch.
+   */
+  private mismatchProblem(candidate: { work: WorkIdentity; sessionId: string }): string | null {
     const work = this.options.work;
-    if (work.ticket.provider !== "jira") return "the Work's ticket is not a Jira ticket";
-    if (sourceKey(work.ticket) !== sourceKey(this.options.selection.source)) {
+    if (candidate.work.ticket.provider !== "jira") {
+      return "the request does not name a Jira ticket";
+    }
+    if (workIdentityKey(candidate.work) !== workIdentityKey(work)) {
+      return "the request names another Work";
+    }
+    if (sourceKey(candidate.work.ticket) !== sourceKey(this.options.selection.source)) {
       return `the Work's source is not the configured selection's source (${this.options.selection.source.site})`;
     }
-    if (repositoryIdentityKey(work.destination) !== repositoryIdentityKey(this.options.selection.destination)) {
+    if (repositoryIdentityKey(candidate.work.destination) !== repositoryIdentityKey(this.options.selection.destination)) {
       return "the Work's destination is not the configured selection's destination";
+    }
+    if (candidate.sessionId !== this.options.sessionId) {
+      return "the request names another session; only the launched session may speak";
     }
     const reservation = readReservation(this.options.workDir);
     if (reservation.state !== "persisted") {
@@ -227,27 +241,6 @@ export class JiraMediator {
       return "the session is not the one recorded for this Work and attempt; the request is not correlated with the launched session";
     }
     return null;
-  }
-
-  /** The same facts again, plus the request's own Work/session claims. */
-  private correlationProblem(request: JiraMediationRequest): string | null {
-    const work = this.options.work;
-    if (request.work.ticket.provider !== "jira") {
-      return "the request does not name a Jira ticket";
-    }
-    if (sourceKey(request.work.ticket) !== sourceKey(this.options.selection.source)) {
-      return `the request names site "${request.work.ticket.site}", not this Work's configured source "${this.options.selection.source.site}"`;
-    }
-    if (repositoryIdentityKey(request.work.destination) !== repositoryIdentityKey(this.options.selection.destination)) {
-      return "the request names a destination that is not this Work's configured destination";
-    }
-    if (workIdentityKey(request.work) !== workIdentityKey(work)) {
-      return "the request names another Work";
-    }
-    if (request.sessionId !== this.options.sessionId) {
-      return "the request names another session; only the launched session may speak";
-    }
-    return this.preflightProblem();
   }
 
   private async read(target: JiraTarget, id: string): Promise<JiraReadResponse> {
@@ -284,8 +277,10 @@ export class JiraMediator {
 
   private async publish(target: JiraTarget, request: JiraPublishRequest): Promise<JiraPublishResponse> {
     const ledger = readMediationLedger(this.options.workDir);
-    // The ledger entry belongs to the Work, attempt and session that wrote it:
-    // a reused request id from another session is not this publication.
+    // The ledger entry belongs to the Work, attempt and session that wrote it —
+    // the identity the request itself carries. The record refuses the same id
+    // with different content, so a request can never be relabelled into another
+    // session's publication.
     const own = (entry: JiraOperationLine): boolean =>
       entry.id === request.id &&
       entry.work === workIdentityKey(this.options.work) &&
@@ -293,7 +288,7 @@ export class JiraMediator {
       entry.attempt === this.options.attempt;
     const published = ledger.results.find(own);
     if (published !== undefined) {
-      return this.publishOk(request.id, published.commentId, published.url, true);
+      return this.publishOk(request.id, published.commentId, published.url ?? null, true);
     }
 
     // An intent (or a ledger that cannot be trusted) means this request may
@@ -392,7 +387,7 @@ export class JiraMediator {
       attempt: this.options.attempt,
       status: "published",
       commentId,
-      url: url ?? "",
+      ...(url === null ? {} : { url }),
     });
   }
 

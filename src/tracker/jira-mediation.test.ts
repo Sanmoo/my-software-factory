@@ -344,6 +344,51 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     assert.equal(harness.sim.issues[0]?.comments?.length, 1, "nothing was published twice");
   });
 
+  test("a request id cannot be relabelled into a later session's publication", async () => {
+    const first = await harness.client.publish({
+      kind: "update",
+      text: "the migration is ready",
+      requestId: "issued-by-one-session",
+    });
+    assert.ok(first.status === "ok");
+    harness.close();
+
+    // A relaunch that opens a new session and reuses the id is refused by the
+    // record: the request, with its session, is the publication's identity.
+    appendSessionLink(harness.workDir, {
+      version: 1,
+      work: harness.work,
+      attempt: ATTEMPT,
+      round: 2,
+      sessionId: "session-2",
+      at: "2026-01-02T00:00:00.000Z",
+    });
+    const mediator = new JiraMediator({
+      work: harness.work,
+      workDir: harness.workDir,
+      attempt: ATTEMPT,
+      sessionId: "session-2",
+      selection: harness.selection,
+      tickets: harness.adapter,
+      pollMs: 1,
+    });
+    mediator.start();
+    try {
+      const client = new JiraWorkerClient({
+        contractPath: mediationPaths(harness.workDir).contract,
+        pollMs: 1,
+        timeoutMs: 1_000,
+      });
+      await assert.rejects(
+        client.publish({ kind: "update", text: "the migration is ready", requestId: "issued-by-one-session" }),
+        /different content/,
+      );
+      assert.equal(harness.sim.issues[0]?.comments?.length, 1, "nothing else was published");
+    } finally {
+      mediator.close();
+    }
+  });
+
   test("the Jira token present in the host environment reaches no worker artifact or request", async () => {
     process.env[TOKEN_ENV] = SECRET;
     const read = await harness.client.read();

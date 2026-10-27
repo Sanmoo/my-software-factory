@@ -154,7 +154,6 @@ describe("the Work record's mediated-tracker part", () => {
       attempt: 1,
       status: "published",
       commentId: "5",
-      url: "",
     });
     const intact = readMediationLedger(dir);
     assert.equal(intact.intact, true);

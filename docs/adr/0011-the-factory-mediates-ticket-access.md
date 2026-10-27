@@ -26,6 +26,21 @@ records the intent before the write and the result after it; when the ledger
 cannot be trusted, the factory reads the conversation for the correlation before
 publishing instead of assuming a first attempt.
 
+The launch path serves the channel: a Jira Work goes out through the factory's
+handler and a Work whose mediated access cannot be correlated is refused before
+a session starts. Bringing a Jira selection into a sweep — claiming, selecting,
+following a reserved Jira Work — is a later slice; `msf run` keeps refusing a
+configured Jira selection until then, so this decision states the authority
+boundary the rest of the Jira work builds on, not an operator-reachable entry
+point.
+
+A publication's retry identity is the request, which names the session that
+issued it: the record refuses the same id with different content, so a later
+session cannot relabel an earlier publication, and a reconciled answer always
+belongs to the request that produced it. A fresh attempt that publishes again
+issues a new request with its own correlation — a new publication the ledger
+records beside the earlier one, never a duplicate of it.
+
 The token stays in the factory process. It is never in the worker's environment,
 files, image, prompt or routine artifacts, and the test suite puts it in the
 host environment to prove it does not ride along. The GitHub credential is a

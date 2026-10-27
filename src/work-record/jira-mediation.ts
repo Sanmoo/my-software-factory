@@ -194,7 +194,8 @@ export interface JiraOperationResult {
   attempt: number;
   status: "published";
   commentId: string;
-  url: string;
+  /** The inspectable link, absent when the site named none. */
+  url?: string;
 }
 
 export type JiraOperationLine = JiraOperationIntent | JiraOperationResult;
@@ -517,7 +518,7 @@ function isOperationLine(value: unknown): value is JiraOperationLine {
     return (
       value["status"] === "published" &&
       typeof value["commentId"] === "string" &&
-      typeof value["url"] === "string"
+      (value["url"] === undefined || typeof value["url"] === "string")
     );
   }
   return false;
