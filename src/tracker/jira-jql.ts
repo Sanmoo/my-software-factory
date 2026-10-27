@@ -12,7 +12,7 @@
 /** The ordering the factory supplies when the query gives none. */
 export const RANK_ORDER = "Rank ASC";
 
-export type RankOrdering =
+export type RankedQuery =
   | { ok: true; jql: string; selectionFilter: string }
   | { ok: false; because: string };
 
@@ -20,7 +20,7 @@ export type RankOrdering =
  * The query the adapter sends: the operator's JQL, with `ORDER BY Rank ASC`
  * appended when it carries no ordering. A conflicting ordering is refused.
  */
-export function withNativeRankOrdering(jql: string): RankOrdering {
+export function withNativeRankOrdering(jql: string): RankedQuery {
   const trimmed = jql.trim();
   if (trimmed === "") return { ok: false, because: "the JQL is empty" };
 
@@ -69,7 +69,7 @@ export function withNativeRankOrdering(jql: string): RankOrdering {
  * the union, because independent selection orders cannot be concatenated into
  * the site-wide order. A single selection keeps its exact query.
  */
-export function withSiteRankOrdering(selections: readonly string[]): RankOrdering {
+export function withSiteRankOrdering(selections: readonly string[]): RankedQuery {
   const [only, ...others] = selections;
   if (only === undefined) return { ok: false, because: "the site carries no selection" };
   if (others.length === 0) return withNativeRankOrdering(only);

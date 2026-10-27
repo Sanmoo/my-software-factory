@@ -10,7 +10,7 @@ import type { IssueComment, Known, WriteOutcome } from "./port.js";
 import { known, notKnown } from "./port.js";
 import { jiraTicket, type JiraTicketIdentity, type TicketIdentity, type TicketSource } from "./identity.js";
 import { renderAdf } from "./jira-adf.js";
-import { withNativeRankOrdering, withSiteRankOrdering, type RankOrdering } from "./jira-jql.js";
+import { withNativeRankOrdering, withSiteRankOrdering, type RankedQuery } from "./jira-jql.js";
 
 /**
  * The real Jira Cloud ticket adapter: reads over the REST API v3
@@ -249,10 +249,10 @@ export class JiraTicketAdapter implements SiteTicketTracker {
   }
 
   /**
-   * The site's several selections as ONE native Rank-ordered result (issue
-   * 129): the union of their filters, read page by page in Jira's own order.
-   * Routing each result to its explicit destination remains the caller's job;
-   * this read never guesses one.
+   * The site's several selections as ONE native Rank-ordered result: the union
+   * of their filters, read page by page in Jira's own order. Routing each
+   * result to its explicit destination remains the caller's job; this read
+   * never guesses one.
    */
   async listSiteTickets(selections: readonly TicketSelection[]): Promise<OpenTicket[]> {
     if (selections.length === 0) {
@@ -278,7 +278,7 @@ export class JiraTicketAdapter implements SiteTicketTracker {
   /** The one native Rank read. An unordered or re-ordered query is a
    *  configuration error, never a result silently sorted by something other
    *  than the site's Rank. */
-  private async readRankOrdered(ordering: RankOrdering): Promise<OpenTicket[]> {
+  private async readRankOrdered(ordering: RankedQuery): Promise<OpenTicket[]> {
     if (!ordering.ok) throw new JiraInvalidJqlError(this.site, ordering.because);
     await this.actingAccount();
     const tickets: OpenTicket[] = [];
