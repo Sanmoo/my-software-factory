@@ -26,7 +26,7 @@ import {
   type WorkIdentity,
 } from "../tracker/identity.js";
 import type { WriteOutcome, IssueComment, Known } from "../tracker/port.js";
-import type { WorkRequest, WorkerRuntime } from "../runtime/port.js";
+import { LaunchPreconditionError, type WorkRequest, type WorkerRuntime } from "../runtime/port.js";
 import { workKeyOf } from "../pool/work-key.js";
 import { githubTicketNumber, githubWork } from "../e2e/work-fixtures.js";
 import type { Launch, Launchable, LaunchCycle } from "./launch.js";
@@ -678,7 +678,7 @@ describe("the launch — the pipeline from the claim to the collected end", () =
     assert.equal(runtime.launched[0]?.material.ticket.title, "Fix the login flow");
   });
 
-  test("a Jira Work is refused before any worker when the launch has no mediated access", async () => {
+  test("a Jira Work is refused as a Launch refusal before any worker when the launch has no mediated access", async () => {
     const jiraWork = workIdentity(
       jiraTicket({ site: "acme.atlassian.net", stableId: "10001", key: "ABC-1" }),
       githubRepository(REPO),
@@ -699,9 +699,16 @@ describe("the launch — the pipeline from the claim to the collected end", () =
         createdAt: CREATED,
         pr: null,
       }),
-      /factory-mediated Jira access/,
+      (error: unknown) =>
+        error instanceof LaunchPreconditionError && /factory-mediated Jira access/.test(error.message),
+      "no worker exists, so the pipeline reads it as the Launch refusal it refunds grants for",
     );
     assert.equal(h.runtime.launched.length, 0, "no worker starts into a Jira it could not reach");
+    assert.equal(
+      h.logs.some((line) => line.includes("was refused before any worker existed")),
+      true,
+      "the operator reads the refusal in the log, not in a silent skip",
+    );
   });
 
 });
