@@ -8,10 +8,15 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { reservationRecordOf, reserveWork, RESERVATION_FILENAME } from "../pool/reservation.js";
 import { buildWorkerPrompt } from "../runtime/prompt.js";
 import type { WorkRequest } from "../runtime/port.js";
-import { appendSessionLink } from "../work-record/continuity.js";
-import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
+import { SESSION_LINKS_FILENAME, appendSessionLink } from "../work-record/continuity.js";
+import {
+  FACTORY_COMMENT_PROPERTY,
+  FACTORY_EVIDENCE_VERSION,
+  JiraTicketAdapter,
+  type JiraTransport,
+} from "./jira-adapter.js";
 import { JiraSim } from "./jira-sim.js";
-import { ConfiguredJiraMediation, JiraMediator } from "./jira-mediation.js";
+import { ConfiguredJiraMediation, JiraMediator, type JiraMediationTracker } from "./jira-mediation.js";
 import {
   JIRA_CONTRACT_CONTAINER_PATH,
   mediationPaths,
@@ -113,8 +118,15 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
       },
       properties: [
         {
-          key: "msf.factory",
-          value: { version: 1, correlationId: "request-old", kind: "help", work: "w", sessionId: SESSION, attempt: ATTEMPT },
+          key: FACTORY_COMMENT_PROPERTY,
+          value: {
+            version: FACTORY_EVIDENCE_VERSION,
+            correlationId: "request-old",
+            kind: "help",
+            work: "w",
+            sessionId: SESSION,
+            attempt: ATTEMPT,
+          },
         },
       ],
     });
@@ -154,7 +166,7 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
 
     const comment = harness.sim.issues[0]?.comments?.at(-1);
     assert.equal(comment?.author?.emailAddress, harness.sim.account.emailAddress, "the Acting account publishes");
-    assert.deepEqual(comment?.properties?.map((property) => property.key), ["msf.factory"]);
+    assert.deepEqual(comment?.properties?.map((property) => property.key), [FACTORY_COMMENT_PROPERTY]);
     const property = comment?.properties?.[0]?.value as Record<string, unknown>;
     assert.equal(property["kind"], "help");
     assert.equal(typeof property["correlationId"], "string");
@@ -357,7 +369,7 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     harness.sim.addComment("ABC-1", {
       id: "c-damaged",
       body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "please unblock" }] }] },
-      properties: [{ key: "msf.factory", value: { version: 99 } }],
+      properties: [{ key: FACTORY_COMMENT_PROPERTY, value: { version: FACTORY_EVIDENCE_VERSION + 1 } }],
     });
 
     // The request's own write is ambiguous, so the retry has to reconcile — and
@@ -394,8 +406,15 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
       body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "please unblock" }] }] },
       properties: [
         {
-          key: "msf.factory",
-          value: { version: 1, correlationId: "retry-landed", kind: "help", work: "w", sessionId: SESSION, attempt: ATTEMPT },
+          key: FACTORY_COMMENT_PROPERTY,
+          value: {
+            version: FACTORY_EVIDENCE_VERSION,
+            correlationId: "retry-landed",
+            kind: "help",
+            work: "w",
+            sessionId: SESSION,
+            attempt: ATTEMPT,
+          },
         },
       ],
     });
@@ -491,6 +510,59 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     const response = JSON.parse(output.stdout) as JiraMediationResponse;
     assert.equal(response.status, "ok");
     assert.equal(`${output.stdout}${output.stderr}`.includes(SECRET), false, "the client never prints the token");
+  });
+
+  test("a request the Work no longer records as its session is rejected, asked through the production client", async () => {
+    // The client writes the request the way a worker does — the same validator
+    // a production session crosses — and the handler refuses it because the
+    // record no longer links this session to the Work.
+    rmSync(join(harness.workDir, SESSION_LINKS_FILENAME), { force: true });
+    const before = harness.sim.requests.length;
+
+    const response = await harness.client.read();
+
+    assert.ok(response.status === "rejected");
+    assert.match(String(response.reason), /session/);
+    assert.equal(harness.sim.requests.length, before, "a request the record cannot correlate calls no Jira endpoint");
+  });
+
+  test("a handler that cannot map its source's answer answers unknown, and the tick still serves the next request", async () => {
+    // One unusable answer must not leave the worker waiting out its timeout,
+    // and it must not keep the session's other requests from being served.
+    harness.close();
+    const unusable = {
+      readTicket: async () => ({ known: true, value: null }),
+      readTicketComments: async () => ({ known: true, value: [] }),
+      publishFactoryComment: async () => {
+        throw new Error("the source published without an answer this port can read");
+      },
+    } as unknown as JiraMediationTracker;
+    const mediator = new JiraMediator({
+      work: harness.work,
+      workDir: harness.workDir,
+      attempt: ATTEMPT,
+      sessionId: SESSION,
+      selection: harness.selection,
+      tickets: unusable,
+      pollMs: 1,
+    });
+    mediator.start();
+    try {
+      const client = new JiraWorkerClient({
+        contractPath: mediationPaths(harness.workDir).contract,
+        pollMs: 1,
+        timeoutMs: 2000,
+      });
+      const first = await client.read();
+      const second = await client.read();
+      for (const response of [first, second]) {
+        assert.ok(response.status === "unknown", `a request the handler could not answer reads as unknown, not as an empty conversation`);
+        assert.deepEqual(response.unknown.sort(), ["comments", "ticket"]);
+        assert.match(String(response.reason), /./, "the unknown names why");
+      }
+    } finally {
+      mediator.close();
+    }
   });
 
   test("one selection serves exactly one Work; an unconfigured source has no handler", () => {

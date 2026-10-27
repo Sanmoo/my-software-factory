@@ -3,7 +3,12 @@ import { describe, test } from "node:test";
 
 import { githubRepository, jiraTicket, workIdentity, type TicketIdentity } from "./identity.js";
 import type { PrerequisiteLink, TicketSelection } from "./expanded-port.js";
-import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
+import {
+  FACTORY_COMMENT_PROPERTY,
+  FACTORY_EVIDENCE_VERSION,
+  JiraTicketAdapter,
+  type JiraTransport,
+} from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount, type SimJiraIssue, type SimJiraLink } from "./jira-sim.js";
 import { humanCommentsAfterLastFactorySpeech } from "./speech.js";
 
@@ -724,6 +729,7 @@ describe("Jira adapter: direct prerequisites come from the configured links and 
     );
   });
 });
+
 /**
  * The conversation and the factory's own publication, over the same simulated
  * REST: the ADF meaning of every comment is rendered, and factory speech is
@@ -758,7 +764,7 @@ describe("Jira adapter: the conversation and the mediated factory comment", () =
     sim.addComment("ABC-1", {
       id: "c2",
       body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
-      properties: [{ key: "msf.factory", value: { version: 1, correlationId: "req-1" } }],
+      properties: [{ key: FACTORY_COMMENT_PROPERTY, value: { version: FACTORY_EVIDENCE_VERSION, correlationId: "req-1" } }],
     });
 
     const comments = await adapterFor(sim).readTicketComments(ticketOf(sim, "10001"));
@@ -799,7 +805,7 @@ describe("Jira adapter: the conversation and the mediated factory comment", () =
     assert.match(published.url, /focusedCommentId=/);
     assert.equal(comment?.author?.emailAddress, sim.account.emailAddress);
     const property = comment?.properties?.[0];
-    assert.equal(property?.key, "msf.factory");
+    assert.equal(property?.key, FACTORY_COMMENT_PROPERTY);
     assert.equal((property?.value as Record<string, unknown>)["correlationId"], "req-2");
     assert.deepEqual((comment?.body as { type: string }).type, "doc");
   });
@@ -811,12 +817,12 @@ describe("Jira adapter: the conversation and the mediated factory comment", () =
     sim.addComment("ABC-1", {
       id: "c-damaged",
       body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
-      properties: [{ key: "msf.factory", value: { version: 99, correlationId: "req-9" } }],
+      properties: [{ key: FACTORY_COMMENT_PROPERTY, value: { version: FACTORY_EVIDENCE_VERSION + 1, correlationId: "req-9" } }],
     });
     sim.addComment("ABC-1", {
       id: "c-no-id",
       body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
-      properties: [{ key: "msf.factory", value: { version: 1 } }],
+      properties: [{ key: FACTORY_COMMENT_PROPERTY, value: { version: FACTORY_EVIDENCE_VERSION } }],
     });
 
     const comments = await adapterFor(sim).readTicketComments(ticketOf(sim, "10001"));

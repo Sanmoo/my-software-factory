@@ -32,7 +32,7 @@ import { SandcastleRuntime, requireModelCredentials, workerToken, type Sandcastl
 import { WORKER_IMAGE } from "./worker-image.js";
 import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
-import type { PullRequestTracker, TicketSelection, TicketTracker } from "./tracker/expanded-port.js";
+import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
 import type { GitWork } from "./git/port.js";
 import { jiraSelectionOf, renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
@@ -164,8 +164,8 @@ async function sandcastleRuntime(config: Config, workspace: WorkspaceLayout): Pr
   return new SandcastleRuntime(sandcastleRuntimeOptions(config, workspace, token));
 }
 
-/** Jira execution is not part of this release: the configuration is
- *  read-only, and the refusal names the configured selections. */
+/** A sweep does not bring Jira work in: the configuration is refused before a
+ *  claim, and the refusal names the configured selections. */
 function assertNoJiraExecution(config: Config): void {
   if (config.jira.length === 0) return;
   const selections = config.jira.map((entry) => `${entry.site} → ${entry.destination}`).join(", ");
@@ -206,11 +206,6 @@ function jiraSelectionEntries(config: Config): ConfiguredJiraSelection[] {
     tickets: adapterFor(entry),
     prerequisites: entry.prerequisites,
   }));
-}
-
-/** The read-only Jira selections of `msf status`. */
-function jiraSelectionReaders(config: Config): ConfiguredJiraSelection[] {
-  return jiraSelectionEntries(config);
 }
 
 /** The factory side of the controlled Jira interaction, one entry per
@@ -390,7 +385,7 @@ async function statusCommand(args: ReturnType<typeof parseCliArgs>): Promise<voi
   // read and native Rank order the adapter contract suite proves. A selection
   // whose credential is missing is reported as unknown, never skipped.
   const view = await deriveStatus(
-    { github, jira: jiraSelectionReaders(config) },
+    { github, jira: jiraSelectionEntries(config) },
     config,
     layout,
     workspaceLivenessProbe(layout),

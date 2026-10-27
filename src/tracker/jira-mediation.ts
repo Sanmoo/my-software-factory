@@ -151,10 +151,19 @@ export class JiraMediator {
       for (const { id, request } of pendingMediationRequests(this.options.workDir)) {
         // A request that cannot be trusted as this schema is answered with the
         // rejection it deserves; it is never acted on.
-        const response =
-          request.state === "ready"
-            ? await this.handle(request.value, id)
-            : this.rejected(id, "unknown", request.state === "invalid" ? request.reason : "the request vanished");
+        const operation = request.state === "ready" ? request.value.operation : "unknown";
+        let response: JiraMediationResponse;
+        try {
+          response =
+            request.state === "ready"
+              ? await this.handle(request.value, id)
+              : this.rejected(id, "unknown", request.state === "invalid" ? request.reason : "the request vanished");
+        } catch (error) {
+          // The handler itself failed: the request is answered as unknown, not
+          // left to the worker's timeout, and one broken request does not keep
+          // the rest of the session's requests from being served.
+          response = this.unanswered(id, operation, describeError(error));
+        }
         writeMediationResponse(this.options.workDir, response);
       }
     } finally {
@@ -169,6 +178,25 @@ export class JiraMediator {
     const target = this.target();
     if (request.operation === "read") return this.read(target, id);
     return this.publish(target, request);
+  }
+
+  /** The handler could not produce an answer at all: `unknown` is the fact, for
+   *  a read and for a publication alike — an interrupted publication may have
+   *  landed. */
+  private unanswered(id: string, operation: JiraMediationRejected["operation"], reason: string): JiraMediationResponse {
+    const boundedReason = bounded(reason);
+    if (operation === "read") {
+      return {
+        version: JIRA_MEDIATION_VERSION,
+        id,
+        operation: "read",
+        status: "unknown",
+        unknown: ["ticket", "comments"],
+        reason: boundedReason,
+        at: this.nowIso(),
+      };
+    }
+    return { version: JIRA_MEDIATION_VERSION, id, operation: "publish", status: "unknown", reason: boundedReason, at: this.nowIso() };
   }
 
   private rejected(
