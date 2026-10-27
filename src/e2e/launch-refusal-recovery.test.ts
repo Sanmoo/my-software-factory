@@ -18,7 +18,7 @@ import { type LocalWorkFacts, type PreparedWork, workBranchName } from "../git/p
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeWorkerRuntime } from "../runtime/fake-runtime.js";
 import { LaunchPreconditionError, type WorkRequest } from "../runtime/port.js";
-import { consumeRecovery } from "../pool/recovery.js";
+import { consumeRecovery, recordStopRequest } from "../pool/recovery.js";
 import { readRecoveryLedger } from "../work-record/recovery.js";
 import { deferred } from "../runtime/deferred.js";
 import { deriveStatus } from "../state/status.js";
@@ -29,13 +29,12 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
- * A launch the runtime refuses BEFORE any worker existed
- * (a precondition of the environment — Docker, the image's inventory, the git
- * helper, the model credential) refunds the recovery grant the factory
- * persisted before the launch. The work stays reserved with its budget intact
- * and the next tick relaunches the same attempt; an ambiguous failure — one
- * that may have left a worker behind — keeps the grant consumed, exactly as
- * before.
+ * A launch the runtime refuses BEFORE any worker existed — a precondition of
+ * the environment: Docker, the image's inventory, the git helper, the model
+ * credential — refunds the recovery grant the factory persisted before the
+ * launch. The work stays reserved with its budget intact and the next tick
+ * relaunches the same attempt; an ambiguous failure, one that may have left a
+ * worker behind, keeps the grant consumed.
  */
 
 const REPO = "Sanmoo/my-tasks";
@@ -233,6 +232,38 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held", () => {
       "the launch wrote the footprint of a worker that may exist",
     );
     assert.equal(existsSync(join(target, "desfecho.json")), false, "and no outcome claims the attempt ended");
+  });
+
+  test("a failed launch that consumed the requested stop re-records it, so the stop keeps excusing the interruption", async () => {
+    const target = interruptedAttempt1();
+    // The operator's stop ended this attempt and the resume is launching: the
+    // record is consumed before the worker starts.
+    await recordStopRequest(target, 1);
+    const runtime = new FakeWorkerRuntime({
+      tracker,
+      outcomes: ["pr-open"],
+      rejectLaunch: (_request, index) =>
+        index === 0 ? new Error("docker run failed after the container was created (daemon did not answer)") : null,
+    });
+
+    await assert.rejects(runOnce(deps(runtime)), /docker run failed after the container was created/);
+
+    const ledger = await readRecoveryLedger(target);
+    assert.equal(
+      ledger.lastStop?.kind,
+      "stop-requested",
+      "the launch never carried the attempt out, so the stop stays what the work keeps",
+    );
+    assert.equal(ledger.lastStop?.attempt, 1);
+    assert.equal(ledger.consumed, 0, "the requested stop is what excuses this attempt: no grant was spent");
+    assert.equal(existsSync(join(target, "desfecho.json")), false, "and no outcome claims the attempt ended");
+
+    // What the record is for: the next invocation resumes the attempt free of
+    // charge instead of charging the interruption of a stop it never consumed.
+    const resumed = await runOnce(deps(runtime));
+    assert.equal(resumed.launched.length, 1);
+    assert.equal(resumed.launched[0]?.request.attempt, 1, "the SAME attempt");
+    assert.equal((await readRecoveryLedger(target)).consumed, 0, "the resume spends nothing");
   });
 
   test("a grant persisted by a factory that died before its relaunch is never refunded by the next process", async () => {

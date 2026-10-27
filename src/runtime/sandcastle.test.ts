@@ -695,7 +695,7 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
     assert.ok(!existsSync(request.workDir), "no footprint: the refusal is infra, not an attempt");
   });
 
-  test("the issue's own refusals — a stale image inventory, an unresolved credential and a half-staged guardrail — are typed as proven-before-worker", async () => {
+  test("a stale image inventory, an unresolved credential and a half-staged guardrail are all typed as proven-before-worker", async () => {
     const stale = JSON.parse(inventoryJson()) as { pi: { version: string } };
     stale.pi.version = "1.2.0";
     const runtimeWith = (preflight: () => Promise<void>) =>
@@ -765,8 +765,8 @@ describe("sandcastle runtime — the artifact contract on real disk", () => {
     );
     assert.ok(!existsSync(request.workDir), "the credential refusal leaves no footprint");
 
-    // The exact case of the reported incident: the image carries no readable
-    // inventory at all (the file is missing or cannot be parsed).
+    // The image carries no readable inventory at all: the file is missing or
+    // cannot be parsed.
     const unreadableInventory = runtimeWith(
       defaultPreflight({
         token: "present",
