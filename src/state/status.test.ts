@@ -808,7 +808,7 @@ describe("status — derivation on demand + local registry scan", () => {
     );
   });
 
-  test("a refunded recovery shows the real budget in the section (issue 178)", async () => {
+  test("a refunded recovery shows the real budget in the section", async () => {
     const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
     claimIssue(tracker, 35);
     const dir = seedAttempt(35, 1);

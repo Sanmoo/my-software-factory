@@ -397,7 +397,7 @@ describe("the operator-stop claim shared by the derivation and the launch path "
   });
 });
 
-describe("returning the grant an admission still holds (issues #146 and #178)", () => {
+describe("returning the grant an admission still holds", () => {
   let root: string;
   let layout: WorkspaceLayout;
   let dir: string;

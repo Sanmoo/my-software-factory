@@ -36,9 +36,9 @@ const logClaim = (log: (message: string) => void, key: string): void =>
  *  worker: the stop module's own admission facts, plus the requested stop this
  *  launch consumed — the pipeline's bookkeeping, not the stop protocol's. */
 interface InFlightLaunch extends StopLaunch {
-  /** The requested stop this admission consumed before launching (issue #146),
-   *  re-recorded when the launch never carried the attempt out; null when the
-   *  launch consumed none. */
+  /** The requested stop this admission consumed before launching, re-recorded
+   *  when the launch never carried the attempt out; null when the launch
+   *  consumed none. */
   consumedStop: RecoveryStop | null;
 }
 
@@ -452,8 +452,8 @@ class LaunchPipeline implements Launch {
 
   /**
    * The launch boundary: the worker's result, or a failure the pipeline
-   * settles before rethrowing it. A Launch refusal (issue 178) — the runtime
-   * proving no worker existed — refunds the admission's grant; a requested stop
+   * settles before rethrowing it. A Launch refusal — the runtime proving no
+   * worker existed — refunds the admission's grant; a requested stop
    * this launch consumed keeps its record either way; any other failure may
    * have left a worker behind and keeps the grant consumed.
    */
@@ -514,8 +514,8 @@ class LaunchPipeline implements Launch {
 
   /**
    * Re-record the requested stop a launch consumed when the launch never
-   * carried the attempt out (issue #146). The guards read the state as it is
-   * now — a requested stop of this attempt, no outcome written, nothing else
+   * carried the attempt out. The guards read the state as it is now — a
+   * requested stop of this attempt, no outcome written, nothing else
    * claiming it — so a worker that may still exist keeps its own record.
    */
   private async rerecordConsumedStop(entry: InFlightLaunch, attempt: number): Promise<void> {
