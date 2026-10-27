@@ -9,6 +9,7 @@ import {
   DEFAULT_LIVENESS_POLICY,
   DEFAULT_MODEL_PROVIDER_BUDGET,
   DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
   type Config,
 } from "../config.js";
 import { ensureWorkspace, workDir, type WorkspaceLayout } from "../layout.js";
@@ -28,7 +29,7 @@ import { expandedGitWorkOf, type LegacyGitWork } from "./legacy-git.js";
 import type { IssueRef } from "../tracker/port.js";
 
 /**
- * e2e of issue 178: a launch the runtime refuses BEFORE any worker existed
+ * A launch the runtime refuses BEFORE any worker existed
  * (a precondition of the environment — Docker, the image's inventory, the git
  * helper, the model credential) refunds the recovery grant the factory
  * persisted before the launch. The work stays reserved with its budget intact
@@ -62,7 +63,7 @@ class FakeGitWork implements LegacyGitWork {
   }
 }
 
-describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 178)", () => {
+describe("e2e: a Launch refusal refunds the recovery the relaunch held", () => {
   let dir: string;
   let layout: WorkspaceLayout;
   let tracker: FakeTrackerAdapter;
@@ -92,6 +93,7 @@ describe("e2e: a Launch refusal refunds the recovery the relaunch held (issue 17
       recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
       liveness: { ...DEFAULT_LIVENESS_POLICY },
       modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+      retro: { ...DEFAULT_RETRO },
       notifications: false,
       configPath: join(dir, "msf.yaml"),
     };

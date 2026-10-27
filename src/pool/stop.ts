@@ -36,7 +36,7 @@ import { workKeyOf, workOfKey } from "./work-key.js";
  * works to reconcile and the latest liveness observation — and calls the
  * interface; the recovery ledger remains `pool/recovery.ts`'s writer, and this
  * module owns when a grant is released: the stop that cancelled its relaunch,
- * and (issue 178) a Launch refusal, whose proof that no worker existed the
+ * and a Launch refusal, whose proof that no worker existed the
  * launch pipeline hands here from the launch boundary instead of re-deriving.
  */
 
@@ -102,7 +102,7 @@ export type GrantReturn = "none-held" | "refunded" | "gone-from-ledger" | "still
  * so a later caller can retry the return, while a `still-consumed` answer drops
  * it because the ledger no longer scopes that grant to this attempt. The caller
  * decides WHEN a grant may be released — a requested stop that cancelled the
- * admission, or the runtime's own proof that no worker existed (issue 178).
+ * admission, or the runtime's own proof that no worker existed.
  */
 export async function refundHeldGrant(launch: StopLaunch, attempt: number): Promise<GrantReturn> {
   const grant = launch.recoveryIndex;
@@ -308,7 +308,7 @@ export class OperatorStop {
   async cancelAdmission(launch: StopLaunch, attempt: number): Promise<boolean> {
     // A stop refunds only a grant no worker may already be carrying. An
     // admission the runtime was already called for keeps the grant named, so a
-    // Launch refusal arriving afterwards still returns it (issue 178).
+    // Launch refusal arriving afterwards still returns it.
     const refunded = !launch.launched && (await refundHeldGrant(launch, attempt)) === "refunded";
     await recordStopRequest(launch.dir, attempt, this.now);
     return refunded;
