@@ -20,19 +20,23 @@ ADF — never parsed as HTML or Markdown.
 Factory speech is evidence the provider owns: a comment property carrying the
 request's correlation id, not a body marker and not the author's login. A human
 and the factory can therefore share one account, a factory comment never resumes
-work by being "the bot's", and a publication whose response was lost is
-reconciled by that correlation and retried at most once. The operation ledger
-records the intent before the write and the result after it; when the ledger
-cannot be trusted, the factory reads the conversation for the correlation before
-publishing instead of assuming a first attempt.
+work by being "the bot's", and a publication whose response was lost is settled
+by reading the conversation for that correlation. Nothing is written twice for
+one request: an ambiguous write is either proved published by that read or
+answered as `unknown`, and the request repeats — correlating before it
+publishes — to settle it. The operation ledger records the intent before the
+write and the result after it; when the ledger cannot be trusted, the factory
+reads the conversation for the correlation before publishing instead of
+assuming a first attempt. A factory comment whose own property cannot be read is
+factory speech with an unknown correlation, never a human answer and never proof
+that the publication is absent.
 
 The launch path serves the channel: a Jira Work goes out through the factory's
 handler and a Work whose mediated access cannot be correlated is refused before
-a session starts. Bringing a Jira selection into a sweep — claiming, selecting,
-following a reserved Jira Work — is a later slice; `msf run` keeps refusing a
-configured Jira selection until then, so this decision states the authority
-boundary the rest of the Jira work builds on, not an operator-reachable entry
-point.
+a session starts. The channel is not an operator-reachable entry point: `msf run`
+refuses a configured Jira selection, so bringing a Jira selection into a sweep —
+claiming, selecting, following a reserved Jira Work — is the authority the rest
+of the Jira work builds on, not a path this decision opens.
 
 A publication's retry identity is the request, which names the session that
 issued it: the record refuses the same id with different content, so a later
@@ -47,10 +51,11 @@ host environment to prove it does not ride along. The GitHub credential is a
 separate, unchanged decision: PRs, review and merge stay on the code host.
 
 Residual limit: the correlation reconciles an ambiguity only when the same
-request is retried. If the factory dies after a write landed and the relaunched
-work publishes again without retrying that request, two comments exist, each
-with its own correlation and both in the ledger — the duplicate is attributable
-and visible, not prevented, and no sweep settles the pending intent on its own.
+request is repeated. Two writes remain possible — a factory that dies after a
+write landed and republishes under a NEW request on relaunch, and a request
+repeated before the site exposes the comment it already stored. Each duplicate
+is attributable and visible through its own correlation property, and the ledger
+keeps both; no sweep settles a pending intent on its own.
 
 Accepted limit: this is credential handling, not isolation. The worker shares
 the work dir and, by [ADR 0003](0003-worker-inherits-the-host-docker-daemon.md),

@@ -737,10 +737,12 @@ function parseComment(site: string, value: unknown): IssueComment {
     author: commentAuthorName(value["author"]),
     body: renderAdf(value["body"]),
     createdAt: created,
-    // The provider's own fact: no property means NOT factory speech, even when
-    // the author is the acting account.
-    agentSpeech: evidence !== null,
-    ...(evidence === null ? {} : { agentCorrelation: evidence.correlationId }),
+    // The provider's own fact: only a comment with NO factory property is human
+    // speech, even when the author is the acting account. A property we cannot
+    // read is still the factory's — reported as factory speech whose
+    // correlation is unknown, never silently handed back to the human.
+    agentSpeech: evidence.state !== "none",
+    ...(evidence.state === "factory" ? { agentCorrelation: evidence.correlationId } : {}),
   };
 }
 
@@ -753,24 +755,40 @@ function commentAuthorName(value: unknown): string {
   return "unknown";
 }
 
-/** The factory evidence a comment carries, or null when it carries none we can
- *  trust. Jira exposes comment properties as `[{key, value}]` (create shape);
- *  the reader accepts a keyed object too. A malformed value is not evidence. */
-function factoryEvidence(properties: unknown): { correlationId: string } | null {
+/**
+ * The factory evidence a comment carries. Jira exposes comment properties as
+ * `[{key, value}]` (create shape); the reader accepts a keyed object too.
+ *
+ * `none` is the provider saying "no factory property": human speech. `factory`
+ * carries the correlation a retry is reconciled by. `unreadable` is a property
+ * that IS the factory's but whose value this version cannot read — evidence
+ * whose correlation is unknown, which is never the same thing as no evidence.
+ */
+function factoryEvidence(
+  properties: unknown,
+):
+  | { state: "none" }
+  | { state: "unreadable" }
+  | { state: "factory"; correlationId: string } {
   let record: Record<string, unknown> | null = null;
+  let present = false;
   if (Array.isArray(properties)) {
     const entry = properties.find(
       (candidate) => isRecord(candidate) && candidate["key"] === FACTORY_COMMENT_PROPERTY,
     );
+    present = entry !== undefined;
     if (isRecord(entry) && isRecord(entry["value"])) record = entry["value"];
-  } else if (isRecord(properties) && isRecord(properties[FACTORY_COMMENT_PROPERTY])) {
-    record = properties[FACTORY_COMMENT_PROPERTY] as Record<string, unknown>;
+  } else if (isRecord(properties) && properties[FACTORY_COMMENT_PROPERTY] !== undefined) {
+    present = true;
+    const candidate = properties[FACTORY_COMMENT_PROPERTY];
+    if (isRecord(candidate)) record = candidate;
   }
-  if (record === null) return null;
-  if (record["version"] !== 1) return null;
+  if (!present) return { state: "none" };
+  if (record === null) return { state: "unreadable" };
+  if (record["version"] !== 1) return { state: "unreadable" };
   const correlationId = record["correlationId"];
-  if (typeof correlationId !== "string" || correlationId === "") return null;
-  return { correlationId };
+  if (typeof correlationId !== "string" || correlationId === "") return { state: "unreadable" };
+  return { state: "factory", correlationId };
 }
 
 function parseSearchPage(site: string, body: unknown): {

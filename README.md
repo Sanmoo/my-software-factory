@@ -65,12 +65,15 @@ selection filter, is a configuration error. All selections on one site share
 that site's native **Rank ascending** order across their destinations.
 `currentUser()` means the account the API token authenticates as, not an
 implicit operator. One site may feed several repositories through several
-selections. This release only reads Jira: `msf status` lists candidates (no
-claim, comment or launch) and `msf run` refuses a Jira configuration before any
-claim; a Jira-only factory writes `repos: []` and still verifies its GitHub
-identity at boot. The report's Jira section, including the `ambiguous` hold and
-each candidate's **Prerequisite** verdict, is described in `docs/RUNBOOK.md`;
-`GLOSSARY.md` defines the term.
+selections. `msf status` lists Jira candidates read-only, and `msf run` refuses a
+Jira configuration before any claim, so a sweep never brings a Jira selection in;
+a Jira-only factory writes `repos: []` and still verifies its GitHub identity at
+boot. The Jira API token stays in the factory process: a worker session never
+holds it, and the factory makes that session's Jira reads and comments on its
+behalf ([ADR 0011](docs/adr/0011-the-factory-mediates-ticket-access.md)). The
+report's Jira section, including the `ambiguous` hold and each candidate's
+**Prerequisite** verdict, is described in `docs/RUNBOOK.md`; `GLOSSARY.md`
+defines the term.
 
 ## Usage
 

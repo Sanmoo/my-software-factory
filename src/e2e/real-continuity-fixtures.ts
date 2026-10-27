@@ -1,8 +1,20 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { GUARDRAIL_CONTAINER_MODULES } from "../runtime/sandcastle.js";
+
+import type { AgentProvider, PiOptions } from "@ai-hero/sandcastle";
+
+import {
+  DEFAULT_LABELS,
+  DEFAULT_LIVENESS_POLICY,
+  DEFAULT_MODEL_PROVIDER_BUDGET,
+  DEFAULT_RECOVERY_BUDGET,
+  DEFAULT_RETRO,
+  type Config,
+} from "../config.js";
+import type { WorkspaceLayout } from "../layout.js";
+import { GUARDRAIL_CONTAINER_MODULES, SandcastleRuntime } from "../runtime/sandcastle.js";
 import { WORKER_IMAGE } from "../worker-image.js";
 
 const ENABLED = process.env["MSF_REQUIRE_DOCKER"] === "1";
@@ -197,22 +209,100 @@ export function killContainer(id: string): void {
  * directory layout is not a contract of the proof.
  */
 export function findSession(sessionsDir: string, sessionId: string): string | null {
-  const stack = [sessionsDir];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    let entries: string[];
-    try {
-      entries = execFileSync("find", [dir, "-type", "f", "-name", `*_${sessionId}.jsonl`], { encoding: "utf8" })
-        .split("\n")
-        .filter((entry) => entry !== "");
-    } catch {
-      continue;
-    }
-    if (entries.length > 0) return entries[0]!;
-    for (const entry of entries) {
-      const parent = dirname(entry);
-      if (parent !== dir) stack.push(parent);
-    }
+  try {
+    const found = execFileSync("find", [sessionsDir, "-type", "f", "-name", `*_${sessionId}.jsonl`], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter((entry) => entry !== "");
+    return found[0] ?? null;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * The deterministic provider's agent config, written where the runtime mounts
+ * it. No personal Pi profile is snapshotted: the fixture hands over exactly the
+ * one file the model needs, and its key is the literal inside it.
+ */
+export function writeDeterministicModelConfig(hostPath: string, baseUrl: string): void {
+  mkdirSync(dirname(hostPath), { recursive: true });
+  writeFileSync(
+    hostPath,
+    JSON.stringify(
+      {
+        providers: {
+          deterministico: {
+            name: "Deterministic",
+            baseUrl,
+            api: "openai-completions",
+            apiKey: "no-credits",
+            models: [
+              {
+                id: "roteiro",
+                name: "Deterministic script",
+                reasoning: false,
+                input: ["text"],
+                contextWindow: 200000,
+                maxTokens: 8192,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              },
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+/** The Config a continuity proof's factory runs: one repository, no Jira
+ *  selection, no notification, and recovery waits that never sleep. */
+export function continuityProofConfig(input: {
+  workspace: WorkspaceLayout;
+  repo: string;
+  configPath: string;
+}): Config {
+  return {
+    workerGhAccount: "bot-do-samuca",
+    workerModel: "deterministico/roteiro",
+    jira: [],
+    repos: [input.repo],
+    concurrency: 1,
+    workspace: input.workspace.root,
+    labels: { ...DEFAULT_LABELS },
+    workerAuthFile: null,
+    recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
+    liveness: { ...DEFAULT_LIVENESS_POLICY },
+    retro: { ...DEFAULT_RETRO },
+    modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
+    notifications: false,
+    configPath: input.configPath,
+  };
+}
+
+/** The production runtime of a continuity proof: the deterministic model is
+ *  supplied EXPLICITLY and no ambient provider variable rides the launch. The
+ *  token only satisfies the runtime's precondition — the proof's script uses no
+ *  GitHub credential. */
+export function continuityProofRuntime(input: {
+  workspace: WorkspaceLayout;
+  modelsFile: string;
+  token: string;
+  piProvider?: (model: string, options?: PiOptions) => AgentProvider;
+}): SandcastleRuntime {
+  return new SandcastleRuntime({
+    model: "deterministico/roteiro",
+    token: input.token,
+    image: WORKER_IMAGE,
+    agentFiles: [{ name: "models.json", hostPath: input.modelsFile }],
+    authEnv: {},
+    workspace: input.workspace.root,
+    idleTimeoutSeconds: 120,
+    activityPollMs: 100,
+    ...(input.piProvider === undefined ? {} : { piProvider: input.piProvider }),
+  });
 }

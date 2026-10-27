@@ -4,22 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 
-import {
-  DEFAULT_LABELS,
-  DEFAULT_LIVENESS_POLICY,
-  DEFAULT_MODEL_PROVIDER_BUDGET,
-  DEFAULT_RECOVERY_BUDGET,
-  DEFAULT_RETRO,
-  type Config,
-} from "../config.js";
+import { DEFAULT_LABELS } from "../config.js";
 import { WORK_MOUNT_PATH, ensureWorkspace, workDir } from "../layout.js";
 import { runOnce, type LoopDeps } from "../loop.js";
 import { localGitWork } from "../git/local.js";
 import { seedFixtureRemote, cleanupFixture } from "../git/local-fixtures.js";
 import { FakeTrackerAdapter, seedIssue } from "../tracker/fake-adapter.js";
 import { FakeNotifier } from "../notify/fake-notifier.js";
-import { SandcastleRuntime } from "../runtime/sandcastle.js";
-import { WORKER_IMAGE } from "../worker-image.js";
 import { EFFECT_JOURNAL_FILENAME, GUARDRAIL_STATE_FILENAME } from "../work-record/continuity.js";
 
 import { inspectSessionFile, sessionToolCalls } from "../work-record/sessions.js";
@@ -44,11 +35,14 @@ import { SESSIONS_SUBDIR } from "../layout.js";
 
 import {
   bridgeAddress,
+  continuityProofConfig,
+  continuityProofRuntime,
   continuitySkipReason as skipReason,
   findSession,
   hostVisibleBase,
   killContainer,
   waitForPushThenFindWorker,
+  writeDeterministicModelConfig,
 } from "./real-continuity-fixtures.js";
 
 describe("e2e: continuity in the real Sandcastle/Pi/Docker", { skip: skipReason }, () => {
@@ -100,71 +94,17 @@ describe("e2e: continuity in the real Sandcastle/Pi/Docker", { skip: skipReason 
       // The deterministic provider is supplied EXPLICITLY into the image's
       // agent dir: no personal Pi profile is snapshotted, so the fixture hands
       // over exactly the one file the model needs.
-      const agentConfig = join(root, "agent-config");
-      mkdirSync(agentConfig, { recursive: true });
-      const modelsFile = join(agentConfig, "models.json");
-      writeFileSync(
-        modelsFile,
-        JSON.stringify(
-          {
-            providers: {
-              deterministico: {
-                name: "Deterministic",
-                baseUrl: model.baseUrl,
-                api: "openai-completions",
-                apiKey: "no-credits",
-                models: [
-                  {
-                    id: "roteiro",
-                    name: "Deterministic script",
-                    reasoning: false,
-                    input: ["text"],
-                    contextWindow: 200000,
-                    maxTokens: 8192,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      const modelsFile = join(root, "agent-config", "models.json");
+      writeDeterministicModelConfig(modelsFile, model.baseUrl);
 
       const tracker = new FakeTrackerAdapter({ workerAccount: "bot-do-samuca" });
       seedIssue(tracker, { repo, number: 119, createdAt: "2026-01-01T00:00:00Z", labels: [DEFAULT_LABELS.ready] });
-      const config: Config = {
-        workerGhAccount: "bot-do-samuca",
-        workerModel: "deterministico/roteiro",
-        jira: [],
-        repos: [repo],
-        concurrency: 1,
-        workspace: workspace.root,
-        labels: { ...DEFAULT_LABELS },
-        workerAuthFile: null,
-        recovery: { ...DEFAULT_RECOVERY_BUDGET, waitsMs: [0, 0, 0] },
-        liveness: { ...DEFAULT_LIVENESS_POLICY },
-        retro: { ...DEFAULT_RETRO },
-        modelProvider: { ...DEFAULT_MODEL_PROVIDER_BUDGET },
-        notifications: false,
-        configPath: join(root, "msf.yaml"),
-      };
+      const config = continuityProofConfig({ workspace, repo, configPath: join(root, "msf.yaml") });
 
-      const runtime = new SandcastleRuntime({
-        model: config.workerModel,
-        // gh is not used by the script; the non-empty token only satisfies the
-        // precondition. No GitHub credential leaves this test.
+      const runtime = continuityProofRuntime({
+        workspace,
+        modelsFile,
         token: "continuity-proof-no-github",
-        image: WORKER_IMAGE,
-        agentFiles: [{ name: "models.json", hostPath: modelsFile }],
-        // The deterministic provider's key is the literal inside models.json;
-        // no ambient provider variable rides this proof.
-        authEnv: {},
-        workspace: workspace.root,
-        idleTimeoutSeconds: 120,
-        activityPollMs: 100,
       });
 
       const deps: LoopDeps = {

@@ -21,6 +21,7 @@ import {
   type JiraPublishOk,
   type JiraPublishRequest,
   type JiraPublishResponse,
+  type JiraPublishUnknown,
   type JiraReadResponse,
   type JiraUnknownFact,
 } from "../work-record/jira-mediation.js";
@@ -41,23 +42,16 @@ import {
 import type { IssueComment, Known } from "./port.js";
 
 /**
- * The factory side of the mediated Jira interaction.
+ * The factory side of the mediated Jira interaction: the only party that talks
+ * to Jira, as the configured Acting account, on behalf of a launched session.
+ * The authority boundary, the answer vocabulary and the correlation that makes
+ * a publication attributable are decided in
+ * [ADR 0011](../../docs/adr/0011-the-factory-mediates-ticket-access.md).
  *
- * The worker writes requests into the Work's own directory; this handler is
- * the only party that talks to Jira, using the configured Acting account. Each
- * request is validated against the launched Work, the persisted reservation,
- * the recorded session, the configured source/destination and the operation
- * whitelist BEFORE any Jira call. A request for another Work/site or an
- * operation outside the contract is rejected without a single HTTP request.
- *
- * Publications carry a comment property with the request id: an ambiguous
- * write is reconciled by reading the conversation for that id, never by
- * assuming success or by publishing a second copy.
- *
- * This is credential handling, not isolation: the worker shares the work dir
- * and, per the accepted Docker-daemon decision, is root-equivalent on the
- * host. The token stays in the factory process and never enters the launch
- * artifacts; that is the promise this module keeps.
+ * What this module owns is the decision per request: correlation with the Work,
+ * its reservation and the recorded session before a single call, the closed set
+ * of operations, and the settling of an ambiguous write — never assuming
+ * success, never writing twice for one request.
  */
 
 /** The Jira surface the mediator needs; the real adapter implements it. */
@@ -297,14 +291,8 @@ export class JiraMediator {
     // case where a publish is the first attempt.
     const mayHaveLanded = !ledger.intact || ledger.intents.some(own);
     if (mayHaveLanded) {
-      const reconciled = await this.reconcile(target, request.id);
-      if (reconciled.state === "found") {
-        this.recordPublished(request.id, reconciled.commentId, null);
-        return this.publishOk(request.id, reconciled.commentId, null, true);
-      }
-      if (reconciled.state === "unknown") {
-        return this.publishUnknown(request.id, reconciled.reason);
-      }
+      const settled = await this.settle(target, request.id);
+      if (settled !== null) return settled;
     }
     if (!ledger.intents.some(own)) {
       appendMediationIntent(this.options.workDir, {
@@ -318,46 +306,55 @@ export class JiraMediator {
       });
     }
 
-    let lastReason = "";
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        const result = await target.tickets.publishFactoryComment(target.ticket, {
-          kind: request.publication.kind,
-          text: request.publication.text,
-          correlationId: request.id,
-          work: this.options.work,
-          sessionId: request.sessionId,
-          attempt: this.options.attempt,
-        });
-        this.recordPublished(request.id, result.commentId, result.url);
-        return this.publishOk(request.id, result.commentId, result.url, false);
-      } catch (error) {
-        lastReason = bounded(describeError(error));
-        if (!(error instanceof JiraPublishUnknownError)) {
-          return this.publishFailed(request.id, lastReason);
-        }
-        const reconciled = await this.reconcile(target, request.id);
-        if (reconciled.state === "found") {
-          this.recordPublished(request.id, reconciled.commentId, null);
-          return this.publishOk(request.id, reconciled.commentId, null, true);
-        }
-        if (reconciled.state === "unknown") {
-          return this.publishUnknown(request.id, `${lastReason}; reconciliation is unknown too: ${reconciled.reason}`);
-        }
-        // Known absent: the write did not land, so one retry is safe.
-      }
+    try {
+      const result = await target.tickets.publishFactoryComment(target.ticket, {
+        kind: request.publication.kind,
+        text: request.publication.text,
+        correlationId: request.id,
+        work: this.options.work,
+        sessionId: request.sessionId,
+        attempt: this.options.attempt,
+      });
+      this.recordPublished(request.id, result.commentId, result.url);
+      return this.publishOk(request.id, result.commentId, result.url, false);
+    } catch (error) {
+      const reason = bounded(describeError(error));
+      if (!(error instanceof JiraPublishUnknownError)) return this.publishFailed(request.id, reason);
+      // Ambiguous: the conversation settles it. A second write from here would
+      // be a guess about what the site stored — the retry is the SAME request,
+      // issued with its own correlation, reconciled before it publishes.
+      const settled = await this.settle(target, request.id);
+      return (
+        settled ??
+        this.publishUnknown(
+          request.id,
+          `${reason}; the publication may or may not have landed — repeating request ${request.id} settles it`,
+        )
+      );
     }
-    return this.publishUnknown(request.id, lastReason || "the publication stayed ambiguous after a retry");
   }
 
   /**
-   * The conversation read that settles an ambiguous write. A `found` comment is
-   * the publication itself (its property carries the request id); only an
-   * `absent` answer — the site answered, and the correlation is not there —
-   * allows the one retry. The read follows the failed write, so a site that had
-   * not yet exposed a landed comment would answer `absent` and the retry would
-   * publish a second copy; the correlation property is what makes such a
-   * duplicate recognisable and reconcilable afterwards, never silent.
+   * The conversation read that settles one request: an answer when the site's
+   * evidence settles it, null when the site proves the publication is NOT there
+   * — the one state in which the request may publish.
+   */
+  private async settle(target: JiraTarget, id: string): Promise<JiraPublishOk | JiraPublishUnknown | null> {
+    const reconciled = await this.reconcile(target, id);
+    if (reconciled.state === "found") {
+      this.recordPublished(id, reconciled.commentId, null);
+      return this.publishOk(id, reconciled.commentId, null, true);
+    }
+    if (reconciled.state === "unknown") return this.publishUnknown(id, reconciled.reason);
+    return null;
+  }
+
+  /**
+   * The correlation read behind `settle`. `found` is the publication itself (a
+   * comment property carrying the request id); `absent` is the site answering
+   * that no such comment exists; `unknown` is an answer that cannot settle the
+   * question — an unreadable conversation, or factory speech whose own evidence
+   * cannot be read, which might be this very publication.
    */
   private async reconcile(
     target: JiraTarget,
@@ -371,7 +368,19 @@ export class JiraMediator {
       const found = comments.value.find(
         (comment) => comment.agentSpeech === true && comment.agentCorrelation === id,
       );
-      return found === undefined ? { state: "absent" } : { state: "found", commentId: found.id };
+      if (found !== undefined) return { state: "found", commentId: found.id };
+      const unreadable = comments.value.filter(
+        (comment) => comment.agentSpeech === true && (comment.agentCorrelation ?? "") === "",
+      );
+      if (unreadable.length > 0) {
+        return {
+          state: "unknown",
+          reason:
+            `the conversation carries ${unreadable.length} factory comment(s) whose correlation cannot be read ` +
+            `(ids ${unreadable.map((comment) => comment.id).join(", ")}); one of them may be this publication`,
+        };
+      }
+      return { state: "absent" };
     } catch (error) {
       return { state: "unknown", reason: bounded(describeError(error)) };
     }
@@ -408,7 +417,7 @@ export class JiraMediator {
     return { version: 1, id, operation: "publish", status: "failed", reason, at: this.nowIso() };
   }
 
-  private publishUnknown(id: string, reason: string): JiraPublishResponse {
+  private publishUnknown(id: string, reason: string): JiraPublishUnknown {
     return { version: 1, id, operation: "publish", status: "unknown", reason, at: this.nowIso() };
   }
 }

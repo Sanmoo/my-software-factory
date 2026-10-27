@@ -17,9 +17,12 @@ import {
  * source the configuration does not promise, or whose session is not recorded,
  * is refused instead of launched into a Jira it could not read or answer.
  *
- * Every refusal here happens before `runtime.launch` — no worker exists, no
- * footprint was written — so each one is the Launch refusal of GLOSSARY.md and
- * the admission's grant is refunded, never silently consumed.
+ * Every refusal here happens before `runtime.launch`, so no worker and no
+ * attempt footprint exist: each one is the Launch refusal of GLOSSARY.md and
+ * the admission's grant is refunded, never silently consumed. The contract the
+ * handler wrote is the record's own part, not an attempt's footprint, so a
+ * launch the runtime's own preflight then refuses leaves it harmlessly beside
+ * the work it describes.
  */
 export async function launchWithJiraMediation(
   runtime: WorkerRuntime,

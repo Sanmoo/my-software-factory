@@ -98,7 +98,7 @@ export function installGuardrail(pi: GuardrailApi, options: GuardrailOptions = {
   // /msf-work is the mount the runtime declares (WORK_MOUNT_PATH in
   // layout.ts) and passes here as MSF_WORK_MOUNT: the literal is
   // spelled out instead of imported because this module is staged into the
-  // image on its own (`scripts/stage-guardrail.mjs` follows relative imports
+  // image on its own (`scripts/stage-image-tools.mjs` follows relative imports
   // only) and must not drag the runtime's prompt in.
   const workMount = options.workMount ?? process.env["MSF_WORK_MOUNT"] ?? "/msf-work";
   const observeRef = options.observeRef ?? observeWorktree;

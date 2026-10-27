@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -14,7 +14,12 @@ import { JiraTicketAdapter } from "../tracker/jira-adapter.js";
 import { JiraSim } from "../tracker/jira-sim.js";
 import { ConfiguredJiraMediation } from "../tracker/jira-mediation.js";
 import { JiraWorkerClient } from "../tracker/jira-worker-client.js";
-import { JIRA_CONTRACT_CONTAINER_PATH, JIRA_MEDIATION_DIRNAME, mediationPaths } from "../work-record/jira-mediation.js";
+import {
+  JIRA_CONTRACT_CONTAINER_PATH,
+  JIRA_MEDIATION_DIRNAME,
+  mediationPaths,
+  readMediationResponse,
+} from "../work-record/jira-mediation.js";
 import type { TicketSelection } from "../tracker/expanded-port.js";
 
 /**
@@ -191,6 +196,82 @@ describe("e2e: a scripted worker session asks the factory for Jira", () => {
     for (const artifact of artifacts) {
       assert.equal(artifact.includes(SECRET), false, "no artifact of the mediation carries the token");
     }
+  });
+
+  test("a request the launched session forges for another Work is rejected without a Jira call", async () => {
+    let answer = "";
+    const runtime = new FakeWorkerRuntime({
+      outcomes: ["blocked-self-report"],
+      hold: async (session) => {
+        // A worker that writes the record's file itself is not the client: the
+        // factory validates what it reads, not what the client promised.
+        const paths = mediationPaths(session.workDir);
+        const elsewhere = workIdentity(
+          jiraTicket({ site: sim.site, stableId: "10002", key: "ABC-2" }),
+          githubRepository("Sanmoo/other"),
+        );
+        writeFileSync(
+          join(paths.requests, "forged-1.json"),
+          `${JSON.stringify({
+            version: 1,
+            id: "forged-1",
+            operation: "publish",
+            work: elsewhere,
+            sessionId: SESSION,
+            publication: { kind: "update", text: "ship it" },
+          })}\n`,
+          "utf8",
+        );
+        for (let attempt = 0; attempt < 2_000; attempt += 1) {
+          const response = readMediationResponse(session.workDir, "forged-1");
+          if (response.state === "ready") {
+            answer = response.value.status;
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        assert.fail("the factory never answered the forged request");
+      },
+    });
+
+    await launchWithJiraMediation(runtime, requestFor(work, workDir), composition);
+
+    assert.equal(answer, "rejected", "the factory answers the forged request as rejected");
+    assert.equal(sim.issues[0]?.comments?.length ?? 0, 0, "a rejected request publishes nothing");
+    assert.equal(
+      sim.requests.some((request) => request.path.includes("10002")),
+      false,
+      "nor does it read the Work it was not asked for",
+    );
+  });
+
+  test("an ambiguous publication is settled by repeating the same request, never by a second write of its own", async () => {
+    let statuses: string[] = [];
+    let reconciled: boolean | null = null;
+    const runtime = new FakeWorkerRuntime({
+      outcomes: ["clean-without-pr"],
+      hold: async (session) => {
+        const client = new JiraWorkerClient({
+          contractPath: mediationPaths(session.workDir).contract,
+          pollMs: 1,
+          timeoutMs: 2000,
+        });
+        sim.faults.commentCreate = { status: 503, messages: ["Jira is unavailable"] };
+        const first = await client.publish({ kind: "update", text: "the check is ready", requestId: "retry-runtime" });
+        delete sim.faults.commentCreate;
+        const retried = await client.publish({ kind: "update", text: "the check is ready", requestId: "retry-runtime" });
+        statuses = [first.status, retried.status];
+        reconciled = retried.status === "ok" ? retried.reconciled : null;
+      },
+    });
+
+    await launchWithJiraMediation(runtime, requestFor(work, workDir), composition);
+
+    assert.deepEqual(statuses, ["unknown", "ok"], "the unknown is a fact the worker acts on, not a phantom success");
+    assert.equal(reconciled, false, "the retried request is the write that landed");
+    assert.equal(sim.issues[0]?.comments?.length, 1, "one publication for one request, however often it is asked");
+    const landings = sim.requests.filter((request) => request.method === "POST" && request.path.endsWith("/comment"));
+    assert.equal(landings.length, 2, "the failed write and the retried one — the factory adds no write of its own");
   });
 });
 

@@ -32,7 +32,7 @@ import { SandcastleRuntime, requireModelCredentials, workerToken, type Sandcastl
 import { WORKER_IMAGE } from "./worker-image.js";
 import { modelAuthEnv } from "./runtime/model-auth.js";
 import type { WorkerRuntime } from "./runtime/port.js";
-import type { PullRequestTracker, TicketTracker } from "./tracker/expanded-port.js";
+import type { PullRequestTracker, TicketSelection, TicketTracker } from "./tracker/expanded-port.js";
 import type { GitWork } from "./git/port.js";
 import { jiraSelectionOf, renderWorkIdentity } from "./tracker/identity.js";
 import { LinuxNotifier } from "./notify/linux.js";
@@ -192,8 +192,10 @@ function jiraAdapterFactory(config: Config): (entry: Config["jira"][number]) => 
   };
 }
 
-/** The read-only Jira selections of `msf status`. */
-function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
+/** The configured selections, each with the adapter of its site: one shape
+ *  serves the read-only listing of `msf status` and the factory's mediated
+ *  access, so both name the same source the same way. */
+function jiraSelectionEntries(config: Config): Array<{ selection: TicketSelection; tickets: JiraTicketAdapter }> {
   const adapterFor = jiraAdapterFactory(config);
   return config.jira.map((entry) => ({
     selection: jiraSelectionOf(entry),
@@ -202,14 +204,16 @@ function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
   }));
 }
 
+/** The read-only Jira selections of `msf status`. */
+function jiraSelectionReaders(config: Config): JiraSelectionReader[] {
+  return jiraSelectionEntries(config);
+}
+
 /** The factory side of the controlled Jira interaction, one entry per
  *  configured selection: the launch path asks it for a handler for each Jira
  *  Work, and no other party performs the API calls. */
 function jiraMediationOf(config: Config): ConfiguredJiraMediation {
-  const adapterFor = jiraAdapterFactory(config);
-  return new ConfiguredJiraMediation(
-    config.jira.map((entry) => ({ selection: jiraSelectionOf(entry), tickets: adapterFor(entry) })),
-  );
+  return new ConfiguredJiraMediation(jiraSelectionEntries(config));
 }
 
 /** The CLI's log: the console plus the workspace record a round reads. */

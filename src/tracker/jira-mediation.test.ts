@@ -303,6 +303,75 @@ describe("Jira mediation: the worker client and the real factory handler", () =>
     const response = await harness.client.publish({ kind: "help", text: "please unblock" });
     assert.equal(response.status, "unknown");
     assert.equal(harness.sim.issues[0]?.comments?.length ?? 0, 0);
+    assert.match(String(response.reason), /repeating request/, "the unknown names what settles it");
+  });
+
+  test("an ambiguous write is never followed by a blind second write: the correlation read settles it, or the answer is unknown", async () => {
+    // The site applies the comment and then answers 503: the conversation holds
+    // the correlation, so the request settles as published — with ONE comment.
+    harness.close();
+    let answered = false;
+    const transport: JiraTransport = async (url, init) => {
+      const response = await harness.sim.transport(url, init);
+      if (!answered && init.method === "POST" && url.endsWith("/comment")) {
+        answered = true;
+        return { status: 503, text: JSON.stringify({ errorMessages: ["gateway timed out"] }) };
+      }
+      return response;
+    };
+    const adapter = new JiraTicketAdapter({
+      site: harness.sim.site,
+      account: harness.sim.account.emailAddress,
+      tokenEnv: TOKEN_ENV,
+      env: { [TOKEN_ENV]: SECRET },
+      transport,
+    });
+    const mediator = new JiraMediator({
+      work: harness.work,
+      workDir: harness.workDir,
+      attempt: ATTEMPT,
+      sessionId: SESSION,
+      selection: harness.selection,
+      tickets: adapter,
+      pollMs: 1,
+    });
+    mediator.start();
+    try {
+      const client = new JiraWorkerClient({
+        contractPath: mediationPaths(harness.workDir).contract,
+        pollMs: 1,
+        timeoutMs: 2000,
+      });
+      const response = await client.publish({ kind: "help", text: "a single question" });
+      assert.ok(response.status === "ok");
+      assert.equal(response.reconciled, true, "the site's own comment is the answer");
+      assert.equal(harness.sim.issues[0]?.comments?.length, 1, "the ambiguous write is not repeated blindly");
+    } finally {
+      mediator.close();
+    }
+  });
+
+  test("factory speech whose correlation cannot be read makes the reconciliation unknown, so nothing is published twice", async () => {
+    // A comment the factory owns, but whose evidence this version cannot read:
+    // it may BE this publication, so the answer is unknown and no write happens.
+    harness.sim.addComment("ABC-1", {
+      id: "c-damaged",
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "please unblock" }] }] },
+      properties: [{ key: "msf.factory", value: { version: 99 } }],
+    });
+
+    // The request's own write is ambiguous, so the retry has to reconcile — and
+    // the unreadable factory comment is exactly what it cannot read past.
+    harness.sim.faults.commentCreate = { status: 503, messages: ["Jira is unavailable"] };
+    const first = await harness.client.publish({ kind: "help", text: "please unblock", requestId: "retry-damaged" });
+    assert.equal(first.status, "unknown");
+
+    delete harness.sim.faults.commentCreate;
+    const response = await harness.client.publish({ kind: "help", text: "please unblock", requestId: "retry-damaged" });
+
+    assert.equal(response.status, "unknown");
+    assert.match(String(response.reason), /correlation cannot be read/);
+    assert.equal(harness.sim.issues[0]?.comments?.length, 1, "the unreadable evidence is not published past");
   });
 
   test("a retry with the same request id completes an unknown publication without a second comment", async () => {

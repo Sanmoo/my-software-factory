@@ -5,6 +5,7 @@ import { githubRepository, jiraTicket, workIdentity, type TicketIdentity } from 
 import type { PrerequisiteLink, TicketSelection } from "./expanded-port.js";
 import { JiraTicketAdapter, type JiraTransport } from "./jira-adapter.js";
 import { basic, JiraSim, type SimJiraAccount, type SimJiraIssue, type SimJiraLink } from "./jira-sim.js";
+import { humanCommentsAfterLastMarker } from "./speech.js";
 
 /**
  * The real Jira adapter over the simulated REST: native Rank
@@ -802,6 +803,40 @@ describe("Jira adapter: the conversation and the mediated factory comment", () =
     assert.equal(property?.key, "msf.factory");
     assert.equal((property?.value as Record<string, unknown>)["correlationId"], "req-2");
     assert.deepEqual((comment?.body as { type: string }).type, "doc");
+  });
+
+  test("a factory property this version cannot read stays factory speech with an unknown correlation — never a human answer", async () => {
+    const sim = new JiraSim();
+    sim.addIssue({ id: "10001", key: "ABC-1", summary: "One" });
+    sim.addComment("ABC-1", { id: "c-human", body: TICKET_ADF });
+    sim.addComment("ABC-1", {
+      id: "c-damaged",
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
+      properties: [{ key: "msf.factory", value: { version: 99, correlationId: "req-9" } }],
+    });
+    sim.addComment("ABC-1", {
+      id: "c-no-id",
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "factory" }] }] },
+      properties: [{ key: "msf.factory", value: { version: 1 } }],
+    });
+
+    const comments = await adapterFor(sim).readTicketComments(ticketOf(sim, "10001"));
+
+    if (!comments.known) assert.fail("the conversation is readable");
+    assert.deepEqual(
+      comments.value.map((comment) => [comment.id, comment.agentSpeech, comment.agentCorrelation ?? null]),
+      [
+        ["c-human", false, null],
+        ["c-damaged", true, null],
+        ["c-no-id", true, null],
+      ],
+      "only the absence of the property makes a comment human speech",
+    );
+    assert.deepEqual(
+      humanCommentsAfterLastMarker(comments.value).map((comment) => comment.id),
+      [],
+      "a human answer cannot be read into a comment the factory owns",
+    );
   });
 
   test("a write failure is either a definite refusal or an ambiguity, never a silent retry", async () => {
