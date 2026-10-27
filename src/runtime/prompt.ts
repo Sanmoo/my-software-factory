@@ -36,11 +36,6 @@ import type { RepairMaterial, RetroRequest, WorkRequest } from "./port.js";
  * artifact schema, never the text.
  */
 
-/**
- * Container paths are layout, not prose: where the host binds the work's
- * artifacts inside the container. Kept here so the prompt and the runtime
- * agree on the contract without runtime importing sandcastle internals.
- */
 /** The completion signal: when the agent prints it, the iteration loop ends. */
 export const COMPLETION_SIGNAL = "<promise>MSF-RESULT</promise>";
 

@@ -398,7 +398,7 @@ export class JiraMediator {
       operation: "publish",
       status: "ok",
       commentId,
-      url: url === "" ? null : url,
+      url,
       reconciled,
       at: this.nowIso(),
     };

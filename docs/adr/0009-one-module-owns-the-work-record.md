@@ -36,9 +36,9 @@ staging and the launch preflight compute.
 One part stays outside the aggregate `read()`/`write(part)` interface by
 design: the mediated ticket channel (`work-record/jira-mediation.ts`) — the
 contract, the worker's requests, the factory's answers and the operation
-ledger. It is a live request/answer protocol whose files are per-occurrence,
-not a snapshot a derivation reads, and its writers must compare and refuse per
-file (a retried id, an answer bound to its request) rather than persist one
+ledger. It is a live request/answer protocol on the launch path, whose files are
+per-occurrence rather than a snapshot a derivation reads, and its writers must
+compare and refuse per file (a retried id, an answer bound to its request) rather than persist one
 record part. It still follows this decision's contract: one module owns its
 files, schemas and cross-references, it is written through the record's own
 durable primitives, and both sides of the image import it from

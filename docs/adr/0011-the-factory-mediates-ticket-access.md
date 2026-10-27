@@ -37,14 +37,20 @@ point.
 A publication's retry identity is the request, which names the session that
 issued it: the record refuses the same id with different content, so a later
 session cannot relabel an earlier publication, and a reconciled answer always
-belongs to the request that produced it. A fresh attempt that publishes again
-issues a new request with its own correlation — a new publication the ledger
-records beside the earlier one, never a duplicate of it.
+belongs to the request that produced it. A publication a later session issues
+afresh is a new request with its own correlation, and the ledger keeps the
+earlier one beside it.
 
 The token stays in the factory process. It is never in the worker's environment,
 files, image, prompt or routine artifacts, and the test suite puts it in the
 host environment to prove it does not ride along. The GitHub credential is a
 separate, unchanged decision: PRs, review and merge stay on the code host.
+
+Residual limit: the correlation reconciles an ambiguity only when the same
+request is retried. If the factory dies after a write landed and the relaunched
+work publishes again without retrying that request, two comments exist, each
+with its own correlation and both in the ledger — the duplicate is attributable
+and visible, not prevented, and no sweep settles the pending intent on its own.
 
 Accepted limit: this is credential handling, not isolation. The worker shares
 the work dir and, by [ADR 0003](0003-worker-inherits-the-host-docker-daemon.md),
