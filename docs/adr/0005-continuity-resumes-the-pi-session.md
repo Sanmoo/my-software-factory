@@ -16,8 +16,13 @@ A resumed attempt keeps its identity (same attempt number, branch preserved) and
 the relaunch reopens the Pi session of that attempt instead of starting a new
 session with reconstructed context.
 Automatic recoveries draw on a separate, finite budget with explicit backoff;
-exhausting it pauses the work and asks the human. `@earendil-works/pi-durable`
-is not adopted.
+exhausting it pauses the work and asks the human. A grant whose relaunch the
+environment refused before any worker existed — Docker, the worker image and its
+inventory, the git credential helper, the model credential — is returned to that
+budget: the refusal proves the attempt never carried the work, so an
+environment's defect spends none of the allowance. A failure that may have left
+a worker behind keeps the grant spent. `@earendil-works/pi-durable` is not
+adopted.
 
 The consequence, stated so nobody rediscovers it as a bug:
 `src/state/outcome.ts` keeps a missing outcome as absence, never as a written
